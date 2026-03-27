@@ -53,6 +53,8 @@ Sonstiges:
   config get <key>    Wert lesen (Punkt-Notation)
   config set <key> <value>  Wert setzen
   config reset        Auf Defaults zurücksetzen
+  config export [file]  Config als JSON ausgeben (oder in Datei speichern)
+  config import <file>  Config aus JSON-Datei laden (ersetzt aktuelle)
   search              Claude im Search-Modus starten
   help                Diese Hilfe
   version             Version anzeigen
@@ -226,6 +228,23 @@ case "${1:-}" in
       reset)
         cp "$DEFAULTS" "$CONFIG"
         echo "Config reset to defaults"
+        ;;
+      export)
+        file="${3:-}"
+        if [[ -n "$file" ]]; then
+          cp "$CONFIG" "$file"
+          echo "Config exportiert nach $file"
+        else
+          cat "$CONFIG"
+        fi
+        ;;
+      import)
+        file="${3:?Usage: claudii config import <file>}"
+        [[ -f "$file" ]] || { echo "Datei nicht gefunden: $file"; exit 1; }
+        jq '.' "$file" >/dev/null 2>&1 || { echo "Kein gültiges JSON: $file"; exit 1; }
+        cp "$CONFIG" "${CONFIG}.bak"
+        cp "$file" "$CONFIG"
+        echo "Config importiert aus $file  (Backup: ${CONFIG}.bak)"
         ;;
       *)
         echo "User config: $CONFIG"
