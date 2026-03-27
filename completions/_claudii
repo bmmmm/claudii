@@ -22,6 +22,7 @@ _claudii() {
         'debug:Show or set debug level'
         'restart:Reload plugin (source ~/.zshrc, stay in current dir)'
         'search:Launch Claude in search mode'
+        'about:About claudii'
         'version:Show version'
         'help:Show help'
       )

@@ -46,6 +46,7 @@ Claude-interne Statusleiste (zeigt Kontext, Kosten, Tokens IN Claude):
   sessionline off     Deaktiviert die Statusleiste
 
 Sonstiges:
+  about               Über claudii
   restart             Plugin neu laden (source ~/.zshrc, bleibt im Verzeichnis)
   debug               Aktuellen Debug-Level anzeigen
   debug <level>       Debug-Level setzen (off|error|warn|info|debug)
@@ -290,6 +291,33 @@ case "${1:-}" in
 
   version)
     echo "claudii v$VERSION"
+    ;;
+
+  about)
+    printf '\n'
+    printf '  \033[0;36mclaudii\033[0m \033[0;90mv%s\033[0m\n' "$VERSION"
+    printf '  \033[0;90m──────────────────────────────────────\033[0m\n'
+    printf '  Claude Interaction Intelligence\n'
+    printf '\n'
+    printf '  zsh plugin + CLI for Claude Code power users.\n'
+    printf '\n'
+    printf '  \033[0;32m◆\033[0m  Model health monitoring · RPROMPT statusline\n'
+    printf '  \033[0;32m◆\033[0m  In-session context · cost · tokens (inside Claude)\n'
+    printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
+    printf '\n'
+    printf '  \033[0;90mhttps://github.com/bmmmm/claudii\033[0m\n'
+    printf '\n'
+    ;;
+
+  42)
+    printf '\n'
+    printf '  \033[0;36m✦  The answer is 42.\033[0m\n'
+    printf '\n'
+    printf '  It was also the number of times Opus was down\n'
+    printf '  while this tool was being built.\n'
+    printf '\n'
+    printf '  \033[0;90m(We monitor all three now. You'\''re welcome.)\033[0m\n'
+    printf '\n'
     ;;
 
   help|--help|-h)
