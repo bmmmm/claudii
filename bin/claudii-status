@@ -79,25 +79,14 @@ while IFS= read -r item; do
   title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
   [[ -z "$title" ]] && continue
 
-  # Decode HTML entities in description for recovery detection
-  desc=$(echo "$item" | sed -n 's/.*<description>\(.*\)<\/description>.*/\1/p' | \
-    sed 's/&lt;[^;]*&gt;//g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
-
-  # Check title for affected models
+  # Check title for affected models — a non-Resolved incident means the model is down.
+  # Recovery patterns are intentionally omitted: they span the full one-line description
+  # and produce false positives (e.g. "Opus 4.6 ... Sonnet is now healthy" matches Opus.*healthy).
+  # Resolved incidents are skipped above; everything else is treated as ongoing.
   echo "$title" | grep -qi "Opus"   && opus_down=true
   echo "$title" | grep -qi "Sonnet" && sonnet_down=true
   echo "$title" | grep -qi "Haiku"  && haiku_down=true
-
-  # Check if description says a model recovered (most recent update is first)
-  if echo "$desc" | grep -qi "Sonnet.*healthy\|Sonnet.*now.*ok\|Sonnet.*recovered"; then
-    sonnet_down=false
-  fi
-  if echo "$desc" | grep -qi "Opus.*healthy\|Opus.*now.*ok\|Opus.*recovered"; then
-    opus_down=false
-  fi
-  if echo "$desc" | grep -qi "Haiku.*healthy\|Haiku.*now.*ok\|Haiku.*recovered"; then
-    haiku_down=false
-  fi
+  _claudii_log debug "item: title='$title' → opus=$opus_down sonnet=$sonnet_down haiku=$haiku_down"
 done < <(
   echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
     awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
