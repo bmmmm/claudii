@@ -120,22 +120,19 @@ The level can also be set via the environment variable
 .SS Other
 .
 .TP
+.B metrics
+Show performance metrics for this shell session: plugin load time, config load time
+(jq), precmd hook timing (last / average / total), and config reload count.
+.B Note:
+This is a zsh shell function \(em it reads in-memory counters, not subprocess output.
+.
+.TP
 .B search
 Launch Claude Code in the configured search directory
 .RI ( search.dir " in config, default:" " ~/claude-search" ).
 Uses the
 .B clq
 alias settings (model + effort).
-.
-.TP
-.B update
-Pull the latest version from GitHub
-.RB ( "git pull --ff-only" )
-and reload the plugin automatically.
-Requires the installation to be a git clone of
-.IR https://github.com/bmmmm/claudii .
-.B Note:
-This is a zsh shell function \(em it reloads the parent shell after pulling.
 .
 .TP
 .B restart
@@ -197,9 +194,7 @@ haiku=ok
 .PP
 The cache is refreshed automatically in the background when it exceeds
 .B status.cache_ttl
-seconds. Use
-.B claudii toggle
-to force an immediate refresh.
+seconds.
 .
 .SH ENVIRONMENT
 .TP
@@ -237,9 +232,6 @@ Activate the in-session statusline:
 .TP
 Show only Opus and Sonnet in RPROMPT:
 .B claudii show model opus sonnet
-.TP
-Refresh status immediately:
-.B claudii toggle
 .TP
 Check every 5 minutes:
 .B claudii status 5m

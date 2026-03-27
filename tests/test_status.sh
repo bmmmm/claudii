@@ -30,12 +30,9 @@ assert_eq "quiet mode produces no output" "" "$output"
 # model status cache always created (even offline → all-ok fallback)
 assert_file_exists "model status cache created" "${TMPDIR:-/tmp}/claudii-status-models"
 
-# RSS XML cache only present when network was reachable
-if [[ -f "${TMPDIR:-/tmp}/claudii-status-cache.xml" ]]; then
-  assert_eq "RSS cache present (network available)" "true" "true"
-else
-  assert_eq "RSS cache absent (offline all-ok fallback)" "true" "true"
-fi
+# RSS XML cache only written when outage detected (and network reachable)
+# Either absent (all ok) or present (outage) — both are valid
+assert_eq "status ran without crash" "true" "true"
 
 # All configured models must appear in cache with valid state
 cached=$(cat "${TMPDIR:-/tmp}/claudii-status-models")
@@ -43,16 +40,16 @@ for model in "${STATUS_MODELS[@]}"; do
   model="${model// /}"
   assert_contains "cache has ${model} entry" "${model}=" "$cached"
   line=$(grep "^${model}=" "${TMPDIR:-/tmp}/claudii-status-models" || true)
-  if echo "$line" | grep -qE "^${model}=(ok|down)$"; then
+  if echo "$line" | grep -qE "^${model}=(ok|degraded|down)$"; then
     assert_eq "cache ${model} has valid state" "true" "true"
   else
-    assert_eq "cache ${model} has valid state" "${model}=ok|down" "$line"
+    assert_eq "cache ${model} has valid state" "${model}=ok|degraded|down" "$line"
   fi
 done
 
 # status subcommand via claudii shows output
 output=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
-if echo "$output" | grep -qE '⚠|✓|verfügbar|down'; then
+if echo "$output" | grep -qE '✗|~|✓|verfügbar|down|degraded'; then
   assert_eq "claudii status shows meaningful output" "true" "true"
 else
   assert_eq "claudii status shows meaningful output" "contains status text" "$output"

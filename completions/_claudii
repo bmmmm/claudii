@@ -19,8 +19,8 @@ _claudii() {
         'sessionline:Manage Claude Code in-session statusline'
         'config:Read or write config values'
         'debug:Show or set debug level'
+        'metrics:Show session performance metrics (load time, precmd timing)'
         'restart:Reload plugin (source ~/.zshrc, stay in current dir)'
-        'update:Pull latest from GitHub and reload'
         'search:Launch Claude in search mode'
         'about:About claudii'
         'version:Show version'
@@ -117,12 +117,17 @@ _claudii() {
               )
               _describe 'config key' keys
               ;;
+            export)
+              _files
+              ;;
             *)
               local -a subcommands
               subcommands=(
                 'get:Get a config value (dot-notation)'
                 'set:Set a config value'
                 'reset:Reset to defaults'
+                'export:Print config as JSON (or write to file)'
+                'import:Replace config from a JSON file'
               )
               _describe 'config subcommand' subcommands
               ;;

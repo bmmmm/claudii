@@ -7,6 +7,16 @@
 #   "statusLine": { "type": "command", "command": "claudii-sessionline" }
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+# Use upstream vendor script when available (kept fresh via claudii update)
+for _vendor in \
+  "$CLAUDII_HOME/vendor/claude-code-statusline/statusline.sh" \
+  "$CLAUDII_HOME/vendor/claude-code-statusline/claude-code-statusline.sh" \
+  "$CLAUDII_HOME/vendor/claude-code-statusline/claude-code-statusline" \
+  "$CLAUDII_HOME/vendor/claude-code-statusline/bin/claude-code-statusline"; do
+  [[ -x "$_vendor" ]] && exec "$_vendor" "$@"
+done
+unset _vendor
 # shellcheck source=lib/log.sh
 source "$CLAUDII_HOME/lib/log.sh"
 

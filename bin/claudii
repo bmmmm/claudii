@@ -166,14 +166,6 @@ case "${1:-}" in
     esac
     ;;
 
-  toggle)
-    rm -f "${TMPDIR:-/tmp}/claudii-status-models" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
-    echo -e "\033[0;36mRefreshing model status...\033[0m"
-    "$CLAUDII_HOME/bin/claudii-status"
-    exit_code=$?
-    [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
-    ;;
-
   # Backwards compatibility
   install-sessionline)
     exec "$0" sessionline on

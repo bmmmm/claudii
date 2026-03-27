@@ -1,6 +1,16 @@
 # claudii statusline — RPROMPT with per-model health + last-fetch age
 
 function _claudii_statusline {
+  local _t=$EPOCHREALTIME
+  _claudii_statusline_render
+  local _el=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
+  _CLAUDII_METRICS[precmd.last_us]=$_el
+  _CLAUDII_METRICS[precmd.calls]=$(( ${_CLAUDII_METRICS[precmd.calls]:-0} + 1 ))
+  _CLAUDII_METRICS[precmd.total_us]=$(( ${_CLAUDII_METRICS[precmd.total_us]:-0} + _el ))
+  _claudii_log debug "precmd: $(_claudii_fmt_us $_el)"
+}
+
+function _claudii_statusline_render {
   # Single cache-load call — fast mtime check, jq only on config change
   _claudii_cache_load
   [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
@@ -41,20 +51,23 @@ function _claudii_statusline {
     model="${model// /}"
     # Pattern match in-process — no grep subprocess
     if [[ $'\n'"$cache_content" == *$'\n'"${model}=down"* ]]; then
-      segments+="%F{yellow}${(C)model} ↓%f "
+      segments+="%F{red}${(C)model} ↓%f "
+    elif [[ $'\n'"$cache_content" == *$'\n'"${model}=degraded"* ]]; then
+      segments+="%F{yellow}${(C)model} ~%f "
     else
       segments+="%F{green}${(C)model} ✓%f "
     fi
   done
 
-  local age_str refreshing=""
+  local age_str refreshing="" unreachable=""
   if (( age < 60 )); then age_str="${age}s"
   elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
   else age_str="$(( age / 3600 ))h"
   fi
   (( age > ttl )) && refreshing=" %F{8}⟳%f"
+  [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
-  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}"
+  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 }
 
 autoload -Uz add-zsh-hook

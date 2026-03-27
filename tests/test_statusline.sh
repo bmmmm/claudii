@@ -24,6 +24,8 @@ _simulate_statusline() {
 
     if grep -q "^${model}=down" "$CACHE_STATUS" 2>/dev/null; then
       segments+="${label} ↓ "
+    elif grep -q "^${model}=degraded" "$CACHE_STATUS" 2>/dev/null; then
+      segments+="${label} ~ "
     else
       segments+="${label} ✓ "
     fi
@@ -62,6 +64,18 @@ output=$(_simulate_statusline "opus=down
 sonnet=down
 haiku=down" "opus,sonnet,haiku")
 assert_eq "all 3, all down" "[Opus ↓ Sonnet ↓ Haiku ↓]" "$output"
+
+# ── Degraded state ──
+
+output=$(_simulate_statusline "opus=degraded
+sonnet=ok
+haiku=ok" "opus,sonnet,haiku")
+assert_eq "all 3, opus degraded" "[Opus ~ Sonnet ✓ Haiku ✓]" "$output"
+
+output=$(_simulate_statusline "opus=degraded
+sonnet=down
+haiku=ok" "opus,sonnet,haiku")
+assert_eq "all 3, opus degraded + sonnet down" "[Opus ~ Sonnet ↓ Haiku ✓]" "$output"
 
 # ── Single model: opus only ──
 

@@ -47,11 +47,12 @@ assert_contains() {
 
 assert_exit_code() {
   local desc="$1" expected="$2" cmd="$3"
-  local actual
+  local actual _errexit=0
+  [[ $- == *e* ]] && _errexit=1
   set +e
   eval "$cmd" >/dev/null 2>&1
   actual=$?
-  set -e
+  (( _errexit )) && set -e || true
   assert_eq "$desc" "$expected" "$actual"
 }
 

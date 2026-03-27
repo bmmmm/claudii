@@ -56,7 +56,7 @@ assert_contains "status info: shows [claudii:info]" "[claudii:info]" "$stderr"
 
 rm -f "${TMPDIR:-/tmp}/claudii-status-models"
 stderr=$(CLAUDII_LOG_LEVEL=debug bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 >/dev/null || true)
-assert_contains "status debug: shows RSS URL" "RSS URL" "$stderr"
+assert_contains "status debug: shows components URL" "Components URL" "$stderr"
 
 # ── claudii-status: cache hit with debug ──
 

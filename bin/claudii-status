@@ -1,11 +1,15 @@
 #!/bin/bash
-# claudii-status — checks status.claude.com RSS for active incidents
-# Writes per-model status to cache file (model=ok|down per line)
-# Exit codes: 0=all ok, 1=some down
+# claudii-status — checks model health via Statuspage components API
+# Primary:   api/v2/components.json → per-model status (structured JSON)
+# Secondary: history.rss           → only on outage, for incident details
+#
+# Cache format: model=ok|degraded|down  (one per line)
+# Exit codes:   0=all ok, 1=some degraded or down
 #
 # Config via environment:
-#   CLAUDII_RSS_URL     (default: https://status.claude.com/history.rss)
-#   CLAUDII_CACHE_TTL   (default: 300)
+#   CLAUDII_COMPONENTS_URL   (default: derived from rss_url)
+#   CLAUDII_RSS_URL          (default: https://status.claude.com/history.rss)
+#   CLAUDII_CACHE_TTL        (default: from config, 900s)
 
 set -uo pipefail
 
@@ -14,17 +18,23 @@ CACHE_DIR="${TMPDIR:-/tmp}"
 CACHE_FILE="$CACHE_DIR/claudii-status-cache.xml"
 CACHE_STATUS="$CACHE_DIR/claudii-status-models"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
-DEFAULTS="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}/config/defaults.json"
+DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
 _cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
 _def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+
 CACHE_TTL="${CLAUDII_CACHE_TTL:-$(_cfg status.cache_ttl)}"
 CACHE_TTL="${CACHE_TTL:-$(_def status.cache_ttl)}"
 CACHE_TTL="${CACHE_TTL:-900}"
+
 RSS_URL="${CLAUDII_RSS_URL:-$(_cfg status.rss_url)}"
 RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
 
+COMPONENTS_URL="${CLAUDII_COMPONENTS_URL:-$(_cfg status.components_url)}"
+COMPONENTS_URL="${COMPONENTS_URL:-$(_def status.components_url)}"
+COMPONENTS_URL="${COMPONENTS_URL:-${RSS_URL%/history.rss}/api/v2/components.json}"
+
 # shellcheck source=lib/log.sh
-source "${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}/lib/log.sh"
+source "${CLAUDII_HOME}/lib/log.sh"
 
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
@@ -34,94 +44,124 @@ NC='\033[0m'
 quiet=false
 [[ "${1:-}" == "--quiet" ]] && quiet=true
 
-# Read models from config — drives everything below
+# Read models from config
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
 models_raw="${models_raw:-$(_def statusline.models)}"
 models_raw="${models_raw:-opus,sonnet,haiku}"
 IFS=',' read -ra MODELS <<< "$models_raw"
 for i in "${!MODELS[@]}"; do MODELS[$i]="${MODELS[$i]// /}"; done
 
-_claudii_log debug "RSS URL: $RSS_URL, Cache TTL: ${CACHE_TTL}s, Models: ${MODELS[*]}"
+_claudii_log debug "Components URL: $COMPONENTS_URL, RSS URL: $RSS_URL, TTL: ${CACHE_TTL}s, Models: ${MODELS[*]}"
 
-# Check cache freshness
+# ── Cache check ──────────────────────────────────────────────────────────────
+
 if [[ -f "$CACHE_STATUS" ]]; then
   cache_age=$(( $(date +%s) - $(stat -f%m "$CACHE_STATUS") ))
   if (( cache_age < CACHE_TTL )); then
     _claudii_log debug "Cache hit (age: ${cache_age}s < TTL: ${CACHE_TTL}s)"
-    # Return cached result
     if ! $quiet; then
       while IFS='=' read -r model state; do
-        [[ "$state" == "down" ]] && echo -e "${YELLOW}⚠ ${model} down${NC}" >&2
+        case "$state" in
+          down)     echo -e "${RED}✗ ${model} down${NC}" >&2 ;;
+          degraded) echo -e "${YELLOW}~ ${model} degraded${NC}" >&2 ;;
+        esac
       done < "$CACHE_STATUS"
     fi
-    grep -q "=down" "$CACHE_STATUS" 2>/dev/null && exit 1
+    grep -q "=down\|=degraded" "$CACHE_STATUS" 2>/dev/null && exit 1
     exit 0
   fi
-  _claudii_log debug "Cache stale (age: ${cache_age}s > TTL: ${CACHE_TTL}s), fetching..."
+  _claudii_log debug "Cache stale (${cache_age}s > TTL: ${CACHE_TTL}s), fetching..."
 fi
 
-# Fetch RSS feed
-_claudii_log info "Fetching $RSS_URL"
-rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || {
-  $quiet || echo -e "${YELLOW}claudii: Status-Feed nicht erreichbar${NC}" >&2
-  _claudii_log warn "RSS fetch failed, writing all-ok fallback"
-  # Write all-ok cache on network error (don't block)
-  printf '%s=ok\n' "${MODELS[@]}" > "$CACHE_STATUS"
+# ── Fetch components API ─────────────────────────────────────────────────────
+
+_claudii_log info "Fetching $COMPONENTS_URL"
+components_json=$(curl -sf --max-time 5 "$COMPONENTS_URL" 2>/dev/null) || {
+  $quiet || echo -e "${YELLOW}claudii: Status-API nicht erreichbar${NC}" >&2
+  _claudii_log warn "Components API fetch failed — writing all-ok fallback with unreachable marker"
+  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$CACHE_STATUS"
   exit 0
 }
 
-_claudii_log debug "RSS fetched (${#rss} bytes)"
-echo "$rss" > "$CACHE_FILE"
+_claudii_log debug "Components API: $(echo "$components_json" | jq '.components | length' 2>/dev/null) components"
 
-# Parse: find active (non-resolved) incidents per model
-# down_models is a space-padded list: " opus sonnet " for safe word-boundary matching
-down_models=" "
+# Map Statuspage component status → claudii state
+# operational            → ok
+# degraded_performance   → degraded
+# partial_outage         → down
+# major_outage           → down
+_resolve_model_status() {
+  local model="$1"
+  echo "$components_json" | jq -r --arg m "$model" '
+    (.components // [])
+    | map(select(.name | ascii_downcase | contains($m)))
+    | if length == 0 then "operational"
+      elif any(.status == "major_outage" or .status == "partial_outage") then "major_outage"
+      elif any(.status == "degraded_performance") then "degraded_performance"
+      else "operational"
+      end
+  ' 2>/dev/null || echo "operational"
+}
 
-while IFS= read -r item; do
-  if echo "$item" | grep -qi "Resolved"; then
-    continue
-  fi
+# ── Determine per-model status ────────────────────────────────────────────────
 
-  title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
-  [[ -z "$title" ]] && continue
+tmpfile="${CACHE_STATUS}.tmp"
+any_issue=false
 
-  # Check title for each configured model name (case-insensitive).
-  # Recovery patterns are intentionally omitted: they span the full one-line description
-  # and produce false positives (e.g. "Opus 4.6 ... Sonnet is now healthy" matches Opus.*healthy).
-  # Resolved incidents are skipped above; everything else is treated as ongoing.
-  for m in "${MODELS[@]}"; do
-    echo "$title" | grep -qi "$m" && down_models="$down_models$m "
-  done
-  _claudii_log debug "item: title='$title' → down:${down_models}"
-done < <(
-  echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
-    awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
-)
-
-# Write per-model status cache
-{
-  for m in "${MODELS[@]}"; do
-    echo "${m}=${down_models}" | grep -q " ${m} " && echo "${m}=down" || echo "${m}=ok"
-  done
-} > "$CACHE_STATUS"
-
-status_summary=""
-for m in "${MODELS[@]}"; do
-  echo "${down_models}" | grep -q " ${m} " \
-    && status_summary+=" ${m}=down" \
-    || status_summary+=" ${m}=ok"
-done
-_claudii_log info "Status:${status_summary}"
-
-# Output
-any_down=false
-for m in "${MODELS[@]}"; do
-  if echo "$down_models" | grep -q " ${m} "; then
-    label="$(echo "${m:0:1}" | tr '[:lower:]' '[:upper:]')${m:1}"
-    $quiet || echo -e "${YELLOW}⚠ ${label} down${NC}" >&2
-    any_down=true
-  fi
+for model in "${MODELS[@]}"; do
+  raw_status=$(_resolve_model_status "$model")
+  case "$raw_status" in
+    operational)          ms="ok" ;;
+    degraded_performance) ms="degraded"; any_issue=true ;;
+    *)                    ms="down";     any_issue=true ;;
+  esac
+  printf '%s=%s\n' "$model" "$ms" >> "$tmpfile"
+  _claudii_log debug "component: $model → $raw_status → $ms"
 done
 
-$any_down && exit 1
-exit 0
+# ── Fetch RSS for incident details (only if needed) ──────────────────────────
+
+incident_detail=""
+if $any_issue; then
+  _claudii_log info "Outage detected — fetching RSS for incident details"
+  rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
+  if [[ -n "$rss" ]]; then
+    echo "$rss" > "$CACHE_FILE"
+    # First non-resolved incident title (skip feed title at line 1)
+    incident_detail=$(echo "$rss" |
+      sed -n 's:.*<title><!\[CDATA\[\(.*\)\]\]></title>.*:\1:p;s:.*<title>\([^<]*\)</title>.*:\1:p' |
+      awk 'NR>1' |
+      grep -iv 'resolved' |
+      head -1 |
+      sed 's/^[[:space:]]*//')
+    [[ -n "$incident_detail" ]] && _claudii_log info "Incident: $incident_detail"
+  fi
+fi
+
+# ── Finalize cache ────────────────────────────────────────────────────────────
+
+mv "$tmpfile" "$CACHE_STATUS"
+
+summary=""
+for model in "${MODELS[@]}"; do
+  ms=$(grep "^${model}=" "$CACHE_STATUS" | cut -d= -f2)
+  summary+=" ${model}=${ms}"
+done
+_claudii_log info "Status:${summary}"
+
+# ── Output ────────────────────────────────────────────────────────────────────
+
+for model in "${MODELS[@]}"; do
+  ms=$(grep "^${model}=" "$CACHE_STATUS" | cut -d= -f2)
+  label="$(echo "${model:0:1}" | tr '[:lower:]' '[:upper:]')${model:1}"
+  case "$ms" in
+    down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2 ;;
+    degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2 ;;
+  esac
+done
+
+if $any_issue && [[ -n "$incident_detail" ]]; then
+  $quiet || echo -e "${YELLOW}  ↳ ${incident_detail}${NC}" >&2
+fi
+
+$any_issue && exit 1 || exit 0

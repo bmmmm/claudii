@@ -87,6 +87,11 @@ function claudii {
       git -C "$CLAUDII_HOME" pull --ff-only || {
         printf '\033[0;31m✗ git pull failed\033[0m\n'; return 1
       }
+      # Update sessionline vendor module if present
+      if [[ -d "$CLAUDII_HOME/vendor/claude-code-statusline" ]]; then
+        printf '\033[0;36mUpdating sessionline module...\033[0m\n'
+        git -C "$CLAUDII_HOME" submodule update --remote vendor/claude-code-statusline
+      fi
       printf '\033[0;36mReloading...\033[0m\n'
       source "$HOME/.zshrc"
       cd "$_dir"

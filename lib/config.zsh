@@ -22,11 +22,13 @@ _claudii_json_flatten() {
 
 # Load defaults into _CLAUDII_DEF_CACHE once at plugin init (defaults never change)
 _claudii_defaults_load() {
+  local _t=$EPOCHREALTIME
   _CLAUDII_DEF_CACHE=()
   local line
   while IFS= read -r line; do
     _CLAUDII_DEF_CACHE[${line%%=*}]="${line#*=}"
   done < <(_claudii_json_flatten "$CLAUDII_DEFAULTS")
+  _CLAUDII_METRICS[config.defaults_us]=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
 }
 
 # Reload user config only when mtime changed — fast no-op on cache hit
@@ -40,13 +42,17 @@ _claudii_cache_load() {
   fi
   [[ "$mtime" == "$_CLAUDII_CFG_MTIME" ]] && return 0
   _CLAUDII_CFG_MTIME=$mtime
+  _CLAUDII_METRICS[config.reloads]=$(( ${_CLAUDII_METRICS[config.reloads]:-0} + 1 ))
+  local _t=$EPOCHREALTIME
   _CLAUDII_CFG_CACHE=()
   local line
   while IFS= read -r line; do
     _CLAUDII_CFG_CACHE[${line%%=*}]="${line#*=}"
   done < <(_claudii_json_flatten "$CLAUDII_CONFIG")
+  _CLAUDII_METRICS[config.cache_load_us]=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
   # Sync debug level to env var so _claudii_log needs no further lookups
   CLAUDII_LOG_LEVEL="${_CLAUDII_CFG_CACHE[debug.level]:-${_CLAUDII_DEF_CACHE[debug.level]:-off}}"
+  _claudii_log debug "config: reload ${_CLAUDII_METRICS[config.cache_load_us]}µs"
 }
 
 function claudii_config_get {
