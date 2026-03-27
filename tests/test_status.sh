@@ -1,13 +1,22 @@
 # test_status.sh — status checker E2E tests
 
-# Setup: clean cache
+# Setup: test config so models are well-known and controllable
+export XDG_CONFIG_HOME="$CLAUDII_HOME/tmp/test_status"
+rm -rf "$XDG_CONFIG_HOME/claudii"
+mkdir -p "$XDG_CONFIG_HOME/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
+
+# Clean cache
 rm -f "${TMPDIR:-/tmp}"/claudii-status-cache.xml
 rm -f "${TMPDIR:-/tmp}"/claudii-status-models
+
+# Determine which models the status script will check (driven by config)
+models_raw=$(jq -r '.statusline.models' "$XDG_CONFIG_HOME/claudii/config.json")
+IFS=',' read -ra STATUS_MODELS <<< "$models_raw"
 
 # status runs without error
 output=$(bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 || true)
 exit_code=$?
-# We can't predict the live status, but exit code should be 0-3
 if (( exit_code >= 0 && exit_code <= 3 )); then
   assert_eq "status exit code is valid (0-3)" "true" "true"
 else
@@ -28,15 +37,12 @@ else
   assert_eq "RSS cache absent (offline all-ok fallback)" "true" "true"
 fi
 
-# per-model cache has correct format
+# All configured models must appear in cache with valid state
 cached=$(cat "${TMPDIR:-/tmp}/claudii-status-models")
-assert_contains "cache has opus entry" "opus=" "$cached"
-assert_contains "cache has sonnet entry" "sonnet=" "$cached"
-assert_contains "cache has haiku entry" "haiku=" "$cached"
-
-# each model is either ok or down
-for model in opus sonnet haiku; do
-  line=$(grep "^${model}=" "${TMPDIR:-/tmp}/claudii-status-models")
+for model in "${STATUS_MODELS[@]}"; do
+  model="${model// /}"
+  assert_contains "cache has ${model} entry" "${model}=" "$cached"
+  line=$(grep "^${model}=" "${TMPDIR:-/tmp}/claudii-status-models" || true)
   if echo "$line" | grep -qE "^${model}=(ok|down)$"; then
     assert_eq "cache ${model} has valid state" "true" "true"
   else
@@ -51,3 +57,15 @@ if echo "$output" | grep -qE '⚠|✓|verfügbar|down'; then
 else
   assert_eq "claudii status shows meaningful output" "contains status text" "$output"
 fi
+
+# Adding a new model to config: status must check it too
+bash "$CLAUDII_HOME/bin/claudii" config set statusline.models "opus,sonnet,haiku,testmodel" >/dev/null 2>&1
+rm -f "${TMPDIR:-/tmp}"/claudii-status-models
+bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>/dev/null || true
+cached=$(cat "${TMPDIR:-/tmp}/claudii-status-models" 2>/dev/null || true)
+assert_contains "new model in config appears in cache" "testmodel=" "$cached"
+
+# Cleanup
+rm -rf "$XDG_CONFIG_HOME"
+rm -f "${TMPDIR:-/tmp}"/claudii-status-models
+unset XDG_CONFIG_HOME

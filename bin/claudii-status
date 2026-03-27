@@ -34,7 +34,14 @@ NC='\033[0m'
 quiet=false
 [[ "${1:-}" == "--quiet" ]] && quiet=true
 
-_claudii_log debug "RSS URL: $RSS_URL, Cache TTL: ${CACHE_TTL}s"
+# Read models from config — drives everything below
+models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
+models_raw="${models_raw:-$(_def statusline.models)}"
+models_raw="${models_raw:-opus,sonnet,haiku}"
+IFS=',' read -ra MODELS <<< "$models_raw"
+for i in "${!MODELS[@]}"; do MODELS[$i]="${MODELS[$i]// /}"; done
+
+_claudii_log debug "RSS URL: $RSS_URL, Cache TTL: ${CACHE_TTL}s, Models: ${MODELS[*]}"
 
 # Check cache freshness
 if [[ -f "$CACHE_STATUS" ]]; then
@@ -59,7 +66,7 @@ rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || {
   $quiet || echo -e "${YELLOW}claudii: Status-Feed nicht erreichbar${NC}" >&2
   _claudii_log warn "RSS fetch failed, writing all-ok fallback"
   # Write all-ok cache on network error (don't block)
-  printf "opus=ok\nsonnet=ok\nhaiku=ok\n" > "$CACHE_STATUS"
+  printf '%s=ok\n' "${MODELS[@]}" > "$CACHE_STATUS"
   exit 0
 }
 
@@ -67,9 +74,8 @@ _claudii_log debug "RSS fetched (${#rss} bytes)"
 echo "$rss" > "$CACHE_FILE"
 
 # Parse: find active (non-resolved) incidents per model
-opus_down=false
-sonnet_down=false
-haiku_down=false
+# down_models is a space-padded list: " opus sonnet " for safe word-boundary matching
+down_models=" "
 
 while IFS= read -r item; do
   if echo "$item" | grep -qi "Resolved"; then
@@ -79,14 +85,14 @@ while IFS= read -r item; do
   title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
   [[ -z "$title" ]] && continue
 
-  # Check title for affected models — a non-Resolved incident means the model is down.
+  # Check title for each configured model name (case-insensitive).
   # Recovery patterns are intentionally omitted: they span the full one-line description
   # and produce false positives (e.g. "Opus 4.6 ... Sonnet is now healthy" matches Opus.*healthy).
   # Resolved incidents are skipped above; everything else is treated as ongoing.
-  echo "$title" | grep -qi "Opus"   && opus_down=true
-  echo "$title" | grep -qi "Sonnet" && sonnet_down=true
-  echo "$title" | grep -qi "Haiku"  && haiku_down=true
-  _claudii_log debug "item: title='$title' → opus=$opus_down sonnet=$sonnet_down haiku=$haiku_down"
+  for m in "${MODELS[@]}"; do
+    echo "$title" | grep -qi "$m" && down_models="$down_models$m "
+  done
+  _claudii_log debug "item: title='$title' → down:${down_models}"
 done < <(
   echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
     awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
@@ -94,27 +100,28 @@ done < <(
 
 # Write per-model status cache
 {
-  $opus_down   && echo "opus=down"   || echo "opus=ok"
-  $sonnet_down && echo "sonnet=down" || echo "sonnet=ok"
-  $haiku_down  && echo "haiku=down"  || echo "haiku=ok"
+  for m in "${MODELS[@]}"; do
+    echo "${m}=${down_models}" | grep -q " ${m} " && echo "${m}=down" || echo "${m}=ok"
+  done
 } > "$CACHE_STATUS"
 
-_claudii_log info "Status: opus=$($opus_down && echo down || echo ok) sonnet=$($sonnet_down && echo down || echo ok) haiku=$($haiku_down && echo down || echo ok)"
+status_summary=""
+for m in "${MODELS[@]}"; do
+  echo "${down_models}" | grep -q " ${m} " \
+    && status_summary+=" ${m}=down" \
+    || status_summary+=" ${m}=ok"
+done
+_claudii_log info "Status:${status_summary}"
 
 # Output
 any_down=false
-if $opus_down; then
-  $quiet || echo -e "${YELLOW}⚠ Opus down${NC}" >&2
-  any_down=true
-fi
-if $sonnet_down; then
-  $quiet || echo -e "${YELLOW}⚠ Sonnet down${NC}" >&2
-  any_down=true
-fi
-if $haiku_down; then
-  $quiet || echo -e "${YELLOW}⚠ Haiku down${NC}" >&2
-  any_down=true
-fi
+for m in "${MODELS[@]}"; do
+  if echo "$down_models" | grep -q " ${m} "; then
+    label="$(echo "${m:0:1}" | tr '[:lower:]' '[:upper:]')${m:1}"
+    $quiet || echo -e "${YELLOW}⚠ ${label} down${NC}" >&2
+    any_down=true
+  fi
+done
 
 $any_down && exit 1
 exit 0
