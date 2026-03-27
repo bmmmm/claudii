@@ -14,14 +14,14 @@ _claudii() {
     command)
       local -a commands
       commands=(
-        ':Start Claude Code in current directory'
-        'status:Show model health / manage statusline'
+        'status:Show model health / manage RPROMPT statusline'
         'toggle:Force-refresh model status (clears cache)'
+        'show:Manage which models appear in RPROMPT'
+        'sessionline:Manage Claude Code in-session statusline'
         'config:Read or write config values'
         'debug:Show or set debug level'
-        'restart:Plugin neu laden (source ~/.zshrc, bleibt im Verzeichnis)'
+        'restart:Reload plugin (source ~/.zshrc, stay in current dir)'
         'search:Launch Claude in search mode'
-        'install-sessionline:Set up Claude Code in-session statusline'
         'version:Show version'
         'help:Show help'
       )
@@ -41,6 +41,42 @@ _claudii() {
             '60m:Refresh every hour'
           )
           _describe 'status option' opts
+          ;;
+
+        show)
+          if (( $#words == 3 )); then
+            local -a show_cmds
+            show_cmds=('model:Manage displayed models')
+            _describe 'show subcommand' show_cmds
+          elif [[ $words[3] == 'model' ]]; then
+            case $words[4] in
+              '')
+                local -a model_opts
+                model_opts=(
+                  'add:Add a model to the list'
+                  'rm:Remove a model from the list'
+                  'opus:Show only Opus'
+                  'sonnet:Show only Sonnet'
+                  'haiku:Show only Haiku'
+                )
+                _describe 'model option' model_opts
+                ;;
+              add|rm)
+                local -a models
+                models=('opus' 'sonnet' 'haiku')
+                _describe 'model name' models
+                ;;
+            esac
+          fi
+          ;;
+
+        sessionline)
+          local -a sl_opts
+          sl_opts=(
+            'on:Activate in-session statusline in ~/.claude/settings.json'
+            'off:Deactivate in-session statusline'
+          )
+          _describe 'sessionline option' sl_opts
           ;;
 
         debug)

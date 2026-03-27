@@ -154,7 +154,35 @@ zsh_out=$(
 )
 assert_contains "zsh: opus down → ↓ in RPROMPT" "↓" "$zsh_out"
 
+# Stale cache → ⟳ indicator
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/claudii-status-models"
+touch -t 202001010000 "$ZSH_TMP/claudii-status-models"   # set mtime far in the past
+zsh_out=$(
+  TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: stale cache → ⟳ in RPROMPT" "⟳" "$zsh_out"
+
+# No cache → […] loading indicator
+rm -f "$ZSH_TMP/claudii-status-models"
+zsh_out=$(
+  TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: no cache → […] in RPROMPT" "…" "$zsh_out"
+
 # Disabled: RPROMPT empty
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/claudii-status-models"
 zsh_out=$(
   TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "

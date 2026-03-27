@@ -9,7 +9,8 @@ function _claudii_statusline {
 
   if [[ ! -f "$cache" ]]; then
     "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
-    RPROMPT=""; return
+    disown
+    RPROMPT="%F{8}[…]%f"; return
   fi
 
   # Trigger background refresh when cache is stale
@@ -17,6 +18,7 @@ function _claudii_statusline {
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
     "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
+    disown
   fi
 
   local models=(${(s:,:)$(claudii_config_get statusline.models)})
@@ -33,13 +35,14 @@ function _claudii_statusline {
   done
 
   # Last-fetch age display
-  local age_str
+  local age_str refreshing=""
   if (( age < 60 )); then age_str="${age}s"
   elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
   else age_str="$(( age / 3600 ))h"
   fi
+  (( age > ttl )) && refreshing=" %F{8}⟳%f"
 
-  RPROMPT="[${segments% }] %F{8}${age_str}%f"
+  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}"
 }
 
 autoload -Uz add-zsh-hook
