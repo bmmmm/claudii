@@ -13,9 +13,23 @@
 
 ## Install
 
+### Homebrew (recommended)
+
 ```bash
-# Add to .zshrc (or use as oh-my-zsh / zinit plugin)
-source ~/offline_coding/claudii/claudii.plugin.zsh
+brew tap bmmmm/claudii
+brew install claudii
+```
+
+Add to `~/.zshrc`:
+```bash
+source "$(brew --prefix)/opt/claudii/libexec/claudii.plugin.zsh"
+```
+
+### Manual
+
+```bash
+git clone https://github.com/bmmmm/claudii ~/claudii
+bash ~/claudii/install.sh
 ```
 
 ## Usage
@@ -103,29 +117,10 @@ Opus ████░░░░░░ 42% $0.55 in:15.2K out:4.5K 5h:23% 7d:71%
 
 Setup:
 ```bash
-claudii install-sessionline   # adds statusLine to ~/.claude/settings.json
+claudii sessionline on   # adds statusLine to ~/.claude/settings.json
 ```
 
 Inspired by [wynandw87/claude-code-statusline](https://github.com/wynandw87/claude-code-statusline) (MIT).
-
-## Structure
-
-```
-claudii.plugin.zsh      # Entry point
-bin/
-  claudii               # CLI (status, config, search, install-sessionline)
-  claudii-status        # RSS parser (standalone)
-  claudii-sessionline   # Claude Code native statusLine handler
-lib/
-  config.zsh            # Config loader
-  functions.zsh         # cl, clo, clm, clq, clh
-  statusline.zsh        # RPROMPT hook
-config/
-  defaults.json         # Shipped defaults
-tests/
-  run.sh                # Test runner (59 tests)
-  test_*.sh             # E2E tests
-```
 
 ## Requirements
 
