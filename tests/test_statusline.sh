@@ -121,6 +121,55 @@ bash "$CLAUDII_HOME/bin/claudii" config set statusline.enabled false >/dev/null 
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get statusline.enabled 2>&1)
 assert_eq "statusline can be disabled" "false" "$output"
 
+# ── zsh integration: call real _claudii_statusline function ──
+
+ZSH_TMP="$CLAUDII_HOME/tmp/test_statusline_zsh"
+rm -rf "$ZSH_TMP"
+mkdir -p "$ZSH_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$ZSH_TMP/config/claudii/config.json"
+
+# All ok
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/claudii-status-models"
+zsh_out=$(
+  TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: all ok → Opus in RPROMPT" "Opus" "$zsh_out"
+assert_contains "zsh: all ok → Sonnet in RPROMPT" "Sonnet" "$zsh_out"
+assert_contains "zsh: all ok → ✓ in RPROMPT" "✓" "$zsh_out"
+
+# Opus down
+printf 'opus=down\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/claudii-status-models"
+zsh_out=$(
+  TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: opus down → ↓ in RPROMPT" "↓" "$zsh_out"
+
+# Disabled: RPROMPT empty
+zsh_out=$(
+  TMPDIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    jq '.statusline.enabled = false' \"\$CLAUDII_HOME/config/defaults.json\" \
+      > \"\$XDG_CONFIG_HOME/claudii/config.json\"
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_eq "zsh: disabled → RPROMPT empty" "" "$zsh_out"
+
+# Cleanup
+rm -rf "$ZSH_TMP"
+
 # Cleanup test config (keep status cache for live statusline)
 rm -rf "$TEST_TMP"
 unset XDG_CONFIG_HOME

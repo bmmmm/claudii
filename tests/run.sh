@@ -48,9 +48,6 @@ assert_contains() {
 assert_exit_code() {
   local desc="$1" expected="$2" cmd="$3"
   local actual
-  eval "$cmd" >/dev/null 2>&1 || true
-  actual=$?
-  # Re-run to get actual exit code
   set +e
   eval "$cmd" >/dev/null 2>&1
   actual=$?

@@ -6,17 +6,24 @@
 # Configure in settings.json:
 #   "statusLine": { "type": "command", "command": "claudii-sessionline" }
 
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=lib/log.sh
+source "$CLAUDII_HOME/lib/log.sh"
+
 read -r json
 
-# Parse with jq (more portable than node)
-model=$(echo "$json" | jq -r '.model.display_name // empty')
-context_pct=$(echo "$json" | jq -r '.context_window.used_percentage // empty')
-cost=$(echo "$json" | jq -r '.cost.total_cost_usd // empty')
-input_tok=$(echo "$json" | jq -r '.context_window.total_input_tokens // empty')
-output_tok=$(echo "$json" | jq -r '.context_window.total_output_tokens // empty')
-rate_5h=$(echo "$json" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-rate_7d=$(echo "$json" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-resets_5h=$(echo "$json" | jq -r '.rate_limits.five_hour.resets_at // empty')
+# Parse all fields in one jq call
+IFS=$'\t' read -r model context_pct cost input_tok output_tok rate_5h rate_7d < <(
+  echo "$json" | jq -r '[
+    (.model.display_name // ""),
+    (.context_window.used_percentage // "" | tostring),
+    (.cost.total_cost_usd // "" | tostring),
+    (.context_window.total_input_tokens // "" | tostring),
+    (.context_window.total_output_tokens // "" | tostring),
+    (.rate_limits.five_hour.used_percentage // "" | tostring),
+    (.rate_limits.seven_day.used_percentage // "" | tostring)
+  ] | join("\t")' 2>/dev/null || printf '\t\t\t\t\t\t'
+)
 
 # Format tokens (K/M)
 _fmt_tok() {
@@ -55,6 +62,9 @@ _rate_color() {
   else echo "\033[36m"
   fi
 }
+
+_claudii_log debug "input: $(echo "$json" | head -c 200)"
+_claudii_log debug "parsed: model=${model} ctx=${context_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d}"
 
 # Build output
 out=""

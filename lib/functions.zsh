@@ -6,6 +6,7 @@ function _claudii_launch {
   local effort=$(claudii_config_get "aliases.$alias_name.effort")
   local dir=$(claudii_config_get "aliases.$alias_name.dir")
 
+  _claudii_log debug "launch: alias=$alias_name model=$model effort=$effort"
   [[ -n "$dir" ]] && cd "${dir/#\~/$HOME}"
 
   # Check fallback
@@ -15,12 +16,14 @@ function _claudii_launch {
     if [[ -f "$cache" ]] && grep -q "^${model}=down" "$cache" 2>/dev/null; then
       local fb_model=$(claudii_config_get "fallback.$model.model")
       local fb_effort=$(claudii_config_get "fallback.$model.effort")
+      _claudii_log warn "fallback: $model → ${fb_model:-$model} (model was down)"
       echo "→ Fallback: ${fb_model:-$model} ${fb_effort:-$effort}"
       claude --model "${fb_model:-$model}" --effort "${fb_effort:-$effort}" "$@"
       return
     fi
   fi
 
+  _claudii_log info "starting claude: $model $effort"
   claude --model "$model" --effort "$effort" "$@"
 }
 
@@ -28,6 +31,20 @@ function cl  { _claudii_launch cl "$@"; }
 function clo { _claudii_launch clo "$@"; }
 function clm { _claudii_launch clm "$@"; }
 function clq { _claudii_launch clq "$@"; }
+
+# claudii wrapper: intercepts 'restart' in the current shell,
+# delegates everything else to the binary.
+function claudii {
+  if [[ "${1:-}" == "restart" ]]; then
+    local _dir="$PWD"
+    printf '\033[0;36mReloading claudii...\033[0m\n'
+    source "$HOME/.zshrc"
+    cd "$_dir"
+    printf '\033[0;32m✓ claudii neu geladen  (%s)\033[0m\n' "$(basename "$_dir")"
+  else
+    command claudii "$@"
+  fi
+}
 
 function clh {
   printf '  ┌───────┬────────┬────────┬────────────────────────────┐\n'

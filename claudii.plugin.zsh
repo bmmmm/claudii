@@ -1,9 +1,12 @@
 # claudii.plugin.zsh — Claude Interaction Intelligence
 # Compatible with: oh-my-zsh, zinit, manual source
 
-CLAUDII_HOME="${0:A:h}"
+export CLAUDII_HOME="${0:A:h}"
 
 [[ ":$PATH:" != *":$CLAUDII_HOME/bin:"* ]] && export PATH="$CLAUDII_HOME/bin:$PATH"
+
+# Register zsh completions
+[[ -d "$CLAUDII_HOME/completions" ]] && fpath=("$CLAUDII_HOME/completions" $fpath)
 
 # Clean up stale hooks on re-source
 add-zsh-hook -d precmd _claudii_rprompt 2>/dev/null

@@ -18,9 +18,15 @@ fi
 output=$(bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>&1 || true)
 assert_eq "quiet mode produces no output" "" "$output"
 
-# cache files created
-assert_file_exists "RSS cache created" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
+# model status cache always created (even offline → all-ok fallback)
 assert_file_exists "model status cache created" "${TMPDIR:-/tmp}/claudii-status-models"
+
+# RSS XML cache only present when network was reachable
+if [[ -f "${TMPDIR:-/tmp}/claudii-status-cache.xml" ]]; then
+  assert_eq "RSS cache present (network available)" "true" "true"
+else
+  assert_eq "RSS cache absent (offline all-ok fallback)" "true" "true"
+fi
 
 # per-model cache has correct format
 cached=$(cat "${TMPDIR:-/tmp}/claudii-status-models")

@@ -1,0 +1,99 @@
+#compdef claudii
+# claudii zsh completion
+# Loaded automatically via claudii.plugin.zsh (fpath)
+
+_claudii() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  _arguments -C \
+    '1: :->command' \
+    '*: :->args'
+
+  case $state in
+    command)
+      local -a commands
+      commands=(
+        ':Start Claude Code in current directory'
+        'status:Show model health / manage statusline'
+        'toggle:Force-refresh model status (clears cache)'
+        'config:Read or write config values'
+        'debug:Show or set debug level'
+        'restart:Plugin neu laden (source ~/.zshrc, bleibt im Verzeichnis)'
+        'search:Launch Claude in search mode'
+        'install-sessionline:Set up Claude Code in-session statusline'
+        'version:Show version'
+        'help:Show help'
+      )
+      _describe 'command' commands
+      ;;
+
+    args)
+      case $words[2] in
+        status)
+          local -a opts
+          opts=(
+            'on:Enable RPROMPT statusline'
+            'off:Disable RPROMPT statusline'
+            '5m:Refresh every 5 minutes'
+            '15m:Refresh every 15 minutes (default)'
+            '30m:Refresh every 30 minutes'
+            '60m:Refresh every hour'
+          )
+          _describe 'status option' opts
+          ;;
+
+        debug)
+          local -a levels
+          levels=(
+            'off:Disable debug output (default)'
+            'error:Only errors'
+            'warn:Warnings and errors'
+            'info:Normal operation info'
+            'debug:Verbose output'
+          )
+          _describe 'debug level' levels
+          ;;
+
+        config)
+          case $words[3] in
+            get|set)
+              local -a keys
+              keys=(
+                'aliases.cl.model:Model for cl (default: sonnet)'
+                'aliases.cl.effort:Effort for cl (default: high)'
+                'aliases.clo.model:Model for clo (default: opus)'
+                'aliases.clo.effort:Effort for clo (default: high)'
+                'aliases.clm.model:Model for clm (default: opus)'
+                'aliases.clm.effort:Effort for clm (default: max)'
+                'aliases.clq.model:Model for clq (default: sonnet)'
+                'aliases.clq.effort:Effort for clq (default: medium)'
+                'fallback.enabled:Auto-fallback on outage (true/false)'
+                'fallback.opus.model:Fallback model when opus is down'
+                'fallback.sonnet.model:Fallback model when sonnet is down'
+                'status.cache_ttl:Status cache TTL in seconds (default: 900)'
+                'status.rss_url:Status RSS feed URL'
+                'statusline.enabled:Show RPROMPT statusline (true/false)'
+                'statusline.models:Models to show (opus,sonnet,haiku)'
+                'debug.level:Debug log level (off/error/warn/info/debug)'
+                'search.dir:Directory for claudii search mode'
+              )
+              _describe 'config key' keys
+              ;;
+            *)
+              local -a subcommands
+              subcommands=(
+                'get:Get a config value (dot-notation)'
+                'set:Set a config value'
+                'reset:Reset to defaults'
+              )
+              _describe 'config subcommand' subcommands
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_claudii "$@"
