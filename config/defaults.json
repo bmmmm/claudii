@@ -1,0 +1,24 @@
+{
+  "aliases": {
+    "cl":  { "model": "sonnet", "effort": "high",   "description": "Standard-Coding" },
+    "clo": { "model": "opus",   "effort": "high",   "description": "Server, komplex" },
+    "clm": { "model": "opus",   "effort": "max",    "description": "Härteste Nüsse" },
+    "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" }
+  },
+  "fallback": {
+    "enabled": true,
+    "opus":   { "model": "sonnet", "effort": "high" },
+    "sonnet": { "model": "opus",   "effort": "high" }
+  },
+  "status": {
+    "rss_url": "https://status.claude.com/history.rss",
+    "cache_ttl": 900
+  },
+  "statusline": {
+    "enabled": true,
+    "models": "opus,sonnet,haiku"
+  },
+  "search": {
+    "dir": "~/claude-search"
+  }
+}

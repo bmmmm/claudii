@@ -1,0 +1,91 @@
+#!/bin/bash
+# claudii-sessionline — Claude Code native statusLine handler
+# Receives JSON session metrics via stdin, outputs formatted status
+# Inspired by wynandw87/claude-code-statusline (MIT)
+#
+# Configure in settings.json:
+#   "statusLine": { "type": "command", "command": "claudii-sessionline" }
+
+read -r json
+
+# Parse with jq (more portable than node)
+model=$(echo "$json" | jq -r '.model.display_name // empty')
+context_pct=$(echo "$json" | jq -r '.context_window.used_percentage // empty')
+cost=$(echo "$json" | jq -r '.cost.total_cost_usd // empty')
+input_tok=$(echo "$json" | jq -r '.context_window.total_input_tokens // empty')
+output_tok=$(echo "$json" | jq -r '.context_window.total_output_tokens // empty')
+rate_5h=$(echo "$json" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+rate_7d=$(echo "$json" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+resets_5h=$(echo "$json" | jq -r '.rate_limits.five_hour.resets_at // empty')
+
+# Format tokens (K/M)
+_fmt_tok() {
+  local n=$1
+  [[ -z "$n" ]] && echo "~" && return
+  if (( n >= 1000000 )); then
+    printf "%.1fM" "$(echo "scale=1; $n/1000000" | bc)"
+  elif (( n >= 1000 )); then
+    printf "%.1fK" "$(echo "scale=1; $n/1000" | bc)"
+  else
+    echo "$n"
+  fi
+}
+
+# Context bar (10 chars)
+_ctx_bar() {
+  local pct=${1:-0}
+  local filled=$(( pct / 10 ))
+  local empty=$(( 10 - filled ))
+  local color="\033[32m"  # green
+  (( pct >= 70 )) && color="\033[33m"  # yellow
+  (( pct >= 90 )) && color="\033[31m"  # red
+  printf "${color}"
+  printf '█%.0s' $(seq 1 $filled 2>/dev/null) || true
+  printf "\033[2m"
+  (( empty > 0 )) && printf '░%.0s' $(seq 1 $empty 2>/dev/null) || true
+  printf "\033[0m"
+}
+
+# Rate limit color
+_rate_color() {
+  local pct=${1:-0}
+  local int_pct=${pct%.*}
+  if (( int_pct >= 90 )); then echo "\033[31m"
+  elif (( int_pct >= 70 )); then echo "\033[33m"
+  else echo "\033[36m"
+  fi
+}
+
+# Build output
+out=""
+
+# Model
+[[ -n "$model" ]] && out+="\033[1;34m${model}\033[0m"
+
+# Context bar
+if [[ -n "$context_pct" ]]; then
+  out+=" $(_ctx_bar "$context_pct") \033[2m${context_pct}%\033[0m"
+fi
+
+# Cost
+if [[ -n "$cost" ]]; then
+  out+=" \033[36m\$$(printf '%.2f' "$cost")\033[0m"
+fi
+
+# Tokens
+if [[ -n "$input_tok" || -n "$output_tok" ]]; then
+  out+=" \033[2min:\033[0m\033[36m$(_fmt_tok "$input_tok")\033[0m"
+  out+=" \033[2mout:\033[0m\033[36m$(_fmt_tok "$output_tok")\033[0m"
+fi
+
+# Rate limits
+if [[ -n "$rate_5h" ]]; then
+  c5=$(_rate_color "$rate_5h")
+  out+=" \033[2m5h:\033[0m${c5}${rate_5h%.*}%\033[0m"
+fi
+if [[ -n "$rate_7d" ]]; then
+  c7=$(_rate_color "$rate_7d")
+  out+=" \033[2m7d:\033[0m${c7}${rate_7d%.*}%\033[0m"
+fi
+
+echo -e "$out"

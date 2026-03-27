@@ -1,0 +1,118 @@
+#!/bin/bash
+# claudii-status — checks status.claude.com RSS for active incidents
+# Writes per-model status to cache file (model=ok|down per line)
+# Exit codes: 0=all ok, 1=some down
+#
+# Config via environment:
+#   CLAUDII_RSS_URL     (default: https://status.claude.com/history.rss)
+#   CLAUDII_CACHE_TTL   (default: 300)
+
+set -uo pipefail
+
+CACHE_DIR="${TMPDIR:-/tmp}"
+CACHE_FILE="$CACHE_DIR/claudii-status-cache.xml"
+CACHE_STATUS="$CACHE_DIR/claudii-status-models"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+DEFAULTS="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}/config/defaults.json"
+_cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
+_def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+CACHE_TTL="${CLAUDII_CACHE_TTL:-$(_cfg status.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-$(_def status.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-900}"
+RSS_URL="${CLAUDII_RSS_URL:-$(_cfg status.rss_url)}"
+RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
+
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+quiet=false
+[[ "${1:-}" == "--quiet" ]] && quiet=true
+
+# Check cache freshness
+if [[ -f "$CACHE_STATUS" ]]; then
+  cache_age=$(( $(date +%s) - $(stat -f%m "$CACHE_STATUS") ))
+  if (( cache_age < CACHE_TTL )); then
+    # Return cached result
+    if ! $quiet; then
+      while IFS='=' read -r model state; do
+        [[ "$state" == "down" ]] && echo -e "${YELLOW}⚠ ${model} down${NC}" >&2
+      done < "$CACHE_STATUS"
+    fi
+    grep -q "=down" "$CACHE_STATUS" 2>/dev/null && exit 1
+    exit 0
+  fi
+fi
+
+# Fetch RSS feed
+rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || {
+  $quiet || echo -e "${YELLOW}claudii: Status-Feed nicht erreichbar${NC}" >&2
+  # Write all-ok cache on network error (don't block)
+  printf "opus=ok\nsonnet=ok\nhaiku=ok\n" > "$CACHE_STATUS"
+  exit 0
+}
+
+echo "$rss" > "$CACHE_FILE"
+
+# Parse: find active (non-resolved) incidents per model
+opus_down=false
+sonnet_down=false
+haiku_down=false
+
+while IFS= read -r item; do
+  if echo "$item" | grep -qi "Resolved"; then
+    continue
+  fi
+
+  title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
+  [[ -z "$title" ]] && continue
+
+  # Decode HTML entities in description for recovery detection
+  desc=$(echo "$item" | sed -n 's/.*<description>\(.*\)<\/description>.*/\1/p' | \
+    sed 's/&lt;[^;]*&gt;//g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
+
+  # Check title for affected models
+  echo "$title" | grep -qi "Opus"   && opus_down=true
+  echo "$title" | grep -qi "Sonnet" && sonnet_down=true
+  echo "$title" | grep -qi "Haiku"  && haiku_down=true
+
+  # Check if description says a model recovered (most recent update is first)
+  if echo "$desc" | grep -qi "Sonnet.*healthy\|Sonnet.*now.*ok\|Sonnet.*recovered"; then
+    sonnet_down=false
+  fi
+  if echo "$desc" | grep -qi "Opus.*healthy\|Opus.*now.*ok\|Opus.*recovered"; then
+    opus_down=false
+  fi
+  if echo "$desc" | grep -qi "Haiku.*healthy\|Haiku.*now.*ok\|Haiku.*recovered"; then
+    haiku_down=false
+  fi
+done < <(
+  echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
+    awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
+)
+
+# Write per-model status cache
+{
+  $opus_down   && echo "opus=down"   || echo "opus=ok"
+  $sonnet_down && echo "sonnet=down" || echo "sonnet=ok"
+  $haiku_down  && echo "haiku=down"  || echo "haiku=ok"
+} > "$CACHE_STATUS"
+
+# Output
+any_down=false
+if $opus_down; then
+  $quiet || echo -e "${YELLOW}⚠ Opus down${NC}" >&2
+  any_down=true
+fi
+if $sonnet_down; then
+  $quiet || echo -e "${YELLOW}⚠ Sonnet down${NC}" >&2
+  any_down=true
+fi
+if $haiku_down; then
+  $quiet || echo -e "${YELLOW}⚠ Haiku down${NC}" >&2
+  any_down=true
+fi
+
+$any_down && exit 1
+exit 0
