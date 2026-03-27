@@ -1,0 +1,254 @@
+.TH CLAUDII 1 "March 2026" "claudii 0.1.0" "claudii manual"
+.
+.SH NAME
+claudii \- Claude Interaction Intelligence
+.
+.SH SYNOPSIS
+.B claudii
+.IR command " [" args ]
+.
+.SH DESCRIPTION
+.B claudii
+is a zsh plugin and CLI for Claude Code power users.
+It monitors model health in the RPROMPT, shows context/cost/tokens inside
+Claude Code sessions, handles auto-fallback to healthy models, and provides
+debug logging and zsh autocomplete.
+.
+.SH COMMANDS
+.
+.SS RPROMPT Statusline
+Monitors model health outside of Claude Code (in the shell prompt).
+.
+.TP
+.B status
+Show current model health (runs a live RSS check).
+.
+.TP
+.BR status " on|off"
+Enable or disable the RPROMPT statusline.
+.
+.TP
+.BR status " 5m|15m|30m|60m"
+Set the cache refresh interval (default: 15m).
+Values below 30s are rejected.
+.
+.TP
+.B toggle
+Clear the status cache and fetch immediately.
+Useful after a known incident to force a fresh check.
+.
+.TP
+.B "show model"
+Show the current list of models displayed in the RPROMPT.
+.
+.TP
+.BI "show model " "opus sonnet haiku"
+Replace the displayed model list (space-separated).
+.
+.TP
+.BI "show model add " model
+Add a model to the RPROMPT list.
+.
+.TP
+.BI "show model rm " model
+Remove a model from the RPROMPT list.
+.
+.SS In-Session Bar (inside Claude Code)
+A statusline rendered inside Claude Code sessions via
+.IR ~/.claude/settings.json .
+Shows model name, context usage, cost, token counts, and rate limits.
+.
+.TP
+.B sessionline
+Show whether the in-session statusline is active.
+.
+.TP
+.B "sessionline on"
+Add the statusline to
+.IR ~/.claude/settings.json .
+Restart Claude Code to activate.
+.
+.TP
+.B "sessionline off"
+Remove the statusline from
+.IR ~/.claude/settings.json .
+.
+.SS Config
+.
+.TP
+.B config
+Show all config values (user config + path).
+.
+.TP
+.BI "config get " key
+Read a config value using dot-notation.
+Example:
+.BR "claudii config get aliases.cl.model" .
+.
+.TP
+.BI "config set " "key value"
+Set a config value.
+Example:
+.BR "claudii config set statusline.models opus,sonnet" .
+.
+.TP
+.B "config reset"
+Reset all config to defaults.
+.
+.TP
+.BI "config export " "[file]"
+Print config as JSON, or write to
+.I file
+if specified.
+.
+.TP
+.BI "config import " file
+Replace current config with a JSON file (backs up the existing config first).
+.
+.SS Debug Logging
+.
+.TP
+.B debug
+Show the current debug level.
+.
+.TP
+.BR "debug " "off|error|warn|info|debug"
+Set the log level.
+.B off
+(default) suppresses all output.
+.B debug
+is the most verbose.
+The level can also be set via the environment variable
+.BR CLAUDII_LOG_LEVEL .
+.
+.SS Other
+.
+.TP
+.B search
+Launch Claude Code in the configured search directory
+.RI ( search.dir " in config, default:" " ~/claude-search" ).
+Uses the
+.B clq
+alias settings (model + effort).
+.
+.TP
+.B restart
+Reload the claudii plugin by sourcing
+.I ~/.zshrc
+in the current shell.
+Stays in the current directory.
+.B Note:
+This is a zsh shell function, not a subprocess \(em it reloads the parent shell.
+.
+.TP
+.B about
+Show version, features, and the project URL.
+.
+.TP
+.B version
+Print the version string.
+.
+.SH CONFIG FILE
+User config:
+.I ~/.config/claudii/config.json
+(or
+.I $XDG_CONFIG_HOME/claudii/config.json
+if set).
+Created automatically from defaults on first run.
+.PP
+Key paths (dot-notation):
+.PP
+.RS
+.nf
+aliases.cl.model        model for \fBcl\fR alias (default: sonnet)
+aliases.cl.effort       effort for \fBcl\fR (default: high)
+aliases.clo.model       model for \fBclo\fR (default: opus)
+aliases.clm.effort      effort for \fBclm\fR (default: max)
+aliases.clq.model       model for \fBclq\fR / search (default: sonnet)
+fallback.enabled        auto-fallback on outage (default: true)
+fallback.opus.model     fallback model when opus is down
+status.cache_ttl        status cache TTL in seconds (default: 900)
+status.rss_url          Claude status RSS feed URL
+statusline.enabled      show RPROMPT statusline (default: true)
+statusline.models       comma-separated model list (default: opus,sonnet,haiku)
+debug.level             log level: off|error|warn|info|debug (default: off)
+search.dir              directory for search mode (default: ~/claude-search)
+.fi
+.RE
+.
+.SH STATUS CACHE
+The model status cache is stored at
+.IR "$TMPDIR/claudii-status-models" .
+It contains one line per model:
+.PP
+.RS
+.nf
+opus=ok
+sonnet=down
+haiku=ok
+.fi
+.RE
+.PP
+The cache is refreshed automatically in the background when it exceeds
+.B status.cache_ttl
+seconds. Use
+.B claudii toggle
+to force an immediate refresh.
+.
+.SH ENVIRONMENT
+.TP
+.B CLAUDII_HOME
+Path to the claudii plugin directory. Set automatically by the plugin.
+.TP
+.B CLAUDII_LOG_LEVEL
+Override the debug log level without writing to config.
+Values: off, error, warn, info, debug.
+.TP
+.B XDG_CONFIG_HOME
+Overrides the config directory (default:
+.IR ~/.config ).
+.
+.SH FILES
+.TP
+.I ~/.config/claudii/config.json
+User configuration.
+.TP
+.I $CLAUDII_HOME/config/defaults.json
+Shipped defaults (read-only reference).
+.TP
+.I $TMPDIR/claudii-status-models
+Per-model status cache, written by
+.BR claudii-status (1).
+.TP
+.I ~/.claude/settings.json
+Claude Code settings file, modified by
+.BR "claudii sessionline" .
+.
+.SH EXAMPLES
+.TP
+Activate the in-session statusline:
+.B claudii sessionline on
+.TP
+Show only Opus and Sonnet in RPROMPT:
+.B claudii show model opus sonnet
+.TP
+Refresh status immediately:
+.B claudii toggle
+.TP
+Check every 5 minutes:
+.B claudii status 5m
+.TP
+Enable verbose debug output:
+.B claudii debug info
+.TP
+Read a config value:
+.B claudii config get aliases.cl.model
+.
+.SH SEE ALSO
+.BR claude (1),
+.BR jq (1),
+.BR zsh (1)
+.
+.SH PROJECT
+.UR https://github.com/bmmmm/claudii
+.UE

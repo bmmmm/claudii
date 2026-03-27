@@ -25,50 +25,24 @@ _cfgget() {
 }
 
 usage() {
-  cat <<EOF
-claudii v$VERSION — Claude Interaction Intelligence
-
-Usage: claudii <command> [args]
-
-Shell-Statusleiste (RPROMPT — zeigt Model-Health außerhalb von Claude):
-  status              Aktuellen Model-Status anzeigen
-  status on|off       RPROMPT-Statusleiste ein-/ausschalten
-  status 5m|15m|30m   Refresh-Intervall setzen (Standard: 15m)
-  toggle              Status-Cache leeren und sofort neu abrufen
-  show model          Angezeigte Modelle anzeigen
-  show model <m> ...  Modelle setzen (z.B. opus sonnet haiku)
-  show model add <m>  Modell hinzufügen
-  show model rm <m>   Modell entfernen
-
-Claude-interne Statusleiste (zeigt Kontext, Kosten, Tokens IN Claude):
-  sessionline         Zeigt ob die interne Statusleiste konfiguriert ist
-  sessionline on      Aktiviert die Statusleiste in ~/.claude/settings.json
-  sessionline off     Deaktiviert die Statusleiste
-
-Sonstiges:
-  about               Über claudii
-  restart             Plugin neu laden (source ~/.zshrc, bleibt im Verzeichnis)
-  debug               Aktuellen Debug-Level anzeigen
-  debug <level>       Debug-Level setzen (off|error|warn|info|debug)
-  config              Alle Einstellungen anzeigen
-  config get <key>    Wert lesen (Punkt-Notation)
-  config set <key> <value>  Wert setzen
-  config reset        Auf Defaults zurücksetzen
-  config export [file]  Config als JSON ausgeben (oder in Datei speichern)
-  config import <file>  Config aus JSON-Datei laden (ersetzt aktuelle)
-  search              Claude im Search-Modus starten
-  help                Diese Hilfe
-  version             Version anzeigen
-
-Beispiele:
-  claudii sessionline on            # interne Statusleiste aktivieren
-  claudii show model opus sonnet    # nur Opus + Sonnet im RPROMPT
-  claudii show model add haiku      # Haiku hinzufügen
-  claudii status 5m                 # alle 5min Status-Check
-  claudii toggle                    # Status sofort neu abrufen
-  claudii debug info                # Debug-Ausgaben aktivieren
-  claudii config get aliases.cl.model
-EOF
+  printf '\n'
+  printf '  \033[0;36mclaudii\033[0m \033[0;90mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
+  printf '\n'
+  printf '  \033[0;90mRPROMPT statusline\033[0m\n'
+  printf '    status [on|off|5m|15m|30m]    health check · statusline control\n'
+  printf '    toggle                         force-refresh now\n'
+  printf '    show model [add|rm|<names>]    which models to display\n'
+  printf '\n'
+  printf '  \033[0;90mIn-session bar (inside Claude)\033[0m\n'
+  printf '    sessionline [on|off]           context · cost · tokens\n'
+  printf '\n'
+  printf '  \033[0;90mTools\033[0m\n'
+  printf '    config [get|set|reset|export|import]\n'
+  printf '    debug  [off|error|warn|info|debug]\n'
+  printf '    search · restart · about · version\n'
+  printf '\n'
+  printf '  \033[0;90mman claudii\033[0m  for the full reference\n'
+  printf '\n'
 }
 
 case "${1:-}" in

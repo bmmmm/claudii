@@ -5,6 +5,9 @@ export CLAUDII_HOME="${0:A:h}"
 
 [[ ":$PATH:" != *":$CLAUDII_HOME/bin:"* ]] && export PATH="$CLAUDII_HOME/bin:$PATH"
 
+# Register man pages
+[[ -d "$CLAUDII_HOME/man" ]] && export MANPATH="$CLAUDII_HOME/man:${MANPATH:-}"
+
 # Register zsh completions
 [[ -d "$CLAUDII_HOME/completions" ]] && fpath=("$CLAUDII_HOME/completions" $fpath)
 

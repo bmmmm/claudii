@@ -6,7 +6,7 @@ assert_contains "claudii version shows version" "v0.1.0" "$output"
 
 # help
 output=$(bash "$CLAUDII_HOME/bin/claudii" help 2>&1)
-assert_contains "help shows usage" "Usage:" "$output"
+assert_contains "help shows usage" "claudii" "$output"
 assert_contains "help lists status command" "status" "$output"
 assert_contains "help lists config command" "config" "$output"
 assert_contains "help lists search command" "search" "$output"
