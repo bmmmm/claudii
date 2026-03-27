@@ -20,6 +20,7 @@ _claudii() {
         'config:Read or write config values'
         'debug:Show or set debug level'
         'restart:Reload plugin (source ~/.zshrc, stay in current dir)'
+        'update:Pull latest from GitHub and reload'
         'search:Launch Claude in search mode'
         'about:About claudii'
         'version:Show version'

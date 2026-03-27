@@ -128,6 +128,16 @@ Uses the
 alias settings (model + effort).
 .
 .TP
+.B update
+Pull the latest version from GitHub
+.RB ( "git pull --ff-only" )
+and reload the plugin automatically.
+Requires the installation to be a git clone of
+.IR https://github.com/bmmmm/claudii .
+.B Note:
+This is a zsh shell function \(em it reloads the parent shell after pulling.
+.
+.TP
 .B restart
 Reload the claudii plugin by sourcing
 .I ~/.zshrc
@@ -245,6 +255,8 @@ Read a config value:
 .BR jq (1),
 .BR zsh (1)
 .
+.SH AUTHOR
+bmmmm
 .SH PROJECT
 .UR https://github.com/bmmmm/claudii
 .UE

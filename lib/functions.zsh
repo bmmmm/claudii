@@ -32,18 +32,73 @@ function clo { _claudii_launch clo "$@"; }
 function clm { _claudii_launch clm "$@"; }
 function clq { _claudii_launch clq "$@"; }
 
-# claudii wrapper: intercepts 'restart' in the current shell,
-# delegates everything else to the binary.
-function claudii {
-  if [[ "${1:-}" == "restart" ]]; then
-    local _dir="$PWD"
-    printf '\033[0;36mReloading claudii...\033[0m\n'
-    source "$HOME/.zshrc"
-    cd "$_dir"
-    printf '\033[0;32m✓ claudii neu geladen  (%s)\033[0m\n' "$(basename "$_dir")"
+# Format microseconds as µs or ms
+function _claudii_fmt_us {
+  local us=$1
+  if (( us < 1000 )); then
+    printf '%dµs' $us
   else
-    command claudii "$@"
+    printf '%d.%dms' $(( us / 1000 )) $(( (us % 1000) / 100 ))
   fi
+}
+
+function _claudii_show_metrics {
+  local calls=${_CLAUDII_METRICS[precmd.calls]:-0}
+  local total=${_CLAUDII_METRICS[precmd.total_us]:-0}
+  local avg=$(( calls > 0 ? total / calls : 0 ))
+  local reloads=${_CLAUDII_METRICS[config.reloads]:-0}
+
+  printf '\n'
+  printf '  \033[0;36mclaudii — performance metrics\033[0m\n'
+  printf '  ──────────────────────────────────────────\n'
+  printf '  %-30s  %s\n' "plugin load"           "$(_claudii_fmt_us ${_CLAUDII_METRICS[plugin.load_us]:-0})"
+  printf '  %-30s  %s\n' "config defaults (jq)"  "$(_claudii_fmt_us ${_CLAUDII_METRICS[config.defaults_us]:-0})"
+  printf '  ──────────────────────────────────────────\n'
+  printf '  %-30s  %s\n' "precmd calls this session"  "${calls}x"
+  printf '  %-30s  %s\n' "precmd last"           "$(_claudii_fmt_us ${_CLAUDII_METRICS[precmd.last_us]:-0})"
+  printf '  %-30s  %s\n' "precmd avg"             "$(_claudii_fmt_us $avg)"
+  printf '  %-30s  %s\n' "precmd total"           "$(_claudii_fmt_us $total)"
+  printf '  ──────────────────────────────────────────\n'
+  printf '  %-30s  %dx\n' "config reloads (jq)"  $reloads
+  if (( reloads > 0 )); then
+    printf '  %-30s  %s\n' "last reload"          "$(_claudii_fmt_us ${_CLAUDII_METRICS[config.cache_load_us]:-0})"
+  fi
+  printf '\n'
+}
+
+# claudii wrapper: intercepts shell-only commands, delegates rest to binary.
+function claudii {
+  case "${1:-}" in
+    restart)
+      local _dir="$PWD"
+      printf '\033[0;36mReloading claudii...\033[0m\n'
+      source "$HOME/.zshrc"
+      cd "$_dir"
+      printf '\033[0;32m✓ claudii neu geladen  (%s)\033[0m\n' "$(basename "$_dir")"
+      ;;
+    update)
+      if ! git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+        printf '\033[0;31m✗ Not a git repo — install via:\033[0m\n'
+        printf '  git clone https://github.com/bmmmm/claudii\n'
+        return 1
+      fi
+      local _dir="$PWD"
+      printf '\033[0;36mPulling latest claudii...\033[0m\n'
+      git -C "$CLAUDII_HOME" pull --ff-only || {
+        printf '\033[0;31m✗ git pull failed\033[0m\n'; return 1
+      }
+      printf '\033[0;36mReloading...\033[0m\n'
+      source "$HOME/.zshrc"
+      cd "$_dir"
+      printf '\033[0;32m✓ claudii updated and reloaded  (%s)\033[0m\n' "$(basename "$_dir")"
+      ;;
+    metrics)
+      _claudii_show_metrics
+      ;;
+    *)
+      command claudii "$@"
+      ;;
+  esac
 }
 
 function clh {

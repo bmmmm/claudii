@@ -39,7 +39,7 @@ usage() {
   printf '    config [get|set|reset|export|import]\n'
   printf '    debug  [off|error|warn|info|debug]\n'
   printf '    metrics                            load time · precmd · jq timings\n'
-  printf '    search · restart · about · version\n'
+  printf '    search · restart · update · about · version\n'
   printf '\n'
   printf '  \033[0;90mman claudii\033[0m  for the full reference\n'
   printf '\n'
@@ -67,7 +67,6 @@ case "${1:-}" in
         echo "Refresh-Intervall: ${interval} (${seconds}s)"
         ;;
       "")
-        rm -f "${TMPDIR:-/tmp}/claudii-status-models" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
         "$CLAUDII_HOME/bin/claudii-status"
         exit_code=$?
         [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
@@ -165,6 +164,14 @@ case "${1:-}" in
         echo "Usage: claudii sessionline [on|off]"; exit 1
         ;;
     esac
+    ;;
+
+  toggle)
+    rm -f "${TMPDIR:-/tmp}/claudii-status-models" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
+    echo -e "\033[0;36mRefreshing model status...\033[0m"
+    "$CLAUDII_HOME/bin/claudii-status"
+    exit_code=$?
+    [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
     ;;
 
   # Backwards compatibility
@@ -273,6 +280,7 @@ case "${1:-}" in
     printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
     printf '\n'
     printf '  \033[0;90mhttps://github.com/bmmmm/claudii\033[0m\n'
+    printf '  \033[0;90mInspired by wynandw87/claude-code-statusline\033[0m\n'
     printf '\n'
     ;;
 
@@ -285,6 +293,15 @@ case "${1:-}" in
     printf '\n'
     printf '  \033[0;90m(We monitor all three now. You'\''re welcome.)\033[0m\n'
     printf '\n'
+    ;;
+
+  update)
+    if ! git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+      printf 'claudii: not a git repo — install via:\n'
+      printf '  git clone https://github.com/bmmmm/claudii\n'; exit 1
+    fi
+    git -C "$CLAUDII_HOME" pull --ff-only
+    printf '\033[0;32m✓ Updated. Run: claudii restart\033[0m\n'
     ;;
 
   metrics)
