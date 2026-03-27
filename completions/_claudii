@@ -14,8 +14,7 @@ _claudii() {
     command)
       local -a commands
       commands=(
-        'status:Show model health / manage RPROMPT statusline'
-        'toggle:Force-refresh model status (clears cache)'
+        'status:Show model health (always live) / manage RPROMPT statusline'
         'show:Manage which models appear in RPROMPT'
         'sessionline:Manage Claude Code in-session statusline'
         'config:Read or write config values'

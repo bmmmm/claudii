@@ -1,4 +1,4 @@
-# test_toggle.sh — claudii toggle (force-refresh) + status on/off E2E tests
+# test_toggle.sh — claudii status + RPROMPT integration E2E tests
 
 TEST_TMP="$CLAUDII_HOME/tmp/test_toggle"
 rm -rf "$TEST_TMP"
@@ -9,35 +9,32 @@ cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
 
 CLI="$CLAUDII_HOME/bin/claudii"
 
-# ── toggle = force-refresh ──
+# ── claudii status always fetches live (cache is cleared first) ──
 
 # Write stale cache
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "${TMPDIR:-/tmp}/claudii-status-models"
+touch -t 202001010000 "${TMPDIR:-/tmp}/claudii-status-models"
 
-output=$(bash "$CLI" toggle 2>&1)
-assert_contains "toggle: shows 'Refreshing'" "Refreshing" "$output"
+bash "$CLI" status >/dev/null 2>&1 || true
 
-# After toggle, cache should be fresh (stat -f%m gives mtime, age < 30s)
+# After status, cache should be fresh (mtime updated by claudii-status)
 cache_age=$(( $(date +%s) - $(stat -f%m "${TMPDIR:-/tmp}/claudii-status-models") ))
 if (( cache_age < 30 )); then
-  assert_eq "toggle: cache refreshed" "true" "true"
+  assert_eq "status: cache is fresh after run" "true" "true"
 else
-  assert_eq "toggle: cache refreshed" "fresh (<30s)" "${cache_age}s"
+  assert_eq "status: cache is fresh after run" "fresh (<30s)" "${cache_age}s"
 fi
 
 # ── status on/off ──
 
-# Default: statusline.enabled = true
 val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "default: statusline.enabled = true" "true" "$val"
 
-# status off
 output=$(bash "$CLI" status off 2>&1)
-assert_contains "status off: shows deactivated" "deaktiviert" "$output"
+assert_contains "status off: shows deaktiviert" "deaktiviert" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "after status off: enabled = false" "false" "$val"
 
-# status on
 output=$(bash "$CLI" status on 2>&1)
 assert_contains "status on: shows aktiviert" "aktiviert" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
@@ -54,7 +51,6 @@ output=$(bash "$CLI" status 15m 2>&1)
 val=$(bash "$CLI" config get status.cache_ttl)
 assert_eq "status 15m: cache_ttl = 900" "900" "$val"
 
-# Invalid interval
 assert_exit_code "status invalid interval exits 1" "1" "bash '$CLI' status 20"
 
 # ── zsh integration: RPROMPT empty when disabled ──

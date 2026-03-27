@@ -29,8 +29,7 @@ usage() {
   printf '  \033[0;36mclaudii\033[0m \033[0;90mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
   printf '\n'
   printf '  \033[0;90mRPROMPT statusline\033[0m\n'
-  printf '    status [on|off|5m|15m|30m]    health check · statusline control\n'
-  printf '    toggle                         force-refresh now\n'
+  printf '    status [on|off|5m|15m|30m]    health check (always live) · statusline control\n'
   printf '    show model [add|rm|<names>]    which models to display\n'
   printf '\n'
   printf '  \033[0;90mIn-session bar (inside Claude)\033[0m\n'
@@ -39,6 +38,7 @@ usage() {
   printf '  \033[0;90mTools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
   printf '    debug  [off|error|warn|info|debug]\n'
+  printf '    metrics                            load time · precmd · jq timings\n'
   printf '    search · restart · about · version\n'
   printf '\n'
   printf '  \033[0;90mman claudii\033[0m  for the full reference\n'
@@ -67,6 +67,7 @@ case "${1:-}" in
         echo "Refresh-Intervall: ${interval} (${seconds}s)"
         ;;
       "")
+        rm -f "${TMPDIR:-/tmp}/claudii-status-models" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
         "$CLAUDII_HOME/bin/claudii-status"
         exit_code=$?
         [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
@@ -169,14 +170,6 @@ case "${1:-}" in
   # Backwards compatibility
   install-sessionline)
     exec "$0" sessionline on
-    ;;
-
-  toggle)
-    rm -f "${TMPDIR:-/tmp}/claudii-status-models" "${TMPDIR:-/tmp}/claudii-status-cache.xml"
-    echo -e "\033[0;36mRefreshing model status...\033[0m"
-    "$CLAUDII_HOME/bin/claudii-status"
-    exit_code=$?
-    [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
     ;;
 
   config)
@@ -292,6 +285,11 @@ case "${1:-}" in
     printf '\n'
     printf '  \033[0;90m(We monitor all three now. You'\''re welcome.)\033[0m\n'
     printf '\n'
+    ;;
+
+  metrics)
+    echo "claudii metrics ist eine zsh-Shell-Funktion."
+    echo "Führe sie direkt im Terminal aus (nicht als Subprozess)."
     ;;
 
   help|--help|-h)

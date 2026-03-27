@@ -21,7 +21,8 @@ Monitors model health outside of Claude Code (in the shell prompt).
 .
 .TP
 .B status
-Show current model health (runs a live RSS check).
+Show current model health.
+Always fetches live from the RSS feed — never uses the cached result.
 .
 .TP
 .BR status " on|off"
@@ -29,13 +30,8 @@ Enable or disable the RPROMPT statusline.
 .
 .TP
 .BR status " 5m|15m|30m|60m"
-Set the cache refresh interval (default: 15m).
+Set the background cache refresh interval (default: 15m).
 Values below 30s are rejected.
-.
-.TP
-.B toggle
-Clear the status cache and fetch immediately.
-Useful after a known incident to force a fresh check.
 .
 .TP
 .B "show model"
