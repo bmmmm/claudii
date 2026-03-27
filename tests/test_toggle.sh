@@ -2,9 +2,9 @@
 
 TEST_TMP="$CLAUDII_HOME/tmp/test_toggle"
 rm -rf "$TEST_TMP"
-mkdir -p "$TEST_TMP"
+mkdir -p "$TEST_TMP/cache" "$TEST_TMP/config/claudii"
 export XDG_CONFIG_HOME="$TEST_TMP/config"
-mkdir -p "$XDG_CONFIG_HOME/claudii"
+export CLAUDII_CACHE_DIR="$TEST_TMP/cache"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
 
 CLI="$CLAUDII_HOME/bin/claudii"
@@ -12,13 +12,13 @@ CLI="$CLAUDII_HOME/bin/claudii"
 # ── claudii status always fetches live (cache is cleared first) ──
 
 # Write stale cache
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "${TMPDIR:-/tmp}/claudii-status-models"
-touch -t 202001010000 "${TMPDIR:-/tmp}/claudii-status-models"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+touch -t 202001010000 "$CLAUDII_CACHE_DIR/status-models"
 
 bash "$CLI" status >/dev/null 2>&1 || true
 
 # After status, cache should be fresh (mtime updated by claudii-status)
-cache_age=$(( $(date +%s) - $(stat -f%m "${TMPDIR:-/tmp}/claudii-status-models") ))
+cache_age=$(( $(date +%s) - $(stat -f%m "$CLAUDII_CACHE_DIR/status-models") ))
 if (( cache_age < 30 )); then
   assert_eq "status: cache is fresh after run" "true" "true"
 else
@@ -55,10 +55,10 @@ assert_exit_code "status invalid interval exits 1" "1" "bash '$CLI' status 20"
 
 # ── zsh integration: RPROMPT empty when disabled ──
 
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$TEST_TMP/claudii-status-models"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$TEST_TMP/status-models"
 
 rprompt_disabled=$(
-  TMPDIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     jq '.statusline.enabled = false' \"\$CLAUDII_HOME/config/defaults.json\" \
       > \"\$XDG_CONFIG_HOME/claudii/config.json\"
@@ -72,7 +72,7 @@ assert_eq "disabled: RPROMPT is empty" "" "$rprompt_disabled"
 # ── zsh integration: RPROMPT shows models when enabled ──
 
 rprompt_enabled=$(
-  TMPDIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -85,4 +85,4 @@ assert_contains "enabled: RPROMPT shows Sonnet" "Sonnet" "$rprompt_enabled"
 
 # Cleanup
 rm -rf "$TEST_TMP"
-unset XDG_CONFIG_HOME
+unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

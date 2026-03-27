@@ -12,7 +12,7 @@ function _claudii_launch {
   # Check fallback
   if [[ "$(claudii_config_get fallback.enabled)" == "true" ]]; then
     "$CLAUDII_HOME/bin/claudii-status" 2>&1
-    local cache="${TMPDIR:-/tmp}/claudii-status-models"
+    local cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
     if [[ -f "$cache" ]] && grep -q "^${model}=down" "$cache" 2>/dev/null; then
       local fb_model=$(claudii_config_get "fallback.$model.model")
       local fb_effort=$(claudii_config_get "fallback.$model.effort")

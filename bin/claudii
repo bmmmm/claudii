@@ -26,22 +26,28 @@ _cfgget() {
 
 usage() {
   printf '\n'
-  printf '  \033[0;36mclaudii\033[0m \033[0;90mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
+  printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
   printf '\n'
-  printf '  \033[0;90mRPROMPT statusline\033[0m\n'
-  printf '    status [on|off|5m|15m|30m]    health check (always live) · statusline control\n'
-  printf '    show model [add|rm|<names>]    which models to display\n'
+  printf '  \033[38;5;213mclaudestatus\033[0m\n'
+  printf '    status [on|off|5m|15m|30m]    live model check · RPROMPT on/off · refresh\n'
+  printf '    show model [add|rm|<names>]    models shown in RPROMPT\n'
   printf '\n'
-  printf '  \033[0;90mIn-session bar (inside Claude)\033[0m\n'
-  printf '    sessionline [on|off]           context · cost · tokens\n'
+  printf '  \033[38;5;213maliases\033[0m\n'
+  printf '    %-5s  %-7s  %-6s  %s\n' "cl"  "sonnet" "high"   "default"
+  printf '    %-5s  %-7s  %-6s  %s\n' "clo" "opus"   "high"   "complex tasks"
+  printf '    %-5s  %-7s  %-6s  %s\n' "clm" "opus"   "max"    "max effort"
+  printf "    %-5s  %-7s  %-6s  %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
+  printf '    %-5s  %-7s  %-6s  %s\n' "clh" ""       ""       "alias table + live status"
   printf '\n'
-  printf '  \033[0;90mTools\033[0m\n'
+  printf "  \033[38;5;213msessionline  (Claude Code · by wynandw87)\033[0m\n"
+  printf "    sessionline [on|off]           context · cost · tokens · rate limits\n"
+  printf '\n'
+  printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
   printf '    debug  [off|error|warn|info|debug]\n'
-  printf '    metrics                            load time · precmd · jq timings\n'
-  printf '    search · restart · update · about · version\n'
+  printf "    metrics · restart · update · about\n"
   printf '\n'
-  printf '  \033[0;90mman claudii\033[0m  for the full reference\n'
+  printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
 }
 
@@ -67,6 +73,7 @@ case "${1:-}" in
         echo "Refresh-Intervall: ${interval} (${seconds}s)"
         ;;
       "")
+        rm -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
         "$CLAUDII_HOME/bin/claudii-status"
         exit_code=$?
         [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
@@ -248,7 +255,7 @@ case "${1:-}" in
     model=$(_cfgget aliases.clq.model)
     effort=$(_cfgget aliases.clq.effort)
     cd "$search_dir"
-    exec claude --model "$model" --effort "$effort"
+    exec claude --model "$model" --effort "$effort" "${@:2}"
     ;;
 
   "")
@@ -261,8 +268,8 @@ case "${1:-}" in
 
   about)
     printf '\n'
-    printf '  \033[0;36mclaudii\033[0m \033[0;90mv%s\033[0m\n' "$VERSION"
-    printf '  \033[0;90m──────────────────────────────────────\033[0m\n'
+    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+    printf '  \033[38;5;213m──────────────────────────────────────\033[0m\n'
     printf '  Claude Interaction Intelligence\n'
     printf '\n'
     printf '  zsh plugin + CLI for Claude Code power users.\n'
@@ -271,8 +278,8 @@ case "${1:-}" in
     printf '  \033[0;32m◆\033[0m  In-session context · cost · tokens (inside Claude)\n'
     printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
     printf '\n'
-    printf '  \033[0;90mhttps://github.com/bmmmm/claudii\033[0m\n'
-    printf '  \033[0;90mInspired by wynandw87/claude-code-statusline\033[0m\n'
+    printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
+    printf '  \033[38;5;213mInspired by wynandw87/claude-code-statusline\033[0m\n'
     printf '\n'
     ;;
 
@@ -283,7 +290,7 @@ case "${1:-}" in
     printf '  It was also the number of times Opus was down\n'
     printf '  while this tool was being built.\n'
     printf '\n'
-    printf '  \033[0;90m(We monitor all three now. You'\''re welcome.)\033[0m\n'
+    printf '  \033[38;5;213m(We monitor all three now. You'\''re welcome.)\033[0m\n'
     printf '\n'
     ;;
 

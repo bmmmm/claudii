@@ -4,11 +4,11 @@ TEST_TMP="$CLAUDII_HOME/tmp/test_metrics"
 rm -rf "$TEST_TMP"
 mkdir -p "$TEST_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$TEST_TMP/config/claudii/config.json"
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$TEST_TMP/claudii-status-models"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$TEST_TMP/status-models"
 
 # Helper: source plugin in isolated zsh, run a snippet, capture stdout+stderr
 _run_zsh() {
-  TMPDIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$TEST_TMP" XDG_CONFIG_HOME="$TEST_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     $1

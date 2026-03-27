@@ -16,13 +16,13 @@ debug logging and zsh autocomplete.
 .
 .SH COMMANDS
 .
-.SS RPROMPT Statusline
-Monitors model health outside of Claude Code (in the shell prompt).
+.SS claudestatus
+Monitors Claude API health in the shell RPROMPT.
+Uses the Statuspage components API; falls back to the RSS feed for per-model incident details.
 .
 .TP
 .B status
-Show current model health.
-Always fetches live from the RSS feed — never uses the cached result.
+Show current model health (always live — bypasses the cache).
 .
 .TP
 .BR status " on|off"
@@ -49,10 +49,41 @@ Add a model to the RPROMPT list.
 .BI "show model rm " model
 Remove a model from the RPROMPT list.
 .
-.SS In-Session Bar (inside Claude Code)
-A statusline rendered inside Claude Code sessions via
+.SS Shell Aliases
+Shell functions loaded by the zsh plugin for launching Claude Code.
+Configured via
+.B aliases.*
+in config.
+Auto-fallback to a healthy model when the configured model is down (see
+.BR fallback.enabled ).
+.
+.TP
+.B cl
+Claude Sonnet, high effort. General-purpose default.
+.TP
+.B clo
+Claude Opus, high effort. Complex tasks, server work.
+.TP
+.B clm
+Claude Opus, max effort. Maximum reasoning.
+.TP
+.B clq
+Claude Sonnet, medium effort. Search mode \(em launches in
+.IR search.dir .
+Equivalent to
+.BR "claudii search" .
+.TP
+.B clh
+Show the alias table and run a live model health check.
+.
+.SS sessionline (Claude Code \(em by wynandw87)
+An in-session statusline rendered inside Claude Code via
 .IR ~/.claude/settings.json .
 Shows model name, context usage, cost, token counts, and rate limits.
+Inspired by and based on
+.UR https://github.com/wynandw87/claude-code-statusline
+wynandw87/claude-code-statusline
+.UE .
 .
 .TP
 .B sessionline
@@ -127,12 +158,15 @@ Show performance metrics for this shell session: plugin load time, config load t
 This is a zsh shell function \(em it reads in-memory counters, not subprocess output.
 .
 .TP
-.B search
+.BI "search " "['query']"
 Launch Claude Code in the configured search directory
 .RI ( search.dir " in config, default:" " ~/claude-search" ).
 Uses the
 .B clq
 alias settings (model + effort).
+If
+.I query
+is provided, it is passed as the initial prompt to Claude Code.
 .
 .TP
 .B restart
@@ -181,7 +215,10 @@ search.dir              directory for search mode (default: ~/claude-search)
 .
 .SH STATUS CACHE
 The model status cache is stored at
-.IR "$TMPDIR/claudii-status-models" .
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+It persists across terminal sessions and reboots.
 It contains one line per model:
 .PP
 .RS
@@ -201,6 +238,11 @@ seconds.
 .B CLAUDII_HOME
 Path to the claudii plugin directory. Set automatically by the plugin.
 .TP
+.B CLAUDII_CACHE_DIR
+Override the cache directory (default:
+.IR ${XDG_CACHE_HOME:-~/.cache}/claudii ).
+Useful for testing or relocating the cache.
+.TP
 .B CLAUDII_LOG_LEVEL
 Override the debug log level without writing to config.
 Values: off, error, warn, info, debug.
@@ -208,6 +250,12 @@ Values: off, error, warn, info, debug.
 .B XDG_CONFIG_HOME
 Overrides the config directory (default:
 .IR ~/.config ).
+.TP
+.B XDG_CACHE_HOME
+Overrides the base cache directory (default:
+.IR ~/.cache ).
+claudii uses
+.IR $XDG_CACHE_HOME/claudii/ .
 .
 .SH FILES
 .TP
@@ -217,9 +265,11 @@ User configuration.
 .I $CLAUDII_HOME/config/defaults.json
 Shipped defaults (read-only reference).
 .TP
-.I $TMPDIR/claudii-status-models
+.I ${XDG_CACHE_HOME:-~/.cache}/claudii/status-models
 Per-model status cache, written by
 .BR claudii-status (1).
+Override with
+.BR CLAUDII_CACHE_DIR .
 .TP
 .I ~/.claude/settings.json
 Claude Code settings file, modified by

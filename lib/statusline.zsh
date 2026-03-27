@@ -15,7 +15,7 @@ function _claudii_statusline_render {
   _claudii_cache_load
   [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
 
-  local status_cache="${TMPDIR:-/tmp}/claudii-status-models"
+  local status_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
 
   if [[ ! -f "$status_cache" ]]; then

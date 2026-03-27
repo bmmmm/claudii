@@ -6,6 +6,8 @@ mkdir -p "$TEST_TMP"
 export XDG_CONFIG_HOME="$TEST_TMP/config"
 mkdir -p "$XDG_CONFIG_HOME/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
+export CLAUDII_CACHE_DIR="$TEST_TMP/cache"
+mkdir -p "$CLAUDII_CACHE_DIR"
 
 CLI="$CLAUDII_HOME/bin/claudii"
 SL="$CLAUDII_HOME/bin/claudii-sessionline"
@@ -48,24 +50,24 @@ assert_eq "sessionline: no debug output when off" "" "$stderr"
 
 # ── claudii-status: info output ──
 
-rm -f "${TMPDIR:-/tmp}/claudii-status-models"
+rm -f "$CLAUDII_CACHE_DIR/status-models"
 stderr=$(CLAUDII_LOG_LEVEL=info bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 >/dev/null || true)
 assert_contains "status info: shows [claudii:info]" "[claudii:info]" "$stderr"
 
 # ── claudii-status: debug output ──
 
-rm -f "${TMPDIR:-/tmp}/claudii-status-models"
+rm -f "$CLAUDII_CACHE_DIR/status-models"
 stderr=$(CLAUDII_LOG_LEVEL=debug bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 >/dev/null || true)
-assert_contains "status debug: shows components URL" "Components URL" "$stderr"
+assert_contains "status debug: shows components URL" "Components:" "$stderr"
 
 # ── claudii-status: cache hit with debug ──
 
 # Write a fresh cache (age 0s)
-printf "opus=ok\nsonnet=ok\nhaiku=ok\n" > "${TMPDIR:-/tmp}/claudii-status-models"
+printf "opus=ok\nsonnet=ok\nhaiku=ok\n" > "$CLAUDII_CACHE_DIR/status-models"
 stderr=$(CLAUDII_LOG_LEVEL=debug bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 >/dev/null || true)
 assert_contains "status debug: cache hit message" "Cache hit" "$stderr"
 
 # Cleanup
 bash "$CLI" debug off >/dev/null 2>&1
 rm -rf "$TEST_TMP"
-unset XDG_CONFIG_HOME
+unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

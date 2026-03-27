@@ -1,22 +1,23 @@
 #!/bin/bash
-# claudii-status — checks model health via Statuspage components API
-# Primary:   api/v2/components.json → per-model status (structured JSON)
-# Secondary: history.rss           → only on outage, for incident details
+# claudii-status — checks model health
 #
-# Cache format: model=ok|degraded|down  (one per line)
+# Strategy:
+#   1. components.json → is "Claude API" operational? (fast, structured)
+#   2. history.rss     → only when non-operational: which models affected?
+#      If RSS mentions no specific model → all models get service-level status.
+#
+# Cache format: model=ok|degraded|down  (+ optional _api=unreachable marker)
 # Exit codes:   0=all ok, 1=some degraded or down
 #
-# Config via environment:
-#   CLAUDII_COMPONENTS_URL   (default: derived from rss_url)
-#   CLAUDII_RSS_URL          (default: https://status.claude.com/history.rss)
-#   CLAUDII_CACHE_TTL        (default: from config, 900s)
+# Env overrides: CLAUDII_COMPONENTS_URL, CLAUDII_RSS_URL, CLAUDII_CACHE_TTL
 
 set -uo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-CACHE_DIR="${TMPDIR:-/tmp}"
-CACHE_FILE="$CACHE_DIR/claudii-status-cache.xml"
-CACHE_STATUS="$CACHE_DIR/claudii-status-models"
+CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+mkdir -p "$CACHE_DIR"
+CACHE_FILE="$CACHE_DIR/status-cache.xml"
+CACHE_STATUS="$CACHE_DIR/status-models"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
 _cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
@@ -33,7 +34,6 @@ COMPONENTS_URL="${CLAUDII_COMPONENTS_URL:-$(_cfg status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-$(_def status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-${RSS_URL%/history.rss}/api/v2/components.json}"
 
-# shellcheck source=lib/log.sh
 source "${CLAUDII_HOME}/lib/log.sh"
 
 RED='\033[0;31m'
@@ -44,21 +44,20 @@ NC='\033[0m'
 quiet=false
 [[ "${1:-}" == "--quiet" ]] && quiet=true
 
-# Read models from config
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
 models_raw="${models_raw:-$(_def statusline.models)}"
 models_raw="${models_raw:-opus,sonnet,haiku}"
 IFS=',' read -ra MODELS <<< "$models_raw"
 for i in "${!MODELS[@]}"; do MODELS[$i]="${MODELS[$i]// /}"; done
 
-_claudii_log debug "Components URL: $COMPONENTS_URL, RSS URL: $RSS_URL, TTL: ${CACHE_TTL}s, Models: ${MODELS[*]}"
+_claudii_log debug "Components: $COMPONENTS_URL | RSS: $RSS_URL | TTL: ${CACHE_TTL}s | Models: ${MODELS[*]}"
 
-# ── Cache check ──────────────────────────────────────────────────────────────
+# ── Cache check ───────────────────────────────────────────────────────────────
 
 if [[ -f "$CACHE_STATUS" ]]; then
   cache_age=$(( $(date +%s) - $(stat -f%m "$CACHE_STATUS") ))
   if (( cache_age < CACHE_TTL )); then
-    _claudii_log debug "Cache hit (age: ${cache_age}s < TTL: ${CACHE_TTL}s)"
+    _claudii_log debug "Cache hit (${cache_age}s < TTL ${CACHE_TTL}s)"
     if ! $quiet; then
       while IFS='=' read -r model state; do
         case "$state" in
@@ -70,93 +69,115 @@ if [[ -f "$CACHE_STATUS" ]]; then
     grep -q "=down\|=degraded" "$CACHE_STATUS" 2>/dev/null && exit 1
     exit 0
   fi
-  _claudii_log debug "Cache stale (${cache_age}s > TTL: ${CACHE_TTL}s), fetching..."
+  _claudii_log debug "Cache stale (${cache_age}s > TTL ${CACHE_TTL}s)"
 fi
 
-# ── Fetch components API ─────────────────────────────────────────────────────
+# ── Step 1: components API → overall service status ───────────────────────────
 
 _claudii_log info "Fetching $COMPONENTS_URL"
 components_json=$(curl -sf --max-time 5 "$COMPONENTS_URL" 2>/dev/null) || {
   $quiet || echo -e "${YELLOW}claudii: Status-API nicht erreichbar${NC}" >&2
-  _claudii_log warn "Components API fetch failed — writing all-ok fallback with unreachable marker"
+  _claudii_log warn "API unreachable — writing all-ok fallback"
   { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$CACHE_STATUS"
   exit 0
 }
 
-_claudii_log debug "Components API: $(echo "$components_json" | jq '.components | length' 2>/dev/null) components"
+# Find "Claude API" component (the one that governs model availability)
+claude_api_status=$(echo "$components_json" | jq -r '
+  .components[]
+  | select(.name | ascii_downcase | (contains("claude api") or contains("api.anthropic")))
+  | .status
+' 2>/dev/null | head -1)
 
-# Map Statuspage component status → claudii state
-# operational            → ok
-# degraded_performance   → degraded
-# partial_outage         → down
-# major_outage           → down
-_resolve_model_status() {
-  local model="$1"
-  echo "$components_json" | jq -r --arg m "$model" '
-    (.components // [])
-    | map(select(.name | ascii_downcase | contains($m)))
-    | if length == 0 then "operational"
-      elif any(.status == "major_outage" or .status == "partial_outage") then "major_outage"
-      elif any(.status == "degraded_performance") then "degraded_performance"
-      else "operational"
-      end
-  ' 2>/dev/null || echo "operational"
-}
+_claudii_log debug "Claude API component status: ${claude_api_status:-not found}"
 
-# ── Determine per-model status ────────────────────────────────────────────────
-
-tmpfile="${CACHE_STATUS}.tmp"
-any_issue=false
-
-for model in "${MODELS[@]}"; do
-  raw_status=$(_resolve_model_status "$model")
-  case "$raw_status" in
-    operational)          ms="ok" ;;
-    degraded_performance) ms="degraded"; any_issue=true ;;
-    *)                    ms="down";     any_issue=true ;;
-  esac
-  printf '%s=%s\n' "$model" "$ms" >> "$tmpfile"
-  _claudii_log debug "component: $model → $raw_status → $ms"
-done
-
-# ── Fetch RSS for incident details (only if needed) ──────────────────────────
-
-incident_detail=""
-if $any_issue; then
-  _claudii_log info "Outage detected — fetching RSS for incident details"
-  rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
-  if [[ -n "$rss" ]]; then
-    echo "$rss" > "$CACHE_FILE"
-    # First non-resolved incident title (skip feed title at line 1)
-    incident_detail=$(echo "$rss" |
-      sed -n 's:.*<title><!\[CDATA\[\(.*\)\]\]></title>.*:\1:p;s:.*<title>\([^<]*\)</title>.*:\1:p' |
-      awk 'NR>1' |
-      grep -iv 'resolved' |
-      head -1 |
-      sed 's/^[[:space:]]*//')
-    [[ -n "$incident_detail" ]] && _claudii_log info "Incident: $incident_detail"
-  fi
+# If component not found, try overall page status as fallback
+if [[ -z "$claude_api_status" ]]; then
+  claude_api_status=$(echo "$components_json" | jq -r '
+    .components | map(.status) |
+    if any(. == "major_outage" or . == "partial_outage") then "major_outage"
+    elif any(. == "degraded_performance") then "degraded_performance"
+    else "operational"
+    end
+  ' 2>/dev/null || echo "operational")
+  _claudii_log debug "Using aggregate status: $claude_api_status"
 fi
 
-# ── Finalize cache ────────────────────────────────────────────────────────────
+case "${claude_api_status:-operational}" in
+  operational)          service_level="ok" ;;
+  degraded_performance) service_level="degraded" ;;
+  *)                    service_level="down" ;;
+esac
 
-mv "$tmpfile" "$CACHE_STATUS"
+# ── All good — no RSS needed ───────────────────────────────────────────────────
+
+if [[ "$service_level" == "ok" ]]; then
+  _claudii_log info "All operational — skipping RSS fetch"
+  printf '%s=ok\n' "${MODELS[@]}" > "$CACHE_STATUS"
+  _claudii_log info "Status: all ok"
+  exit 0
+fi
+
+# ── Step 2: RSS → which specific models are affected? ─────────────────────────
+
+_claudii_log info "Service ${service_level} — fetching RSS for per-model detail"
+rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
+
+incident_detail=""
+down_models=" "
+
+if [[ -n "$rss" ]]; then
+  echo "$rss" > "$CACHE_FILE"
+
+  while IFS= read -r item; do
+    echo "$item" | grep -qi "Resolved" && continue
+    title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
+    [[ -z "$title" ]] && continue
+    [[ -z "$incident_detail" ]] && incident_detail="$title"
+    for m in "${MODELS[@]}"; do
+      echo "$title" | grep -qi "$m" && down_models="$down_models$m "
+    done
+    _claudii_log debug "RSS item: '$title' → down: [${down_models}]"
+  done < <(
+    echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
+      awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
+  )
+fi
+
+# If RSS names no specific model → assume all models are affected
+no_model_named=true
+for m in "${MODELS[@]}"; do
+  echo "$down_models" | grep -q " $m " && no_model_named=false && break
+done
+
+# ── Write cache ───────────────────────────────────────────────────────────────
+
+{
+  for model in "${MODELS[@]}"; do
+    if $no_model_named || echo "$down_models" | grep -q " $model "; then
+      printf '%s=%s\n' "$model" "$service_level"
+    else
+      printf '%s=ok\n' "$model"
+    fi
+  done
+} > "$CACHE_STATUS"
 
 summary=""
-for model in "${MODELS[@]}"; do
-  ms=$(grep "^${model}=" "$CACHE_STATUS" | cut -d= -f2)
-  summary+=" ${model}=${ms}"
+for m in "${MODELS[@]}"; do
+  ms=$(grep "^${m}=" "$CACHE_STATUS" | cut -d= -f2)
+  summary+=" ${m}=${ms}"
 done
 _claudii_log info "Status:${summary}"
 
 # ── Output ────────────────────────────────────────────────────────────────────
 
+any_issue=false
 for model in "${MODELS[@]}"; do
   ms=$(grep "^${model}=" "$CACHE_STATUS" | cut -d= -f2)
   label="$(echo "${model:0:1}" | tr '[:lower:]' '[:upper:]')${model:1}"
   case "$ms" in
-    down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2 ;;
-    degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2 ;;
+    down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2;     any_issue=true ;;
+    degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2; any_issue=true ;;
   esac
 done
 
