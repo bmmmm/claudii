@@ -560,6 +560,22 @@ Sessionline (inside Claude Code). Includes current status, config, and data flow
 Show version, features, and project URL.
 .
 .TP
+.BI "release " version
+Tag, push, and publish a GitHub release.
+Runs a pre-flight check (tests, version sync, no existing tag), creates and pushes an
+annotated git tag, polls GitHub Actions until the triggered workflow completes,
+then creates a GitHub Release with auto-generated notes.
+Requires
+.B gh
+(GitHub CLI) to be installed and authenticated.
+On workflow failure the pushed tag is automatically removed.
+.
+.TP
+.BI "release " "version" " \-\-dry-run"
+Show all steps that would be executed without making any changes.
+No tag is created or pushed, no GitHub API calls are made.
+.
+.TP
 .B version
 Print the version string.
 When piped (stdout is not a terminal), prints the bare version number without the
@@ -717,6 +733,12 @@ Enable sessionline:
 .TP
 Session handoff after context exhaustion:
 .B claudii continue \-\-launch
+.TP
+Publish a release:
+.B claudii release 0.6.0
+.TP
+Dry-run to verify pre-flight checks:
+.B claudii release 0.6.0 \-\-dry-run
 .TP
 Read a config value:
 .B claudii config get aliases.cl.model

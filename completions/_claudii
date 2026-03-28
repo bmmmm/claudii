@@ -37,6 +37,7 @@ _claudii() {
         'doctor:Check claudii installation health'
         'watch:Background rate-limit reset watcher with macOS notifications'
         'agents:List available agent roles from ~/.claude/agents/*.md'
+        'release:Tag, push, and create a GitHub release'
         'help:Show help'
       )
       _describe 'command' commands
@@ -108,6 +109,14 @@ _claudii() {
             'status:Show watcher status'
           )
           _describe 'watch subcommand' watch_cmds
+          ;;
+
+        release)
+          local -a rel_opts
+          rel_opts=(
+            '--dry-run:Show what would happen without making changes'
+          )
+          _describe 'release option' rel_opts
           ;;
 
         debug)
