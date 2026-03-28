@@ -31,7 +31,7 @@
 
 **Homebrew**
 ```bash
-brew tap bmmmm/claudii
+brew tap bmmmm/tap
 brew install claudii
 # add to ~/.zshrc:
 source "$(brew --prefix)/opt/claudii/libexec/claudii.plugin.zsh"
