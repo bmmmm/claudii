@@ -28,6 +28,7 @@ _claudii() {
         'components:Component overview (ClaudeStatus, SessionBar, Sessionline)'
         'about:About claudii'
         'version:Show version'
+        'doctor:Check claudii installation health'
         'help:Show help'
       )
       _describe 'command' commands

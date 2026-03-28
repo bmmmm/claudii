@@ -237,6 +237,18 @@ Show version, features, and project URL.
 .B version
 Print the version string.
 .
+.TP
+.B doctor
+Run an installation health check.
+Verifies that Claude Code and jq are installed,
+that the Sessionline is configured in
+.IR ~/.claude/settings.json ,
+that the cache directory exists,
+that completions are present,
+and that the plugin is loaded.
+Also reports the installed version and whether the local repo is behind
+.IR origin/main .
+.
 .SH CONFIG FILE
 User config:
 .I ~/.config/claudii/config.json
