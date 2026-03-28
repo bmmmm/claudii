@@ -44,7 +44,7 @@ class Claudii < Formula
       Then restart your shell or run:
         source ~/.zshrc
 
-      Optional — activate Claude Code in-session statusline:
+      Optional — activate the Claude Code Status Line:
         claudii sessionline on
     EOS
   end

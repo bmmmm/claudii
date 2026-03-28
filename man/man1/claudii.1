@@ -16,7 +16,7 @@ debug logging and zsh autocomplete.
 .
 .SH COMMANDS
 .
-.SS claudestatus
+.SS ClaudeStatus
 Monitors Claude API health in the shell RPROMPT.
 Uses the Statuspage components API; falls back to the RSS feed for per-model incident details.
 .
@@ -26,7 +26,7 @@ Show current model health (always live — bypasses the cache).
 .
 .TP
 .BR status " on|off"
-Enable or disable the RPROMPT statusline.
+Enable or disable ClaudeStatus in the RPROMPT.
 .
 .TP
 .BR status " 5m|15m|30m|60m"
@@ -76,28 +76,28 @@ Equivalent to
 .B clh
 Show the alias table and run a live model health check.
 .
-.SS sessionline (Claude Code \(em by wynandw87)
-An in-session statusline rendered inside Claude Code via
+.SS Claude Code Status Line (by wynandw87)
+Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
 Shows model name, context usage, cost, token counts, and rate limits.
-Inspired by and based on
+Based on
 .UR https://github.com/wynandw87/claude-code-statusline
 wynandw87/claude-code-statusline
 .UE .
 .
 .TP
 .B sessionline
-Show whether the in-session statusline is active.
+Show whether the Claude Code Status Line is active.
 .
 .TP
 .B "sessionline on"
-Add the statusline to
+Add the Claude Code Status Line to
 .IR ~/.claude/settings.json .
 Restart Claude Code to activate.
 .
 .TP
 .B "sessionline off"
-Remove the statusline from
+Remove the Claude Code Status Line from
 .IR ~/.claude/settings.json .
 .
 .SS Config
@@ -206,7 +206,7 @@ fallback.enabled        auto-fallback on outage (default: true)
 fallback.opus.model     fallback model when opus is down
 status.cache_ttl        status cache TTL in seconds (default: 900)
 status.rss_url          Claude status RSS feed URL
-statusline.enabled      show RPROMPT statusline (default: true)
+statusline.enabled      show ClaudeStatus in RPROMPT (default: true)
 statusline.models       comma-separated model list (default: opus,sonnet,haiku)
 debug.level             log level: off|error|warn|info|debug (default: off)
 search.dir              directory for search mode (default: ~/claude-search)
@@ -277,7 +277,7 @@ Claude Code settings file, modified by
 .
 .SH EXAMPLES
 .TP
-Activate the in-session statusline:
+Activate the Claude Code Status Line:
 .B claudii sessionline on
 .TP
 Show only Opus and Sonnet in RPROMPT:

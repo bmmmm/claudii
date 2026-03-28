@@ -32,7 +32,7 @@ usage() {
   printf '\n'
   printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
   printf '\n'
-  printf '  \033[38;5;213mclaudestatus\033[0m\n'
+  printf '  \033[38;5;213mClaudeStatus\033[0m\n'
   printf '    status [on|off|5m|15m|30m]    live model check · RPROMPT on/off · refresh\n'
   printf '    show model [add|rm|<names>]    models shown in RPROMPT\n'
   printf '\n'
@@ -43,7 +43,7 @@ usage() {
   printf "    %-5s  %-7s  %-6s  %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
   printf '    %-5s  %-7s  %-6s  %s\n' "clh" ""       ""       "alias table + live status"
   printf '\n'
-  printf "  \033[38;5;213msessionline  (Claude Code · by wynandw87)\033[0m\n"
+  printf "  \033[38;5;213mClaude Code Status Line  (by wynandw87)\033[0m\n"
   printf "    sessionline [on|off]           context · cost · tokens · rate limits\n"
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
@@ -278,12 +278,12 @@ case "${1:-}" in
     printf '\n'
     printf '  zsh plugin + CLI for Claude Code power users.\n'
     printf '\n'
-    printf '  \033[0;32m◆\033[0m  Model health monitoring · RPROMPT statusline\n'
-    printf '  \033[0;32m◆\033[0m  In-session context · cost · tokens (inside Claude)\n'
+    printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health monitoring in RPROMPT\n'
+    printf '  \033[0;32m◆\033[0m  Claude Code Status Line — context · cost · tokens\n'
     printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
     printf '\n'
     printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
-    printf '  \033[38;5;213mInspired by wynandw87/claude-code-statusline\033[0m\n'
+    printf '  \033[38;5;213mClaude Code Status Line by wynandw87\033[0m\n'
     printf '\n'
     ;;
 
