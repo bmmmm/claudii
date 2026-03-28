@@ -25,6 +25,8 @@ _claudii() {
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'
         'stats:Session efficiency metrics: counts, costs, model distribution'
+        'trends:Weekly and daily cost trends from persistent history (Flight Recorder)'
+        'continue:Session handoff — show context from last session'
         'debug:Show or set debug level'
         'metrics:Session performance metrics'
         'restart:Reload plugin'
@@ -77,6 +79,15 @@ _claudii() {
                 ;;
             esac
           fi
+          ;;
+
+        continue)
+          local -a cont_opts
+          cont_opts=(
+            '--launch:Fork into new session with context from the last one'
+            '--resume:Resume the exact same session'
+          )
+          _describe 'continue option' cont_opts
           ;;
 
         sessionline)

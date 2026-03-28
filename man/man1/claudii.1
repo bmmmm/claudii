@@ -1,5 +1,5 @@
 .\" claudii manual — auto-synced to wiki via GitHub Actions
-.TH CLAUDII 1 "March 28, 2026" "claudii 0.4.0" "claudii manual"
+.TH CLAUDII 1 "March 28, 2026" "claudii 0.5.0" "claudii manual"
 .
 .SH NAME
 claudii \- Fast Claude Code aliases with live model status and session insights
@@ -57,7 +57,7 @@ bash ~/claudii/install.sh
 .B \-\-json
 Output structured JSON instead of formatted text.
 Available for:
-.BR status ", " sessions ", " cost ", " doctor ", " version .
+.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version .
 .TP
 .B \-\-tsv
 Output tab-separated values (header row + data rows).
@@ -168,7 +168,7 @@ Claude Code \(-> Sessionline (stdin JSON) \(-> cache file \(-> SessionBar (precm
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
 Shows model name, context usage bar, cost, token counts, rate limits,
-lines changed, and session duration in a single info-dense line.
+lines changed, session duration, worktree name, and agent context in a single info-dense line.
 .
 .TP
 .B sessionline
@@ -188,7 +188,7 @@ Remove the sessionline from
 .TP
 .B sessions
 List active and recent Claude Code sessions with model, context usage,
-cost, and rate limits.
+cost, rate limits, worktree name, and agent context.
 Shows per-session details and an aggregate summary.
 Sessions are detected from cache files written by the sessionline handler.
 Supports
@@ -259,6 +259,29 @@ Stop the background watcher and remove the PID file.
 .B "watch status"
 Show whether the watcher is running and its PID.
 .
+.SS Session Handoff
+.
+.TP
+.B continue
+Show context from the most recent session in the current project:
+model, context usage, cost, the last user messages, and the assistant's
+final response (truncated).
+If no transcript is found in the current project, falls back to the most
+recently modified transcript across all projects.
+.
+.TP
+.B "continue \-\-launch"
+Fork the last session into a new one.
+Equivalent to
+.BR "claude \-\-continue \-\-fork\-session" .
+Context from the previous session is carried over but a new session ID is created.
+.
+.TP
+.B "continue \-\-resume"
+Resume the exact same session (no fork).
+Equivalent to
+.BR "claude \-\-resume " \fIsession-id\fR .
+.
 .SS Other
 .
 .TP
@@ -285,6 +308,19 @@ Session cache files are read from
 .IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
 (overrideable via
 .BR CLAUDII_CACHE_DIR ).
+.
+.TP
+.B trends
+Weekly and daily cost trends from persistent history (Flight Recorder).
+The sessionline handler appends a line to
+.I ~/.cache/claudii/history.tsv
+on every update.
+.B trends
+reads this file, deduplicates by session (takes the max cost per session_id),
+and shows a per-day breakdown for the current week, a total for last week,
+a 30-day model distribution split, and the costliest day.
+Supports
+.BR \-\-json .
 .
 .TP
 .BR "debug " "[off|error|warn|info|debug]"
@@ -359,6 +395,7 @@ l l.
 s	status
 ss	sessions
 c	cost
+t	trends
 d	doctor
 .TE
 .PP
@@ -449,6 +486,13 @@ Per-model status cache.
 Per-session cache files written by the sessionline handler.
 Contains model, context percentage, cost, and rate limit data.
 .TP
+.I ~/.cache/claudii/history.tsv
+Persistent session history (Flight Recorder).
+TSV file with one line per sessionline update:
+timestamp, model, cost, context percentage, 5-hour rate, session_id.
+Read by
+.BR "claudii trends" .
+.TP
 .I ~/.claude/settings.json
 Claude Code settings, modified by
 .BR "claudii sessionline" .
@@ -469,6 +513,9 @@ Check every 5 minutes:
 .TP
 Enable sessionline:
 .B claudii sessionline on
+.TP
+Session handoff after context exhaustion:
+.B claudii continue \-\-launch
 .TP
 Read a config value:
 .B claudii config get aliases.cl.model

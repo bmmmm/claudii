@@ -33,13 +33,14 @@ assert_eq() {
 
 assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -q "$needle"; then
+  # Use grep on here-string — avoids SIGPIPE broken pipe with pipefail on large input (Ubuntu CI)
+  if grep -q "$needle" <<< "$haystack"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     (( PASS++ ))
   else
     echo -e "  ${RED}✗${NC} $desc"
     echo -e "    Expected to contain: ${GREEN}$needle${NC}"
-    echo -e "    Got: ${RED}$haystack${NC}"
+    echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
     (( FAIL++ ))
     ERRORS+=("$desc")
   fi

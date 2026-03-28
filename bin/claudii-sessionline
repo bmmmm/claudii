@@ -54,6 +54,12 @@ _session_file="$_cache_dir/session-${_sid:-unknown}"
   "agent=$agent_name" \
   > "$_session_file"; } 2>/dev/null || true
 
+# Append to persistent history (Flight Recorder) — one TSV line per update
+# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(date +%s)" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
+  >> "$_cache_dir/history.tsv" 2>/dev/null || true
+
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
 _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name}"
 
@@ -110,8 +116,14 @@ SEP="${DIM} │${RST} "
 # --- build output ---
 out=""
 
-# Model (bold)
-[[ -n "$model" ]] && out+="\033[1m${model}${RST}"
+# Model (bold) + effort mode (dim, from env — workaround until API exposes it)
+if [[ -n "$model" ]]; then
+  out+="\033[1m${model}${RST}"
+  _effort="${CLAUDII_EFFORT:-}"
+  if [[ -n "$_effort" && "$_effort" != "high" ]]; then
+    out+=" ${DIM}${_effort}${RST}"
+  fi
+fi
 
 # Context bar (10 chars) + percentage
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then

@@ -103,7 +103,7 @@ function _claudii_session_bar {
   [[ -z "$sc" ]] && return
 
   # Parse all fields via pattern matching — zero subprocesses
-  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
+  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent=""
   [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
@@ -111,6 +111,8 @@ function _claudii_session_bar {
   [[ $'\n'"$sc" == *$'\n'rate_7d=* ]]  && s_7d="${${sc#*rate_7d=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'reset_7d=* ]] && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'worktree=* ]] && s_worktree="${${sc#*worktree=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'agent=* ]]    && s_agent="${${sc#*agent=}%%$'\n'*}"
 
   [[ -z "$s_model" ]] && return
 
@@ -120,6 +122,10 @@ function _claudii_session_bar {
 
   # Model (bold)
   bar+="%B${s_model}%b"
+
+  # Worktree and agent context (dim brackets)
+  [[ -n "$s_worktree" ]] && bar+=" %F{8}[wt:${s_worktree}]%f"
+  [[ -n "$s_agent" ]]    && bar+=" %F{8}[agent:${s_agent}]%f"
 
   # Context bar (10 chars) + percentage
   if [[ -n "$s_ctx" ]]; then

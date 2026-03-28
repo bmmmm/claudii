@@ -5,7 +5,7 @@
 set -euo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-VERSION="0.4.0"
+VERSION="0.5.0"
 
 # TTY detection — 1 if stdout is a terminal, 0 if piped
 _TTY=0
@@ -76,11 +76,12 @@ usage() {
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
-  printf "    doctor · cost · stats · debug · metrics · restart · components · about\n"
+  printf "    doctor · cost · stats · trends · debug · metrics · restart · components · about\n"
+  printf "    continue [--launch|--resume]  — session handoff\n"
   printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
   printf '\n'
   printf '  \033[38;5;213mshortcuts\033[0m\n'
-  printf "  s=status  ss=sessions  c=cost  d=doctor\n"
+  printf "  s=status  ss=sessions  c=cost  t=trends  d=doctor\n"
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
@@ -91,6 +92,7 @@ case "${1:-}" in
   s)  set -- status    "${@:2}" ;;
   ss) set -- sessions  "${@:2}" ;;
   c)  set -- cost      "${@:2}" ;;
+  t)  set -- trends    "${@:2}" ;;
   d)  set -- doctor    "${@:2}" ;;
 esac
 
@@ -562,6 +564,459 @@ case "${1:-}" in
     printf '\n'
     ;;
 
+  trends)
+    # Flight Recorder — weekly/daily aggregates from persistent history
+    history_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/history.tsv"
+
+    if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+      echo "No history data yet. Start a Claude session with sessionline enabled."
+      exit 0
+    fi
+
+    # Strategy: bash does date conversions (portable macOS/GNU), awk does
+    # all aggregation and formatting (no associative arrays needed in bash).
+    now=$(date +%s)
+
+    # Detect macOS vs GNU date
+    if date -j -f '%s' "$now" '+%u' >/dev/null 2>&1; then
+      _date_cmd="macos"
+    else
+      _date_cmd="gnu"
+    fi
+
+    # Precompute date boundaries
+    if [[ "$_date_cmd" == "macos" ]]; then
+      today_str=$(date -j -f '%s' "$now" '+%Y-%m-%d')
+      today_dow=$(date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
+      this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
+      this_monday_str=$(date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
+      last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
+      last_monday_str=$(date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
+      last_sunday_ts=$(( this_monday_ts - 86400 ))
+      last_sunday_str=$(date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
+      thirty_days_ago_ts=$(( now - 30 * 86400 ))
+      thirty_days_ago_str=$(date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
+    else
+      today_str=$(date -d "@$now" '+%Y-%m-%d')
+      today_dow=$(date -d "@$now" '+%u')
+      this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
+      this_monday_str=$(date -d "@$this_monday_ts" '+%Y-%m-%d')
+      last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
+      last_monday_str=$(date -d "@$last_monday_ts" '+%Y-%m-%d')
+      last_sunday_ts=$(( this_monday_ts - 86400 ))
+      last_sunday_str=$(date -d "@$last_sunday_ts" '+%Y-%m-%d')
+      thirty_days_ago_ts=$(( now - 30 * 86400 ))
+      thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
+    fi
+
+    # Build week_days string: "date:name,date:name,..." for Mon..Sun (up to today)
+    _week_days=""
+    for (( d=0; d<7; d++ )); do
+      day_ts=$(( this_monday_ts + d * 86400 ))
+      if [[ "$_date_cmd" == "macos" ]]; then
+        _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
+        _wn=$(date -j -f '%s' "$day_ts" '+%a')
+      else
+        _wd=$(date -d "@$day_ts" '+%Y-%m-%d')
+        _wn=$(date -d "@$day_ts" '+%a')
+      fi
+      [[ -n "$_week_days" ]] && _week_days+=","
+      _week_days+="${_wd}:${_wn}"
+      [[ "$_wd" == "$today_str" ]] && break
+    done
+
+    # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names
+    # Use a while loop (portable across macOS/GNU date)
+    _trends_augmented=$(
+      while IFS=$'\t' read -r ts _t_model cost ctx rate sid; do
+        [[ -z "$ts" || "$ts" == "timestamp" ]] && continue
+        if [[ "$_date_cmd" == "macos" ]]; then
+          _t_day=$(date -j -f '%s' "$ts" '+%Y-%m-%d' 2>/dev/null) || continue
+        else
+          _t_day=$(date -d "@$ts" '+%Y-%m-%d' 2>/dev/null) || continue
+        fi
+        # Normalize model name (opening parens prevent ) from closing $())
+        case "$_t_model" in
+          (*[Oo]pus*)   _t_short="Opus"   ;;
+          (*[Ss]onnet*) _t_short="Sonnet" ;;
+          (*[Hh]aiku*)  _t_short="Haiku"  ;;
+          (*)           _t_short="$_t_model" ;;
+        esac
+        printf '%s\t%s\t%s\t%s\n' "$_t_day" "$_t_short" "$cost" "$sid"
+      done < "$history_file"
+    )
+
+    # Step 2: awk does dedup, aggregation, and ALL output formatting
+    # No bash associative arrays needed — awk handles everything
+    echo "$_trends_augmented" | awk -F'\t' \
+      -v today="$today_str" \
+      -v this_mon="$this_monday_str" \
+      -v last_mon="$last_monday_str" \
+      -v last_sun="$last_sunday_str" \
+      -v thirty="$thirty_days_ago_str" \
+      -v week_days="$_week_days" \
+      -v fmt="${_FORMAT:-}" \
+      '
+    {
+      day = $1; model = $2; cost = $3 + 0; sid = $4
+      if (sid == "") next
+
+      # Dedup: take max cost per session_id
+      key = sid
+      if (!(key in max_cost) || cost > max_cost[key]) {
+        max_cost[key] = cost
+        sid_day[key] = day
+        sid_model[key] = model
+      }
+    }
+    END {
+      # Aggregate deduplicated sessions by day
+      for (key in max_cost) {
+        day = sid_day[key]
+        model = sid_model[key]
+        cost = max_cost[key]
+
+        day_cost[day] += cost
+        day_sessions[day]++
+        day_model_sessions[day, model]++
+
+        # 30d model split
+        if (day >= thirty) {
+          model_sessions_30d[model]++
+          total_sessions_30d++
+        }
+      }
+
+      # Costliest day (30d)
+      max_day_cost = 0; max_day = ""
+      for (d in day_cost) {
+        if (d >= thirty && day_cost[d] > max_day_cost) {
+          max_day_cost = day_cost[d]
+          max_day = d
+        }
+      }
+
+      # This week + last week totals
+      tw_cost = 0; tw_sessions = 0
+      lw_cost = 0; lw_sessions = 0
+      for (d in day_cost) {
+        if (d >= this_mon) { tw_cost += day_cost[d]; tw_sessions += day_sessions[d] }
+        if (d >= last_mon && d <= last_sun) { lw_cost += day_cost[d]; lw_sessions += day_sessions[d] }
+      }
+
+      # Parse week_days string into arrays: wd_date[0..n], wd_name[0..n]
+      n_days = split(week_days, _wd_parts, ",")
+      for (i = 1; i <= n_days; i++) {
+        split(_wd_parts[i], _dn, ":")
+        wd_date[i] = _dn[1]
+        wd_name[i] = _dn[2]
+      }
+
+      # --- JSON output ---
+      if (fmt == "json") {
+        printf "{"
+
+        # this_week array
+        printf "\"this_week\":["
+        for (i = 1; i <= n_days; i++) {
+          d = wd_date[i]
+          if (i > 1) printf ","
+          printf "{\"date\":\"%s\",\"day\":\"%s\",\"cost\":%.2f,\"sessions\":%d}", \
+            d, wd_name[i], (d in day_cost ? day_cost[d] : 0), (d in day_sessions ? day_sessions[d] : 0)
+        }
+        printf "],"
+
+        printf "\"this_week_total\":%.2f,", tw_cost
+        printf "\"last_week\":{\"cost\":%.2f,\"sessions\":%d},", lw_cost, lw_sessions
+
+        # model_split_30d
+        printf "\"model_split_30d\":{"
+        first = 1
+        for (m in model_sessions_30d) {
+          pct = (total_sessions_30d > 0) ? int(model_sessions_30d[m] * 100 / total_sessions_30d + 0.5) : 0
+          if (!first) printf ","
+          printf "\"%s\":{\"sessions\":%d,\"percent\":%d}", m, model_sessions_30d[m], pct
+          first = 0
+        }
+        printf "},"
+
+        # costliest_day_30d
+        if (max_day != "") {
+          printf "\"costliest_day_30d\":{\"date\":\"%s\",\"cost\":%.2f}", max_day, max_day_cost
+        } else {
+          printf "\"costliest_day_30d\":null"
+        }
+
+        printf "}\n"
+        exit
+      }
+
+      # --- Pretty output ---
+      cyan  = "\033[0;36m"
+      dim   = "\033[38;5;240m"
+      pink  = "\033[38;5;213m"
+      reset = "\033[0m"
+      sep   = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
+
+      printf "\n"
+      printf "  %sclaudii trends%s\n\n", cyan, reset
+      printf "  %sThis week%s (Mon\xe2\x80\x93Sun)\n", pink, reset
+
+      for (i = 1; i <= n_days; i++) {
+        d = wd_date[i]
+        label = (d == today) ? "Today" : wd_name[i]
+
+        if (!(d in day_cost) || day_cost[d] == 0) {
+          printf "    %-7s %s$0.00%s  %s\342\200\224%s\n", label, dim, reset, dim, reset
+        } else {
+          # Build model detail
+          detail = ""
+          # Check known models in fixed order
+          models_order[1] = "Opus"; models_order[2] = "Sonnet"; models_order[3] = "Haiku"
+          for (mi = 1; mi <= 3; mi++) {
+            m = models_order[mi]
+            if ((d, m) in day_model_sessions) {
+              if (detail != "") detail = detail ", "
+              detail = detail day_model_sessions[d, m] " " m
+            }
+          }
+          # Unknown models
+          for (combo in day_model_sessions) {
+            split(combo, cp, SUBSEP)
+            if (cp[1] == d && cp[2] != "Opus" && cp[2] != "Sonnet" && cp[2] != "Haiku") {
+              if (detail != "") detail = detail ", "
+              detail = detail day_model_sessions[combo] " " cp[2]
+            }
+          }
+          sess = day_sessions[d]
+          s_suffix = (sess != 1) ? "s" : ""
+          printf "    %-7s %s$%.2f%s  (%d session%s, %s)\n", \
+            label, cyan, day_cost[d], reset, sess, s_suffix, detail
+        }
+      }
+
+      printf "%s\n", sep
+      printf "    %-7s %s$%.2f%s\n", "Total", cyan, tw_cost, reset
+
+      # Last week
+      printf "\n  %sLast week%s\n", pink, reset
+      if (lw_sessions > 0) {
+        s_suffix = (lw_sessions != 1) ? "s" : ""
+        printf "    Total  %s$%.2f%s  (%d session%s)\n", cyan, lw_cost, reset, lw_sessions, s_suffix
+      } else {
+        printf "    %s(no data)%s\n", dim, reset
+      }
+
+      # Model split (30d)
+      if (total_sessions_30d > 0) {
+        printf "\n"
+        split_str = ""
+        # Fixed order
+        for (mi = 1; mi <= 3; mi++) {
+          m = models_order[mi]
+          if (m in model_sessions_30d) {
+            pct = int(model_sessions_30d[m] * 100 / total_sessions_30d + 0.5)
+            if (split_str != "") split_str = split_str " \302\267 "
+            split_str = split_str m " " pct "%"
+          }
+        }
+        # Unknown models
+        for (m in model_sessions_30d) {
+          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+            pct = int(model_sessions_30d[m] * 100 / total_sessions_30d + 0.5)
+            if (split_str != "") split_str = split_str " \302\267 "
+            split_str = split_str m " " pct "%"
+          }
+        }
+        printf "  Model split (30d): %s\n", split_str
+      }
+
+      # Costliest day
+      if (max_day != "") {
+        printf "  Costliest day: %s (%s$%.2f%s)\n", max_day, cyan, max_day_cost, reset
+      }
+      printf "\n"
+    }'
+    ;;
+
+  continue)
+    # Session Handoff — show context from last session, optionally launch new one
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+
+    # ── Find the project hash for the current directory ──
+    _cwd_hash=$(echo "$PWD" | sed 's|/|-|g; s|^-||')
+    _project_dir="$HOME/.claude/projects/-${_cwd_hash}"
+    if [[ ! -d "$_project_dir" ]]; then
+      # Fallback: search all projects for the most recent transcript
+      _project_dir=""
+    fi
+
+    # ── Find the latest JSONL transcript ──
+    _find_latest_jsonl() {
+      local search_dir="$1" latest="" latest_mt=0
+      while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        # Skip subagent transcripts — only main session files
+        [[ "$f" == */subagents/* ]] && continue
+        local mt
+        if stat -f%m "$f" >/dev/null 2>&1; then
+          mt=$(stat -f%m "$f")
+        else
+          mt=$(stat -c%Y "$f" 2>/dev/null || echo 0)
+        fi
+        if (( mt > latest_mt )); then
+          latest_mt=$mt
+          latest="$f"
+        fi
+      done < <(find "$search_dir" -maxdepth 2 -name "*.jsonl" -type f 2>/dev/null)
+      echo "$latest"
+    }
+
+    if [[ -n "$_project_dir" ]]; then
+      _transcript=$(_find_latest_jsonl "$_project_dir")
+    fi
+    if [[ -z "${_transcript:-}" ]]; then
+      # Try all projects
+      _transcript=$(_find_latest_jsonl "$HOME/.claude/projects")
+    fi
+
+    if [[ -z "${_transcript:-}" ]]; then
+      echo "No transcript found."
+      echo "  Start a Claude session first, then run: claudii continue"
+      exit 1
+    fi
+
+    # ── Extract session ID from filename ──
+    _basename=$(basename "$_transcript" .jsonl)
+    _session_id="$_basename"
+
+    # ── Get transcript mtime ──
+    if stat -f%m "$_transcript" >/dev/null 2>&1; then
+      _tx_mt=$(stat -f%m "$_transcript")
+    else
+      _tx_mt=$(stat -c%Y "$_transcript" 2>/dev/null || echo 0)
+    fi
+    _tx_date=$(date -r "$_tx_mt" "+%Y-%m-%d %H:%M" 2>/dev/null || date -d "@$_tx_mt" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
+
+    # ── Read session cache for model/cost/context info ──
+    _c_model="" _c_ctx="" _c_cost=""
+    _cache_file="$cache_dir/session-${_session_id:0:8}"
+    if [[ -f "$_cache_file" ]]; then
+      _cc=$(cat "$_cache_file" 2>/dev/null) || true
+      [[ $'\n'"$_cc" == *$'\n'model=* ]]   && _c_model="${_cc#*model=}"   && _c_model="${_c_model%%$'\n'*}"
+      [[ $'\n'"$_cc" == *$'\n'ctx_pct=* ]] && _c_ctx="${_cc#*ctx_pct=}"   && _c_ctx="${_c_ctx%%$'\n'*}"
+      [[ $'\n'"$_cc" == *$'\n'cost=* ]]    && _c_cost="${_cc#*cost=}"     && _c_cost="${_c_cost%%$'\n'*}"
+    fi
+
+    # ── Extract last N user messages (only actual typed messages, not tool results) ──
+    _max_user=5
+    _max_chars=500
+    _user_msgs=()
+    while IFS= read -r msg; do
+      [[ -z "$msg" || "$msg" == "null" ]] && continue
+      # Skip system-injected messages (XML tags from tool results, usage stats, etc.)
+      [[ "$msg" == "<"* ]] && continue
+      [[ "$msg" == *"</task-notification>"* ]] && continue
+      # Truncate long messages
+      if (( ${#msg} > _max_chars )); then
+        msg="${msg:0:$_max_chars}..."
+      fi
+      _user_msgs+=("$msg")
+    done < <(
+      jq -r '
+        select(.type == "user" and .userType == "external") |
+        .message.content |
+        if type == "string" then
+          if length > 0 then . else empty end
+        elif type == "array" then
+          [.[] | select(.type == "text") | .text] | join("") |
+          if length > 0 then . else empty end
+        else empty end
+      ' "$_transcript" 2>/dev/null | tail -"$_max_user"
+    )
+
+    # ── Extract last assistant text message (summary) ──
+    _summary=""
+    _summary=$(
+      jq -r '
+        select(.type == "assistant") |
+        [.message.content[]? | select(.type == "text") | .text] | join("") |
+        if length > 0 then . else empty end
+      ' "$_transcript" 2>/dev/null | tail -1
+    )
+    # Truncate summary to 1000 chars
+    if [[ -n "$_summary" ]] && (( ${#_summary} > 1000 )); then
+      _summary="${_summary:0:1000}..."
+    fi
+
+    # ── Handle subcommands ──
+    case "${2:-}" in
+      --launch)
+        # Launch a new forked session from the last one
+        echo "Forking session ${_session_id:0:8}..."
+        exec claude --continue --fork-session
+        ;;
+      --resume)
+        # Resume the exact same session (no fork)
+        echo "Resuming session ${_session_id:0:8}..."
+        exec claude --resume "$_session_id"
+        ;;
+      "")
+        # Default: print context summary
+        printf '\n'
+        printf '  \033[0;36mclaudii continue\033[0m\n'
+        printf '\n'
+
+        # Session info line
+        _info="  Last session:"
+        [[ -n "$_c_model" ]] && _info+=" \033[1m${_c_model}\033[0m,"
+        [[ -n "$_c_ctx" ]]   && _info+=" ${_c_ctx}% context,"
+        [[ -n "$_c_cost" && "$_c_cost" != "0" ]] && _info+=" \033[0;36m\$$(printf '%.2f' "$_c_cost")\033[0m,"
+        # Remove trailing comma
+        _info="${_info%,}"
+        printf '%b\n' "$_info"
+
+        printf '  Transcript: \033[38;5;240m%s\033[0m\n' "$_transcript"
+        printf '  Updated:    \033[38;5;240m%s\033[0m\n' "$_tx_date"
+        printf '\n'
+
+        # User messages
+        if [[ ${#_user_msgs[@]} -gt 0 ]]; then
+          printf '  \033[38;5;213m── Last %d user message%s ──\033[0m\n' \
+            "${#_user_msgs[@]}" "$( (( ${#_user_msgs[@]} != 1 )) && echo 's' || true)"
+          _n=1
+          for _msg in "${_user_msgs[@]}"; do
+            # Replace newlines with spaces for display, trim
+            _display=$(echo "$_msg" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
+            printf '  %d. "%s"\n' "$_n" "$_display"
+            (( _n++ ))
+          done
+          printf '\n'
+        fi
+
+        # Summary
+        if [[ -n "$_summary" ]]; then
+          printf '  \033[38;5;213m── Context summary ──\033[0m\n'
+          # Print summary with word wrap at ~76 chars, indented
+          echo "$_summary" | fold -s -w 72 | while IFS= read -r _line; do
+            printf '  %s\n' "$_line"
+          done
+          printf '\n'
+        fi
+
+        # Action hints
+        printf '  \033[38;5;240mTo continue:\033[0m\n'
+        printf '    claudii continue --launch   fork into new session with context\n'
+        printf '    claudii continue --resume   resume the exact same session\n'
+        printf '    claude --continue            built-in continue (same session)\n'
+        printf '\n'
+        ;;
+      *)
+        echo "Usage: claudii continue [--launch|--resume]"; exit 1
+        ;;
+    esac
+    ;;
+
   search)
     _cfg_init
     search_dir=$(_cfgget search.dir)
@@ -841,7 +1296,7 @@ case "${1:-}" in
     latest_5h="" latest_7d="" latest_reset=""
 
     # Collect all session data into parallel arrays
-    declare -a _sf_model _sf_ctx _sf_cost _sf_5h _sf_7d _sf_reset _sf_sid _sf_age _sf_active
+    declare -a _sf_model _sf_ctx _sf_cost _sf_5h _sf_7d _sf_reset _sf_sid _sf_age _sf_active _sf_worktree _sf_agent
     _sf_count=0
 
     for sf in "$cache_dir"/session-*; do
@@ -850,7 +1305,7 @@ case "${1:-}" in
       age=$(( now - mt ))
 
       content=$(cat "$sf" 2>/dev/null) || continue
-      s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid=""
+      s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid="" s_worktree="" s_agent=""
       [[ $'\n'"$content" == *$'\n'model=* ]] && s_model="${content#*model=}" && s_model="${s_model%%$'\n'*}"
       [[ $'\n'"$content" == *$'\n'ctx_pct=* ]] && s_ctx="${content#*ctx_pct=}" && s_ctx="${s_ctx%%$'\n'*}"
       [[ $'\n'"$content" == *$'\n'cost=* ]] && s_cost="${content#*cost=}" && s_cost="${s_cost%%$'\n'*}"
@@ -858,6 +1313,8 @@ case "${1:-}" in
       [[ $'\n'"$content" == *$'\n'rate_7d=* ]] && s_7d="${content#*rate_7d=}" && s_7d="${s_7d%%$'\n'*}"
       [[ $'\n'"$content" == *$'\n'reset_5h=* ]] && s_reset="${content#*reset_5h=}" && s_reset="${s_reset%%$'\n'*}"
       [[ $'\n'"$content" == *$'\n'session_id=* ]] && s_sid="${content#*session_id=}" && s_sid="${s_sid%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'worktree=* ]] && s_worktree="${content#*worktree=}" && s_worktree="${s_worktree%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'agent=* ]] && s_agent="${content#*agent=}" && s_agent="${s_agent%%$'\n'*}"
 
       # Accumulate cost
       if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
@@ -876,6 +1333,8 @@ case "${1:-}" in
       _sf_7d[$_sf_count]="$s_7d"
       _sf_reset[$_sf_count]="$s_reset"
       _sf_sid[$_sf_count]="$s_sid"
+      _sf_worktree[$_sf_count]="$s_worktree"
+      _sf_agent[$_sf_count]="$s_agent"
       _sf_age[$_sf_count]="$age"
       if (( age < 300 )); then
         _sf_active[$_sf_count]="active"
@@ -901,25 +1360,29 @@ case "${1:-}" in
           --arg rate_7d "${_sf_7d[$i]}" \
           --arg reset_5h "${_sf_reset[$i]}" \
           --arg session_id "${_sf_sid[$i]}" \
+          --arg worktree "${_sf_worktree[$i]}" \
+          --arg agent "${_sf_agent[$i]}" \
           --arg age "${_sf_age[$i]}" \
           --arg status "${_sf_active[$i]}" \
           '{model:$model, ctx_pct:($ctx_pct|if .=="" then null else tonumber? end),
             cost:($cost|tonumber? // 0), rate_5h:($rate_5h|if .=="" then null else tonumber? end),
             rate_7d:($rate_7d|if .=="" then null else tonumber? end),
             reset_5h:($reset_5h|if .=="" then null else tonumber? end),
-            session_id:$session_id, age_seconds:($age|tonumber), status:$status}')
+            session_id:$session_id, worktree:$worktree, agent:$agent,
+            age_seconds:($age|tonumber), status:$status}')
         _first=0
       done
       _json_arr+="]"
       echo "$_json_arr" | jq .
       exit 0
     elif [[ "$_FORMAT" == "tsv" ]]; then
-      printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tage_seconds\tstatus\n"
+      printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\n"
       for (( i=0; i<_sf_count; i++ )); do
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
           "${_sf_model[$i]}" "${_sf_ctx[$i]}" "${_sf_cost[$i]:-0}" \
           "${_sf_5h[$i]}" "${_sf_7d[$i]}" "${_sf_reset[$i]}" \
-          "${_sf_sid[$i]}" "${_sf_age[$i]}" "${_sf_active[$i]}"
+          "${_sf_sid[$i]}" "${_sf_worktree[$i]}" "${_sf_agent[$i]}" \
+          "${_sf_age[$i]}" "${_sf_active[$i]}"
       done
       exit 0
     fi
@@ -940,6 +1403,8 @@ case "${1:-}" in
       else age_str="$(( age / 86400 ))d"; fi
 
       line="  ${status_icon} \033[1m${_sf_model[$i]:-?}\033[0m"
+      [[ -n "${_sf_worktree[$i]}" ]] && line+=" \033[2m[wt:${_sf_worktree[$i]}]\033[0m"
+      [[ -n "${_sf_agent[$i]}" ]] && line+=" \033[2m[agent:${_sf_agent[$i]}]\033[0m"
       [[ -n "${_sf_ctx[$i]}" ]] && line+="  ${_sf_ctx[$i]}%"
       [[ -n "${_sf_cost[$i]}" && "${_sf_cost[$i]}" != "0" ]] && line+="  \033[36m\$$(printf '%.2f' "${_sf_cost[$i]}")\033[0m"
       [[ -n "${_sf_5h[$i]}" ]] && line+="  5h:${_sf_5h[$i]%.*}%"
