@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [man/man1/claudii.1]
+    paths: [man/man1/claudii.1, .github/wiki-convert.sh]
 
 permissions:
   contents: write
@@ -18,96 +18,8 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
 
-      - name: Convert man page to markdown
-        run: |
-          # Convert with pandoc, then heavily post-process for readability
-          pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > /tmp/raw.md
-
-          # Post-process: add spacing, separators, breathing room
-          python3 - /tmp/raw.md /tmp/Home.md << 'PYEOF'
-          import sys, re
-
-          with open(sys.argv[1]) as f:
-              raw = f.read()
-
-          # Remove everything up to and including DESCRIPTION heading
-          raw = re.sub(r'^.*?(?=# DESCRIPTION)', '', raw, flags=re.DOTALL)
-          raw = re.sub(r'^# DESCRIPTION\n+', '', raw)
-
-          # Remove SEE ALSO and everything after
-          raw = re.sub(r'# SEE ALSO.*', '', raw, flags=re.DOTALL)
-
-          # Demote headings: # → ##, ## → ###, ### → ####
-          lines = []
-          for line in raw.split('\n'):
-              if line.startswith('### '):
-                  lines.append('#### ' + line[4:])
-              elif line.startswith('## '):
-                  lines.append('### ' + line[3:])
-              elif line.startswith('# '):
-                  lines.append('## ' + line[2:])
-              else:
-                  lines.append(line)
-          raw = '\n'.join(lines)
-
-          # Add --- separator before each ## heading (major sections)
-          raw = re.sub(r'\n(## [A-Z])', r'\n\n---\n\n\1', raw)
-
-          # Add extra blank line after ### headings (subsections)
-          raw = re.sub(r'(### .+)\n', r'\1\n\n', raw)
-
-          # Make **bold** terms in definition lists more visible
-          raw = re.sub(r'^\*\*(\w+)\*\*$', r'**`\1`**', raw, flags=re.MULTILINE)
-
-          # Build final page
-          header = """# claudii ♥
-
-> Fast Claude Code aliases with live model status and session insights.
-
-<sub>Auto-generated from <a href="https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1"><code>man claudii</code></a> — do not edit directly.</sub>
-
----
-
-"""
-
-          footer = """
-
----
-
-## Links
-
-| | |
-|---|---|
-| GitHub | [bmmmm/claudii](https://github.com/bmmmm/claudii) |
-| Install | `brew tap bmmmm/tap && brew install claudii` |
-| Releases | [v0.1.0+](https://github.com/bmmmm/claudii/releases) |
-| Claude Code Status Line | [wynandw87](https://github.com/wynandw87/claude-code-statusline) |
-"""
-
-          with open(sys.argv[2], 'w') as f:
-              f.write(header + raw.strip() + footer)
-          PYEOF
-
-      - name: Create sidebar
-        run: |
-          cat > /tmp/_Sidebar.md << 'EOF'
-          **claudii** ♥
-
-          - [[Home]]
-          - [README](https://github.com/bmmmm/claudii#readme)
-          - [Install](https://github.com/bmmmm/claudii#install)
-          - [Releases](https://github.com/bmmmm/claudii/releases)
-          - [Contributing](https://github.com/bmmmm/claudii/blob/main/CONTRIBUTING.md)
-
-          **Sections**
-          - [Aliases](#aliases)
-          - [ClaudeStatus](#claudestatus)
-          - [Claude Code Status Line](#claude-code-status-line-by-wynandw87)
-          - [Config](#config)
-          - [Environment](#environment)
-          - [Examples](#examples)
-          EOF
-          sed -i 's/^          //' /tmp/_Sidebar.md
+      - name: Convert man page to wiki markdown
+        run: bash .github/wiki-convert.sh man/man1/claudii.1 /tmp/Home.md /tmp/_Sidebar.md
 
       - name: Push to wiki
         env:
