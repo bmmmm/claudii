@@ -5,7 +5,6 @@
 ```bash
 git clone https://github.com/bmmmm/claudii
 cd claudii
-git submodule update --init    # optional: Claude Code Status Line vendor module
 ```
 
 No build step. The plugin runs directly from source.
@@ -37,7 +36,7 @@ Tests are plain bash — no framework needed. Each `test_*.sh` file in `tests/` 
 claudii.plugin.zsh      # entry point (sources lib/)
 bin/claudii              # CLI commands
 bin/claudii-status       # ClaudeStatus health checker
-bin/claudii-sessionline  # Claude Code Status Line handler
+bin/claudii-sessionline  # Claude Code sessionline handler
 lib/config.zsh           # config loader (jq + zsh cache)
 lib/functions.zsh        # shell aliases + metrics
 lib/statusline.zsh       # RPROMPT precmd hook
@@ -66,7 +65,7 @@ man/man1/claudii.1       # man page (groff)
 ## Naming
 
 - **ClaudeStatus** — our RPROMPT health monitor
-- **Claude Code Status Line** — wynandw87's in-session bar (bundled)
+- **Sessionline** — in-session status bar (native implementation)
 - CLI commands: `claudii status`, `claudii sessionline` (lowercase)
 - Config keys: `statusline.*` (internal, don't rename)
 

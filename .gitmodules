@@ -1,3 +1,0 @@
-[submodule "vendor/claude-code-statusline"]
-	path = vendor/claude-code-statusline
-	url = https://github.com/wynandw87/claude-code-statusline

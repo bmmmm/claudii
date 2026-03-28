@@ -68,7 +68,47 @@ function _claudii_statusline_render {
   (( age > ttl )) && refreshing=" %F{8}⟳%f"
   [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
-  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
+  local rprompt="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
+
+  # Session data — shown when a Claude Code session is active (cache < 5min old)
+  local session_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/session-data"
+  if [[ -f "$session_cache" ]]; then
+    local session_age=0
+    if (( _CLAUDII_HAVE_ZSTAT )); then
+      local -A _szst
+      zstat -H _szst "$session_cache" 2>/dev/null \
+        && session_age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_szst[mtime]:-0} ))
+    else
+      session_age=$(( $(date +%s) - $(stat -c%Y "$session_cache" 2>/dev/null || stat -f%m "$session_cache" 2>/dev/null || echo 0) ))
+    fi
+    if (( session_age < 300 )); then
+      local session_content=""
+      { session_content=$(<"$session_cache"); } 2>/dev/null
+      if [[ -n "$session_content" ]]; then
+        local s_model="" s_ctx="" s_cost="" s_5h="" s_7d=""
+        # Pattern matching — same technique as status-models, zero subprocesses
+        [[ $'\n'"$session_content" == *$'\n'model=* ]] && s_model="${${session_content#*model=}%%$'\n'*}"
+        [[ $'\n'"$session_content" == *$'\n'ctx_pct=* ]] && s_ctx="${${session_content#*ctx_pct=}%%$'\n'*}"
+        [[ $'\n'"$session_content" == *$'\n'cost=* ]] && s_cost="${${session_content#*cost=}%%$'\n'*}"
+        [[ $'\n'"$session_content" == *$'\n'rate_5h=* ]] && s_5h="${${session_content#*rate_5h=}%%$'\n'*}"
+        [[ $'\n'"$session_content" == *$'\n'rate_7d=* ]] && s_7d="${${session_content#*rate_7d=}%%$'\n'*}"
+        # Build compact session segment
+        local sess=""
+        [[ -n "$s_ctx" ]] && sess+="%F{8}${s_ctx}%%%f"
+        if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+          [[ -n "$sess" ]] && sess+=" "
+          sess+="%F{cyan}\$${s_cost}%f"
+        fi
+        if [[ -n "$s_5h" ]]; then
+          [[ -n "$sess" ]] && sess+=" "
+          sess+="%F{8}5h:${s_5h%.*}%%%f"
+        fi
+        [[ -n "$sess" ]] && rprompt+=" %F{8}│%f ${sess}"
+      fi
+    fi
+  fi
+
+  RPROMPT="$rprompt"
 }
 
 autoload -Uz add-zsh-hook

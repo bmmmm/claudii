@@ -120,28 +120,25 @@ RPROMPT indicators:
 .B \(rn
 = refreshing (stale cache).
 .
-.SS Claude Code Status Line (by wynandw87)
+.SS Sessionline
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
-Shows model name, context usage, cost, token counts, and rate limits.
-Based on
-.UR https://github.com/wynandw87/claude-code-statusline
-wynandw87/claude-code-statusline
-.UE .
+Shows model name, context usage bar, cost, token counts, rate limits,
+lines changed, and session duration in a single info-dense line.
 .
 .TP
 .B sessionline
-Show whether the Claude Code Status Line is active.
+Show whether the sessionline is active.
 .
 .TP
 .B "sessionline on"
-Add the Claude Code Status Line to
+Add the sessionline to
 .IR ~/.claude/settings.json .
 Restart Claude Code to activate.
 .
 .TP
 .B "sessionline off"
-Remove the Claude Code Status Line from
+Remove the sessionline from
 .IR ~/.claude/settings.json .
 .
 .SS Config
@@ -312,7 +309,7 @@ Monitor only Opus and Sonnet:
 Check every 5 minutes:
 .B claudii status 5m
 .TP
-Enable Claude Code Status Line:
+Enable sessionline:
 .B claudii sessionline on
 .TP
 Read a config value:

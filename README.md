@@ -40,9 +40,9 @@ clh                   # alias table + live status
 ➜  project (main)                        [Opus ↓ Sonnet ✓ Haiku ✓] 3m ⟳
 ```
 
-**Claude Code Status Line** — context, cost, tokens inside Claude:
+**Sessionline** — context, cost, tokens, rate limits inside Claude:
 ```
-Opus ████░░░░░░ 42% $0.55 in:15.2K out:4.5K 5h:23% 7d:71%
+Opus ████░░░░░░ 42% │ $0.55 │ 15K↑ 4K↓ │ 5h:23% 7d:71% │ +156 -23 │ 12m
 ```
 
 ## Quick start
@@ -50,17 +50,13 @@ Opus ████░░░░░░ 42% $0.55 in:15.2K out:4.5K 5h:23% 7d:71%
 ```bash
 claudii                       # show all commands
 claudii status                # live model health
-claudii sessionline on        # enable Claude Code Status Line
+claudii sessionline on        # enable sessionline in Claude Code
 man claudii                   # full reference
 ```
 
 ## Requirements
 
 `zsh` · `jq` · `curl`
-
-## Credits
-
-Claude Code Status Line by [wynandw87/claude-code-statusline](https://github.com/wynandw87/claude-code-statusline).
 
 ## License
 
