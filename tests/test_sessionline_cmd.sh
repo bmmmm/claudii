@@ -62,12 +62,12 @@ assert_contains "sessionline off: already off → not configured msg" "nicht kon
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
 assert_contains "sessionline: not configured after off" "nicht konfiguriert" "$output"
 
-# ── backwards compat: install-sessionline → sessionline on ──
+# ── backwards compat: sessionline shim → cc-statusline ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" install-sessionline 2>&1)
-assert_contains "install-sessionline: aktiviert" "aktiviert" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
+assert_contains "sessionline shim: routes to cc-statusline on → aktiviert" "aktiviert" "$output"
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
-assert_eq "install-sessionline: sets command" "claudii-sessionline" "$val"
+assert_eq "sessionline shim: sets command" "claudii-sessionline" "$val"
 
 # Cleanup
 rm -rf "$TEST_TMP"

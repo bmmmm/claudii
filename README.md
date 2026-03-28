@@ -6,11 +6,10 @@ No agents, no background daemons, no API calls from your prompt. Just reads loca
 
 ## Highlights
 
-- **Three display layers + Dashboard** — model health in RPROMPT, multi-session dashboard above your prompt, dense metrics line inside Claude Code
+- **Three display layers** — model health in RPROMPT, multi-session dashboard above your prompt, dense metrics line inside Claude Code
 - **Cache-hit ratio** — see how efficiently Claude uses prompt caching (`⚡73%`)
 - **Rate-limit intelligence** — 5h/7d usage with reset countdown, auto-fallback to healthy models
 - **Cost tracking** — per-session, per-day, per-model breakdown (`claudii cost`, `claudii trends`)
-- **Session handoff** — pick up where you left off after context exhaustion (`claudii continue --launch`)
 - **Notifications** — get pinged when your rate limit resets (`claudii watch`)
 - **Fast aliases** — `cl` (Sonnet), `clo` (Opus), `clm` (Opus max) with effort mode display
 
@@ -18,11 +17,11 @@ No agents, no background daemons, no API calls from your prompt. Just reads loca
 
 claudii is read-only. It never modifies your Claude sessions or makes API calls on your behalf.
 
-**Shell prompt (RPROMPT + SessionBar):** Reads `~/.cache/claudii/status-models` — a plain text file written by a background subshell that checks `status.claude.com` once every 15 minutes, then exits. No persistent process, no network in `precmd`.
+**Shell prompt (ClaudeStatus + Dashboard):** Reads `~/.cache/claudii/status-models` — a plain text file written by a background subshell that checks `status.claude.com` once every 15 minutes, then exits. No persistent process, no network in `precmd`.
 
-**Inside Claude Code (Sessionline):** Claude Code's native `statusLine` hook calls `claudii-sessionline` on each turn and passes session JSON via stdin. The handler writes a cache file and prints one line. Nothing runs between updates.
+**Inside Claude Code (CC-Statusline):** Claude Code's native `statusLine` hook calls `claudii-sessionline` on each turn and passes session JSON via stdin. The handler writes a cache file and prints one line. Nothing runs between updates.
 
-## Three display layers + Dashboard
+## Three display layers
 
 ### 1. ClaudeStatus — RPROMPT
 Model health in your right prompt. Cache-only, never blocks.
@@ -43,7 +42,7 @@ Opus 4.6 ██░░░░░░ 15% │ $0.30  │ [agent:explorer]     [Opus 
 
 Toggle with `claudii dash on/off/auto`. Detail view: `claudii dash show`
 
-### 3. Sessionline — inside Claude Code
+### 3. CC-Statusline — inside Claude Code
 Dense metrics on every turn via the `statusLine` hook.
 
 ![Sessionline](screenshot-sessionline.png)
@@ -61,9 +60,9 @@ Add to `~/.zshrc`:
 source "$(brew --prefix)/opt/claudii/libexec/claudii.plugin.zsh"
 ```
 
-Enable the sessionline (writes one key to `~/.claude/settings.json`):
+Enable the CC-Statusline (writes one key to `~/.claude/settings.json`):
 ```bash
-claudii sessionline on
+claudii cc-statusline on
 # then restart Claude Code
 ```
 
@@ -88,21 +87,43 @@ clh      # alias table + live model health
 
 Auto-fallback: if a model is down, claudii picks a healthy one.
 
+## Agent Aliases
+
+Agent aliases launch Claude with a specific skill as the system prompt. Configure in `config.json`, list with `claudii agents`:
+
+```bash
+clorch   # Opus high — orchestrate skill
+cle      # Sonnet medium — explorer skill
+```
+
+```bash
+claudii agents                              # list configured agents
+claudii config set agents.clorch.skill orchestrate
+claudii config set agents.clorch.model opus
+claudii config set agents.clorch.effort high
+```
+
 ## Commands
 
 ```bash
-claudii status                 # live model health check
-claudii dash                   # multi-session dashboard detail view
-claudii sessions               # active + recent sessions
-claudii cost                   # per-model cost breakdown (today + all-time)
-claudii trends                 # weekly/daily cost history (Flight Recorder)
-claudii continue --launch      # fork last session into a new one
-claudii watch                  # notify when rate limit resets
-claudii doctor                 # installation health check
-claudii config get <key>       # read/write config (dot-notation)
+claudii                          # smart overview: sessions, account, agents, services
+claudii on                       # enable all display layers
+claudii off                      # disable all display layers
+claudii claudestatus [on|off]    # toggle ClaudeStatus RPROMPT only
+claudii dashboard [on|off]       # toggle Dashboard only
+claudii cc-statusline [on|off]   # toggle CC-Statusline only
+claudii status                   # live model health check     (shortcut: s)
+claudii sessions                 # active + recent sessions    (shortcut: ss)
+claudii dash                     # dashboard detail view
+claudii cost                     # per-model cost breakdown    (shortcut: c)
+claudii trends                   # weekly/daily cost history   (shortcut: t)
+claudii watch                    # notify when rate limit resets
+claudii layers                   # component overview
+claudii doctor                   # installation health check   (shortcut: d)
+claudii config get <key>         # read config value
+claudii config set <key> <val>   # write config value
+claudii agents                   # list configured agent aliases
 ```
-
-Shortcuts: `s` → status, `ss` → sessions, `c` → cost, `t` → trends, `d` → doctor
 
 All commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
 
@@ -118,6 +139,8 @@ All commands support `--json` and `--tsv` for scripting. Full reference: `man cl
 | `status.cache_ttl` | `900` | Health check interval (seconds) |
 | `statusline.models` | `opus,sonnet,haiku` | Models in RPROMPT |
 | `dashboard.enabled` | `auto` | Dashboard mode (auto/true/off) |
+| `watch.sound` | `` | Path to sound file for notifications |
+| `watch.volume` | `50` | Notification sound volume (0-100) |
 
 ## Why claudii?
 

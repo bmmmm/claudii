@@ -10,10 +10,10 @@ BIN_VERSION=$(grep '^VERSION=' "$CLI" | head -1 | tr -d '"' | cut -d= -f2)
 assert_contains "man page version matches bin/claudii" "$BIN_VERSION" "$(cat "$MAN")"
 
 # Top-level commands that must appear in both man page and autocomplete
-# (excludes backwards-compat aliases like install-sessionline and easter eggs like 42)
+# (excludes backwards-compat shims like sessionline/components, and easter eggs like 42)
 # help is not documented separately — the man page itself is the help
-MAN_COMMANDS=(on off status show sessionline sessions continue cost stats trends config debug search metrics restart components about version doctor watch agents release dash)
-ALL_COMMANDS=(on off status show sessionline sessions continue cost stats trends config debug search metrics restart components about version doctor watch agents release dash help)
+MAN_COMMANDS=(on off status cc-statusline sessions cost trends config search restart update layers version doctor watch agents dash claudestatus dashboard)
+ALL_COMMANDS=(on off status cc-statusline sessions cost trends config search restart update layers version doctor watch agents dash claudestatus dashboard help)
 
 for cmd in "${MAN_COMMANDS[@]}"; do
   assert_contains "man page documents: $cmd"     "$cmd"  "$(cat "$MAN")"
@@ -33,7 +33,3 @@ done
 # Removed commands must NOT appear as implemented commands
 assert_eq "toggle removed from bin/claudii" "" \
   "$(grep -E '^\s+toggle\)' "$CLI" || true)"
-assert_eq "update removed from man page" "" \
-  "$(grep -E '^\.B update$' "$MAN" || true)"
-assert_eq "update removed from autocomplete" "" \
-  "$(grep 'update:Pull' "$COMP" || true)"

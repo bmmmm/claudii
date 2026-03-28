@@ -1,4 +1,4 @@
-# test_debug.sh — debug mode E2E tests
+# test_debug.sh — debug level via config set + CLAUDII_LOG_LEVEL env var
 
 TEST_TMP="$CLAUDII_HOME/tmp/test_debug"
 rm -rf "$TEST_TMP"
@@ -13,29 +13,21 @@ CLI="$CLAUDII_HOME/bin/claudii"
 SL="$CLAUDII_HOME/bin/claudii-sessionline"
 JSON='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521},"cost":{"total_cost_usd":0.55}}'
 
-# ── Defaults ──
+# ── debug command is removed ──
+
+output=$(bash "$CLI" debug 2>&1 || true)
+assert_contains "debug command removed: shows config redirect" "config set" "$output"
+
+# ── Use config set to manage debug.level ──
 
 val=$(bash "$CLI" config get debug.level)
 assert_eq "default debug.level = off" "off" "$val"
 
-# ── claudii debug (show current) ──
-
-output=$(bash "$CLI" debug 2>&1)
-assert_contains "debug shows current level" "off" "$output"
-assert_contains "debug shows valid levels" "error" "$output"
-
-# ── claudii debug <level> ──
-
 for level in error warn info debug off; do
-  output=$(bash "$CLI" debug "$level" 2>&1)
-  assert_contains "debug set $level: confirmation" "$level" "$output"
+  bash "$CLI" config set debug.level "$level" >/dev/null 2>&1
   val=$(bash "$CLI" config get debug.level)
-  assert_eq "debug.level = $level after set" "$level" "$val"
+  assert_eq "config set debug.level = $level" "$level" "$val"
 done
-
-# ── Invalid level ──
-
-assert_exit_code "invalid level exits 1" "1" "bash '$CLI' debug invalid"
 
 # ── CLAUDII_LOG_LEVEL env var: sessionline debug output ──
 
@@ -68,6 +60,6 @@ stderr=$(CLAUDII_LOG_LEVEL=debug bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 >/
 assert_contains "status debug: cache hit message" "Cache hit" "$stderr"
 
 # Cleanup
-bash "$CLI" debug off >/dev/null 2>&1
+bash "$CLI" config set debug.level off >/dev/null 2>&1
 rm -rf "$TEST_TMP"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

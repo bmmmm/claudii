@@ -16,29 +16,25 @@ _claudii() {
     command)
       local -a commands
       commands=(
-        'on:Enable ClaudeStatus RPROMPT'
-        'off:Disable ClaudeStatus RPROMPT'
+        'on:Enable all display layers (ClaudeStatus, Dashboard, Sessionline)'
+        'off:Disable all display layers'
+        'claudestatus:Toggle ClaudeStatus RPROMPT (on/off)'
+        'dashboard:Toggle Dashboard above prompt (on/off)'
+        'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
         'status:Live model health check / set refresh interval'
-        'show:Select which models to monitor in RPROMPT'
-        'sessionline:Sessionline (context, cost, tokens, rate limits)'
-        'dash:Multi-session dashboard toggle and detail view'
         'sessions:Active sessions, costs, rate limits'
+        'dash:Multi-session dashboard toggle and detail view'
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'
-        'stats:Session efficiency metrics: counts, costs, model distribution'
         'trends:Weekly and daily cost trends from persistent history (Flight Recorder)'
-        'continue:Session handoff — show context from last session'
-        'debug:Show or set debug level'
-        'metrics:Session performance metrics'
-        'restart:Reload plugin'
-        'search:Launch Claude in search mode'
-        'components:Component overview (ClaudeStatus, SessionBar, Sessionline)'
-        'about:About claudii'
-        'version:Show version'
+        'layers:Component overview (ClaudeStatus, Dashboard, Sessionline)'
+        'version:Show version and about info'
         'doctor:Check claudii installation health'
+        'restart:Reload plugin'
+        'update:Update claudii (auto-detects Homebrew or git install)'
+        'search:Launch Claude in search mode'
         'watch:Background rate-limit reset watcher with macOS notifications'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
-        'release:Tag, push, and create a GitHub release'
         'help:Show help'
       )
       _describe 'command' commands
@@ -57,31 +53,22 @@ _claudii() {
           _describe 'status option' opts
           ;;
 
-        show)
-          if (( $#words == 3 )); then
-            local -a show_cmds
-            show_cmds=('model:Manage displayed models')
-            _describe 'show subcommand' show_cmds
-          elif [[ $words[3] == 'model' ]]; then
-            case $words[4] in
-              '')
-                local -a model_opts
-                model_opts=(
-                  'add:Add a model to the list'
-                  'rm:Remove a model from the list'
-                  'opus:Show only Opus'
-                  'sonnet:Show only Sonnet'
-                  'haiku:Show only Haiku'
-                )
-                _describe 'model option' model_opts
-                ;;
-              add|rm)
-                local -a models
-                models=('opus' 'sonnet' 'haiku')
-                _describe 'model name' models
-                ;;
-            esac
-          fi
+        claudestatus|dashboard)
+          local -a toggle_opts
+          toggle_opts=(
+            'on:Enable'
+            'off:Disable'
+          )
+          _describe 'toggle option' toggle_opts
+          ;;
+
+        cc-statusline|sessionline)
+          local -a sl_opts
+          sl_opts=(
+            'on:Activate in-session statusline in ~/.claude/settings.json'
+            'off:Deactivate in-session statusline'
+          )
+          _describe 'cc-statusline option' sl_opts
           ;;
 
         dash)
@@ -95,52 +82,15 @@ _claudii() {
           _describe 'dash option' dash_opts
           ;;
 
-        continue)
-          local -a cont_opts
-          cont_opts=(
-            '--launch:Fork into new session with context from the last one'
-            '--resume:Resume the exact same session'
-          )
-          _describe 'continue option' cont_opts
-          ;;
-
-        sessionline)
-          local -a sl_opts
-          sl_opts=(
-            'on:Activate in-session statusline in ~/.claude/settings.json'
-            'off:Deactivate in-session statusline'
-          )
-          _describe 'sessionline option' sl_opts
-          ;;
-
         watch)
           local -a watch_cmds
           watch_cmds=(
             'start:Start the background watcher (default)'
             'stop:Stop the background watcher'
             'status:Show watcher status'
+            'test:Send a test notification to verify watch works'
           )
           _describe 'watch subcommand' watch_cmds
-          ;;
-
-        release)
-          local -a rel_opts
-          rel_opts=(
-            '--dry-run:Show what would happen without making changes'
-          )
-          _describe 'release option' rel_opts
-          ;;
-
-        debug)
-          local -a levels
-          levels=(
-            'off:Disable debug output (default)'
-            'error:Only errors'
-            'warn:Warnings and errors'
-            'info:Normal operation info'
-            'debug:Verbose output'
-          )
-          _describe 'debug level' levels
           ;;
 
         config)
@@ -166,6 +116,8 @@ _claudii() {
                 'dashboard.enabled:Dashboard mode (auto/true/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
+                'watch.sound:Path to sound file played on notification (empty = no sound)'
+                'watch.volume:Notification sound volume 0-100 (default: 50)'
               )
               _describe 'config key' keys
               ;;

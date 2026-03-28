@@ -204,20 +204,12 @@ function claudii {
       printf '\033[0;32m✓ claudii neu geladen  (%s)\033[0m\n' "$(basename "$_dir")"
       ;;
     update)
-      if ! git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
-        printf '\033[0;31m✗ Not a git repo — install via:\033[0m\n'
-        printf '  git clone https://github.com/bmmmm/claudii\n'
-        return 1
-      fi
       local _dir="$PWD"
-      printf '\033[0;36mPulling latest claudii...\033[0m\n'
-      git -C "$CLAUDII_HOME" pull --ff-only || {
-        printf '\033[0;31m✗ git pull failed\033[0m\n'; return 1
-      }
+      command claudii update || return $?
       printf '\033[0;36mReloading...\033[0m\n'
       source "$HOME/.zshrc"
       cd "$_dir"
-      printf '\033[0;32m✓ claudii updated and reloaded  (%s)\033[0m\n' "$(basename "$_dir")"
+      printf '\033[0;32m✓ claudii reloaded  (%s)\033[0m\n' "$(basename "$_dir")"
       ;;
     metrics)
       _claudii_show_metrics

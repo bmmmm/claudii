@@ -216,17 +216,17 @@ function _claudii_dashboard {
   if (( active_count > 0 )); then
     # Calculate total cost from active sessions (float sum)
     local today_cost="0"
-    local i
-    for (( i=1; i<=active_count; i++ )); do
-      if [[ -n "${active_costs[$i]}" && "${active_costs[$i]}" != "0" ]]; then
-        local cost_fmt
-        printf -v cost_fmt '%.2f' "${active_costs[$i]}" 2>/dev/null || cost_fmt="0.00"
+    local _ci
+    for (( _ci=1; _ci<=active_count; _ci++ )); do
+      if [[ -n "${active_costs[$_ci]}" && "${active_costs[$_ci]}" != "0" ]]; then
+        local _cost_fmt
+        _cost_fmt=$(printf '%.2f' "${active_costs[$_ci]}" 2>/dev/null) || _cost_fmt="0.00"
         # Use awk for float addition — no bc dependency
-        today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $cost_fmt }" 2>/dev/null || echo "$today_cost")
+        today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $_cost_fmt }" 2>/dev/null || echo "$today_cost")
       fi
     done
     [[ -n "$global_line" ]] && global_line+="${SEP}"
-    global_line+="%F{cyan}\$${today_cost}%f %F{8}today (${active_count} session"
+    global_line+="%F{cyan}%{\$%}${today_cost}%f %F{8}today (${active_count} session"
     (( active_count != 1 )) && global_line+="s"
     global_line+=")%f"
   fi
@@ -234,44 +234,45 @@ function _claudii_dashboard {
   [[ -n "$global_line" ]] && dash_lines="${global_line}"$'\n'
 
   # ── Session lines ──
-  local i
-  for (( i=1; i<=active_count; i++ )); do
+  local _si
+  for (( _si=1; _si<=active_count; _si++ )); do
     local s_line=""
 
+    # Skip sessions with no context percentage (stale/incomplete)
+    [[ -z "${active_ctxs[$_si]}" ]] && continue
+
     # Model (bold)
-    s_line+="%B${active_models[$i]}%b"
+    s_line+="%B${active_models[$_si]}%b"
 
     # Context bar (8 blocks) + percentage
-    if [[ -n "${active_ctxs[$i]}" ]]; then
-      local pct=${active_ctxs[$i]%.*}
-      (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
-      local filled=$(( pct * 8 / 100 )) empty=$(( 8 - filled ))
-      local ctx_color="green"
-      (( pct >= 70 )) && ctx_color="yellow"
-      (( pct >= 90 )) && ctx_color="red"
-      local ctx_bar=""
-      (( filled > 0 )) && ctx_bar+="${(l:$filled::█:)}"
-      (( empty > 0 )) && ctx_bar+="%F{8}${(l:$empty::░:)}%f"
-      s_line+=" %F{${ctx_color}}${ctx_bar}%f %F{8}${pct}%%%f"
-    fi
+    local _pct=${active_ctxs[$_si]%.*}
+    (( _pct < 0 )) && _pct=0; (( _pct > 100 )) && _pct=100
+    local _filled=$(( _pct * 8 / 100 )) _empty=$(( 8 - _filled ))
+    local _ctx_color="green"
+    (( _pct >= 70 )) && _ctx_color="yellow"
+    (( _pct >= 90 )) && _ctx_color="red"
+    local _ctx_bar=""
+    (( _filled > 0 )) && _ctx_bar+="${(l:$_filled::█:)}"
+    (( _empty > 0 )) && _ctx_bar+="%F{8}${(l:$_empty::░:)}%f"
+    s_line+=" %F{${_ctx_color}}${_ctx_bar}%f %F{8}${_pct}%%%f"
 
     # Cost
-    if [[ -n "${active_costs[$i]}" && "${active_costs[$i]}" != "0" ]]; then
-      local cost_fmt
-      printf -v cost_fmt '%.2f' "${active_costs[$i]}" 2>/dev/null || cost_fmt="${active_costs[$i]}"
-      s_line+="${SEP}%F{cyan}\$${cost_fmt}%f"
+    if [[ -n "${active_costs[$_si]}" && "${active_costs[$_si]}" != "0" ]]; then
+      local _cost_fmt_s
+      _cost_fmt_s=$(printf '%.2f' "${active_costs[$_si]}" 2>/dev/null) || _cost_fmt_s="${active_costs[$_si]}"
+      s_line+="${SEP}%F{cyan}%{\$%}${_cost_fmt_s}%f"
     fi
 
     # Cache hit ratio
-    if [[ -n "${active_cache_pcts[$i]}" && "${active_cache_pcts[$i]}" != "0" && "${active_cache_pcts[$i]}" != "" ]]; then
-      s_line+="${SEP}%F{8}⚡${active_cache_pcts[$i]}%%%f"
+    if [[ -n "${active_cache_pcts[$_si]}" && "${active_cache_pcts[$_si]}" != "0" && "${active_cache_pcts[$_si]}" != "" ]]; then
+      s_line+="${SEP}%F{8}⚡${active_cache_pcts[$_si]}%%%f"
     fi
 
     # Worktree / agent context
-    if [[ -n "${active_worktrees[$i]}" ]]; then
-      s_line+="${SEP}%F{8}[wt:${active_worktrees[$i]}]%f"
-    elif [[ -n "${active_agents[$i]}" ]]; then
-      s_line+="${SEP}%F{8}[agent:${active_agents[$i]}]%f"
+    if [[ -n "${active_worktrees[$_si]}" ]]; then
+      s_line+="${SEP}%F{8}[wt:${active_worktrees[$_si]}]%f"
+    elif [[ -n "${active_agents[$_si]}" ]]; then
+      s_line+="${SEP}%F{8}[agent:${active_agents[$_si]}]%f"
     fi
 
     dash_lines+="${s_line}"$'\n'

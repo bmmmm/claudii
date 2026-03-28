@@ -31,12 +31,12 @@ val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "default: statusline.enabled = true" "true" "$val"
 
 output=$(bash "$CLI" off 2>&1)
-assert_contains "off: shows deaktiviert" "deaktiviert" "$output"
+assert_contains "off: shows disabled" "disabled" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "after off: enabled = false" "false" "$val"
 
 output=$(bash "$CLI" on 2>&1)
-assert_contains "on: shows aktiviert" "aktiviert" "$output"
+assert_contains "on: shows enabled" "enabled" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "after on: enabled = true" "true" "$val"
 

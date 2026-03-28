@@ -65,28 +65,27 @@ usage() {
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
   printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + live status"
   printf '\n'
+  printf '  \033[38;5;213mDisplay Layers\033[0m\n'
+  printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
+  printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
+  printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
+  printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "Sessionline inside Claude toggle"
+  printf '\n'
   printf '  \033[38;5;213mClaudeStatus\033[0m                              RPROMPT\n'
-  printf "    %-33s $d %s\n" "on | off"                    "enable/disable"
-  printf "    %-33s $d %s\n" "status [5m|15m|30m]"         "live model check · refresh interval"
-  printf "    %-33s $d %s\n" "show model [add|rm|<names>]" "select which models to monitor"
+  printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf '\n'
   printf "  \033[38;5;213mSessionline\033[0m                               inside Claude\n"
-  printf "    %-33s $d %s\n" "sessionline [on|off]"        "context · cost · tokens · rate limits"
-  printf "    %-33s $d %s\n" "sessions"                    "active sessions · costs · rate limits"
+  printf "    %-33s $d %s\n" "sessions (ss)"                   "active sessions · costs · rate limits"
   printf '\n'
   printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
-  printf "    %-33s $d %s\n" "dash [on|off|auto|show]"       "multi-session dashboard toggle"
+  printf "    %-33s $d %s\n" "dash [on|off|auto|show]"         "multi-session dashboard toggle"
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
-  printf "    doctor · cost · stats · trends · debug · metrics · restart · components · about\n"
-  printf "    continue [--launch|--resume]  — session handoff\n"
+  printf "    cost (c) · trends (t) · doctor (d) · restart · layers · version\n"
   printf "    agents  — configured agents (alias→skill) or onboarding\n"
   printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
-  printf "    release <version> [--dry-run]  — tag, push, create GitHub release\n"
-  printf '\n'
-  printf '  \033[38;5;213mshortcuts\033[0m\n'
-  printf "  s=status  ss=sessions  c=cost  t=trends  d=doctor\n"
+  printf "    search ['query']  — launch Claude in search mode\n"
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
@@ -104,14 +103,74 @@ esac
 case "${1:-}" in
   on)
     _cfg_init
-    echo "$(jq '.statusline.enabled = true' "$CONFIG")" > "$CONFIG"
-    echo -e "\033[0;32mClaudeStatus aktiviert\033[0m"
+    # Enable all three layers
+    echo "$(jq '.statusline.enabled = true | .dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
+    SETTINGS="${HOME}/.claude/settings.json"
+    if [[ -f "$SETTINGS" ]]; then
+      if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
+        echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
+      fi
+    fi
+    echo -e "\033[0;32mAll layers enabled\033[0m  (ClaudeStatus · Dashboard · Sessionline)"
     ;;
   off)
     _cfg_init
-    echo "$(jq '.statusline.enabled = false' "$CONFIG")" > "$CONFIG"
-    echo -e "\033[0;33mClaudeStatus deaktiviert\033[0m"
+    # Disable all three layers
+    echo "$(jq '.statusline.enabled = false | .dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+    SETTINGS="${HOME}/.claude/settings.json"
+    if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
+      echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
+    fi
+    echo -e "\033[0;33mAll layers disabled\033[0m  (ClaudeStatus · Dashboard · Sessionline)"
     ;;
+
+  claudestatus)
+    _cfg_init
+    case "${2:-}" in
+      on)
+        echo "$(jq '.statusline.enabled = true' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mClaudeStatus aktiviert\033[0m"
+        ;;
+      off)
+        echo "$(jq '.statusline.enabled = false' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;33mClaudeStatus deaktiviert\033[0m"
+        ;;
+      "")
+        enabled=$(_cfgget statusline.enabled)
+        if [[ "$enabled" == "true" ]]; then
+          echo -e "ClaudeStatus: \033[0;32mon\033[0m"
+        else
+          echo -e "ClaudeStatus: \033[0;33moff\033[0m"
+        fi
+        ;;
+      *)
+        echo "Usage: claudii claudestatus [on|off]"; exit 1
+        ;;
+    esac
+    ;;
+
+  dashboard)
+    _cfg_init
+    case "${2:-}" in
+      on)
+        echo "$(jq '.dashboard.enabled = "true"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mDashboard enabled\033[0m"
+        ;;
+      off)
+        echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;33mDashboard disabled\033[0m"
+        ;;
+      "")
+        current=$(_cfgget dashboard.enabled)
+        [[ -z "$current" ]] && current="auto"
+        echo "Dashboard: $current"
+        ;;
+      *)
+        echo "Usage: claudii dashboard [on|off]"; exit 1
+        ;;
+    esac
+    ;;
+
   status)
     _cfg_init
     case "${2:-}" in
@@ -147,47 +206,8 @@ case "${1:-}" in
     ;;
 
   show)
-    _cfg_init
-    case "${2:-}" in
-      model)
-        case "${3:-}" in
-          add)
-            model="${4:?Usage: claudii show model add <model>}"
-            current=$(_cfgget statusline.models)
-            if echo "$current" | tr ',' '\n' | grep -qx "$model"; then
-              echo "$model ist bereits in der Liste: $current"
-            else
-              new_models="${current},${model}"
-              echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
-              echo -e "\033[0;32mModelle: $new_models\033[0m"
-            fi
-            ;;
-          rm|remove)
-            model="${4:?Usage: claudii show model rm <model>}"
-            current=$(_cfgget statusline.models)
-            new_models=$(echo "$current" | tr ',' '\n' | grep -vx "$model" | tr '\n' ',' | sed 's/,$//')
-            if [[ "$new_models" == "$current" ]]; then
-              echo "$model nicht gefunden in: $current"; exit 1
-            fi
-            echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
-            echo -e "\033[0;32mModelle: ${new_models:-keine}\033[0m"
-            ;;
-          "")
-            current=$(_cfgget statusline.models)
-            echo "Angezeigte Modelle: $current"
-            ;;
-          *)
-            # All remaining args are model names to set directly
-            new_models=$(IFS=,; echo "${*:3}")
-            echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
-            echo -e "\033[0;32mModelle: $new_models\033[0m"
-            ;;
-        esac
-        ;;
-      ""|*)
-        echo "Usage: claudii show model [add|rm|<model> ...]"
-        ;;
-    esac
+    echo "claudii show is removed. Use: claudii config set statusline.models <models>"
+    exit 1
     ;;
 
   dash)
@@ -374,7 +394,7 @@ case "${1:-}" in
     esac
     ;;
 
-  sessionline)
+  cc-statusline)
     SETTINGS="${HOME}/.claude/settings.json"
     case "${2:-}" in
       on)
@@ -409,19 +429,18 @@ case "${1:-}" in
           echo -e "Sessionline: \033[0;33mandere Konfiguration\033[0m  ($other)"
         else
           echo "Sessionline: nicht konfiguriert"
-          echo "  → claudii sessionline on  zum Aktivieren"
+          echo "  → claudii cc-statusline on  zum Aktivieren"
         fi
         ;;
       *)
-        echo "Usage: claudii sessionline [on|off]"; exit 1
+        echo "Usage: claudii cc-statusline [on|off]"; exit 1
         ;;
     esac
     ;;
 
-  # Backwards compatibility
-  install-sessionline)
-    exec "$0" sessionline on
-    ;;
+  # Backward-compat shim: sessionline → cc-statusline
+  sessionline) exec "$0" cc-statusline "${@:2}" ;;
+
 
   config)
     _cfg_init
@@ -476,23 +495,8 @@ case "${1:-}" in
     ;;
 
   debug)
-    _cfg_init
-    if [[ -z "${2:-}" ]]; then
-      current=$(jq -r 'if (.debug.level | type) != "null" then .debug.level else "off" end' "$CONFIG")
-      echo "debug level: $current"
-      echo "Valid levels: off, error, warn, info, debug"
-    else
-      case "${2}" in
-        off|error|warn|info|debug)
-          echo "$(jq ".debug.level = \"${2}\"" "$CONFIG")" > "$CONFIG"
-          echo "Debug level: ${2}"
-          ;;
-        *)
-          echo "Unbekannter Level: ${2}"
-          echo "Valid levels: off, error, warn, info, debug"; exit 1
-          ;;
-      esac
-    fi
+    echo "claudii debug is removed. Use: claudii config set debug.level <level>"
+    exit 1
     ;;
 
   cost)
@@ -614,143 +618,8 @@ case "${1:-}" in
     ;;
 
   stats)
-    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-    shopt -s nullglob
-    session_files=("$cache_dir"/session-*)
-    shopt -u nullglob
-
-    if [[ ${#session_files[@]} -eq 0 ]]; then
-      echo "No session data found. Start a Claude session first."
-      exit 0
-    fi
-
-    now=$(date +%s)
-    cutoff=$(( now - 86400 ))
-
-    # Associative arrays for per-model totals
-    declare -A today_cost today_count alltime_cost alltime_count
-
-    for f in "${session_files[@]}"; do
-      [[ -f "$f" ]] || continue
-
-      # Read key=value pairs
-      cost="" model=""
-      while IFS='=' read -r key val; do
-        case "$key" in
-          cost)  cost="$val"  ;;
-          model) model="$val" ;;
-        esac
-      done < "$f"
-
-      [[ -z "$model" ]] && continue
-      [[ -z "$cost" ]]  && cost="0"
-
-      # Normalize model name to short form
-      case "$model" in
-        *[Oo]pus*)   short="Opus"   ;;
-        *[Ss]onnet*) short="Sonnet" ;;
-        *[Hh]aiku*)  short="Haiku"  ;;
-        *)           short="$model" ;;
-      esac
-
-      # Get mtime
-      if stat -f%m "$f" >/dev/null 2>&1; then
-        mtime=$(stat -f%m "$f")
-      else
-        mtime=$(stat -c%Y "$f")
-      fi
-
-      # Accumulate all-time
-      alltime_cost[$short]=$(printf '%.4f' \
-        "$(echo "${alltime_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${alltime_cost[$short]:-0}")")
-      alltime_count[$short]=$(( ${alltime_count[$short]:-0} + 1 ))
-
-      # Accumulate today (mtime within last 24h)
-      if (( mtime >= cutoff )); then
-        today_cost[$short]=$(printf '%.4f' \
-          "$(echo "${today_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${today_cost[$short]:-0}")")
-        today_count[$short]=$(( ${today_count[$short]:-0} + 1 ))
-      fi
-    done
-
-    cyan='\033[0;36m'
-    reset='\033[0m'
-    line='  ─────────────────────────────────'
-
-    # Count totals for section headers
-    today_total_count=0
-    for m in "${!today_count[@]}"; do
-      today_total_count=$(( today_total_count + today_count[$m] ))
-    done
-    alltime_total_count=0
-    for m in "${!alltime_count[@]}"; do
-      alltime_total_count=$(( alltime_total_count + alltime_count[$m] ))
-    done
-
-    _stats_section() {
-      local -n _costs=$1 _counts=$2
-      local total=0 has_data=0
-      for m in Opus Sonnet Haiku; do
-        [[ -z "${_counts[$m]+x}" ]] && continue
-        c="${_costs[$m]}"
-        n="${_counts[$m]}"
-        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
-          "$m" "$n" "$( (( n != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$c")"
-        total=$(echo "$total + $c" | bc -l)
-        has_data=1
-      done
-      # Catch any unknown model names not in the ordered list above
-      for m in "${!_counts[@]}"; do
-        [[ "$m" == "Opus" || "$m" == "Sonnet" || "$m" == "Haiku" ]] && continue
-        c="${_costs[$m]}"
-        n="${_counts[$m]}"
-        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
-          "$m" "$n" "$( (( n != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$c")"
-        total=$(echo "$total + $c" | bc -l)
-        has_data=1
-      done
-      if (( has_data )); then
-        printf '%s\n' "$line"
-        local tot_count=0
-        for m in "${!_counts[@]}"; do tot_count=$(( tot_count + _counts[$m] )); done
-        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
-          "Total" "$tot_count" "$( (( tot_count != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$total")"
-      else
-        printf "    (none)\n"
-      fi
-    }
-
-    printf '\n'
-    printf '  \033[0;36mclaudii stats\033[0m\n'
-    printf '\n'
-    printf '  \033[38;5;213mToday\033[0m (%d session%s)\n' \
-      "$today_total_count" "$( (( today_total_count != 1 )) && echo 's' || true)"
-    _stats_section today_cost today_count
-    printf '\n'
-    printf '  \033[38;5;213mAll time\033[0m (%d session%s)\n' \
-      "$alltime_total_count" "$( (( alltime_total_count != 1 )) && echo 's' || true)"
-    _stats_section alltime_cost alltime_count
-
-    # Model split (all-time)
-    if [[ ${#alltime_count[@]} -gt 0 ]]; then
-      printf '\n'
-      split_str=""
-      for m in Opus Sonnet Haiku; do
-        [[ -z "${alltime_count[$m]+x}" ]] && continue
-        pct=$(printf '%.0f' "$(echo "${alltime_count[$m]} * 100 / $alltime_total_count" | bc -l)")
-        [[ -n "$split_str" ]] && split_str+=" · "
-        split_str+="${m} ${pct}%"
-      done
-      # Unknown models
-      for m in "${!alltime_count[@]}"; do
-        [[ "$m" == "Opus" || "$m" == "Sonnet" || "$m" == "Haiku" ]] && continue
-        pct=$(printf '%.0f' "$(echo "${alltime_count[$m]} * 100 / $alltime_total_count" | bc -l)")
-        [[ -n "$split_str" ]] && split_str+=" · "
-        split_str+="${m} ${pct}%"
-      done
-      printf '  Model split: %s\n' "$split_str"
-    fi
-    printf '\n'
+    echo "claudii stats is removed."
+    exit 1
     ;;
 
   trends)
@@ -1029,181 +898,8 @@ case "${1:-}" in
     ;;
 
   continue)
-    # Session Handoff — show context from last session, optionally launch new one
-    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-
-    # ── Find the project hash for the current directory ──
-    _cwd_hash=$(echo "$PWD" | sed 's|/|-|g; s|^-||')
-    _project_dir="$HOME/.claude/projects/-${_cwd_hash}"
-    if [[ ! -d "$_project_dir" ]]; then
-      # Fallback: search all projects for the most recent transcript
-      _project_dir=""
-    fi
-
-    # ── Find the latest JSONL transcript ──
-    _find_latest_jsonl() {
-      local search_dir="$1" latest="" latest_mt=0
-      while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        # Skip subagent transcripts — only main session files
-        [[ "$f" == */subagents/* ]] && continue
-        local mt
-        if stat -f%m "$f" >/dev/null 2>&1; then
-          mt=$(stat -f%m "$f")
-        else
-          mt=$(stat -c%Y "$f" 2>/dev/null || echo 0)
-        fi
-        if (( mt > latest_mt )); then
-          latest_mt=$mt
-          latest="$f"
-        fi
-      done < <(find "$search_dir" -maxdepth 2 -name "*.jsonl" -type f 2>/dev/null)
-      echo "$latest"
-    }
-
-    if [[ -n "$_project_dir" ]]; then
-      _transcript=$(_find_latest_jsonl "$_project_dir")
-    fi
-    if [[ -z "${_transcript:-}" ]]; then
-      # Try all projects
-      _transcript=$(_find_latest_jsonl "$HOME/.claude/projects")
-    fi
-
-    if [[ -z "${_transcript:-}" ]]; then
-      echo "No transcript found."
-      echo "  Start a Claude session first, then run: claudii continue"
-      exit 1
-    fi
-
-    # ── Extract session ID from filename ──
-    _basename=$(basename "$_transcript" .jsonl)
-    _session_id="$_basename"
-
-    # ── Get transcript mtime ──
-    if stat -f%m "$_transcript" >/dev/null 2>&1; then
-      _tx_mt=$(stat -f%m "$_transcript")
-    else
-      _tx_mt=$(stat -c%Y "$_transcript" 2>/dev/null || echo 0)
-    fi
-    _tx_date=$(date -r "$_tx_mt" "+%Y-%m-%d %H:%M" 2>/dev/null || date -d "@$_tx_mt" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "unknown")
-
-    # ── Read session cache for model/cost/context info ──
-    _c_model="" _c_ctx="" _c_cost=""
-    _cache_file="$cache_dir/session-${_session_id:0:8}"
-    if [[ -f "$_cache_file" ]]; then
-      _cc=$(cat "$_cache_file" 2>/dev/null) || true
-      [[ $'\n'"$_cc" == *$'\n'model=* ]]   && _c_model="${_cc#*model=}"   && _c_model="${_c_model%%$'\n'*}"
-      [[ $'\n'"$_cc" == *$'\n'ctx_pct=* ]] && _c_ctx="${_cc#*ctx_pct=}"   && _c_ctx="${_c_ctx%%$'\n'*}"
-      [[ $'\n'"$_cc" == *$'\n'cost=* ]]    && _c_cost="${_cc#*cost=}"     && _c_cost="${_c_cost%%$'\n'*}"
-    fi
-
-    # ── Extract last N user messages (only actual typed messages, not tool results) ──
-    _max_user=5
-    _max_chars=500
-    _user_msgs=()
-    while IFS= read -r msg; do
-      [[ -z "$msg" || "$msg" == "null" ]] && continue
-      # Skip system-injected messages (XML tags from tool results, usage stats, etc.)
-      [[ "$msg" == "<"* ]] && continue
-      [[ "$msg" == *"</task-notification>"* ]] && continue
-      # Truncate long messages
-      if (( ${#msg} > _max_chars )); then
-        msg="${msg:0:$_max_chars}..."
-      fi
-      _user_msgs+=("$msg")
-    done < <(
-      jq -r '
-        select(.type == "user" and .userType == "external") |
-        .message.content |
-        if type == "string" then
-          if length > 0 then . else empty end
-        elif type == "array" then
-          [.[] | select(.type == "text") | .text] | join("") |
-          if length > 0 then . else empty end
-        else empty end
-      ' "$_transcript" 2>/dev/null | tail -"$_max_user"
-    )
-
-    # ── Extract last assistant text message (summary) ──
-    _summary=""
-    _summary=$(
-      jq -r '
-        select(.type == "assistant") |
-        [.message.content[]? | select(.type == "text") | .text] | join("") |
-        if length > 0 then . else empty end
-      ' "$_transcript" 2>/dev/null | tail -1
-    )
-    # Truncate summary to 1000 chars
-    if [[ -n "$_summary" ]] && (( ${#_summary} > 1000 )); then
-      _summary="${_summary:0:1000}..."
-    fi
-
-    # ── Handle subcommands ──
-    case "${2:-}" in
-      --launch)
-        # Launch a new forked session from the last one
-        echo "Forking session ${_session_id:0:8}..."
-        exec claude --continue --fork-session
-        ;;
-      --resume)
-        # Resume the exact same session (no fork)
-        echo "Resuming session ${_session_id:0:8}..."
-        exec claude --resume "$_session_id"
-        ;;
-      "")
-        # Default: print context summary
-        printf '\n'
-        printf '  \033[0;36mclaudii continue\033[0m\n'
-        printf '\n'
-
-        # Session info line
-        _info="  Last session:"
-        [[ -n "$_c_model" ]] && _info+=" \033[1m${_c_model}\033[0m,"
-        [[ -n "$_c_ctx" ]]   && _info+=" ${_c_ctx}% context,"
-        [[ -n "$_c_cost" && "$_c_cost" != "0" ]] && _info+=" \033[0;36m\$$(printf '%.2f' "$_c_cost")\033[0m,"
-        # Remove trailing comma
-        _info="${_info%,}"
-        printf '%b\n' "$_info"
-
-        printf '  Transcript: \033[38;5;240m%s\033[0m\n' "$_transcript"
-        printf '  Updated:    \033[38;5;240m%s\033[0m\n' "$_tx_date"
-        printf '\n'
-
-        # User messages
-        if [[ ${#_user_msgs[@]} -gt 0 ]]; then
-          printf '  \033[38;5;213m── Last %d user message%s ──\033[0m\n' \
-            "${#_user_msgs[@]}" "$( (( ${#_user_msgs[@]} != 1 )) && echo 's' || true)"
-          _n=1
-          for _msg in "${_user_msgs[@]}"; do
-            # Replace newlines with spaces for display, trim
-            _display=$(echo "$_msg" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
-            printf '  %d. "%s"\n' "$_n" "$_display"
-            (( _n++ ))
-          done
-          printf '\n'
-        fi
-
-        # Summary
-        if [[ -n "$_summary" ]]; then
-          printf '  \033[38;5;213m── Context summary ──\033[0m\n'
-          # Print summary with word wrap at ~76 chars, indented
-          echo "$_summary" | fold -s -w 72 | while IFS= read -r _line; do
-            printf '  %s\n' "$_line"
-          done
-          printf '\n'
-        fi
-
-        # Action hints
-        printf '  \033[38;5;240mTo continue:\033[0m\n'
-        printf '    claudii continue --launch   fork into new session with context\n'
-        printf '    claudii continue --resume   resume the exact same session\n'
-        printf '    claude --continue            built-in continue (same session)\n'
-        printf '\n'
-        ;;
-      *)
-        echo "Usage: claudii continue [--launch|--resume]"; exit 1
-        ;;
-    esac
+    echo "claudii continue is removed. Use: claude --continue"
+    exit 1
     ;;
 
   search)
@@ -1217,180 +913,305 @@ case "${1:-}" in
     ;;
 
   "")
-    # Smart default: show contextual info based on current state
+    # Smart account overview: Sessions · Account · Agents · Services
+    _cfg_init
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     now=$(date +%s)
 
+    # ANSI colors (stdout output, not PROMPT)
+    _ov_green='\033[0;32m'
+    _ov_yellow='\033[0;33m'
+    _ov_red='\033[0;31m'
+    _ov_cyan='\033[0;36m'
+    _ov_dim='\033[38;5;240m'
+    _ov_bold='\033[1m'
+    _ov_reset='\033[0m'
+
     printf '\n'
-    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+    printf "  ${_ov_cyan}claudii${_ov_reset} ${_ov_bold}v%s${_ov_reset}\n" "$VERSION"
     printf '\n'
 
-    # Collect session data
+    # ── Sessions ──────────────────────────────────────────────────────
+    printf "  ${_ov_bold}Sessions${_ov_reset}\n"
+
     shopt -s nullglob
-    _sd_files=("$cache_dir"/session-*)
+    _ov_files=("$cache_dir"/session-*)
     shopt -u nullglob
 
-    if [[ ${#_sd_files[@]} -eq 0 ]]; then
-      # No cache at all
-      printf '  No session data yet.\n'
-      printf '  Run \033[0;36mclaudii doctor\033[0m to check your setup.\n'
-      printf '\n'
-      printf '  \033[38;5;240mclaudii help  for all commands\033[0m\n'
-      printf '\n'
-    else
-      # Find most-recent session file and read it
-      _sd_latest="" _sd_latest_mt=0
-      for _sd_f in "${_sd_files[@]}"; do
-        [[ -f "$_sd_f" ]] || continue
-        if stat -f%m "$_sd_f" >/dev/null 2>&1; then
-          _sd_mt=$(stat -f%m "$_sd_f")
+    _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_mt=0
+    _ov_today_cost=0 _ov_today_count=0
+    _ov_cutoff=$(( now - 86400 ))
+    _ov_any_session=0
+
+    if [[ ${#_ov_files[@]} -gt 0 ]]; then
+      for _ov_f in "${_ov_files[@]}"; do
+        [[ -f "$_ov_f" ]] || continue
+
+        # mtime
+        if stat -f%m "$_ov_f" >/dev/null 2>&1; then
+          _ov_mt=$(stat -f%m "$_ov_f")
         else
-          _sd_mt=$(stat -c%Y "$_sd_f")
+          _ov_mt=$(stat -c%Y "$_ov_f")
         fi
-        if (( _sd_mt > _sd_latest_mt )); then
-          _sd_latest_mt=$_sd_mt
-          _sd_latest=$_sd_f
-        fi
-      done
+        _ov_age=$(( now - _ov_mt ))
 
-      # Parse the latest session file
-      _sd_content="" _sd_model="" _sd_ctx="" _sd_cost="" _sd_5h="" _sd_7d="" _sd_reset=""
-      if [[ -n "$_sd_latest" ]]; then
-        _sd_content=$(cat "$_sd_latest" 2>/dev/null) || true
-        [[ $'\n'"$_sd_content" == *$'\n'model=* ]]    && _sd_model="${_sd_content#*model=}"    && _sd_model="${_sd_model%%$'\n'*}"
-        [[ $'\n'"$_sd_content" == *$'\n'ctx_pct=* ]]  && _sd_ctx="${_sd_content#*ctx_pct=}"    && _sd_ctx="${_sd_ctx%%$'\n'*}"
-        [[ $'\n'"$_sd_content" == *$'\n'cost=* ]]     && _sd_cost="${_sd_content#*cost=}"      && _sd_cost="${_sd_cost%%$'\n'*}"
-        [[ $'\n'"$_sd_content" == *$'\n'rate_5h=* ]]  && _sd_5h="${_sd_content#*rate_5h=}"     && _sd_5h="${_sd_5h%%$'\n'*}"
-        [[ $'\n'"$_sd_content" == *$'\n'rate_7d=* ]]  && _sd_7d="${_sd_content#*rate_7d=}"     && _sd_7d="${_sd_7d%%$'\n'*}"
-        [[ $'\n'"$_sd_content" == *$'\n'reset_5h=* ]] && _sd_reset="${_sd_content#*reset_5h=}" && _sd_reset="${_sd_reset%%$'\n'*}"
-      fi
+        # Parse key=value pairs
+        _ov_content=$(cat "$_ov_f" 2>/dev/null) || continue
+        _ov_model="" _ov_ctx="" _ov_cost="" _ov_5h="" _ov_7d="" _ov_reset_ts="" _ov_ppid=""
+        _ov_worktree="" _ov_agent="" _ov_cache_pct="" _ov_7d_start=""
+        while IFS='=' read -r _k _v; do
+          case "$_k" in
+            model)         _ov_model="$_v" ;;
+            ctx_pct)       _ov_ctx="$_v" ;;
+            cost)          _ov_cost="$_v" ;;
+            rate_5h)       _ov_5h="$_v" ;;
+            rate_7d)       _ov_7d="$_v" ;;
+            reset_5h)      _ov_reset_ts="$_v" ;;
+            ppid)          _ov_ppid="$_v" ;;
+            worktree)      _ov_worktree="$_v" ;;
+            agent)         _ov_agent="$_v" ;;
+            cache_pct)     _ov_cache_pct="$_v" ;;
+            rate_7d_start) _ov_7d_start="$_v" ;;
+          esac
+        done <<< "$_ov_content"
 
-      _sd_age=$(( now - _sd_latest_mt ))
-      _sd_active=$(( _sd_age < 300 ))
+        # Skip if no model (corrupt/empty file)
+        [[ -z "$_ov_model" ]] && continue
+        _ov_any_session=1
 
-      # Check rate limit
-      _sd_5h_int="${_sd_5h%.*}"
-      _sd_rate_warn=0
-      [[ -n "$_sd_5h_int" ]] && (( _sd_5h_int >= 80 )) && _sd_rate_warn=1
-
-      if (( _sd_rate_warn )); then
-        # Rate-limited: show warning
-        _sd_reset_str=""
-        if [[ -n "$_sd_reset" && "$_sd_reset" != "0" ]]; then
-          _sd_remaining=$(( _sd_reset - now ))
-          (( _sd_remaining > 0 )) && _sd_reset_str=" — reset in $(( _sd_remaining / 60 ))min"
-        fi
-        printf '  \033[0;33m⚠\033[0m \033[1m%s\033[0m 5h:%s%%%s\n' \
-          "${_sd_model:-?}" "${_sd_5h_int}" "$_sd_reset_str"
-      else
-        # Active or stale session — show session line
-        if (( _sd_active )); then
-          _sd_icon="\033[0;32m●\033[0m"
-        else
-          _sd_icon="\033[0;90m○\033[0m"
-        fi
-
-        # Build context bar (10 blocks)
-        _sd_bar=""
-        if [[ -n "$_sd_ctx" && "$_sd_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-          _sd_filled=$(( ${_sd_ctx%.*} / 10 ))
-          (( _sd_filled > 10 )) && _sd_filled=10
-          _sd_empty=$(( 10 - _sd_filled ))
-          for (( _i=0; _i<_sd_filled; _i++ )); do _sd_bar+="\033[0;32m█\033[0m"; done
-          for (( _i=0; _i<_sd_empty; _i++ ));  do _sd_bar+="\033[38;5;240m░\033[0m"; done
-        fi
-
-        # Build line
-        _sd_line="  ${_sd_icon} \033[1m${_sd_model:-?}\033[0m"
-        [[ -n "$_sd_bar" ]] && _sd_line+=" ${_sd_bar} ${_sd_ctx%.*}%"
-        if [[ -n "$_sd_cost" && "$_sd_cost" != "0" ]]; then
-          _sd_line+=" \033[38;5;240m│\033[0m \033[0;36m\$$(printf '%.2f' "$_sd_cost")\033[0m"
-        fi
-        if [[ -n "$_sd_5h_int" ]]; then
-          _sd_reset_str=""
-          if [[ -n "$_sd_reset" && "$_sd_reset" != "0" ]]; then
-            _sd_remaining=$(( _sd_reset - now ))
-            (( _sd_remaining > 0 )) && _sd_reset_str=" reset $(( _sd_remaining / 60 ))min"
-          fi
-          _sd_line+=" \033[38;5;240m│\033[0m 5h:${_sd_5h_int}%${_sd_reset_str}"
-        fi
-        printf '%b\n' "${_sd_line}"
-      fi
-
-      # Rate limits summary (always if available)
-      if [[ -n "$_sd_5h" ]]; then
-        printf '\n'
-        _sd_rl_str="  Rate limits: 5h:${_sd_5h%.*}%"
-        [[ -n "$_sd_7d" ]] && _sd_rl_str+="  7d:${_sd_7d%.*}%"
-        printf '%s\n' "$_sd_rl_str"
-      fi
-
-      # Session count + total cost for today
-      _sd_today_count=0 _sd_today_cost=0
-      _sd_cutoff=$(( now - 86400 ))
-      for _sd_f in "${_sd_files[@]}"; do
-        [[ -f "$_sd_f" ]] || continue
-        if stat -f%m "$_sd_f" >/dev/null 2>&1; then
-          _sd_mt=$(stat -f%m "$_sd_f")
-        else
-          _sd_mt=$(stat -c%Y "$_sd_f")
-        fi
-        if (( _sd_mt >= _sd_cutoff )); then
-          _sd_today_count=$(( _sd_today_count + 1 ))
-          _sd_fc=$(cat "$_sd_f" 2>/dev/null) || true
-          _sd_fc_cost=""
-          [[ $'\n'"$_sd_fc" == *$'\n'cost=* ]] && _sd_fc_cost="${_sd_fc#*cost=}" && _sd_fc_cost="${_sd_fc_cost%%$'\n'*}"
-          if [[ -n "$_sd_fc_cost" && "$_sd_fc_cost" != "0" ]]; then
-            _sd_today_cost=$(echo "$_sd_today_cost + $_sd_fc_cost" | bc 2>/dev/null || echo "$_sd_today_cost")
+        # Active check: mtime < 300s AND PID alive
+        _ov_is_active=0
+        if (( _ov_age < 300 )); then
+          if [[ -n "$_ov_ppid" && "$_ov_ppid" != "0" ]]; then
+            kill -0 "$_ov_ppid" 2>/dev/null && _ov_is_active=1
+          else
+            _ov_is_active=1
           fi
         fi
-      done
-      if (( _sd_today_count > 0 )); then
-        printf '  %d session%s today, \033[0;36m$%s\033[0m total\n' \
-          "$_sd_today_count" "$( (( _sd_today_count != 1 )) && printf 's' || true)" \
-          "$(printf '%.2f' "$_sd_today_cost")"
-      fi
 
-      printf '\n'
-      printf '  \033[38;5;240mclaudii help  for all commands\033[0m\n'
-      printf '\n'
+        # Track freshest rate-limit data (from most-recently-modified file)
+        if (( _ov_mt > _ov_acct_mt )) && [[ -n "$_ov_5h" ]]; then
+          _ov_acct_mt=$_ov_mt
+          _ov_acct_5h="$_ov_5h"
+          _ov_acct_7d="$_ov_7d"
+          _ov_acct_reset="$_ov_reset_ts"
+          _ov_acct_7d_start="$_ov_7d_start"
+        fi
+
+        # Today's cost accumulation
+        if (( _ov_mt >= _ov_cutoff )); then
+          _ov_today_count=$(( _ov_today_count + 1 ))
+          if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
+            _ov_today_cost=$(echo "$_ov_today_cost + $_ov_cost" | bc 2>/dev/null || echo "$_ov_today_cost")
+          fi
+        fi
+
+        # Status icon
+        if (( _ov_is_active )); then
+          _ov_icon="${_ov_green}●${_ov_reset}"
+        else
+          _ov_icon="${_ov_dim}○${_ov_reset}"
+        fi
+
+        # Context bar (8 blocks), color by usage
+        _ov_bar=""
+        if [[ -n "$_ov_ctx" && "$_ov_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _ov_pct=${_ov_ctx%.*}
+          (( _ov_pct > 100 )) && _ov_pct=100
+          (( _ov_pct < 0 ))   && _ov_pct=0
+          _ov_filled=$(( _ov_pct * 8 / 100 ))
+          _ov_empty=$(( 8 - _ov_filled ))
+          if (( _ov_pct >= 90 )); then _ov_bc="${_ov_red}"
+          elif (( _ov_pct >= 70 )); then _ov_bc="${_ov_yellow}"
+          else _ov_bc="${_ov_green}"; fi
+          _ov_bar_str=""
+          for (( _bi=0; _bi<_ov_filled; _bi++ )); do _ov_bar_str+="█"; done
+          for (( _bi=0; _bi<_ov_empty;  _bi++ )); do _ov_bar_str+="░"; done
+          _ov_bar=" ${_ov_bc}${_ov_bar_str}${_ov_reset} ${_ov_dim}${_ov_pct}%${_ov_reset}"
+        fi
+
+        # Build line: icon + model + bar + cost + cache + worktree + agent + age
+        _ov_line="  ${_ov_icon} ${_ov_bold}${_ov_model}${_ov_reset}${_ov_bar}"
+
+        if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
+          _ov_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$$(printf '%.2f' "$_ov_cost")${_ov_reset}"
+        fi
+
+        if [[ -n "$_ov_cache_pct" && "$_ov_cache_pct" != "0" ]]; then
+          _ov_line+=" ${_ov_dim}│ ⚡${_ov_cache_pct}%${_ov_reset}"
+        fi
+
+        if [[ -n "$_ov_worktree" ]]; then
+          _ov_line+=" ${_ov_dim}[wt:${_ov_worktree}]${_ov_reset}"
+        fi
+        if [[ -n "$_ov_agent" ]]; then
+          _ov_line+=" ${_ov_dim}[agent:${_ov_agent}]${_ov_reset}"
+        fi
+
+        # Age (only for non-active sessions)
+        if (( ! _ov_is_active )); then
+          if (( _ov_age < 60 )); then _ov_age_str="${_ov_age}s ago"
+          elif (( _ov_age < 3600 )); then _ov_age_str="$(( _ov_age / 60 ))m ago"
+          elif (( _ov_age < 86400 )); then _ov_age_str="$(( _ov_age / 3600 ))h ago"
+          else _ov_age_str="$(( _ov_age / 86400 ))d ago"; fi
+          _ov_line+="  ${_ov_dim}${_ov_age_str}${_ov_reset}"
+        fi
+
+        printf '%b\n' "$_ov_line"
+      done
     fi
+
+    if (( ! _ov_any_session )); then
+      printf "  ${_ov_dim}No sessions yet. Start Claude to see data here.${_ov_reset}\n"
+    fi
+
+    # ── Account ───────────────────────────────────────────────────────
+    printf '\n'
+    printf "  ${_ov_bold}Account${_ov_reset}\n"
+
+    if [[ -n "$_ov_acct_5h" ]]; then
+      _ov_5h_int=${_ov_acct_5h%.*}
+      _ov_acct_line="  5h: ${_ov_5h_int}%"
+      # Reset countdown
+      if [[ -n "$_ov_acct_reset" && "$_ov_acct_reset" != "0" ]]; then
+        _ov_remaining=$(( _ov_acct_reset - now ))
+        (( _ov_remaining > 0 )) && _ov_acct_line+=" reset $(( _ov_remaining / 60 ))min"
+      fi
+      if [[ -n "$_ov_acct_7d" ]]; then
+        _ov_7d_int=${_ov_acct_7d%.*}
+        _ov_acct_line+=" ${_ov_dim}│${_ov_reset} 7d: ${_ov_7d_int}%"
+        # 7d delta
+        if [[ -n "$_ov_acct_7d_start" ]]; then
+          _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
+          (( _ov_delta > 0 )) && _ov_acct_line+=" ${_ov_dim}(+${_ov_delta}%)${_ov_reset}"
+        fi
+      fi
+      # Today's cost and session count
+      if (( _ov_today_count > 0 )); then
+        _ov_today_fmt=$(printf '%.2f' "$_ov_today_cost")
+        _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
+        _ov_acct_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$${_ov_today_fmt}${_ov_reset} today (${_ov_today_count} session${_ov_s})"
+      fi
+      printf '%b\n' "$_ov_acct_line"
+    else
+      printf "  ${_ov_dim}No rate limit data yet.${_ov_reset}\n"
+    fi
+
+    # ── Agents ────────────────────────────────────────────────────────
+    printf '\n'
+    printf "  ${_ov_bold}Agents${_ov_reset}\n"
+
+    _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$CONFIG" 2>/dev/null)
+    [[ -z "$_ov_agents_json" ]] && _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
+
+    if [[ -n "$_ov_agents_json" ]]; then
+      while IFS=$'\t' read -r _a_alias _a_skill _a_model _a_effort; do
+        printf "  %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
+      done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
+    else
+      printf "  ${_ov_dim}No agents configured. See: claudii agents${_ov_reset}\n"
+    fi
+
+    # ── Services ──────────────────────────────────────────────────────
+    printf '\n'
+    printf "  ${_ov_bold}Services${_ov_reset}\n"
+
+    # ClaudeStatus
+    _ov_cs_en=$(_cfgget statusline.enabled)
+    if [[ "$_ov_cs_en" == "true" ]]; then
+      _ov_cs_str="${_ov_green}●${_ov_reset} on"
+    else
+      _ov_cs_str="${_ov_dim}○${_ov_reset} off"
+    fi
+
+    # Dashboard
+    _ov_dash_en=$(_cfgget dashboard.enabled)
+    [[ -z "$_ov_dash_en" ]] && _ov_dash_en="auto"
+    if [[ "$_ov_dash_en" == "off" ]]; then
+      _ov_dash_str="${_ov_dim}○${_ov_reset} off"
+    elif [[ "$_ov_dash_en" == "auto" ]]; then
+      _ov_dash_str="${_ov_green}●${_ov_reset} auto"
+    else
+      _ov_dash_str="${_ov_green}●${_ov_reset} on"
+    fi
+
+    # CC-Statusline
+    _ov_sl_settings="${HOME}/.claude/settings.json"
+    if [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1; then
+      _ov_sl_str="${_ov_green}●${_ov_reset} on"
+    else
+      _ov_sl_str="${_ov_dim}○${_ov_reset} off"
+    fi
+
+    # Watch
+    _ov_watch_pid="$cache_dir/watch.pid"
+    if [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null; then
+      _ov_watch_str="${_ov_green}●${_ov_reset} on"
+    else
+      _ov_watch_str="${_ov_dim}○${_ov_reset} off"
+    fi
+
+    printf "  ClaudeStatus %b  ${_ov_dim}│${_ov_reset}  Dashboard %b  ${_ov_dim}│${_ov_reset}  CC-Statusline %b  ${_ov_dim}│${_ov_reset}  Watch %b\n" \
+      "$_ov_cs_str" "$_ov_dash_str" "$_ov_sl_str" "$_ov_watch_str"
+
+    printf '\n'
+    printf "  ${_ov_dim}claudii help  for all commands${_ov_reset}\n"
+    printf '\n'
     ;;
 
-  version)
+  version|about)
     if [[ "$_FORMAT" == "json" ]]; then
       jq -n --arg v "$VERSION" '{"version": $v}'
     elif _plain; then
       echo "$VERSION"
     else
-      echo "claudii v$VERSION"
+      # Interactive: about-style output + release notes for current version
+      printf '\n'
+      printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+      printf '  \033[38;5;213m──────────────────────────────────────\033[0m\n'
+      printf '  Claude Interaction Intelligence\n'
+      printf '\n'
+      printf '  zsh plugin + CLI for Claude Code power users.\n'
+      printf '\n'
+      printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health in RPROMPT\n'
+      printf '  \033[0;32m◆\033[0m  Dashboard — multi-session view above prompt\n'
+      printf '  \033[0;32m◆\033[0m  Sessionline — info-dense line inside Claude Code\n'
+      printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
+      printf '\n'
+      printf '  \033[38;5;240mclaudii layers  — component overview\033[0m\n'
+      printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
+      printf '\n'
+
+      # Release notes: extract the block for the current version from CHANGELOG.md
+      _changelog="$CLAUDII_HOME/CHANGELOG.md"
+      if [[ -f "$_changelog" ]]; then
+        # Extract lines between the current version header and the next ## header
+        _notes=$(awk -v ver="$VERSION" '
+          /^## \[/ {
+            if (found) { exit }
+            if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+          }
+          found { print }
+        ' "$_changelog")
+        if [[ -n "$_notes" ]]; then
+          printf '  \033[38;5;213mWhat'\''s in v%s\033[0m\n' "$VERSION"
+          printf '\n'
+          while IFS= read -r _rline; do
+            # Skip blank lines at start, render the rest indented
+            printf '  \033[38;5;240m%s\033[0m\n' "$_rline"
+          done <<< "$_notes"
+          printf '\n'
+        fi
+      fi
     fi
     ;;
 
-  about)
-    printf '\n'
-    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
-    printf '  \033[38;5;213m──────────────────────────────────────\033[0m\n'
-    printf '  Claude Interaction Intelligence\n'
-    printf '\n'
-    printf '  zsh plugin + CLI for Claude Code power users.\n'
-    printf '\n'
-    printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health in RPROMPT\n'
-    printf '  \033[0;32m◆\033[0m  SessionBar — session data above prompt\n'
-    printf '  \033[0;32m◆\033[0m  Sessionline — info-dense line inside Claude Code\n'
-    printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
-    printf '\n'
-    printf '  \033[38;5;240mclaudii components  — component overview\033[0m\n'
-    printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
-    printf '\n'
-    ;;
-
-  components)
+  layers)
     local_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     _cfg_init
 
     printf '\n'
-    printf '  \033[0;36mclaudii components\033[0m\n'
+    printf '  \033[0;36mclaudii layers\033[0m\n'
     printf '  \033[38;5;213m──────────────────────────────────────────────────────────\033[0m\n'
     printf '\n'
 
@@ -1465,6 +1286,9 @@ case "${1:-}" in
     printf '  status.claude.com \033[38;5;240m─bg→\033[0m \033[1mClaudeStatus\033[0m (RPROMPT)\n'
     printf '\n'
     ;;
+
+  # Backward-compat shim: components → layers
+  components) exec "$0" layers "${@:2}" ;;
 
   42)
     printf '\n'
@@ -1618,11 +1442,18 @@ case "${1:-}" in
     ;;
 
   update)
-    if ! git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
-      printf 'claudii: not a git repo — install via:\n'
-      printf '  git clone https://github.com/bmmmm/claudii\n'; exit 1
+    if [[ "$CLAUDII_HOME" == "$(brew --prefix 2>/dev/null)"* ]]; then
+      echo "claudii: Homebrew install detected"
+      brew upgrade claudii
+    elif git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+      echo "claudii: Git install detected"
+      git -C "$CLAUDII_HOME" pull --ff-only
+    else
+      echo "claudii: cannot determine install method"
+      echo "  Homebrew: brew upgrade claudii"
+      echo "  Git:      cd $CLAUDII_HOME && git pull"
+      exit 1
     fi
-    git -C "$CLAUDII_HOME" pull --ff-only
     printf '\033[0;32m✓ Updated. Run: claudii restart\033[0m\n'
     ;;
 
@@ -1636,6 +1467,13 @@ case "${1:-}" in
         terminal-notifier -title "$title" -message "$msg" >/dev/null 2>&1
       else
         osascript -e "display notification \"$msg\" with title \"$title\"" >/dev/null 2>&1
+      fi
+      local sound volume
+      _cfg_init
+      sound=$(_cfgget watch.sound 2>/dev/null || true)
+      volume=$(_cfgget watch.volume 2>/dev/null || true)
+      if [[ -n "$sound" && -f "$sound" ]]; then
+        ( afplay -v "$(awk "BEGIN { printf \"%.2f\", ${volume:-50}/100 }")" "$sound" & ) 2>/dev/null
       fi
     }
 
@@ -1717,8 +1555,12 @@ case "${1:-}" in
           echo "claudii watch: not running"
         fi
         ;;
+      test)
+        _watch_notify "Test — claudii watch works"
+        echo "claudii watch: test notification sent"
+        ;;
       *)
-        echo "Usage: claudii watch [start|stop|status]"; exit 1
+        echo "Usage: claudii watch [start|stop|status|test]"; exit 1
         ;;
     esac
     ;;
@@ -1803,20 +1645,6 @@ case "${1:-}" in
       fi
     else
       _dc_add "updates" "warn" "Not a git repo — skipping update check"
-    fi
-
-    # 9. CI status (last run on current branch, requires gh)
-    if command -v gh >/dev/null 2>&1; then
-      _ci_branch=$(git -C "$CLAUDII_HOME" branch --show-current 2>/dev/null || true)
-      if [[ -n "$_ci_branch" ]]; then
-        _ci_conclusion=$(gh run list --branch "$_ci_branch" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || true)
-        if [[ "$_ci_conclusion" == "failure" ]]; then
-          _dc_add "ci" "warn" "Last CI run on branch '$_ci_branch' failed — check GitHub Actions"
-        elif [[ -n "$_ci_conclusion" ]]; then
-          _dc_add "ci" "ok" "CI: $_ci_conclusion (branch: $_ci_branch)"
-        fi
-        # If empty (no runs or gh not authenticated), skip silently
-      fi
     fi
 
     if [[ "$_FORMAT" == "json" ]]; then
@@ -1934,212 +1762,8 @@ case "${1:-}" in
     ;;
 
   release)
-    # ── Parse flags ──
-    _dry_run=0
-    _rel_version=""
-    for _rel_arg in "${@:2}"; do
-      case "$_rel_arg" in
-        --dry-run) _dry_run=1 ;;
-        -*)        echo "Unknown flag: $_rel_arg"; echo "Usage: claudii release <version> [--dry-run]"; exit 1 ;;
-        *)         _rel_version="$_rel_arg" ;;
-      esac
-    done
-
-    if [[ -z "$_rel_version" ]]; then
-      echo "Usage: claudii release <version> [--dry-run]"
-      echo "  Example: claudii release 0.6.0"
-      exit 1
-    fi
-
-    # Strip leading v if provided
-    _rel_version="${_rel_version#v}"
-    _rel_tag="v${_rel_version}"
-
-    # ── Helpers ──
-    _rel_box_start() { printf '┌ %s\n' "$1"; }
-    _rel_box_item()  { printf "│ %b %s\n" "$1" "$2"; }
-    _rel_box_sep()   { printf '├ %s\n' "$1"; }
-    _rel_box_end()   { printf '└ %s\n' "$1"; }
-
-    _rel_ok()   { _rel_box_item "\033[0;32m✓\033[0m" "$1"; }
-    _rel_fail() { _rel_box_item "\033[0;31m✗\033[0m" "$1"; printf '\n'; }
-    _rel_spin() { _rel_box_item "⏳" "$1"; }
-
-    printf '\n'
-    [[ "$_dry_run" -eq 1 ]] && printf '  \033[38;5;240m[dry-run]\033[0m '
-    printf '\033[0;36mclaudii release\033[0m \033[38;5;213m%s\033[0m\n\n' "$_rel_tag"
-
-    # ── Pre-flight ──
-    _rel_box_start "Pre-Flight"
-
-    # 1. Run tests
-    if [[ "$_dry_run" -eq 1 ]]; then
-      _rel_ok "Tests — skipped (dry-run)"
-    else
-      _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" 2>&1)
-      _test_exit=$?
-      if [[ $_test_exit -eq 0 ]]; then
-        _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
-        _rel_ok "Tests lokal grün ($_test_passed)"
-      else
-        _rel_fail "Tests fehlgeschlagen"
-        echo "$_test_out" | tail -20 >&2
-        exit 1
-      fi
-    fi
-
-    # 2. Version sync check
-    _bin_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | tr -d '"' | cut -d= -f2)
-    _man_version=$(grep -oE 'claudii [0-9]+\.[0-9]+\.[0-9]+' "$CLAUDII_HOME/man/man1/claudii.1" | head -1 | awk '{print $2}')
-
-    _ver_ok=1
-    if [[ "$_bin_version" != "$_rel_version" ]]; then
-      _rel_fail "bin/claudii VERSION=$_bin_version != $_rel_version"
-      _ver_ok=0
-    fi
-    if [[ "$_man_version" != "$_rel_version" ]]; then
-      _rel_fail "man page version=$_man_version != $_rel_version"
-      _ver_ok=0
-    fi
-    if [[ "$_ver_ok" -eq 0 ]]; then
-      echo "  Update VERSION in bin/claudii and man/man1/claudii.1 to $_rel_version" >&2
-      exit 1
-    fi
-    _rel_ok "Versionen synchron (bin=$_bin_version, man=$_man_version)"
-
-    # 3. No existing tag
-    _existing_tag=$(git -C "$CLAUDII_HOME" tag -l "$_rel_tag")
-    if [[ -n "$_existing_tag" ]]; then
-      _rel_fail "Tag $_rel_tag existiert bereits"
-      echo "  git tag -d $_rel_tag  (lokal löschen)" >&2
-      echo "  git push origin :refs/tags/$_rel_tag  (remote löschen)" >&2
-      exit 1
-    fi
-    _rel_ok "Kein offener Tag $_rel_tag"
-
-    # ── Release ──
-    _rel_box_sep "Release"
-
-    # 4. Create and push tag
-    if [[ "$_dry_run" -eq 1 ]]; then
-      _rel_ok "Tag $_rel_tag — skipped (dry-run)"
-      _rel_ok "Push origin $_rel_tag — skipped (dry-run)"
-    else
-      git -C "$CLAUDII_HOME" tag -a "$_rel_tag" -m "$_rel_tag" 2>&1
-      _rel_ok "Tag $_rel_tag gesetzt"
-
-      git -C "$CLAUDII_HOME" push origin "$_rel_tag" 2>&1
-      _push_exit=$?
-      if [[ $_push_exit -ne 0 ]]; then
-        _rel_fail "Push von $_rel_tag fehlgeschlagen"
-        git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
-        exit 1
-      fi
-      _rel_ok "Tag $_rel_tag gepusht"
-    fi
-
-    # 5. Poll GitHub Actions
-    if [[ "$_dry_run" -eq 1 ]]; then
-      _rel_ok "GitHub Actions — skipped (dry-run)"
-    else
-      # Get repo owner/name from remote URL
-      _remote_url=$(git -C "$CLAUDII_HOME" remote get-url origin 2>/dev/null || echo "")
-      if [[ "$_remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-        _gh_owner="${BASH_REMATCH[1]}"
-        _gh_repo="${BASH_REMATCH[2]}"
-      else
-        _rel_fail "Kein GitHub-Remote gefunden: $_remote_url"
-        exit 1
-      fi
-
-      _rel_spin "Warte auf GitHub Actions..."
-
-      _poll_timeout=300
-      _poll_interval=10
-      _poll_elapsed=0
-      _run_id=""
-      _run_conclusion=""
-      _spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-      _spin_idx=0
-
-      while (( _poll_elapsed < _poll_timeout )); do
-        # Look for a workflow run triggered by the tag push
-        _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
-          --jq ".workflow_runs[] | select(.event == \"push\" and (.head_branch == \"refs/tags/${_rel_tag}\" or .head_branch == \"${_rel_tag}\")) | {id: .id, status: .status, conclusion: .conclusion, name: .name}" \
-          2>/dev/null || echo "")
-
-        if [[ -n "$_runs" ]]; then
-          _run_id=$(echo "$_runs" | jq -r '.id' | head -1)
-          _run_status=$(echo "$_runs" | jq -r '.status' | head -1)
-          _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1)
-          _run_name=$(echo "$_runs" | jq -r '.name' | head -1)
-
-          if [[ "$_run_status" == "completed" ]]; then
-            break
-          fi
-        fi
-
-        # Spinner update
-        _spin_char="${_spinner_chars:$(( _spin_idx % ${#_spinner_chars} )):1}"
-        printf '\r│ %s Warte auf GitHub Actions... (%ds)  ' "$_spin_char" "$_poll_elapsed"
-        _spin_idx=$(( _spin_idx + 1 ))
-
-        sleep "$_poll_interval"
-        _poll_elapsed=$(( _poll_elapsed + _poll_interval ))
-      done
-      printf '\r'  # Clear spinner line
-
-      if [[ -z "$_run_id" ]]; then
-        _rel_fail "Kein GitHub-Actions-Run für $_rel_tag gefunden (Timeout ${_poll_timeout}s)"
-        echo "  Prüfe: https://github.com/${_gh_owner}/${_gh_repo}/actions" >&2
-        exit 1
-      fi
-
-      _run_url="https://github.com/${_gh_owner}/${_gh_repo}/actions/runs/${_run_id}"
-
-      if [[ "$_run_conclusion" == "success" ]]; then
-        _rel_ok "Release-Workflow grün (Run #${_run_id})"
-      else
-        _rel_fail "Workflow fehlgeschlagen: conclusion=$_run_conclusion"
-        echo "  $_run_url" >&2
-        # Cleanup: remove the pushed tag since release failed
-        git -C "$CLAUDII_HOME" push origin ":refs/tags/$_rel_tag" 2>/dev/null || true
-        git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
-        echo "  Tag $_rel_tag wurde entfernt." >&2
-        exit 1
-      fi
-
-      # 6. Create GitHub Release
-      _release_out=$(gh release create "$_rel_tag" \
-        --title "$_rel_tag" \
-        --generate-notes \
-        --repo "${_gh_owner}/${_gh_repo}" 2>&1)
-      _release_exit=$?
-
-      if [[ $_release_exit -eq 0 ]]; then
-        _release_url=$(echo "$_release_out" | grep -oE 'https://[^ ]+' | head -1)
-        [[ -z "$_release_url" ]] && _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
-        _rel_ok "GitHub Release erstellt"
-      else
-        _rel_fail "gh release create fehlgeschlagen"
-        echo "$_release_out" >&2
-        exit 1
-      fi
-    fi
-
-    # ── Done ──
-    if [[ "$_dry_run" -eq 1 ]]; then
-      _rel_box_end "Dry-run abgeschlossen — keine Änderungen vorgenommen"
-    else
-      _rel_box_end "Done — ${_release_url:-https://github.com/bmmmm/claudii/releases/tag/${_rel_tag}}"
-    fi
-    printf '\n'
-    ;;
-
-  explore)
-    # Internal dev tool — not shipped, not documented
-    [[ -x "$CLAUDII_HOME/bin/claudii-explore" ]] || { echo "claudii-explore not found (internal tool)"; exit 1; }
-    exec "$CLAUDII_HOME/bin/claudii-explore" "${@:2}"
+    echo "Moved to: scripts/release.sh"
+    exit 1
     ;;
 
   metrics)

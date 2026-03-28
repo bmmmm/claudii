@@ -27,5 +27,9 @@
   },
   "debug": {
     "level": "off"
+  },
+  "watch": {
+    "sound": "",
+    "volume": 50
   }
 }
