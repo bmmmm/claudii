@@ -16,10 +16,14 @@ function _claudii_launch {
     if [[ -f "$cache" ]] && grep -q "^${model}=down" "$cache" 2>/dev/null; then
       local fb_model=$(claudii_config_get "fallback.$model.model")
       local fb_effort=$(claudii_config_get "fallback.$model.effort")
-      _claudii_log warn "fallback: $model → ${fb_model:-$model} (model was down)"
-      echo "→ Fallback: ${fb_model:-$model} ${fb_effort:-$effort}"
-      claude --model "${fb_model:-$model}" --effort "${fb_effort:-$effort}" "$@"
-      return
+      if [[ -z "$fb_model" ]]; then
+        _claudii_log warn "fallback: no fallback configured for $model — using original"
+      else
+        _claudii_log warn "fallback: $model → $fb_model (model was down)"
+        echo "→ Fallback: $fb_model ${fb_effort:-$effort}"
+        model="$fb_model"
+        [[ -n "$fb_effort" ]] && effort="$fb_effort"
+      fi
     fi
   fi
 

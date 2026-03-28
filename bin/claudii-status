@@ -34,6 +34,8 @@ COMPONENTS_URL="${CLAUDII_COMPONENTS_URL:-$(_cfg status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-$(_def status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-${RSS_URL%/history.rss}/api/v2/components.json}"
 
+_mtime() { stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0; }
+
 source "${CLAUDII_HOME}/lib/log.sh"
 
 RED='\033[0;31m'
@@ -55,7 +57,7 @@ _claudii_log debug "Components: $COMPONENTS_URL | RSS: $RSS_URL | TTL: ${CACHE_T
 # ── Cache check ───────────────────────────────────────────────────────────────
 
 if [[ -f "$CACHE_STATUS" ]]; then
-  cache_age=$(( $(date +%s) - $(stat -f%m "$CACHE_STATUS") ))
+  cache_age=$(( $(date +%s) - $(_mtime "$CACHE_STATUS") ))
   if (( cache_age < CACHE_TTL )); then
     _claudii_log debug "Cache hit (${cache_age}s < TTL ${CACHE_TTL}s)"
     if ! $quiet; then

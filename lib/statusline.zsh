@@ -31,7 +31,7 @@ function _claudii_statusline_render {
     zstat -H _zst "$status_cache" 2>/dev/null \
       && age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_zst[mtime]:-0} ))
   else
-    age=$(( $(date +%s) - $(stat -f%m "$status_cache") ))
+    age=$(( $(date +%s) - $(stat -c%Y "$status_cache" 2>/dev/null || stat -f%m "$status_cache" 2>/dev/null || echo 0) ))
   fi
 
   if (( age > ttl )); then
@@ -44,7 +44,10 @@ function _claudii_statusline_render {
   local models=(${(s:,:)models_str})
 
   # Read cache file once — $(<file) is a zsh builtin, no subprocess
-  local cache_content=$(<"$status_cache")
+  # Guard against TOCTOU: file may be deleted between age check and read
+  local cache_content=""
+  { cache_content=$(<"$status_cache"); } 2>/dev/null
+  [[ -z "$cache_content" ]] && { RPROMPT="%F{8}[…]%f"; return; }
 
   local segments=""
   for model in "${models[@]}"; do

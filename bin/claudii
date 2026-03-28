@@ -7,6 +7,10 @@ set -euo pipefail
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 VERSION="0.1.0"
 
+command -v jq >/dev/null 2>&1 || {
+  echo "claudii: jq nicht gefunden. Install: brew install jq" >&2; exit 1
+}
+
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
 _cfg_init() {
   CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
@@ -69,7 +73,7 @@ case "${1:-}" in
         if ! [[ "$seconds" =~ ^[0-9]+$ ]] || (( seconds < 30 )); then
           echo "Ungültiges Intervall: $interval (mindestens 30s)"; exit 1
         fi
-        echo "$(jq ".status.cache_ttl = $seconds" "$CONFIG")" > "$CONFIG"
+        echo "$(jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG")" > "$CONFIG"
         echo "Refresh-Intervall: ${interval} (${seconds}s)"
         ;;
       "")
@@ -97,7 +101,7 @@ case "${1:-}" in
               echo "$model ist bereits in der Liste: $current"
             else
               new_models="${current},${model}"
-              echo "$(jq ".statusline.models = \"$new_models\"" "$CONFIG")" > "$CONFIG"
+              echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
               echo -e "\033[0;32mModelle: $new_models\033[0m"
             fi
             ;;
@@ -108,7 +112,7 @@ case "${1:-}" in
             if [[ "$new_models" == "$current" ]]; then
               echo "$model nicht gefunden in: $current"; exit 1
             fi
-            echo "$(jq ".statusline.models = \"$new_models\"" "$CONFIG")" > "$CONFIG"
+            echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
             echo -e "\033[0;32mModelle: ${new_models:-keine}\033[0m"
             ;;
           "")
@@ -118,7 +122,7 @@ case "${1:-}" in
           *)
             # All remaining args are model names to set directly
             new_models=$(IFS=,; echo "${*:3}")
-            echo "$(jq ".statusline.models = \"$new_models\"" "$CONFIG")" > "$CONFIG"
+            echo "$(jq --arg v "$new_models" '.statusline.models = $v' "$CONFIG")" > "$CONFIG"
             echo -e "\033[0;32mModelle: $new_models\033[0m"
             ;;
         esac
@@ -193,9 +197,9 @@ case "${1:-}" in
         value="${4:?Usage: claudii config set <key> <value>}"
         jq_path=".$(echo "$key" | sed 's/\././g')"
         if [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
-          echo "$(jq "$jq_path = $value" "$CONFIG")" > "$CONFIG"
+          echo "$(jq --argjson v "$value" "$jq_path = \$v" "$CONFIG")" > "$CONFIG"
         else
-          echo "$(jq "$jq_path = \"$value\"" "$CONFIG")" > "$CONFIG"
+          echo "$(jq --arg v "$value" "$jq_path = \$v" "$CONFIG")" > "$CONFIG"
         fi
         echo "Set $key = $value"
         ;;

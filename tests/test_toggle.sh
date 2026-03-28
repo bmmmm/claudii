@@ -18,7 +18,7 @@ touch -t 202001010000 "$CLAUDII_CACHE_DIR/status-models"
 bash "$CLI" status >/dev/null 2>&1 || true
 
 # After status, cache should be fresh (mtime updated by claudii-status)
-cache_age=$(( $(date +%s) - $(stat -f%m "$CLAUDII_CACHE_DIR/status-models") ))
+cache_age=$(( $(date +%s) - $(stat -c%Y "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || stat -f%m "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || echo 0) ))
 if (( cache_age < 30 )); then
   assert_eq "status: cache is fresh after run" "true" "true"
 else

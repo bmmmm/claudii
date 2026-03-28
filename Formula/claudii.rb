@@ -3,7 +3,7 @@ class Claudii < Formula
   homepage "https://github.com/bmmmm/claudii"
   url "https://github.com/bmmmm/claudii/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256" # update with: brew fetch --build-from-source Formula/claudii.rb
-  license "MIT"
+  license "GPL-3.0-only"
   version "0.1.0"
 
   head "https://github.com/bmmmm/claudii.git", branch: "main"
@@ -16,6 +16,9 @@ class Claudii < Formula
     libexec.install "claudii.plugin.zsh", "bin", "lib", "config"
     libexec.install "completions" if (buildpath/"completions").exist?
 
+    # Man page
+    man1.install "man/man1/claudii.1"
+
     # Create bin wrappers that set CLAUDII_HOME before calling the real scripts.
     # Homebrew symlinks bins into $(brew --prefix)/bin — write_env_script handles
     # the indirection so CLAUDII_HOME always resolves to libexec, not the symlink dir.
@@ -25,6 +28,12 @@ class Claudii < Formula
 
     # Register zsh completions with Homebrew
     zsh_completion.install libexec/"completions/_claudii" if (libexec/"completions/_claudii").exist?
+
+    # Note: vendor/claude-code-statusline (git submodule) is not included in the
+    # Homebrew tarball. bin/claudii-sessionline falls back to its built-in
+    # implementation automatically. Users can clone the submodule manually:
+    #   git clone https://github.com/wynandw87/claude-code-statusline \
+    #     "$(brew --prefix claudii)/libexec/vendor/claude-code-statusline"
   end
 
   def caveats

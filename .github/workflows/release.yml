@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: bash tests/run.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "claudii ${{ github.ref_name }}" \
+            --generate-notes
+
+      - name: Compute tarball SHA256 and update Formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
+          SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          echo "sha256: $SHA"
+          sed -i '' "s/sha256 \".*\"/sha256 \"${SHA}\"/" Formula/claudii.rb
+          echo "Updated Formula/claudii.rb with sha256: $SHA"
+          cat Formula/claudii.rb
