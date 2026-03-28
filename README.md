@@ -1,5 +1,7 @@
 # claudii ♥
 
+![claudii screenshot](screenshot.png)
+
 Fast Claude Code aliases with live model status and session insights.
 
 ## Install
