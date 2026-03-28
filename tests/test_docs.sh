@@ -8,8 +8,6 @@ CLI="$CLAUDII_HOME/bin/claudii"
 # Single source of truth: VERSION= in bin/claudii
 BIN_VERSION=$(grep '^VERSION=' "$CLI" | head -1 | tr -d '"' | cut -d= -f2)
 assert_contains "man page version matches bin/claudii" "$BIN_VERSION" "$(cat "$MAN")"
-assert_contains "test_cli.sh version matches bin/claudii" "v$BIN_VERSION" \
-  "$(cat "$CLAUDII_HOME/tests/test_cli.sh")"
 
 # Top-level commands that must appear in both man page and autocomplete
 # (excludes backwards-compat aliases like install-sessionline and easter eggs like 42)

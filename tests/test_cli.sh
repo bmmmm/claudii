@@ -1,8 +1,10 @@
 # test_cli.sh — claudii CLI E2E tests
 
 # version
+_bin_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | tr -d '"' | cut -d= -f2)
 output=$(bash "$CLAUDII_HOME/bin/claudii" version 2>&1)
-assert_contains "claudii version shows version" "v0.2.0" "$output"
+assert_contains "claudii version shows version" "v$_bin_version" "$output"
+unset _bin_version
 
 # help
 output=$(bash "$CLAUDII_HOME/bin/claudii" help 2>&1)
