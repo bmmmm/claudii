@@ -1,6 +1,10 @@
-# claudii statusline — RPROMPT with per-model health + last-fetch age
+# claudii statusline — RPROMPT with per-model health + dashboard
 # shellcheck source=lib/visual.sh
 source "${CLAUDII_HOME}/lib/visual.sh"
+
+# Capture the user's original PROMPT once at load time.
+# Every precmd cycle restores PROMPT to this, then prepends dashboard lines.
+typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 function _claudii_statusline {
   local _t=$EPOCHREALTIME
@@ -13,9 +17,12 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
+  # Restore PROMPT to the user's original every cycle
+  PROMPT="${_CLAUDII_USER_PROMPT}"
+
   # Single cache-load call — fast mtime check, jq only on config change
   _claudii_cache_load
-  [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; PROMPT="${_CLAUDII_USER_PROMPT}"; return; }
+  [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
 
   local status_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
@@ -72,17 +79,27 @@ function _claudii_statusline_render {
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Session bar — prepends a line to PROMPT (avoids stdout/command-output confusion)
-  _claudii_session_bar
+  # Dashboard — multi-session lines prepended to PROMPT
+  _claudii_dashboard
 }
 
-typeset -g _CLAUDII_LAST_SESSION_BAR=""
+typeset -g _CLAUDII_LAST_DASHBOARD=""
 
-function _claudii_session_bar {
+function _claudii_dashboard {
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local session_cache="" best_mtime=0
+  local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
 
-  # Find freshest session-* file
+  # "off" = never show dashboard
+  [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; return; }
+
+  # Collect all active session files (PID alive + mtime < 300s)
+  local -a active_files active_contents active_pids
+  local -a active_models active_ctxs active_costs active_5hs active_7ds
+  local -a active_r5hs active_r7ds active_worktrees active_agents
+  local -a active_burn_etas active_cache_pcts active_7d_starts
+  local active_count=0
+  local total_cost=0
+
   for _sf in "$_cache_base"/session-*(N); do
     local _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
@@ -91,116 +108,189 @@ function _claudii_session_bar {
     else
       _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
-    (( _sf_mt > best_mtime )) && best_mtime=$_sf_mt && session_cache=$_sf
+    local _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
+    (( _sf_age >= 300 )) && continue
+
+    local sc=""
+    { sc=$(<"$_sf"); } 2>/dev/null
+    [[ -z "$sc" ]] && continue
+
+    # Check if Claude process is still running via ppid
+    local s_ppid=""
+    [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
+    if [[ -n "$s_ppid" && "$s_ppid" != "0" && "$s_ppid" != "" ]]; then
+      kill -0 "$s_ppid" 2>/dev/null || continue
+    fi
+
+    # Parse fields
+    local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
+    local s_worktree="" s_agent="" s_burn_eta="" s_cache_pct="" s_7d_start=""
+    [[ $'\n'"$sc" == *$'\n'model=* ]]      && s_model="${${sc#*model=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]    && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'cost=* ]]       && s_cost="${${sc#*cost=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]    && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'rate_7d=* ]]    && s_7d="${${sc#*rate_7d=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]]   && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'reset_7d=* ]]   && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'worktree=* ]]   && s_worktree="${${sc#*worktree=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'agent=* ]]      && s_agent="${${sc#*agent=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'burn_eta=* ]]   && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'cache_pct=* ]]  && s_cache_pct="${${sc#*cache_pct=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'rate_7d_start=* ]] && s_7d_start="${${sc#*rate_7d_start=}%%$'\n'*}"
+
+    [[ -z "$s_model" ]] && continue
+
+    active_models+=("$s_model")
+    active_ctxs+=("$s_ctx")
+    active_costs+=("$s_cost")
+    active_5hs+=("$s_5h")
+    active_7ds+=("$s_7d")
+    active_r5hs+=("$s_r5h")
+    active_r7ds+=("$s_r7d")
+    active_worktrees+=("$s_worktree")
+    active_agents+=("$s_agent")
+    active_burn_etas+=("$s_burn_eta")
+    active_cache_pcts+=("$s_cache_pct")
+    active_7d_starts+=("$s_7d_start")
+
+    if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+      # Simple integer addition for cost (truncated to cents)
+      local cost_cents=${s_cost%.*}
+      (( total_cost += ${cost_cents:-0} ))
+    fi
+    (( active_count++ ))
   done
 
-  if [[ -z "$session_cache" ]]; then
-    PROMPT="${_CLAUDII_USER_PROMPT}"
-    return
-  fi
-  local session_age=$(( ${EPOCHSECONDS:-$(date +%s)} - best_mtime ))
-  if (( session_age >= 300 )); then
-    PROMPT="${_CLAUDII_USER_PROMPT}"
+  # "auto" mode: only show when sessions are active
+  if [[ "$dash_mode" == "auto" && active_count -eq 0 ]]; then
+    _CLAUDII_LAST_DASHBOARD=""
     return
   fi
 
-  local sc=""
-  { sc=$(<"$session_cache"); } 2>/dev/null
-  if [[ -z "$sc" ]]; then
-    PROMPT="${_CLAUDII_USER_PROMPT}"
+  # "true" mode but no sessions: show nothing (no empty dashboard)
+  if (( active_count == 0 )); then
+    _CLAUDII_LAST_DASHBOARD=""
     return
   fi
 
-  # Parse all fields via pattern matching — zero subprocesses
-  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent="" s_burn_eta="" s_ppid=""
-  [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'rate_7d=* ]]  && s_7d="${${sc#*rate_7d=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'reset_7d=* ]] && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'worktree=* ]] && s_worktree="${${sc#*worktree=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'agent=* ]]    && s_agent="${${sc#*agent=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'burn_eta=* ]] && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
-  [[ $'\n'"$sc" == *$'\n'ppid=* ]]     && s_ppid="${${sc#*ppid=}%%$'\n'*}"
-
-  if [[ -z "$s_model" ]]; then
-    PROMPT="${_CLAUDII_USER_PROMPT}"
-    return
-  fi
-
-  # Skip session bar if the Claude process is no longer running — prevents stale
-  # data from showing in new terminals after a session ends.
-  # kill -0 is a no-op signal: just checks if PID exists, no subprocess needed.
-  if [[ -n "$s_ppid" && "$s_ppid" =~ ^[0-9]+$ ]]; then
-    kill -0 "$s_ppid" 2>/dev/null || return
-  fi
-
-  # Build session bar
-  local bar=""
+  # Build dashboard lines
+  local dash_lines=""
   local SEP="%F{8} │%f "
 
-  # Model (bold)
-  bar+="%B${s_model}%b"
+  # ── Global line ──
+  # Aggregate: use the freshest (first) session's rate limits as representative
+  local g_5h="${active_5hs[1]}" g_7d="${active_7ds[1]}" g_r5h="${active_r5hs[1]}"
+  local g_burn_eta="${active_burn_etas[1]}" g_7d_start="${active_7d_starts[1]}"
 
-  # Worktree and agent context (dim brackets)
-  [[ -n "$s_worktree" ]] && bar+=" %F{8}[wt:${s_worktree}]%f"
-  [[ -n "$s_agent" ]]    && bar+=" %F{8}[agent:${s_agent}]%f"
-
-  # Context bar (10 chars) + percentage
-  if [[ -n "$s_ctx" ]]; then
-    local pct=${s_ctx%.*}
-    (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
-    local filled=$(( pct / 10 )) empty=$(( 10 - filled ))
-    local ctx_color="green"
-    (( pct >= 70 )) && ctx_color="yellow"
-    (( pct >= 90 )) && ctx_color="red"
-    local ctx_bar=""
-    (( filled > 0 )) && ctx_bar+="${(l:$filled::█:)}"
-    (( empty > 0 )) && ctx_bar+="%F{8}${(l:$empty::░:)}%f"
-    bar+=" %F{${ctx_color}}${ctx_bar}%f %F{8}${pct}%%%f"
-  fi
-
-  # Cost — format raw float to 2 decimal places
-  if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
-    local cost_fmt
-    printf -v cost_fmt '%.2f' "$s_cost" 2>/dev/null || cost_fmt="$s_cost"
-    bar+="${SEP}%F{cyan}%{\$%}${cost_fmt}%f"
-  fi
-
-  # Rate limits with reset countdown
-  if [[ -n "$s_5h" ]]; then
-    local rl_color="cyan" rl_int=${s_5h%.*}
+  local global_line=""
+  if [[ -n "$g_5h" && "$g_5h" != "null" ]]; then
+    local rl_color="cyan" rl_int=${g_5h%.*}
     (( rl_int >= 70 )) && rl_color="yellow"
     (( rl_int >= 90 )) && rl_color="red"
-    bar+="${SEP}%F{${rl_color}}5h:${rl_int}%%%f"
-    # Burn-rate ETA — show when present, > 0, and < 120min
-    if [[ -n "$s_burn_eta" && "$s_burn_eta" != "" ]] && (( s_burn_eta > 0 && s_burn_eta < 120 )); then
-      local eta_color="8"
-      (( s_burn_eta < 10 )) && eta_color="red"
-      (( s_burn_eta >= 10 && s_burn_eta < 30 )) && eta_color="yellow"
-      bar+=" %F{${eta_color}}~${s_burn_eta}min%f"
-    fi
+    global_line+="%F{${rl_color}}5h:${rl_int}%%%f"
+
     # Reset countdown
-    if [[ -n "$s_r5h" && "$s_r5h" != "0" ]]; then
-      local remaining=$(( s_r5h - EPOCHSECONDS ))
+    if [[ -n "$g_r5h" && "$g_r5h" != "0" ]]; then
+      local remaining=$(( g_r5h - EPOCHSECONDS ))
       if (( remaining > 0 )); then
-        bar+=" %F{8}reset $(( remaining / 60 ))min%f"
+        global_line+=" %F{8}reset $(( remaining / 60 ))min%f"
       fi
     fi
   fi
-  if [[ -n "$s_7d" ]]; then
-    local rl7_color="cyan" rl7_int=${s_7d%.*}
+
+  if [[ -n "$g_7d" && "$g_7d" != "null" ]]; then
+    [[ -n "$global_line" ]] && global_line+="${SEP}"
+    local rl7_color="cyan" rl7_int=${g_7d%.*}
     (( rl7_int >= 70 )) && rl7_color="yellow"
     (( rl7_int >= 90 )) && rl7_color="red"
-    bar+=" %F{${rl7_color}}7d:${rl7_int}%%%f"
+    global_line+="%F{${rl7_color}}7d:${rl7_int}%%%f"
+
+    # 7d delta
+    if [[ -n "$g_7d_start" && "$g_7d_start" != "" ]]; then
+      local delta_7d=$(( ${g_7d%.*} - ${g_7d_start%.*} ))
+      (( delta_7d > 0 )) && global_line+=" %F{8}(+${delta_7d}%%)%f"
+    fi
   fi
 
-  # Set session bar as first line of PROMPT — avoids printing to stdout
-  # (which would make it appear between command output and the next prompt)
-  _CLAUDII_LAST_SESSION_BAR="$bar"
-  PROMPT="${bar}"$'\n'"${_CLAUDII_USER_PROMPT}"
+  # Today cost + session count
+  if (( active_count > 0 )); then
+    # Calculate total cost from active sessions (float sum)
+    local today_cost="0"
+    local i
+    for (( i=1; i<=active_count; i++ )); do
+      if [[ -n "${active_costs[$i]}" && "${active_costs[$i]}" != "0" ]]; then
+        local cost_fmt
+        printf -v cost_fmt '%.2f' "${active_costs[$i]}" 2>/dev/null || cost_fmt="0.00"
+        # Use awk for float addition — no bc dependency
+        today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $cost_fmt }" 2>/dev/null || echo "$today_cost")
+      fi
+    done
+    [[ -n "$global_line" ]] && global_line+="${SEP}"
+    global_line+="%F{cyan}\$${today_cost}%f %F{8}today (${active_count} session"
+    (( active_count != 1 )) && global_line+="s"
+    global_line+=")%f"
+  fi
+
+  [[ -n "$global_line" ]] && dash_lines="${global_line}"$'\n'
+
+  # ── Session lines ──
+  local i
+  for (( i=1; i<=active_count; i++ )); do
+    local s_line=""
+
+    # Model (bold)
+    s_line+="%B${active_models[$i]}%b"
+
+    # Context bar (8 blocks) + percentage
+    if [[ -n "${active_ctxs[$i]}" ]]; then
+      local pct=${active_ctxs[$i]%.*}
+      (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
+      local filled=$(( pct * 8 / 100 )) empty=$(( 8 - filled ))
+      local ctx_color="green"
+      (( pct >= 70 )) && ctx_color="yellow"
+      (( pct >= 90 )) && ctx_color="red"
+      local ctx_bar=""
+      (( filled > 0 )) && ctx_bar+="${(l:$filled::█:)}"
+      (( empty > 0 )) && ctx_bar+="%F{8}${(l:$empty::░:)}%f"
+      s_line+=" %F{${ctx_color}}${ctx_bar}%f %F{8}${pct}%%%f"
+    fi
+
+    # Cost
+    if [[ -n "${active_costs[$i]}" && "${active_costs[$i]}" != "0" ]]; then
+      local cost_fmt
+      printf -v cost_fmt '%.2f' "${active_costs[$i]}" 2>/dev/null || cost_fmt="${active_costs[$i]}"
+      s_line+="${SEP}%F{cyan}\$${cost_fmt}%f"
+    fi
+
+    # Cache hit ratio
+    if [[ -n "${active_cache_pcts[$i]}" && "${active_cache_pcts[$i]}" != "0" && "${active_cache_pcts[$i]}" != "" ]]; then
+      s_line+="${SEP}%F{8}⚡${active_cache_pcts[$i]}%%%f"
+    fi
+
+    # Worktree / agent context
+    if [[ -n "${active_worktrees[$i]}" ]]; then
+      s_line+="${SEP}%F{8}[wt:${active_worktrees[$i]}]%f"
+    elif [[ -n "${active_agents[$i]}" ]]; then
+      s_line+="${SEP}%F{8}[agent:${active_agents[$i]}]%f"
+    fi
+
+    dash_lines+="${s_line}"$'\n'
+  done
+
+  # Deduplicate — only update PROMPT if dashboard changed
+  [[ "$dash_lines" == "$_CLAUDII_LAST_DASHBOARD" ]] && {
+    # Still need to prepend cached dashboard to PROMPT
+    if [[ -n "$_CLAUDII_LAST_DASHBOARD" ]]; then
+      PROMPT="${_CLAUDII_LAST_DASHBOARD}${_CLAUDII_USER_PROMPT}"
+    fi
+    return
+  }
+  _CLAUDII_LAST_DASHBOARD="$dash_lines"
+
+  # Prepend dashboard to PROMPT
+  if [[ -n "$dash_lines" ]]; then
+    PROMPT="${dash_lines}${_CLAUDII_USER_PROMPT}"
+  fi
 }
 
 autoload -Uz add-zsh-hook

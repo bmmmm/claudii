@@ -57,9 +57,37 @@ if [[ -n "$_session_min" && -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" 
   fi
 fi
 
-# Write per-session cache (key=value) — RPROMPT + aliases read without jq
+# Cache hit percentage — computed from cache_read vs input tokens
+_cache_pct=""
+if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
+  _cr=${cache_read%.*}
+  _ci=${input_tok%.*}
+  if (( _ci + _cr > 0 )); then
+    _cache_pct=$(( _cr * 100 / (_cr + _ci) ))
+  fi
+fi
+
+# 7d-Delta: record rate_7d_start on FIRST update if not yet set
 _sid="${session_id:+${session_id:0:8}}"
 _session_file="$_cache_dir/session-${_sid:-unknown}"
+_rate_7d_start=""
+if [[ -n "$rate_7d" && "$rate_7d" != "null" && "$rate_7d" != "" ]]; then
+  # Check if existing cache file has rate_7d_start already
+  if [[ -f "$_session_file" ]]; then
+    _existing_cache=""
+    { _existing_cache=$(<"$_session_file"); } 2>/dev/null
+    if [[ $'\n'"$_existing_cache" == *$'\n'rate_7d_start=* ]]; then
+      _rate_7d_start="${_existing_cache#*rate_7d_start=}"
+      _rate_7d_start="${_rate_7d_start%%$'\n'*}"
+    fi
+  fi
+  # If still empty, this is the first update — record current 7d as start
+  [[ -z "$_rate_7d_start" ]] && _rate_7d_start="$rate_7d"
+fi
+
+# Write per-session cache (key=value) — RPROMPT + aliases read without jq
+# Include ppid so dashboard can check if Claude process is still alive
+_ppid="${PPID:-}"
 { printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
   "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
@@ -69,7 +97,9 @@ _session_file="$_cache_dir/session-${_sid:-unknown}"
   "agent=$agent_name" \
   "model_id=$model_id" \
   "burn_eta=$_burn_eta" \
-  "ppid=$PPID" \
+  "cache_pct=$_cache_pct" \
+  "ppid=$_ppid" \
+  "rate_7d_start=$_rate_7d_start" \
   > "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
@@ -83,7 +113,7 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 
 # --- helpers ---
 
-# Format token count: 1234→1.2K  1234567→1.2M
+# Format token count: 1234->1.2K  1234567->1.2M
 _tok() {
   local n=$1
   [[ -z "$n" || "$n" == "null" ]] && return
@@ -96,7 +126,7 @@ _tok() {
   fi
 }
 
-# Format duration: ms → "<1m", "5m", "1h 23m"
+# Format duration: ms -> "<1m", "5m", "1h 23m"
 _dur() {
   local ms=$1
   [[ -z "$ms" || "$ms" == "null" ]] && return
@@ -134,6 +164,11 @@ SEP="${DIM} │${RST} "
 # --- build output ---
 out=""
 
+# Terminal width for adaptive truncation
+# Default to 120 (full output) when COLUMNS is not set — the sessionline
+# runs inside Claude Code which controls its own rendering width.
+_cols="${COLUMNS:-120}"
+
 # Model (bold) + effort mode (dim, from env — workaround until API exposes it)
 if [[ -n "$model" ]]; then
   out+="\033[1m${model}${RST}"
@@ -143,7 +178,7 @@ if [[ -n "$model" ]]; then
   fi
 fi
 
-# Context bar (10 chars) + percentage
+# Context bar (10 chars) + percentage — always shown (>= any width)
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
@@ -161,64 +196,74 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   out+=" $(_thr "$local_pct")${bar}${RST} ${DIM}${local_pct}%${RST}${win}"
 fi
 
-# Cost
-if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
-  out+="${SEP}\033[36m\$$(printf '%.2f' "$cost")${RST}"
-fi
+# Truncation logic: segments shown based on COLUMNS
+# < 60: only model + context bar (already added)
+# 60-80: + cost
+# 80-100: + rate limits
+# > 100: everything (tokens, lines, duration)
 
-# Tokens (compact: 15K↑ 4K↓ ⚡73%)
-if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
-  in_fmt=$(_tok "$input_tok")
-  out_fmt=$(_tok "$output_tok")
-  out+="${SEP}${DIM}${in_fmt}↑${RST}"
-  [[ -n "$out_fmt" ]] && out+=" ${DIM}${out_fmt}↓${RST}"
-  # Cache hit ratio — only show when cache_read > 0
-  if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
-    _cr=${cache_read%.*}
-    _ci=${input_tok%.*}
-    if (( _ci + _cr > 0 )); then
-      _cache_pct=$(( _cr * 100 / (_cr + _ci) ))
-      if (( _cache_pct >= 60 )); then _cc="\033[32m"
-      elif (( _cache_pct < 30 )); then _cc="\033[33m"
-      else _cc="${DIM}"; fi
-      out+=" ${_cc}⚡${_cache_pct}%${RST}"
-    fi
+# Cost — shown when cols >= 60
+if (( _cols >= 60 )); then
+  if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
+    out+="${SEP}\033[36m\$$(printf '%.2f' "$cost")${RST}"
   fi
 fi
 
-# Rate limits (only when present — Pro/Max)
-if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-  out+="${SEP}$(_rlc "$rate_5h")5h:${rate_5h%.*}%${RST}"
-  # Burn-rate ETA — show when calculated and < 120min
-  if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] && (( _burn_eta < 120 )); then
-    if (( _burn_eta < 10 )); then
-      _eta_color="\033[31m"    # red
-    elif (( _burn_eta < 30 )); then
-      _eta_color="\033[33m"    # yellow
-    else
-      _eta_color="${DIM}"      # dim
+# Rate limits — shown when cols >= 80
+if (( _cols >= 80 )); then
+  if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+    out+="${SEP}$(_rlc "$rate_5h")5h:${rate_5h%.*}%${RST}"
+    # Burn-rate ETA — show when calculated and < 120min
+    if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] && (( _burn_eta < 120 )); then
+      if (( _burn_eta < 10 )); then
+        _eta_color="\033[31m"    # red
+      elif (( _burn_eta < 30 )); then
+        _eta_color="\033[33m"    # yellow
+      else
+        _eta_color="${DIM}"      # dim
+      fi
+      out+=" ${_eta_color}~${_burn_eta}min${RST}"
     fi
-    out+=" ${_eta_color}~${_burn_eta}min${RST}"
+  fi
+  if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
+    [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"
+    out+=" $(_rlc "$rate_7d")7d:${rate_7d%.*}%${RST}"
   fi
 fi
-if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
-  [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"
-  out+=" $(_rlc "$rate_7d")7d:${rate_7d%.*}%${RST}"
-fi
 
-# Lines changed (only when > 0)
-if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
-   [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
-  lns=""
-  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && lns+="\033[32m+${lines_add}${RST}"
-  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && lns+=" \033[31m-${lines_rm}${RST}"
-  out+="${SEP}${lns}"
-fi
+# Full details — shown when cols > 100
+if (( _cols > 100 )); then
+  # Tokens (compact: 15K↑ 4K↓ ⚡73%)
+  if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
+    in_fmt=$(_tok "$input_tok")
+    out_fmt=$(_tok "$output_tok")
+    out+="${SEP}${DIM}${in_fmt}↑${RST}"
+    [[ -n "$out_fmt" ]] && out+=" ${DIM}${out_fmt}↓${RST}"
+    # Cache hit ratio — only show when cache_read > 0
+    if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
+      if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
+        if (( _cache_pct >= 60 )); then _cc="\033[32m"
+        elif (( _cache_pct < 30 )); then _cc="\033[33m"
+        else _cc="${DIM}"; fi
+        out+=" ${_cc}⚡${_cache_pct}%${RST}"
+      fi
+    fi
+  fi
 
-# Duration
-if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
-  dur=$(_dur "$duration_ms")
-  [[ -n "$dur" ]] && out+="${SEP}${DIM}${dur}${RST}"
+  # Lines changed (only when > 0)
+  if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
+     [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
+    lns=""
+    [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && lns+="\033[32m+${lines_add}${RST}"
+    [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && lns+=" \033[31m-${lines_rm}${RST}"
+    out+="${SEP}${lns}"
+  fi
+
+  # Duration
+  if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
+    dur=$(_dur "$duration_ms")
+    [[ -n "$dur" ]] && out+="${SEP}${DIM}${dur}${RST}"
+  fi
 fi
 
 echo -e "$out"

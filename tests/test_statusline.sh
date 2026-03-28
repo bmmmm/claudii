@@ -247,8 +247,8 @@ else
     CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
     zsh -c "
       source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-      _CLAUDII_LAST_SESSION_BAR=''
-      _claudii_session_bar
+      _CLAUDII_LAST_DASHBOARD=''
+      _claudii_dashboard
     " 2>/dev/null
   )
   assert_eq "session bar: dead PID → no output (stale session suppressed)" "" "$zsh_session_bar"
@@ -265,8 +265,8 @@ zsh_session_bar_live=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    _CLAUDII_LAST_SESSION_BAR=''
-    _claudii_session_bar
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
     print -P \"\$PROMPT\"
   " 2>/dev/null
 )

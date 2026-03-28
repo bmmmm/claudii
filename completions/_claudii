@@ -21,6 +21,7 @@ _claudii() {
         'status:Live model health check / set refresh interval'
         'show:Select which models to monitor in RPROMPT'
         'sessionline:Sessionline (context, cost, tokens, rate limits)'
+        'dash:Multi-session dashboard toggle and detail view'
         'sessions:Active sessions, costs, rate limits'
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'
@@ -81,6 +82,17 @@ _claudii() {
                 ;;
             esac
           fi
+          ;;
+
+        dash)
+          local -a dash_opts
+          dash_opts=(
+            'on:Always show dashboard'
+            'off:Never show dashboard'
+            'auto:Show when sessions active (default)'
+            'show:Detail view of all sessions'
+          )
+          _describe 'dash option' dash_opts
           ;;
 
         continue)
@@ -151,6 +163,7 @@ _claudii() {
                 'status.rss_url:Status RSS feed URL'
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
+                'dashboard.enabled:Dashboard mode (auto/true/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
               )

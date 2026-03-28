@@ -72,7 +72,7 @@ prints only the bare version number when piped.
 .
 .SH DISPLAY LAYERS
 .B claudii
-provides three display layers, each serving a different scope:
+provides three display layers plus a multi-session dashboard, each serving a different scope:
 .TP
 .B ClaudeStatus (RPROMPT)
 Model health indicators rendered in the right-hand prompt of your shell.
@@ -114,6 +114,31 @@ agent context
 context bar with percentage, cost, and rate limits with reset countdown.
 Sessions older than 5 minutes are suppressed.
 .TP
+.B Dashboard (multi-session, above prompt)
+When multiple Claude Code sessions are active, a multi-line dashboard is
+prepended to
+.B PROMPT
+via the precmd hook.
+The first line shows aggregated rate limits (5h/7d with reset countdown),
+a 7-day delta percentage, today's total cost, and the number of active sessions.
+Below that, one line per active session shows: model name (bold),
+an 8-block context bar with percentage, cost, cache hit ratio
+.RB ( \[u26A1]XX% ),
+and worktree/agent context.
+The RPROMPT (ClaudeStatus) appears next to the last dashboard line.
+Controlled via
+.B "claudii dash"
+(see below) or the
+.B dashboard.enabled
+config key (values:
+.BR auto ", " true ", " off ;
+default:
+.BR auto ).
+In
+.B auto
+mode the dashboard is shown when at least one active session exists and
+hidden otherwise.
+.TP
 .B Sessionline (inside Claude Code)
 An info-dense metrics line rendered inside Claude Code sessions via the
 .B statusLine
@@ -142,6 +167,13 @@ Each segment is separated by a dim
 .B \(bv
 character.
 Segments are omitted when their data is absent.
+.PP
+Segments are also adapted to the terminal width
+.RB ( $COLUMNS ):
+below 60 columns only the model and context bar are shown;
+60\(en80 adds cost;
+80\(en100 adds rate limits;
+above 100 shows everything (tokens, cache ratio, lines changed, duration).
 .TP
 .B Model name + effort mode
 The model display name in
@@ -328,6 +360,45 @@ Data flow:
 .RS
 Claude Code \(-> Sessionline (stdin JSON) \(-> cache file \(-> SessionBar (precmd)
 .RE
+.
+.SS Dashboard
+Multi-session dashboard rendered above the prompt.
+Shows aggregated rate limits, cost summary, and per-session context bars.
+.
+.TP
+.B dash
+Show current dashboard mode and a detail view of all sessions
+(same as
+.BR "dash show" ).
+.
+.TP
+.B "dash on"
+Always show the dashboard (even with a single session).
+Sets
+.B dashboard.enabled
+to
+.BR true .
+.
+.TP
+.B "dash off"
+Never show the dashboard.
+Sets
+.B dashboard.enabled
+to
+.BR off .
+.
+.TP
+.B "dash auto"
+Show dashboard only when sessions are active (default).
+Sets
+.B dashboard.enabled
+to
+.BR auto .
+.
+.TP
+.B "dash show"
+Detail view of all sessions with context bars, costs, cache hit ratios,
+rate limits, 7-day deltas, worktree/agent context, and session age.
 .
 .SS Sessionline
 Rendered inside Claude Code sessions via
@@ -643,6 +714,7 @@ fallback.opus.model     fallback model when opus is down
 status.cache_ttl        cache TTL in seconds (default: 900)
 statusline.enabled      ClaudeStatus in RPROMPT (default: true)
 statusline.models       models to monitor (default: opus,sonnet,haiku)
+dashboard.enabled       dashboard mode (default: auto; values: auto/true/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)
 .fi
