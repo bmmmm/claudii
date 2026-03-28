@@ -1,0 +1,50 @@
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+    paths: [man/man1/claudii.1]
+
+permissions:
+  contents: write
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mandoc
+        run: sudo apt-get update && sudo apt-get install -y mandoc
+
+      - name: Convert man page to markdown
+        run: |
+          {
+            echo "# claudii"
+            echo ""
+            echo "_Auto-generated from \`man claudii\` — do not edit directly._"
+            echo "_Source: [man/man1/claudii.1](https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1)_"
+            echo ""
+            echo '---'
+            echo ""
+            mandoc -T markdown man/man1/claudii.1 \
+              | sed '1,/^## DESCRIPTION/d' \
+              | sed 's/^## /## /; s/^### /### /'
+          } > /tmp/Home.md
+
+      - name: Push to wiki
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git" /tmp/wiki 2>/dev/null || {
+            mkdir /tmp/wiki && cd /tmp/wiki && git init
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git"
+          }
+          cp /tmp/Home.md /tmp/wiki/Home.md
+          cd /tmp/wiki
+          git add Home.md
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: update wiki from man page"
+          git push origin HEAD:master || git push origin HEAD:main

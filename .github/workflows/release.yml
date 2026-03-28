@@ -12,9 +12,38 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Run tests
         run: bash tests/run.sh
+
+      - name: Build release notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          PREV=$(git tag --sort=-v:refname | grep -v "$TAG" | head -1 || echo "")
+          {
+            echo "## claudii $TAG"
+            echo ""
+            echo "Fast Claude Code aliases with live model status and session insights ♥"
+            echo ""
+            echo "### Install"
+            echo '```bash'
+            echo "brew tap bmmmm/tap && brew install claudii"
+            echo '```'
+            echo ""
+            echo "### What's new"
+            echo ""
+            if [[ -n "$PREV" ]]; then
+              git log --pretty="- %s" "$PREV..$TAG" | grep -v "Co-Authored-By"
+            else
+              git log --pretty="- %s" "$TAG" | head -20 | grep -v "Co-Authored-By"
+            fi
+            echo ""
+            echo "### Tests"
+            echo ""
+            bash tests/run.sh 2>&1 | tail -1
+          } > /tmp/release-notes.md
 
       - name: Create GitHub Release
         env:
@@ -22,9 +51,9 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "claudii ${{ github.ref_name }}" \
-            --generate-notes
+            --notes-file /tmp/release-notes.md
 
-      - name: Compute tarball SHA256 and update Formula
+      - name: Compute tarball SHA256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -32,6 +61,7 @@ jobs:
           URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
           SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
           echo "sha256: $SHA"
-          sed -i '' "s/sha256 \".*\"/sha256 \"${SHA}\"/" Formula/claudii.rb
-          echo "Updated Formula/claudii.rb with sha256: $SHA"
-          cat Formula/claudii.rb
+          echo "SHA256=$SHA" >> "$GITHUB_ENV"
+          echo ""
+          echo "Update Formula/claudii.rb and homebrew-tap with:"
+          echo "  sha256 \"$SHA\""

@@ -104,6 +104,10 @@ function claudii {
     metrics)
       _claudii_show_metrics
       ;;
+    "")
+      command claudii
+      print -z "claudii "
+      ;;
     *)
       command claudii "$@"
       ;;
