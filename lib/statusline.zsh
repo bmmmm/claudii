@@ -15,7 +15,7 @@ function _claudii_statusline {
 function _claudii_statusline_render {
   # Single cache-load call — fast mtime check, jq only on config change
   _claudii_cache_load
-  [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
+  [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; PROMPT="${_CLAUDII_USER_PROMPT}"; return; }
 
   local status_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
@@ -72,7 +72,7 @@ function _claudii_statusline_render {
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Session bar — full-width line printed above the prompt via print -P
+  # Session bar — prepends a line to PROMPT (avoids stdout/command-output confusion)
   _claudii_session_bar
 }
 
@@ -94,13 +94,22 @@ function _claudii_session_bar {
     (( _sf_mt > best_mtime )) && best_mtime=$_sf_mt && session_cache=$_sf
   done
 
-  [[ -z "$session_cache" ]] && return
+  if [[ -z "$session_cache" ]]; then
+    PROMPT="${_CLAUDII_USER_PROMPT}"
+    return
+  fi
   local session_age=$(( ${EPOCHSECONDS:-$(date +%s)} - best_mtime ))
-  (( session_age >= 300 )) && return
+  if (( session_age >= 300 )); then
+    PROMPT="${_CLAUDII_USER_PROMPT}"
+    return
+  fi
 
   local sc=""
   { sc=$(<"$session_cache"); } 2>/dev/null
-  [[ -z "$sc" ]] && return
+  if [[ -z "$sc" ]]; then
+    PROMPT="${_CLAUDII_USER_PROMPT}"
+    return
+  fi
 
   # Parse all fields via pattern matching — zero subprocesses
   local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent="" s_burn_eta="" s_ppid=""
@@ -116,7 +125,10 @@ function _claudii_session_bar {
   [[ $'\n'"$sc" == *$'\n'burn_eta=* ]] && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'ppid=* ]]     && s_ppid="${${sc#*ppid=}%%$'\n'*}"
 
-  [[ -z "$s_model" ]] && return
+  if [[ -z "$s_model" ]]; then
+    PROMPT="${_CLAUDII_USER_PROMPT}"
+    return
+  fi
 
   # Skip session bar if the Claude process is no longer running — prevents stale
   # data from showing in new terminals after a session ends.
@@ -185,10 +197,10 @@ function _claudii_session_bar {
     bar+=" %F{${rl7_color}}7d:${rl7_int}%%%f"
   fi
 
-  # Deduplicate — only print if bar content changed since last render
-  [[ "$bar" == "$_CLAUDII_LAST_SESSION_BAR" ]] && return
+  # Set session bar as first line of PROMPT — avoids printing to stdout
+  # (which would make it appear between command output and the next prompt)
   _CLAUDII_LAST_SESSION_BAR="$bar"
-  print -P "$bar"
+  PROMPT="${bar}"$'\n'"${_CLAUDII_USER_PROMPT}"
 }
 
 autoload -Uz add-zsh-hook

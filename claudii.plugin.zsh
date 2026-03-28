@@ -30,6 +30,10 @@ add-zsh-hook -d precmd _claudii_rprompt 2>/dev/null
 add-zsh-hook -d precmd _claudii_statusline 2>/dev/null
 RPROMPT=""
 
+# Capture user's PROMPT before we modify it — used by session bar to prepend
+# its line without printing to stdout (which would appear in command output)
+typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
+
 source "$CLAUDII_HOME/lib/config.zsh"
 source "$CLAUDII_HOME/lib/functions.zsh"
 source "$CLAUDII_HOME/lib/statusline.zsh"
