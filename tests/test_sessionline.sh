@@ -88,3 +88,24 @@ _ppid_val="$(echo "$_cache_contents" | grep '^ppid=' | cut -d= -f2)"
   && assert_eq "session cache ppid is a valid PID integer" "true" "true" \
   || assert_eq "session cache ppid is a valid PID integer" "true" "false (got: $_ppid_val)"
 rm -rf "$_test_cache_dir"
+
+# Token order: input↑ must appear before output↓ in the rendered line
+# (values from real session: 64.9K input, 121.1K output — order matters regardless of magnitude)
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":47,"total_input_tokens":64900,"total_output_tokens":121100,"context_window_size":200000},"cost":{"total_cost_usd":12.53,"total_duration_ms":3600000},"rate_limits":{"five_hour":{"used_percentage":11},"seven_day":{"used_percentage":65}}}' | COLUMNS=150 bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+up_pos=$(echo "$strip" | grep -bo '↑' | head -1 | cut -d: -f1 || echo "9999")
+down_pos=$(echo "$strip" | grep -bo '↓' | head -1 | cut -d: -f1 || echo "9999")
+assert_contains "token input shown with ↑" "64.9K↑" "$strip"
+assert_contains "token output shown with ↓" "121.1K↓" "$strip"
+assert_eq "token order: ↑ (input) appears before ↓ (output)" "true" "$([ "${up_pos:-9999}" -lt "${down_pos:-9999}" ] && echo true || echo false)"
+
+# Reset countdown in sessionline — must show "reset Xmin" when resets_at is set
+_reset_ts=$(( $(date +%s) + 5400 ))
+output=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":11,\"resets_at\":${_reset_ts}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "sessionline shows reset countdown" "1" "$(echo "$strip" | grep -cE 'reset [0-9]+min' || true)"
+
+# Reset countdown color: red (\033[31m) when < 10min remaining
+_reset_soon=$(( $(date +%s) + 300 ))
+output_soon=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":11,\"resets_at\":${_reset_soon}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
+assert_eq "reset countdown < 10min: red color code present" "1" "$(printf '%s' "$output_soon" | grep -c $'\033\[31m' || true)"

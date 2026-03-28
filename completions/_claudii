@@ -23,6 +23,7 @@ _claudii() {
         'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
         'status:Live model health check / set refresh interval'
         'sessions:Active sessions, costs, rate limits'
+        'se:Shorthand for sessions'
         'dash:Multi-session dashboard toggle and detail view'
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'

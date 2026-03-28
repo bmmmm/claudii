@@ -75,7 +75,7 @@ usage() {
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf '\n'
   printf "  \033[38;5;213mSessionline\033[0m                               inside Claude\n"
-  printf "    %-33s $d %s\n" "sessions (ss)"                   "active sessions · costs · rate limits"
+  printf "    %-33s $d %s\n" "sessions (se|ss)"                 "active sessions · costs · rate limits"
   printf '\n'
   printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
   printf "    %-33s $d %s\n" "dash [on|off|auto|show]"         "multi-session dashboard toggle"
@@ -94,6 +94,7 @@ usage() {
 # Shorthand aliases — expand before main case statement
 case "${1:-}" in
   s)  set -- status    "${@:2}" ;;
+  se) set -- sessions  "${@:2}" ;;
   ss) set -- sessions  "${@:2}" ;;
   c)  set -- cost      "${@:2}" ;;
   t)  set -- trends    "${@:2}" ;;
@@ -160,13 +161,17 @@ case "${1:-}" in
         echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
         echo -e "\033[0;33mDashboard disabled\033[0m"
         ;;
+      auto)
+        echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;36mDashboard auto mode (shows when sessions active)\033[0m"
+        ;;
       "")
         current=$(_cfgget dashboard.enabled)
         [[ -z "$current" ]] && current="auto"
         echo "Dashboard: $current"
         ;;
       *)
-        echo "Usage: claudii dashboard [on|off]"; exit 1
+        echo "Usage: claudii dashboard [on|off|auto]"; exit 1
         ;;
     esac
     ;;
@@ -234,7 +239,7 @@ case "${1:-}" in
         [[ -z "$current" ]] && current="auto"
 
         printf '\n'
-        printf '  \033[0;36mclaudii dash\033[0m  mode: %s\n' "$current"
+        printf '  \033[0;36mclaudii dashboard\033[0m  mode: %s\n' "$current"
         printf '\n'
 
         shopt -s nullglob
@@ -384,12 +389,12 @@ case "${1:-}" in
           printf "  ${dim}%d active, %d total, \$%s${reset}\n" \
             "$active_count" "$all_count" "$(printf '%.2f' "$total_cost")"
           printf '\n'
-          printf "  ${dim}claudii dash on|off|auto  to change mode${reset}\n"
+          printf "  ${dim}claudii dashboard on|off|auto  to change mode${reset}\n"
         fi
         printf '\n'
         ;;
       *)
-        echo "Usage: claudii dash [on|off|auto|show]"; exit 1
+        echo "Usage: claudii dashboard [on|off|auto]"; exit 1
         ;;
     esac
     ;;
@@ -513,8 +518,21 @@ case "${1:-}" in
     now=$(date +%s)
     cutoff=$(( now - 86400 ))
 
-    # Associative arrays for per-model totals
-    declare -A today_cost today_count alltime_cost alltime_count
+    # Parallel indexed arrays for per-model totals (bash 3.2 compatible, no declare -A)
+    _cost_models=()
+    _today_cost=()
+    _today_count=()
+    _alltime_cost=()
+    _alltime_count=()
+
+    # Helper: find index of model in _cost_models, returns -1 if not found
+    _cost_model_idx() {
+      local needle="$1" i
+      for (( i=0; i<${#_cost_models[@]}; i++ )); do
+        [[ "${_cost_models[$i]}" == "$needle" ]] && echo "$i" && return
+      done
+      echo "-1"
+    }
 
     for f in "${session_files[@]}"; do
       [[ -f "$f" ]] || continue
@@ -546,16 +564,27 @@ case "${1:-}" in
         mtime=$(stat -c%Y "$f")
       fi
 
+      # Find or add model index
+      idx=$(_cost_model_idx "$short")
+      if [[ "$idx" == "-1" ]]; then
+        idx=${#_cost_models[@]}
+        _cost_models+=("$short")
+        _today_cost+=("0")
+        _today_count+=("0")
+        _alltime_cost+=("0")
+        _alltime_count+=("0")
+      fi
+
       # Accumulate all-time
-      alltime_cost[$short]=$(printf '%.4f' \
-        "$(echo "${alltime_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${alltime_cost[$short]:-0}")")
-      alltime_count[$short]=$(( ${alltime_count[$short]:-0} + 1 ))
+      _alltime_cost[$idx]=$(printf '%.4f' \
+        "$(echo "${_alltime_cost[$idx]} + $cost" | bc -l 2>/dev/null || echo "${_alltime_cost[$idx]}")")
+      _alltime_count[$idx]=$(( ${_alltime_count[$idx]} + 1 ))
 
       # Accumulate today (mtime within last 24h)
       if (( mtime >= cutoff )); then
-        today_cost[$short]=$(printf '%.4f' \
-          "$(echo "${today_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${today_cost[$short]:-0}")")
-        today_count[$short]=$(( ${today_count[$short]:-0} + 1 ))
+        _today_cost[$idx]=$(printf '%.4f' \
+          "$(echo "${_today_cost[$idx]} + $cost" | bc -l 2>/dev/null || echo "${_today_cost[$idx]}")")
+        _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))
       fi
     done
 
@@ -563,12 +592,13 @@ case "${1:-}" in
       # Build JSON with today + alltime breakdown
       today_obj="{}"
       alltime_obj="{}"
-      for m in "${!today_cost[@]}"; do
-        today_obj=$(echo "$today_obj" | jq --arg m "$m" --argjson c "${today_cost[$m]}" --argjson n "${today_count[$m]}" \
-          '.[$m] = {cost: $c, sessions: $n}')
-      done
-      for m in "${!alltime_cost[@]}"; do
-        alltime_obj=$(echo "$alltime_obj" | jq --arg m "$m" --argjson c "${alltime_cost[$m]}" --argjson n "${alltime_count[$m]}" \
+      for (( i=0; i<${#_cost_models[@]}; i++ )); do
+        m="${_cost_models[$i]}"
+        if [[ "${_today_count[$i]}" != "0" ]]; then
+          today_obj=$(echo "$today_obj" | jq --arg m "$m" --argjson c "${_today_cost[$i]}" --argjson n "${_today_count[$i]}" \
+            '.[$m] = {cost: $c, sessions: $n}')
+        fi
+        alltime_obj=$(echo "$alltime_obj" | jq --arg m "$m" --argjson c "${_alltime_cost[$i]}" --argjson n "${_alltime_count[$i]}" \
           '.[$m] = {cost: $c, sessions: $n}')
       done
       jq -n --argjson today "$today_obj" --argjson alltime "$alltime_obj" \
@@ -576,11 +606,11 @@ case "${1:-}" in
       exit 0
     elif [[ "$_FORMAT" == "tsv" ]]; then
       printf "period\tmodel\tcost\tsessions\n"
-      for m in "${!today_cost[@]}"; do
-        printf "today\t%s\t%s\t%s\n" "$m" "${today_cost[$m]}" "${today_count[$m]}"
-      done
-      for m in "${!alltime_cost[@]}"; do
-        printf "alltime\t%s\t%s\t%s\n" "$m" "${alltime_cost[$m]}" "${alltime_count[$m]}"
+      for (( i=0; i<${#_cost_models[@]}; i++ )); do
+        m="${_cost_models[$i]}"
+        [[ "${_today_count[$i]}" != "0" ]] && \
+          printf "today\t%s\t%s\t%s\n" "$m" "${_today_cost[$i]}" "${_today_count[$i]}"
+        printf "alltime\t%s\t%s\t%s\n" "$m" "${_alltime_cost[$i]}" "${_alltime_count[$i]}"
       done
       exit 0
     fi
@@ -590,14 +620,19 @@ case "${1:-}" in
     line='  ─────────────────'
 
     _print_section() {
-      local -n _costs=$1 _counts=$2
+      local section="$1"  # "today" or "alltime"
       local total=0 has_data=0
-      for m in "${!_costs[@]}"; do
-        c="${_costs[$m]}"
-        n="${_counts[$m]}"
+      for (( _pi=0; _pi<${#_cost_models[@]}; _pi++ )); do
+        local _pm="${_cost_models[$_pi]}"
+        if [[ "$section" == "today" ]]; then
+          local _pc="${_today_cost[$_pi]}" _pn="${_today_count[$_pi]}"
+        else
+          local _pc="${_alltime_cost[$_pi]}" _pn="${_alltime_count[$_pi]}"
+        fi
+        [[ "$_pn" == "0" ]] && continue
         printf "    %-10s ${cyan}\$%s${reset}  (%s session%s)\n" \
-          "$m" "$(printf '%.2f' "$c")" "$n" "$( (( n != 1 )) && echo 's' || true)"
-        total=$(echo "$total + $c" | bc -l)
+          "$_pm" "$(printf '%.2f' "$_pc")" "$_pn" "$( (( _pn != 1 )) && echo 's' || true)"
+        total=$(echo "$total + $_pc" | bc -l)
         has_data=1
       done
       if (( has_data )); then
@@ -610,10 +645,10 @@ case "${1:-}" in
 
     printf '\n'
     printf '  \033[38;5;213mToday\033[0m\n'
-    _print_section today_cost today_count
+    _print_section today
     printf '\n'
     printf '  \033[38;5;213mAll time\033[0m\n'
-    _print_section alltime_cost alltime_count
+    _print_section alltime
     printf '\n'
     ;;
 
@@ -1238,7 +1273,7 @@ case "${1:-}" in
     else
       printf '  Cache:    \033[38;5;240m(not yet created)\033[0m\n'
     fi
-    printf '  Commands: claudii on/off · status · show model\n'
+    printf '  Commands: claudii on/off · claudii status\n'
     printf '\n'
 
     # SessionBar
@@ -1403,7 +1438,8 @@ case "${1:-}" in
     # Pretty output
     printf '\n'
     for (( i=0; i<_sf_count; i++ )); do
-      local status_icon age_str
+      status_icon=""
+      age_str=""
       age="${_sf_age[$i]}"
       if [[ "${_sf_active[$i]}" == "active" ]]; then
         status_icon="\033[0;32m●\033[0m"
@@ -1572,7 +1608,7 @@ case "${1:-}" in
     declare -a _dc_name _dc_status _dc_detail
     _dc_count=0
 
-    _dc_add() { _dc_name[$_dc_count]="$1"; _dc_status[$_dc_count]="$2"; _dc_detail[$_dc_count]="$3"; (( _dc_count++ )); }
+    _dc_add() { _dc_name[$_dc_count]="$1"; _dc_status[$_dc_count]="$2"; _dc_detail[$_dc_count]="$3"; _dc_count=$(( _dc_count + 1 )); }
 
     # 1. Claude Code
     if command -v claude >/dev/null 2>&1; then
@@ -1661,9 +1697,9 @@ case "${1:-}" in
       exit 0
     fi
 
-    local ok="\033[0;32m✓\033[0m"
-    local warn="\033[0;33m⚠\033[0m"
-    local fail="\033[0;31m✗\033[0m"
+    ok="\033[0;32m✓\033[0m"
+    warn="\033[0;33m⚠\033[0m"
+    fail="\033[0;31m✗\033[0m"
     printf '\n'
     printf '  \033[0;36mclaudii doctor\033[0m\n\n'
     for (( i=0; i<_dc_count; i++ )); do

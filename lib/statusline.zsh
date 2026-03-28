@@ -176,6 +176,7 @@ function _claudii_dashboard {
   # Build dashboard lines
   local dash_lines=""
   local SEP="%F{8} │%f "
+  local _cost_fmt _cost_fmt_s
 
   # ── Global line ──
   # Aggregate: use the freshest (first) session's rate limits as representative
@@ -219,7 +220,6 @@ function _claudii_dashboard {
     local _ci
     for (( _ci=1; _ci<=active_count; _ci++ )); do
       if [[ -n "${active_costs[$_ci]}" && "${active_costs[$_ci]}" != "0" ]]; then
-        local _cost_fmt
         _cost_fmt=$(printf '%.2f' "${active_costs[$_ci]}" 2>/dev/null) || _cost_fmt="0.00"
         # Use awk for float addition — no bc dependency
         today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $_cost_fmt }" 2>/dev/null || echo "$today_cost")
@@ -258,7 +258,6 @@ function _claudii_dashboard {
 
     # Cost
     if [[ -n "${active_costs[$_si]}" && "${active_costs[$_si]}" != "0" ]]; then
-      local _cost_fmt_s
       _cost_fmt_s=$(printf '%.2f' "${active_costs[$_si]}" 2>/dev/null) || _cost_fmt_s="${active_costs[$_si]}"
       s_line+="${SEP}%F{cyan}%{\$%}${_cost_fmt_s}%f"
     fi

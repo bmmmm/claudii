@@ -225,6 +225,32 @@ assert_contains "dash show: shows cache hit" "⚡42%" "$output"
 assert_contains "dash show: shows 7d delta" "+3%" "$output"
 assert_contains "dash show: shows mode" "auto" "$output"
 
+# ── No stdout leak from dashboard render (regression: _cost_fmt=, _cost_fmt_s=) ──
+
+cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
+printf '%s\n' "model=Sonnet 4.6" "ctx_pct=56" "cost=1.09" "rate_5h=4" "rate_7d=65" \
+  "reset_5h=0" "reset_7d=0" "session_id=leaktest1" \
+  "worktree=main" "agent=" "cache_pct=80" "ppid=$$" "rate_7d_start=63" \
+  > "$CLAUDII_CACHE_DIR/session-leaktest1"
+printf '%s\n' "model=Opus 4.6" "ctx_pct=46" "cost=11.66" "rate_5h=4" "rate_7d=65" \
+  "reset_5h=0" "reset_7d=0" "session_id=leaktest2" \
+  "worktree=work" "agent=" "cache_pct=58" "ppid=$$" "rate_7d_start=63" \
+  > "$CLAUDII_CACHE_DIR/session-leaktest2"
+touch "$CLAUDII_CACHE_DIR/session-leaktest1" "$CLAUDII_CACHE_DIR/session-leaktest2"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+
+# _claudii_statusline must print NOTHING to stdout — all output goes to $PROMPT
+leaked=$(
+  CLAUDII_CACHE_DIR="$CLAUDII_CACHE_DIR" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+  " 2>/dev/null
+)
+assert_eq "no stdout leak from dashboard render" "" "$leaked"
+leak_cost=$(printf '%s' "$leaked" | grep -c "_cost_fmt=" || true)
+assert_eq "no _cost_fmt= leak in stdout" "0" "$leak_cost"
+
 # ── Cleanup ──
 rm -rf "$DASH_TMP"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR
