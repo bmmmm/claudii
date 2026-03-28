@@ -70,6 +70,157 @@ strips ANSI colors and prints plain text.
 .B version
 prints only the bare version number when piped.
 .
+.SH DISPLAY LAYERS
+.B claudii
+provides three display layers, each serving a different scope:
+.TP
+.B ClaudeStatus (RPROMPT)
+Model health indicators rendered in the right-hand prompt of your shell.
+Reads from a local cache file \(em no network calls in
+.IR precmd .
+The cache is refreshed automatically in the background when it exceeds
+.B status.cache_ttl
+seconds.
+Indicators:
+.B \(dg
+= ok (green),
+.B \(ti
+= degraded (yellow),
+.B \(da
+= down (red),
+.B ?
+= API unreachable,
+.B \(lB\(el\(rB
+= loading (no cache),
+.B \(rn
+= refreshing (stale cache).
+Enable with
+.B claudii on
+/ disable with
+.BR "claudii off" .
+.TP
+.B SessionBar (above prompt)
+A summary line printed above the prompt on every
+.I precmd
+invocation via
+.BR "print \-P" .
+Reads per-session cache files written by the Sessionline handler \(em no
+network calls.
+Only prints when the data changes (deduplication prevents flicker).
+Shows: model name (bold), worktree context
+.RI ( [wt:name] ),
+agent context
+.RI ( [agent:name] ),
+context bar with percentage, cost, and rate limits with reset countdown.
+Sessions older than 5 minutes are suppressed.
+.TP
+.B Sessionline (inside Claude Code)
+An info-dense metrics line rendered inside Claude Code sessions via the
+.B statusLine
+hook in
+.IR ~/.claude/settings.json .
+Receives live JSON from Claude Code on stdin on every turn and outputs a
+single formatted line.
+Segments are described in detail in
+.B SESSIONLINE SEGMENTS
+below.
+Enable with
+.B claudii sessionline on
+/ disable with
+.BR "claudii sessionline off" .
+.PP
+Data flow:
+.RS
+.nf
+Claude Code \(-> Sessionline (stdin JSON) \(-> cache file \(-> SessionBar (precmd)
+                                         \(-> history.tsv (Flight Recorder)
+.fi
+.RE
+.
+.SH SESSIONLINE SEGMENTS
+Each segment is separated by a dim
+.B \(bv
+character.
+Segments are omitted when their data is absent.
+.TP
+.B Model name + effort mode
+The model display name in
+.B bold
+(e.g.\&
+.BR "claude-opus-4-5" ).
+If the
+.B CLAUDII_EFFORT
+environment variable is set to anything other than
+.BR high ,
+the effort mode is appended in
+.I dim
+text (e.g.\&
+.IR max ).
+.TP
+.B Context bar
+A 10-character block bar showing context window usage:
+.B \[u2588]
+(filled) and
+.B \[u2591]
+(empty) characters.
+Color: green < 70%, yellow 70\(en89%, red \(>= 90%.
+Followed by the percentage value in dim text.
+A dim
+.B 1M
+indicator is appended when the context window size is >= 1,000,000 tokens
+(extended context mode).
+.TP
+.B Cost
+Session cost formatted as
+.B $X.XX
+in cyan.
+Omitted when cost is zero.
+.TP
+.B Tokens + cache hit ratio
+Input tokens (with
+.B \(ua
+arrow) and output tokens (with
+.B \(da
+arrow) formatted with K/M suffixes (e.g.\&
+.BR "15.2K\(ua 4.1K\(da" ).
+When cache read tokens are present, a cache hit ratio is appended as
+.B \[u26A1]XX%
+(green >= 60%, yellow < 30%, dim otherwise).
+.TP
+.B Rate limits
+5-hour and 7-day usage shown as
+.B 5h:XX%
+and
+.B 7d:XX%
+respectively.
+Color: cyan < 70%, yellow 70\(en89%, red >= 90%.
+Only shown when the API returns rate limit data (Pro/Max plans).
+.TP
+.B Lines changed
+Lines added in green
+.RB ( +N )
+and lines removed in red
+.RB ( \-N ).
+Omitted when both are zero.
+.TP
+.B Duration
+Wall-clock session duration formatted as
+.BR <1m ,
+.BR 5m ,
+or
+.B 1h 23m
+(dim text).
+.TP
+.B Worktree / agent context
+Shown in the
+.B SessionBar
+only (not in the Sessionline output itself).
+Worktree name rendered as
+.B [wt:name]
+and agent context as
+.B [agent:name]
+in dim text.
+.
 .SH COMMANDS
 .
 .SS Aliases
