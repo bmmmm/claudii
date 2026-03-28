@@ -1,4 +1,6 @@
 # claudii statusline — RPROMPT with per-model health + last-fetch age
+# shellcheck source=lib/visual.sh
+source "${CLAUDII_HOME}/lib/visual.sh"
 
 function _claudii_statusline {
   local _t=$EPOCHREALTIME
@@ -52,11 +54,11 @@ function _claudii_statusline_render {
     model="${model// /}"
     # Pattern match in-process — no grep subprocess
     if [[ $'\n'"$cache_content" == *$'\n'"${model}=down"* ]]; then
-      segments+="%F{red}${(C)model} ↓%f "
+      segments+="%F{red}${(C)model} ${CLAUDII_SYM_DOWN}%f "
     elif [[ $'\n'"$cache_content" == *$'\n'"${model}=degraded"* ]]; then
-      segments+="%F{yellow}${(C)model} ~%f "
+      segments+="%F{yellow}${(C)model} ${CLAUDII_SYM_DEGRADED}%f "
     else
-      segments+="%F{green}${(C)model} ✓%f "
+      segments+="%F{green}${(C)model} ${CLAUDII_SYM_OK}%f "
     fi
   done
 

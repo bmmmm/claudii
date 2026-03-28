@@ -343,6 +343,37 @@ Enable sessionline:
 Read a config value:
 .B claudii config get aliases.cl.model
 .
+.SH VISUAL LANGUAGE
+claudii uses a consistent set of symbols across all output:
+.PP
+.TS
+l l l.
+Symbol	Meaning	Color
+_
+\(bu	active session	green
+\(ci	ended / inactive	dim
+\(tf	warning (rate limit, stale cache)	yellow
+\(mu	error / failure	red
+\(OK	ok / success	green
+\(da	down (model unavailable)	red
+~	degraded (partial outage)	yellow
+|	separator	\(em
+\[u2588]	progress bar \(em filled block	context-sensitive
+\[u2591]	progress bar \(em empty block	dim
+.TE
+.PP
+The helper function
+.B _claudii_sym
+.RI ( lib/visual.sh )
+accepts a name
+.RB ( active ", " inactive ", " warn ", " error ", " ok ", " down ", " degraded ", " sep )
+and prints the corresponding colored symbol.
+Constants are prefixed
+.B CLAUDII_SYM_
+(symbols) and
+.B CLAUDII_CLR_
+(ANSI colors).
+.
 .SH SEE ALSO
 .BR claude (1),
 .BR jq (1),
