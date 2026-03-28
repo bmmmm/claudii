@@ -57,9 +57,20 @@ usage() {
   printf '    config [get|set|reset|export|import]\n'
   printf "    doctor · cost · debug · metrics · restart · components · about\n"
   printf '\n'
+  printf '  \033[38;5;213mshortcuts\033[0m\n'
+  printf "  s=status  ss=sessions  c=cost  d=doctor\n"
+  printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
 }
+
+# Shorthand aliases — expand before main case statement
+case "${1:-}" in
+  s)  set -- status    "${@:2}" ;;
+  ss) set -- sessions  "${@:2}" ;;
+  c)  set -- cost      "${@:2}" ;;
+  d)  set -- doctor    "${@:2}" ;;
+esac
 
 case "${1:-}" in
   on)

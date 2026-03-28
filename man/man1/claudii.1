@@ -259,6 +259,22 @@ and that the plugin is loaded.
 Also reports the installed version and whether the local repo is behind
 .IR origin/main .
 .
+.SH SHORTCUTS
+Single-letter shorthands expand to their full command before processing.
+.PP
+.TS
+l l.
+s	status
+ss	sessions
+c	cost
+d	doctor
+.TE
+.PP
+Example:
+.B claudii s
+is identical to
+.BR "claudii status" .
+.
 .SH CONFIG FILE
 User config:
 .I ~/.config/claudii/config.json
