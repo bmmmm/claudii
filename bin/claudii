@@ -5,7 +5,7 @@
 set -euo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-VERSION="0.5.0"
+VERSION="0.6.0"
 
 # TTY detection — 1 if stdout is a terminal, 0 if piped
 _TTY=0
