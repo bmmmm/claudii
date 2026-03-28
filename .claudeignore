@@ -1,3 +1,7 @@
 .git/
 tmp/
 .DS_Store
+LICENSE
+vendor/
+*.swp
+*.swo

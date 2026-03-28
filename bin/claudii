@@ -20,9 +20,13 @@ _cfg_init() {
   [[ -f "$CONFIG" ]] || cp "$DEFAULTS" "$CONFIG"
 }
 
+# Validate config key — alphanumeric, dots, underscores only (prevents jq injection)
+_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._]+$ ]] || { echo "Invalid key: $1" >&2; return 1; }; }
+
 # Config value lookup — user config first, falls back to defaults.json
 _cfgget() {
   local key="$1" val
+  _validate_key "$key" || return 1
   val=$(jq -r ".$key // empty" "$CONFIG" 2>/dev/null)
   [[ -z "$val" ]] && val=$(jq -r ".$key // empty" "$DEFAULTS" 2>/dev/null)
   echo "$val"
@@ -187,6 +191,7 @@ case "${1:-}" in
     case "${2:-}" in
       get)
         key="${3:?Usage: claudii config get <key>}"
+        _validate_key "$key" || exit 1
         jq_path=".$(echo "$key" | sed 's/\././g')"
         val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
         [[ -z "$val" ]] && val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
@@ -194,6 +199,7 @@ case "${1:-}" in
         ;;
       set)
         key="${3:?Usage: claudii config set <key> <value>}"
+        _validate_key "$key" || exit 1
         value="${4:?Usage: claudii config set <key> <value>}"
         jq_path=".$(echo "$key" | sed 's/\././g')"
         if [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
