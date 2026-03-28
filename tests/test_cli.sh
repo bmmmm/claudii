@@ -2,7 +2,7 @@
 
 # version
 output=$(bash "$CLAUDII_HOME/bin/claudii" version 2>&1)
-assert_contains "claudii version shows version" "v0.1.0" "$output"
+assert_contains "claudii version shows version" "v0.2.0" "$output"
 
 # help
 output=$(bash "$CLAUDII_HOME/bin/claudii" help 2>&1)
