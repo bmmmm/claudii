@@ -20,17 +20,62 @@ jobs:
 
       - name: Convert man page to markdown
         run: |
-          {
-            echo "# claudii ♥"
-            echo ""
-            echo "_Auto-generated from \`man claudii\` — do not edit directly._"
-            echo "_Source: [man/man1/claudii.1](https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1)_"
-            echo ""
-            echo '---'
-            echo ""
-            pandoc -f man -t gfm man/man1/claudii.1 \
-              | sed '/^# CLAUDII/d; /^# NAME/,/^$/d'
-          } > /tmp/Home.md
+          # Convert and clean up
+          pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > /tmp/raw.md
+
+          # Build clean wiki page
+          cat > /tmp/Home.md << 'HEADER'
+          # claudii ♥
+
+          > Fast Claude Code aliases with live model status and session insights.
+
+          _Auto-generated from [`man claudii`](https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1) — do not edit directly._
+
+          ---
+
+          HEADER
+          # Strip leading spaces from heredoc
+          sed -i 's/^          //' /tmp/Home.md
+
+          # Extract and clean content (skip NAME heading, keep rest)
+          sed '/^# NAME/,/^# /{/^# [^N]/!d}; /^# CLAUDII/d' /tmp/raw.md \
+            | sed 's/^# /## /g; s/^## /## /g; s/^### /### /g' \
+            | sed '/^## SEE ALSO/,$d' \
+            >> /tmp/Home.md
+
+          # Add footer
+          cat >> /tmp/Home.md << 'FOOTER'
+
+          ---
+
+          ## Links
+
+          - [GitHub](https://github.com/bmmmm/claudii)
+          - [Install](https://github.com/bmmmm/claudii#install)
+          - [Releases](https://github.com/bmmmm/claudii/releases)
+          - [Claude Code Status Line by wynandw87](https://github.com/wynandw87/claude-code-statusline)
+          FOOTER
+
+      - name: Create sidebar
+        run: |
+          cat > /tmp/_Sidebar.md << 'EOF'
+          **claudii** ♥
+
+          - [[Home]]
+          - [README](https://github.com/bmmmm/claudii#readme)
+          - [Install](https://github.com/bmmmm/claudii#install)
+          - [Releases](https://github.com/bmmmm/claudii/releases)
+          - [Contributing](https://github.com/bmmmm/claudii/blob/main/CONTRIBUTING.md)
+
+          **Sections**
+          - [Aliases](#aliases)
+          - [ClaudeStatus](#claudestatus)
+          - [Claude Code Status Line](#claude-code-status-line-by-wynandw87)
+          - [Config](#config)
+          - [Environment](#environment)
+          - [Examples](#examples)
+          EOF
+          sed -i 's/^          //' /tmp/_Sidebar.md
 
       - name: Push to wiki
         env:
@@ -41,8 +86,9 @@ jobs:
             git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git"
           }
           cp /tmp/Home.md /tmp/wiki/Home.md
+          cp /tmp/_Sidebar.md /tmp/wiki/_Sidebar.md
           cd /tmp/wiki
-          git add Home.md
+          git add Home.md _Sidebar.md
           git diff --staged --quiet && echo "No changes" && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
