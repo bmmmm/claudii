@@ -34,10 +34,17 @@ jobs:
             echo ""
             echo "### What's new"
             echo ""
+            REPO="${{ github.repository }}"
             if [[ -n "$PREV" ]]; then
-              git log --pretty="- %s" "$PREV..$TAG" | grep -v "Co-Authored-By"
+              git log --pretty="%H %s" "$PREV..$TAG" | grep -v "Co-Authored-By" | while read hash msg; do
+                short="${hash:0:7}"
+                echo "- $msg [\`$short\`](https://github.com/$REPO/commit/$hash)"
+              done
             else
-              git log --pretty="- %s" "$TAG" | head -20 | grep -v "Co-Authored-By"
+              git log --pretty="%H %s" "$TAG" | head -20 | grep -v "Co-Authored-By" | while read hash msg; do
+                short="${hash:0:7}"
+                echo "- $msg [\`$short\`](https://github.com/$REPO/commit/$hash)"
+              done
             fi
             echo ""
             echo "### Tests"
