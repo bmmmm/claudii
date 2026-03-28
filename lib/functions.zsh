@@ -101,31 +101,63 @@ function clo { _claudii_launch clo "$@"; }
 function clm { _claudii_launch clm "$@"; }
 function clq { _claudii_launch clq "$@"; }
 
-# Agent launcher — launches claude with a system prompt from ~/.claude/agents/<name>.md
+# Agent launcher — starts claude with a skill as system prompt
+# Looks in: .claude/skills/<name>/SKILL.md (project) → ~/.claude/agents/<name>.md (global)
 function _claudii_agent_launch {
   local agent_name="$1"; shift
-  local agent_file="${HOME}/.claude/agents/${agent_name}.md"
+  local agent_file=""
 
-  if [[ ! -f "$agent_file" ]]; then
-    printf '\033[0;31m✗ Agent not found: %s\033[0m\n' "$agent_file" >&2
-    printf '  Available agents:\n' >&2
+  # Project skill first, then global agents
+  if [[ -f ".claude/skills/${agent_name}/SKILL.md" ]]; then
+    agent_file=".claude/skills/${agent_name}/SKILL.md"
+  elif [[ -f "${HOME}/.claude/agents/${agent_name}.md" ]]; then
+    agent_file="${HOME}/.claude/agents/${agent_name}.md"
+  fi
+
+  if [[ -z "$agent_file" ]]; then
+    printf '\033[0;31m✗ Agent not found: %s\033[0m\n' "$agent_name" >&2
+    printf '  Available:\n' >&2
     local found=0
-    for f in "${HOME}/.claude/agents/"*.md(N); do
-      printf '    %s\n' "$(basename "$f" .md)" >&2
+    for f in .claude/skills/*/SKILL.md(N); do
+      printf '    %s (skill)\n' "$(basename "$(dirname "$f")")" >&2
       found=1
     done
-    (( found == 0 )) && printf '    (none — create ~/.claude/agents/*.md files)\n' >&2
+    for f in "${HOME}/.claude/agents/"*.md(N); do
+      printf '    %s (agent)\n' "$(basename "$f" .md)" >&2
+      found=1
+    done
+    (( found == 0 )) && printf '    (none)\n' >&2
     return 1
   fi
 
   local prompt
   prompt=$(< "$agent_file")
-  _claudii_log info "agent launch: $agent_name"
-  claude --model opus --effort high --system-prompt "$prompt" "$@"
+  local model=${2:-opus} effort=${3:-high}
+  _claudii_log info "agent launch: $agent_name ($agent_file) model=$model effort=$effort"
+  CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" --append-system-prompt "$prompt" "$@"
 }
 
-function clorch { _claudii_agent_launch orchestrator "$@"; }
-function cle    { _claudii_agent_launch explorer "$@"; }
+# Register agent aliases from config (agents.*.skill/model/effort)
+# Creates shell functions dynamically — no hardcoded aliases
+function _claudii_register_agents {
+  _claudii_cache_load
+  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  [[ -f "$config" ]] || return
+
+  local agents_json
+  agents_json=$(jq -r '.agents // {} | to_entries[] | "\(.key)\t\(.value.skill // "")\t\(.value.model // "opus")\t\(.value.effort // "high")"' "$config" 2>/dev/null) || return
+
+  [[ -z "$agents_json" ]] && return
+
+  while IFS=$'\t' read -r name skill model effort; do
+    [[ -z "$name" || -z "$skill" ]] && continue
+    # Create a shell function with this name
+    eval "function $name { _claudii_agent_launch $skill $model $effort \"\$@\"; }"
+    _claudii_log debug "registered agent alias: $name → $skill ($model/$effort)"
+  done <<< "$agents_json"
+}
+
+_claudii_register_agents
 
 # Format microseconds as µs or ms
 function _claudii_fmt_us {
