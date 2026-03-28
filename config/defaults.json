@@ -22,6 +22,9 @@
   "search": {
     "dir": "~/claude-search"
   },
+  "dashboard": {
+    "enabled": "auto"
+  },
   "debug": {
     "level": "off"
   }

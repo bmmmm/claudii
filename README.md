@@ -6,7 +6,7 @@ No agents, no background daemons, no API calls from your prompt. Just reads loca
 
 ## Highlights
 
-- **Three display layers** — model health in RPROMPT, session bar above your prompt, dense metrics line inside Claude Code
+- **Three display layers + Dashboard** — model health in RPROMPT, multi-session dashboard above your prompt, dense metrics line inside Claude Code
 - **Cache-hit ratio** — see how efficiently Claude uses prompt caching (`⚡73%`)
 - **Rate-limit intelligence** — 5h/7d usage with reset countdown, auto-fallback to healthy models
 - **Cost tracking** — per-session, per-day, per-model breakdown (`claudii cost`, `claudii trends`)
@@ -22,7 +22,7 @@ claudii is read-only. It never modifies your Claude sessions or makes API calls 
 
 **Inside Claude Code (Sessionline):** Claude Code's native `statusLine` hook calls `claudii-sessionline` on each turn and passes session JSON via stdin. The handler writes a cache file and prints one line. Nothing runs between updates.
 
-## Three display layers
+## Three display layers + Dashboard
 
 ### 1. ClaudeStatus — RPROMPT
 Model health in your right prompt. Cache-only, never blocks.
@@ -31,12 +31,17 @@ Model health in your right prompt. Cache-only, never blocks.
 
 `✓` ok · `~` degraded · `↓` down · `?` unreachable · `[…]` loading · `⟳` refreshing
 
-### 2. SessionBar — above your prompt
-Live session data from cache files. Only prints when data changes.
+### 2. Dashboard — above your prompt
+Multi-session dashboard auto-activates when Claude sessions are running. Shows aggregated rate limits, per-session context bars, costs, and cache efficiency.
 
 ```
-Opus ████████░░ 76% │ $0.07 │ 5h:17% reset 43min
+5h:8% reset 257min │ 7d:61% (+3%) │ $93.20 today (7 sessions)
+Opus 4.6 ████████ 73% │ $25.63 │ ⚡42% │ [wt:main]
+Sonnet   ████░░░░ 42% │ $1.20  │ [wt:feat-xyz]
+Opus 4.6 ██░░░░░░ 15% │ $0.30  │ [agent:explorer]     [Opus ✓ Sonnet ✓ Haiku ✓] 21m
 ```
+
+Toggle with `claudii dash on/off/auto`. Detail view: `claudii dash show`
 
 ### 3. Sessionline — inside Claude Code
 Dense metrics on every turn via the `statusLine` hook.
@@ -87,6 +92,7 @@ Auto-fallback: if a model is down, claudii picks a healthy one.
 
 ```bash
 claudii status                 # live model health check
+claudii dash                   # multi-session dashboard detail view
 claudii sessions               # active + recent sessions
 claudii cost                   # per-model cost breakdown (today + all-time)
 claudii trends                 # weekly/daily cost history (Flight Recorder)
@@ -111,6 +117,7 @@ All commands support `--json` and `--tsv` for scripting. Full reference: `man cl
 | `fallback.enabled` | `true` | Auto-switch on outage |
 | `status.cache_ttl` | `900` | Health check interval (seconds) |
 | `statusline.models` | `opus,sonnet,haiku` | Models in RPROMPT |
+| `dashboard.enabled` | `auto` | Dashboard mode (auto/true/off) |
 
 ## Why claudii?
 

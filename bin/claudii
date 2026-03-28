@@ -74,6 +74,9 @@ usage() {
   printf "    %-33s $d %s\n" "sessionline [on|off]"        "context · cost · tokens · rate limits"
   printf "    %-33s $d %s\n" "sessions"                    "active sessions · costs · rate limits"
   printf '\n'
+  printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
+  printf "    %-33s $d %s\n" "dash [on|off|auto|show]"       "multi-session dashboard toggle"
+  printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
   printf "    doctor · cost · stats · trends · debug · metrics · restart · components · about\n"
@@ -182,6 +185,190 @@ case "${1:-}" in
         ;;
       ""|*)
         echo "Usage: claudii show model [add|rm|<model> ...]"
+        ;;
+    esac
+    ;;
+
+  dash)
+    _cfg_init
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    now=$(date +%s)
+
+    case "${2:-}" in
+      on)
+        echo "$(jq '.dashboard.enabled = "true"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mDashboard enabled (always on)\033[0m"
+        ;;
+      off)
+        echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;33mDashboard disabled\033[0m"
+        ;;
+      auto)
+        echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;36mDashboard auto mode (shows when sessions active)\033[0m"
+        ;;
+      show|"")
+        # Show current mode + detail view of all sessions
+        current=$(_cfgget dashboard.enabled)
+        [[ -z "$current" ]] && current="auto"
+
+        printf '\n'
+        printf '  \033[0;36mclaudii dash\033[0m  mode: %s\n' "$current"
+        printf '\n'
+
+        shopt -s nullglob
+        session_files=("$cache_dir"/session-*)
+        shopt -u nullglob
+
+        if [[ ${#session_files[@]} -eq 0 ]]; then
+          printf '  No session data.\n\n'
+        else
+          cyan='\033[0;36m'
+          dim='\033[38;5;240m'
+          bold='\033[1m'
+          reset='\033[0m'
+          green='\033[0;32m'
+          yellow='\033[0;33m'
+          red='\033[0;31m'
+
+          total_cost=0
+          active_count=0
+          all_count=0
+
+          for f in "${session_files[@]}"; do
+            [[ -f "$f" ]] || continue
+            mt=$(stat -f%m "$f" 2>/dev/null || stat -c%Y "$f" 2>/dev/null || echo 0)
+            age=$(( now - mt ))
+
+            content=$(cat "$f" 2>/dev/null) || continue
+            s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid=""
+            s_worktree="" s_agent="" s_cache_pct="" s_7d_start="" s_ppid=""
+            while IFS='=' read -r key val; do
+              case "$key" in
+                model)          s_model="$val" ;;
+                ctx_pct)        s_ctx="$val" ;;
+                cost)           s_cost="$val" ;;
+                rate_5h)        s_5h="$val" ;;
+                rate_7d)        s_7d="$val" ;;
+                reset_5h)       s_reset="$val" ;;
+                session_id)     s_sid="$val" ;;
+                worktree)       s_worktree="$val" ;;
+                agent)          s_agent="$val" ;;
+                cache_pct)      s_cache_pct="$val" ;;
+                rate_7d_start)  s_7d_start="$val" ;;
+                ppid)           s_ppid="$val" ;;
+              esac
+            done < "$f"
+
+            [[ -z "$s_model" ]] && continue
+            (( all_count++ ))
+
+            # Active check: mtime < 300s and PID alive (if available)
+            is_active=0
+            if (( age < 300 )); then
+              if [[ -n "$s_ppid" && "$s_ppid" != "0" && "$s_ppid" != "" ]]; then
+                kill -0 "$s_ppid" 2>/dev/null && is_active=1
+              else
+                is_active=1
+              fi
+            fi
+            (( is_active )) && (( active_count++ ))
+
+            # Cost
+            if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+              total_cost=$(echo "$total_cost + $s_cost" | bc 2>/dev/null || echo "$total_cost")
+            fi
+
+            # Status icon
+            if (( is_active )); then
+              icon="${green}●${reset}"
+            else
+              icon="${dim}○${reset}"
+            fi
+
+            # Build context bar (8 blocks)
+            ctx_bar=""
+            if [[ -n "$s_ctx" && "$s_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+              pct_int=${s_ctx%.*}
+              (( pct_int > 100 )) && pct_int=100
+              (( pct_int < 0 )) && pct_int=0
+              filled=$(( pct_int * 8 / 100 ))
+              empty=$(( 8 - filled ))
+              if (( pct_int >= 90 )); then bc_color="$red"
+              elif (( pct_int >= 70 )); then bc_color="$yellow"
+              else bc_color="$green"; fi
+              bar_str=""
+              for (( bi=0; bi<filled; bi++ )); do bar_str+="█"; done
+              for (( bi=0; bi<empty; bi++ )); do bar_str+="░"; done
+              ctx_bar=" ${bc_color}${bar_str}${reset} ${dim}${pct_int}%${reset}"
+            fi
+
+            line="  ${icon} ${bold}${s_model}${reset}${ctx_bar}"
+
+            # Cost
+            if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+              line+=" ${dim}│${reset} ${cyan}\$$(printf '%.2f' "$s_cost")${reset}"
+            fi
+
+            # Cache hit
+            if [[ -n "$s_cache_pct" && "$s_cache_pct" != "0" && "$s_cache_pct" != "" ]]; then
+              line+=" ${dim}│${reset} ${dim}⚡${s_cache_pct}%${reset}"
+            fi
+
+            # Rate limits
+            if [[ -n "$s_5h" && "$s_5h" != "" ]]; then
+              rl_int=${s_5h%.*}
+              if (( rl_int >= 90 )); then rl_c="$red"
+              elif (( rl_int >= 70 )); then rl_c="$yellow"
+              else rl_c="$cyan"; fi
+              line+=" ${dim}│${reset} ${rl_c}5h:${rl_int}%${reset}"
+              # Reset countdown
+              if [[ -n "$s_reset" && "$s_reset" != "0" ]]; then
+                remaining=$(( s_reset - now ))
+                (( remaining > 0 )) && line+=" ${dim}reset $(( remaining / 60 ))min${reset}"
+              fi
+            fi
+            if [[ -n "$s_7d" && "$s_7d" != "" ]]; then
+              rl7_int=${s_7d%.*}
+              if (( rl7_int >= 90 )); then rl7_c="$red"
+              elif (( rl7_int >= 70 )); then rl7_c="$yellow"
+              else rl7_c="$cyan"; fi
+              line+=" ${rl7_c}7d:${rl7_int}%${reset}"
+              # 7d delta
+              if [[ -n "$s_7d_start" && "$s_7d_start" != "" ]]; then
+                delta=$(( rl7_int - ${s_7d_start%.*} ))
+                (( delta > 0 )) && line+=" ${dim}(+${delta}%)${reset}"
+              fi
+            fi
+
+            # Context
+            [[ -n "$s_worktree" ]] && line+=" ${dim}[wt:${s_worktree}]${reset}"
+            [[ -n "$s_agent" ]]    && line+=" ${dim}[agent:${s_agent}]${reset}"
+
+            # Age
+            if (( age < 60 )); then age_str="${age}s"
+            elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
+            elif (( age < 86400 )); then age_str="$(( age / 3600 ))h"
+            else age_str="$(( age / 86400 ))d"; fi
+            line+="  ${dim}${age_str} ago${reset}"
+
+            # Session ID
+            [[ -n "$s_sid" ]] && line+="  ${dim}${s_sid:0:8}${reset}"
+
+            printf '%b\n' "$line"
+          done
+
+          # Summary
+          printf '\n'
+          printf "  ${dim}%d active, %d total, \$%s${reset}\n" \
+            "$active_count" "$all_count" "$(printf '%.2f' "$total_cost")"
+          printf '\n'
+          printf "  ${dim}claudii dash on|off|auto  to change mode${reset}\n"
+        fi
+        printf '\n'
+        ;;
+      *)
+        echo "Usage: claudii dash [on|off|auto|show]"; exit 1
         ;;
     esac
     ;;
