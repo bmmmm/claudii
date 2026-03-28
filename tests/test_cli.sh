@@ -1,10 +1,13 @@
 # test_cli.sh — claudii CLI E2E tests
 
-# version
+# version — when piped (no TTY) prints bare version number; with --json prints JSON
 _bin_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | tr -d '"' | cut -d= -f2)
 output=$(bash "$CLAUDII_HOME/bin/claudii" version 2>&1)
-assert_contains "claudii version shows version" "v$_bin_version" "$output"
-unset _bin_version
+assert_contains "claudii version shows version" "$_bin_version" "$output"
+output_json=$(bash "$CLAUDII_HOME/bin/claudii" version --json 2>&1)
+assert_contains "claudii version --json shows version" "$_bin_version" "$output_json"
+assert_contains "claudii version --json is valid json" '"version"' "$output_json"
+unset _bin_version output_json
 
 # help
 output=$(bash "$CLAUDII_HOME/bin/claudii" help 2>&1)

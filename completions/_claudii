@@ -7,6 +7,8 @@ _claudii() {
   typeset -A opt_args
 
   _arguments -C \
+    '--json[Output structured JSON]' \
+    '--tsv[Output tab-separated values]' \
     '1: :->command' \
     '*: :->args'
 

@@ -52,6 +52,24 @@ bash ~/claudii/install.sh
 .fi
 .RE
 .
+.SH OPTIONS
+.TP
+.B \-\-json
+Output structured JSON instead of formatted text.
+Available for:
+.BR status ", " sessions ", " cost ", " doctor ", " version .
+.TP
+.B \-\-tsv
+Output tab-separated values (header row + data rows).
+Available for:
+.BR sessions ", " cost .
+.PP
+When stdout is not a terminal (piped or redirected) and no explicit format flag is given,
+.B claudii
+strips ANSI colors and prints plain text.
+.B version
+prints only the bare version number when piped.
+.
 .SH COMMANDS
 .
 .SS Aliases
@@ -95,6 +113,9 @@ Disable ClaudeStatus in the RPROMPT.
 .TP
 .B status
 Live model health check (always bypasses the cache).
+Supports
+.B \-\-json
+(array of model/status objects).
 .
 .TP
 .BR status " 5m|15m|30m|60m"
@@ -170,6 +191,11 @@ List active and recent Claude Code sessions with model, context usage,
 cost, and rate limits.
 Shows per-session details and an aggregate summary.
 Sessions are detected from cache files written by the sessionline handler.
+Supports
+.B \-\-json
+(array of session objects) and
+.B \-\-tsv
+(tab-separated rows).
 .
 .SS Config
 .
@@ -244,6 +270,11 @@ Session cache files are read from
 .IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
 (overrideable via
 .BR CLAUDII_CACHE_DIR ).
+Supports
+.B \-\-json
+(object with today/alltime breakdown) and
+.B \-\-tsv
+(period/model/cost/sessions rows).
 .
 .TP
 .B stats
@@ -297,6 +328,11 @@ Show version, features, and project URL.
 .TP
 .B version
 Print the version string.
+When piped (stdout is not a terminal), prints the bare version number without the
+.B "claudii v"
+prefix.
+Supports
+.BR \-\-json .
 .
 .TP
 .B doctor
@@ -309,6 +345,11 @@ that completions are present,
 and that the plugin is loaded.
 Also reports the installed version and whether the local repo is behind
 .IR origin/main .
+Supports
+.B \-\-json
+(array of check result objects with
+.BR check ", " status ", " detail
+fields).
 .
 .SH SHORTCUTS
 Single-letter shorthands expand to their full command before processing.
