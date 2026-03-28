@@ -92,7 +92,8 @@ function _claudii_launch {
   done
 
   _claudii_log info "starting claude: $model $effort"
-  claude --model "$model" --effort "$effort" "$@"
+  # Export effort for sessionline — workaround until Anthropic adds effort to statusLine JSON
+  CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" "$@"
 }
 
 function cl  { _claudii_launch cl "$@"; }
