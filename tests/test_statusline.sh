@@ -224,6 +224,54 @@ job_leak=$(
 )
 assert_eq "zsh -i: no [N] job notification (start or done)" "" "$job_leak"
 
+# ── Session bar: dead PID → bar suppressed ──
+# Write a session cache with a PID that no longer exists.
+# On any reasonable system, PID 1 is init/launchd — never a Claude process.
+# We use a sentinel PID that is guaranteed to be gone: spawn a subshell, grab
+# its PID, let it exit, then use that dead PID.
+_dead_pid=$(bash -c 'echo $$' 2>/dev/null)
+SESSION_BAR_TMP="$CLAUDII_HOME/tmp/test_statusline_sessionbar"
+rm -rf "$SESSION_BAR_TMP"
+mkdir -p "$SESSION_BAR_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$SESSION_BAR_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SESSION_BAR_TMP/status-models"
+# Write session cache with dead PID — mtime is fresh (now)
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=deadtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_dead_pid" \
+  > "$SESSION_BAR_TMP/session-deadtest"
+# Verify the PID is actually dead before testing
+kill -0 "$_dead_pid" 2>/dev/null && _pid_alive=1 || _pid_alive=0
+if (( _pid_alive )); then
+  echo "  (skipped: dead PID test — PID $_dead_pid was reused)"
+else
+  zsh_session_bar=$(
+    CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+    zsh -c "
+      source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+      _CLAUDII_LAST_SESSION_BAR=''
+      _claudii_session_bar
+    " 2>/dev/null
+  )
+  assert_eq "session bar: dead PID → no output (stale session suppressed)" "" "$zsh_session_bar"
+fi
+
+# Session bar: live PID → bar shown
+# Use $$ (current test runner's PID) as a guaranteed live process
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=livetest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-livetest"
+# Remove the dead session so only the live one is found
+rm -f "$SESSION_BAR_TMP/session-deadtest"
+zsh_session_bar_live=$(
+  CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_SESSION_BAR=''
+    _claudii_session_bar
+  " 2>/dev/null
+)
+assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
+rm -rf "$SESSION_BAR_TMP"
+
 # Cleanup
 rm -rf "$ZSH_TMP"
 

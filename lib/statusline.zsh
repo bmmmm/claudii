@@ -103,7 +103,7 @@ function _claudii_session_bar {
   [[ -z "$sc" ]] && return
 
   # Parse all fields via pattern matching — zero subprocesses
-  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent="" s_burn_eta=""
+  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent="" s_burn_eta="" s_ppid=""
   [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
@@ -114,8 +114,16 @@ function _claudii_session_bar {
   [[ $'\n'"$sc" == *$'\n'worktree=* ]] && s_worktree="${${sc#*worktree=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'agent=* ]]    && s_agent="${${sc#*agent=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'burn_eta=* ]] && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'ppid=* ]]     && s_ppid="${${sc#*ppid=}%%$'\n'*}"
 
   [[ -z "$s_model" ]] && return
+
+  # Skip session bar if the Claude process is no longer running — prevents stale
+  # data from showing in new terminals after a session ends.
+  # kill -0 is a no-op signal: just checks if PID exists, no subprocess needed.
+  if [[ -n "$s_ppid" && "$s_ppid" =~ ^[0-9]+$ ]]; then
+    kill -0 "$s_ppid" 2>/dev/null || return
+  fi
 
   # Build session bar
   local bar=""

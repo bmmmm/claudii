@@ -69,6 +69,7 @@ _session_file="$_cache_dir/session-${_sid:-unknown}"
   "agent=$agent_name" \
   "model_id=$model_id" \
   "burn_eta=$_burn_eta" \
+  "ppid=$PPID" \
   > "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update

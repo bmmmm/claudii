@@ -75,3 +75,16 @@ _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
 assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_cache_contents"
 assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
 rm -rf "$_test_cache_dir"
+
+# ppid — written to session cache file so RPROMPT can detect dead sessions
+_test_cache_dir="$(mktemp -d)"
+echo '{"session_id":"testppid123456","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1 >/dev/null
+_test_session_file="$_test_cache_dir/session-testppid"
+_cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
+assert_contains "session cache has ppid=" "ppid=" "$_cache_contents"
+# ppid value must be a non-zero integer (the bash process that ran claudii-sessionline)
+_ppid_val="$(echo "$_cache_contents" | grep '^ppid=' | cut -d= -f2)"
+[[ "$_ppid_val" =~ ^[0-9]+$ ]] \
+  && assert_eq "session cache ppid is a valid PID integer" "true" "true" \
+  || assert_eq "session cache ppid is a valid PID integer" "true" "false (got: $_ppid_val)"
+rm -rf "$_test_cache_dir"
