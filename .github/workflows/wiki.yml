@@ -1,6 +1,7 @@
 name: Wiki
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths: [man/man1/claudii.1]
