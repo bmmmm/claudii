@@ -21,12 +21,7 @@ BODY=$(echo "$RAW" \
 BODY=$(echo "$BODY" | sed 's/^#### /##### /; s/^### /#### /; s/^## /### /; s/^# /## /')
 
 # Add --- separator + extra spacing before ## headings
-BODY=$(echo "$BODY" | sed '/^## /{
-i\
-
-i\---
-i\
-}')
+BODY=$(printf '%s\n' "$BODY" | awk '/^## /{print "\n---\n"} {print}')
 
 # Write Home.md
 cat > "$OUTPUT" << 'HEADER'
