@@ -15,22 +15,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install mandoc
-        run: sudo apt-get update && sudo apt-get install -y mandoc
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
 
       - name: Convert man page to markdown
         run: |
           {
-            echo "# claudii"
+            echo "# claudii ♥"
             echo ""
             echo "_Auto-generated from \`man claudii\` — do not edit directly._"
             echo "_Source: [man/man1/claudii.1](https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1)_"
             echo ""
             echo '---'
             echo ""
-            mandoc -T markdown man/man1/claudii.1 \
-              | sed '1,/^## DESCRIPTION/d' \
-              | sed 's/^## /## /; s/^### /### /'
+            pandoc -f man -t gfm man/man1/claudii.1 \
+              | sed '/^# CLAUDII/d; /^# NAME/,/^$/d'
           } > /tmp/Home.md
 
       - name: Push to wiki
