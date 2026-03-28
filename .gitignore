@@ -1,4 +1,6 @@
 tmp/
+TODO.md
+bin/claudii-explore
 .DS_Store
 *.swp
 *.swo

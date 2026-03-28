@@ -1,5 +1,5 @@
 .\" claudii manual — auto-synced to wiki via GitHub Actions
-.TH CLAUDII 1 "March 28, 2026" "claudii 0.3.0" "claudii manual"
+.TH CLAUDII 1 "March 28, 2026" "claudii 0.4.0" "claudii manual"
 .
 .SH NAME
 claudii \- Fast Claude Code aliases with live model status and session insights
@@ -7,6 +7,17 @@ claudii \- Fast Claude Code aliases with live model status and session insights
 .SH SYNOPSIS
 .B claudii
 .IR command " [" args ]
+.PP
+When invoked with no arguments,
+.B claudii
+shows a contextual summary instead of the help text.
+The output adapts to the current state:
+an active session (cache file less than 5 minutes old) shows a compact session line
+with model, context bar, cost, and rate limits;
+a stale session shows the last known data;
+a rate-limited state (5h usage \(>= 80%) shows a warning with the reset countdown;
+and if no cache exists at all, a brief welcome message with a hint to run
+.BR "claudii doctor" .
 .
 .SH DESCRIPTION
 .B claudii
@@ -40,6 +51,24 @@ git clone https://github.com/bmmmm/claudii ~/claudii
 bash ~/claudii/install.sh
 .fi
 .RE
+.
+.SH OPTIONS
+.TP
+.B \-\-json
+Output structured JSON instead of formatted text.
+Available for:
+.BR status ", " sessions ", " cost ", " doctor ", " version .
+.TP
+.B \-\-tsv
+Output tab-separated values (header row + data rows).
+Available for:
+.BR sessions ", " cost .
+.PP
+When stdout is not a terminal (piped or redirected) and no explicit format flag is given,
+.B claudii
+strips ANSI colors and prints plain text.
+.B version
+prints only the bare version number when piped.
 .
 .SH COMMANDS
 .
@@ -84,6 +113,9 @@ Disable ClaudeStatus in the RPROMPT.
 .TP
 .B status
 Live model health check (always bypasses the cache).
+Supports
+.B \-\-json
+(array of model/status objects).
 .
 .TP
 .BR status " 5m|15m|30m|60m"
@@ -159,6 +191,11 @@ List active and recent Claude Code sessions with model, context usage,
 cost, and rate limits.
 Shows per-session details and an aggregate summary.
 Sessions are detected from cache files written by the sessionline handler.
+Supports
+.B \-\-json
+(array of session objects) and
+.B \-\-tsv
+(tab-separated rows).
 .
 .SS Config
 .
@@ -192,6 +229,36 @@ if specified.
 .BI "config import " file
 Replace current config with a JSON file (backs up the existing config first).
 .
+.SS Watch
+Background watcher that monitors session cache files and sends a macOS notification
+when a 5-hour rate limit resets.
+Uses
+.B terminal-notifier
+if installed, otherwise falls back to
+.BR osascript .
+The watcher polls every 60 seconds and only notifies once per reset timestamp.
+The process ID is stored in
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/watch.pid" .
+.
+.TP
+.B watch
+Start the background watcher (same as
+.BR "watch start" ).
+.
+.TP
+.B "watch start"
+Start the background watcher.
+Prints the PID and exits immediately.
+Does nothing if a watcher is already running.
+.
+.TP
+.B "watch stop"
+Stop the background watcher and remove the PID file.
+.
+.TP
+.B "watch status"
+Show whether the watcher is running and its PID.
+.
 .SS Other
 .
 .TP
@@ -199,6 +266,21 @@ Replace current config with a JSON file (backs up the existing config first).
 Aggregate session costs from the session cache.
 Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
 and all time.
+Session cache files are read from
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+Supports
+.B \-\-json
+(object with today/alltime breakdown) and
+.B \-\-tsv
+(period/model/cost/sessions rows).
+.
+.TP
+.B stats
+Efficiency metrics from the session cache.
+Shows session count and cost breakdown by model for today (sessions written in the last 24 hours)
+and all time, plus an all-time model distribution split (Opus / Sonnet / Haiku percentage).
 Session cache files are read from
 .IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
 (overrideable via
@@ -246,6 +328,11 @@ Show version, features, and project URL.
 .TP
 .B version
 Print the version string.
+When piped (stdout is not a terminal), prints the bare version number without the
+.B "claudii v"
+prefix.
+Supports
+.BR \-\-json .
 .
 .TP
 .B doctor
@@ -258,6 +345,11 @@ that completions are present,
 and that the plugin is loaded.
 Also reports the installed version and whether the local repo is behind
 .IR origin/main .
+Supports
+.B \-\-json
+(array of check result objects with
+.BR check ", " status ", " detail
+fields).
 .
 .SH SHORTCUTS
 Single-letter shorthands expand to their full command before processing.
