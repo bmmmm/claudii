@@ -1,5 +1,5 @@
 class Claudii < Formula
-  desc "Claude Interaction Intelligence — zsh plugin + CLI for Claude Code"
+  desc "Fast Claude Code aliases with live model status and session insights ♥"
   homepage "https://github.com/bmmmm/claudii"
   url "https://github.com/bmmmm/claudii/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "bd03213adb0bd010705d6128d831393777245b0fc107379800036382fff8878e"
