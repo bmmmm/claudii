@@ -2,7 +2,7 @@ class Claudii < Formula
   desc "Claude Interaction Intelligence — zsh plugin + CLI for Claude Code"
   homepage "https://github.com/bmmmm/claudii"
   url "https://github.com/bmmmm/claudii/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "PLACEHOLDER_SHA256" # update with: brew fetch --build-from-source Formula/claudii.rb
+  sha256 "bd03213adb0bd010705d6128d831393777245b0fc107379800036382fff8878e"
   license "GPL-3.0-only"
   version "0.1.0"
 
