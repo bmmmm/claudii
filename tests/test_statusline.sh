@@ -267,6 +267,7 @@ zsh_session_bar_live=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_SESSION_BAR=''
     _claudii_session_bar
+    print -P \"\$PROMPT\"
   " 2>/dev/null
 )
 assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
