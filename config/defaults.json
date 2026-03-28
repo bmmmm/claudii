@@ -31,5 +31,13 @@
   "watch": {
     "sound": "",
     "volume": 50
+  },
+  "agents": {
+    "sh":      { "model": "opus",   "effort": "high",   "skill": "shape",       "description": "Shaper — product decisions, TODO planning" },
+    "orc":     { "model": "opus",   "effort": "high",   "skill": "orchestrate", "description": "Orchestrator — spawns + merges agents" },
+    "sn":      { "model": "sonnet", "effort": "high",                           "description": "Sonnet worker — bug fixes, standard features" },
+    "snmax":   { "model": "sonnet", "effort": "max",                            "description": "Sonnet max — harder implementation tasks" },
+    "op":      { "model": "opus",   "effort": "high",                           "description": "Opus worker — complex multi-file tasks" },
+    "showall": { "model": "sonnet", "effort": "high",   "skill": "showall",     "description": "Show all — full project state (TODO, git, tests, sessions)" }
   }
 }

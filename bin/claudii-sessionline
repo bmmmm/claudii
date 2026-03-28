@@ -224,6 +224,21 @@ if (( _cols >= 80 )); then
       fi
       out+=" ${_eta_color}~${_burn_eta}min${RST}"
     fi
+    # Reset countdown — show minutes until 5h rate limit resets
+    if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
+      _now=$(date +%s)
+      _reset_min=$(awk "BEGIN { d=$reset_5h - $_now; printf \"%d\", (d > 0 ? int(d/60 + 0.5) : 0) }")
+      if (( _reset_min > 0 )); then
+        if (( _reset_min < 10 )); then
+          _reset_color="\033[31m"   # red
+        elif (( _reset_min < 30 )); then
+          _reset_color="\033[33m"   # yellow
+        else
+          _reset_color="\033[32m"   # green
+        fi
+        out+=" ${_reset_color}reset ${_reset_min}min${RST}"
+      fi
+    fi
   fi
   if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
     [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"

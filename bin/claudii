@@ -1532,7 +1532,7 @@ case "${1:-}" in
           [[ -z "$reset_ts" || "$reset_ts" == "0" ]] && continue
           # Rate limit has reset and we haven't notified for this timestamp yet
           if (( now >= reset_ts && reset_ts != last_notified )); then
-            _watch_notify "Rate limit reset — Claude is ready"
+            _watch_notify "5h rate limit reset — Claude is ready"
             last_notified="$reset_ts"
             break
           fi
@@ -1592,7 +1592,7 @@ case "${1:-}" in
         fi
         ;;
       test)
-        _watch_notify "Test — claudii watch works"
+        _watch_notify "claudii watch is active"
         echo "claudii watch: test notification sent"
         ;;
       *)
