@@ -19,7 +19,7 @@ function _claudii_statusline_render {
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
 
   if [[ ! -f "$status_cache" ]]; then
-    () { setopt local_options no_monitor; "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & }
+    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
     RPROMPT="%F{8}[…]%f"; return
   fi
 
@@ -35,7 +35,7 @@ function _claudii_statusline_render {
 
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
-    () { setopt local_options no_monitor; "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & }
+    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
@@ -68,47 +68,103 @@ function _claudii_statusline_render {
   (( age > ttl )) && refreshing=" %F{8}⟳%f"
   [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
-  local rprompt="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
+  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Session data — shown when a Claude Code session is active (cache < 5min old)
-  local session_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/session-data"
-  if [[ -f "$session_cache" ]]; then
-    local session_age=0
+  # Session bar — full-width line printed above the prompt via print -P
+  _claudii_session_bar
+}
+
+typeset -g _CLAUDII_LAST_SESSION_BAR=""
+
+function _claudii_session_bar {
+  local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local session_cache="" best_mtime=0
+
+  # Find freshest session-* file
+  for _sf in "$_cache_base"/session-*(N); do
+    local _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
-      local -A _szst
-      zstat -H _szst "$session_cache" 2>/dev/null \
-        && session_age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_szst[mtime]:-0} ))
+      local -A _sfst
+      zstat -H _sfst "$_sf" 2>/dev/null && _sf_mt=${_sfst[mtime]:-0}
     else
-      session_age=$(( $(date +%s) - $(stat -c%Y "$session_cache" 2>/dev/null || stat -f%m "$session_cache" 2>/dev/null || echo 0) ))
+      _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
-    if (( session_age < 300 )); then
-      local session_content=""
-      { session_content=$(<"$session_cache"); } 2>/dev/null
-      if [[ -n "$session_content" ]]; then
-        local s_model="" s_ctx="" s_cost="" s_5h="" s_7d=""
-        # Pattern matching — same technique as status-models, zero subprocesses
-        [[ $'\n'"$session_content" == *$'\n'model=* ]] && s_model="${${session_content#*model=}%%$'\n'*}"
-        [[ $'\n'"$session_content" == *$'\n'ctx_pct=* ]] && s_ctx="${${session_content#*ctx_pct=}%%$'\n'*}"
-        [[ $'\n'"$session_content" == *$'\n'cost=* ]] && s_cost="${${session_content#*cost=}%%$'\n'*}"
-        [[ $'\n'"$session_content" == *$'\n'rate_5h=* ]] && s_5h="${${session_content#*rate_5h=}%%$'\n'*}"
-        [[ $'\n'"$session_content" == *$'\n'rate_7d=* ]] && s_7d="${${session_content#*rate_7d=}%%$'\n'*}"
-        # Build compact session segment
-        local sess=""
-        [[ -n "$s_ctx" ]] && sess+="%F{8}${s_ctx}%%%f"
-        if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
-          [[ -n "$sess" ]] && sess+=" "
-          sess+="%F{cyan}\$${s_cost}%f"
-        fi
-        if [[ -n "$s_5h" ]]; then
-          [[ -n "$sess" ]] && sess+=" "
-          sess+="%F{8}5h:${s_5h%.*}%%%f"
-        fi
-        [[ -n "$sess" ]] && rprompt+=" %F{8}│%f ${sess}"
+    (( _sf_mt > best_mtime )) && best_mtime=$_sf_mt && session_cache=$_sf
+  done
+
+  [[ -z "$session_cache" ]] && return
+  local session_age=$(( ${EPOCHSECONDS:-$(date +%s)} - best_mtime ))
+  (( session_age >= 300 )) && return
+
+  local sc=""
+  { sc=$(<"$session_cache"); } 2>/dev/null
+  [[ -z "$sc" ]] && return
+
+  # Parse all fields via pattern matching — zero subprocesses
+  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
+  [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'rate_7d=* ]]  && s_7d="${${sc#*rate_7d=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'reset_7d=* ]] && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
+
+  [[ -z "$s_model" ]] && return
+
+  # Build session bar
+  local bar=""
+  local SEP="%F{8} │%f "
+
+  # Model (bold)
+  bar+="%B${s_model}%b"
+
+  # Context bar (10 chars) + percentage
+  if [[ -n "$s_ctx" ]]; then
+    local pct=${s_ctx%.*}
+    (( pct < 0 )) && pct=0; (( pct > 100 )) && pct=100
+    local filled=$(( pct / 10 )) empty=$(( 10 - filled ))
+    local ctx_color="green"
+    (( pct >= 70 )) && ctx_color="yellow"
+    (( pct >= 90 )) && ctx_color="red"
+    local ctx_bar=""
+    (( filled > 0 )) && ctx_bar+="${(l:$filled::█:)}"
+    (( empty > 0 )) && ctx_bar+="%F{8}${(l:$empty::░:)}%f"
+    bar+=" %F{${ctx_color}}${ctx_bar}%f %F{8}${pct}%%%f"
+  fi
+
+  # Cost — format raw float to 2 decimal places
+  if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+    local cost_fmt
+    printf -v cost_fmt '%.2f' "$s_cost" 2>/dev/null || cost_fmt="$s_cost"
+    bar+="${SEP}%F{cyan}\$${cost_fmt}%f"
+  fi
+
+  # Rate limits with reset countdown
+  if [[ -n "$s_5h" ]]; then
+    local rl_color="cyan" rl_int=${s_5h%.*}
+    (( rl_int >= 70 )) && rl_color="yellow"
+    (( rl_int >= 90 )) && rl_color="red"
+    bar+="${SEP}%F{${rl_color}}5h:${rl_int}%%%f"
+    # Reset countdown
+    if [[ -n "$s_r5h" && "$s_r5h" != "0" ]]; then
+      local remaining=$(( s_r5h - EPOCHSECONDS ))
+      if (( remaining > 0 )); then
+        bar+=" %F{8}reset $(( remaining / 60 ))min%f"
       fi
     fi
   fi
+  if [[ -n "$s_7d" ]]; then
+    local rl7_color="cyan" rl7_int=${s_7d%.*}
+    (( rl7_int >= 70 )) && rl7_color="yellow"
+    (( rl7_int >= 90 )) && rl7_color="red"
+    bar+=" %F{${rl7_color}}7d:${rl7_int}%%%f"
+  fi
 
-  RPROMPT="$rprompt"
+  # Deduplicate — only print if bar content changed since last render
+  [[ "$bar" == "$_CLAUDII_LAST_SESSION_BAR" ]] && return
+  _CLAUDII_LAST_SESSION_BAR="$bar"
+  print -P "$bar"
 }
 
 autoload -Uz add-zsh-hook

@@ -27,6 +27,70 @@ function _claudii_launch {
     fi
   fi
 
+  # Rate-Limit-Intelligence — warn before launching into a near-full window
+  local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local _rl_warned=0
+  for _sf in "$_cache_base"/session-*(N); do
+    # Only consider fresh sessions (< 5min old)
+    local _sf_mt=0
+    if (( ${+modules[zsh/stat]} )); then
+      local -A _rfst
+      zstat -H _rfst "$_sf" 2>/dev/null && _sf_mt=${_rfst[mtime]:-0}
+    else
+      _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || echo 0)
+    fi
+    (( (EPOCHSECONDS - _sf_mt) > 300 )) && continue
+
+    local _sf_content=""
+    { _sf_content=$(<"$_sf"); } 2>/dev/null
+    [[ -z "$_sf_content" ]] && continue
+
+    local _rl_5h="" _rl_reset=""
+    [[ $'\n'"$_sf_content" == *$'\n'rate_5h=* ]] && _rl_5h="${${_sf_content#*rate_5h=}%%$'\n'*}"
+    [[ $'\n'"$_sf_content" == *$'\n'reset_5h=* ]] && _rl_reset="${${_sf_content#*reset_5h=}%%$'\n'*}"
+
+    [[ -z "$_rl_5h" ]] && continue
+    local _rl_int=${_rl_5h%.*}
+    (( _rl_int < 80 )) && continue
+
+    # Rate limit is high — build warning
+    local _reset_str=""
+    if [[ -n "$_rl_reset" && "$_rl_reset" != "0" ]]; then
+      local _remaining=$(( _rl_reset - EPOCHSECONDS ))
+      if (( _remaining > 0 )); then
+        _reset_str=" Reset in $(( _remaining / 60 ))min"
+      fi
+    fi
+
+    local _color="\033[33m"  # yellow
+    (( _rl_int >= 90 )) && _color="\033[31m"  # red
+
+    printf "${_color}⚠ ${(C)model} 5h bei ${_rl_int}%%${_reset_str}\033[0m\n"
+    # Suggest alternative if launching opus
+    if [[ "$model" == "opus" ]]; then
+      local _fb_model=$(claudii_config_get "fallback.opus.model")
+      [[ -z "$_fb_model" ]] && _fb_model="sonnet"
+      printf "  ${_fb_model} stattdessen? \033[2m[Enter] starten · [s] ${_fb_model} · [w] warten\033[0m "
+      local _choice=""
+      read -k1 _choice
+      echo ""
+      case "$_choice" in
+        s|S)
+          model="$_fb_model"
+          local _fb_effort=$(claudii_config_get "fallback.opus.effort")
+          [[ -n "$_fb_effort" ]] && effort="$_fb_effort"
+          printf "→ \033[36m${_fb_model} ${effort}\033[0m\n"
+          ;;
+        w|W)
+          printf "\033[2mAbgebrochen.\033[0m\n"
+          return 0
+          ;;
+      esac
+    fi
+    _rl_warned=1
+    break  # Only warn once (freshest session)
+  done
+
   _claudii_log info "starting claude: $model $effort"
   claude --model "$model" --effort "$effort" "$@"
 }

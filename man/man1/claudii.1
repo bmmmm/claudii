@@ -120,6 +120,18 @@ RPROMPT indicators:
 .B \(rn
 = refreshing (stale cache).
 .
+.SS SessionBar
+Rendered in the shell above the prompt line via
+.IR precmd .
+Reads per-session cache files written by the Sessionline handler.
+Shows model name, context usage bar, cost, and rate limits with reset countdown.
+Only prints when data changes (deduplication).
+.PP
+Data flow:
+.RS
+Claude Code \(-> Sessionline (stdin JSON) \(-> cache file \(-> SessionBar (precmd)
+.RE
+.
 .SS Sessionline
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
@@ -140,6 +152,13 @@ Restart Claude Code to activate.
 .B "sessionline off"
 Remove the sessionline from
 .IR ~/.claude/settings.json .
+.
+.TP
+.B sessions
+List active and recent Claude Code sessions with model, context usage,
+cost, and rate limits.
+Shows per-session details and an aggregate summary.
+Sessions are detected from cache files written by the sessionline handler.
 .
 .SS Config
 .
@@ -204,6 +223,11 @@ is provided, it is passed as the initial prompt.
 Reload the plugin by sourcing
 .IR ~/.zshrc .
 Stays in the current directory.
+.
+.TP
+.B components
+Show component overview: ClaudeStatus (RPROMPT), SessionBar (above prompt),
+Sessionline (inside Claude Code). Includes current status, config, and data flow.
 .
 .TP
 .B about
@@ -290,6 +314,10 @@ Shipped defaults (read-only reference).
 .TP
 .I ~/.cache/claudii/status-models
 Per-model status cache.
+.TP
+.I ~/.cache/claudii/session-*
+Per-session cache files written by the sessionline handler.
+Contains model, context percentage, cost, and rate limit data.
 .TP
 .I ~/.claude/settings.json
 Claude Code settings, modified by
