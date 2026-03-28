@@ -41,7 +41,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - All settings via config.json, nothing hardcoded
 - jq is required
 - No network calls in precmd (cache only)
-- Background jobs: always `{ cmd & } 2>/dev/null` + `disown $!` (prevents [N] PID leak)
+- Background jobs: always `() { setopt local_options no_monitor; cmd & }` (prevents [N] PID leak)
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh`
 

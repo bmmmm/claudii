@@ -39,7 +39,5 @@ unset _claudii_t0
 
 # Head-start: fire status refresh now if cache is absent, so the background
 # job has more time to finish before the first prompt renders.
-if [[ ! -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models" ]]; then
-  { "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & } 2>/dev/null
-  disown $! 2>/dev/null
-fi
+[[ -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models" ]] || \
+  () { setopt local_options no_monitor; "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & }
