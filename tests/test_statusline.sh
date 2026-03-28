@@ -209,7 +209,7 @@ zsh_out=$(
 )
 assert_eq "zsh: disabled → RPROMPT empty" "" "$zsh_out"
 
-# Interactive mode: no [N] PID job notification (the bug that only shows in real terminals)
+# Interactive mode: no [N] PID job notification (start or done)
 rm -f "$ZSH_TMP/status-models"   # force background spawn
 job_leak=$(
   CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
@@ -217,9 +217,12 @@ job_leak=$(
     cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _claudii_statusline
+    # Wait for background job to finish — 'done' notification appears on next
+    # prompt after job exit, so we must still be in the shell when it completes
+    sleep 3
   " 2>&1 | grep -E '^\[[0-9]+\]' || true
 )
-assert_eq "zsh -i: no [N] PID job notification" "" "$job_leak"
+assert_eq "zsh -i: no [N] job notification (start or done)" "" "$job_leak"
 
 # Cleanup
 rm -rf "$ZSH_TMP"

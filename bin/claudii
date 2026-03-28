@@ -5,7 +5,7 @@
 set -euo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 command -v jq >/dev/null 2>&1 || {
   echo "claudii: jq nicht gefunden. Install: brew install jq" >&2; exit 1

@@ -19,7 +19,8 @@ function _claudii_statusline_render {
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
 
   if [[ ! -f "$status_cache" ]]; then
-    () { setopt local_options no_monitor; "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & }
+    { "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & } 2>/dev/null
+    disown $! 2>/dev/null
     RPROMPT="%F{8}[…]%f"; return
   fi
 
@@ -35,7 +36,8 @@ function _claudii_statusline_render {
 
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
-    () { setopt local_options no_monitor; "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & }
+    { "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & } 2>/dev/null
+    disown $! 2>/dev/null
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
