@@ -1617,6 +1617,20 @@ case "${1:-}" in
       _dc_add "updates" "warn" "Not a git repo — skipping update check"
     fi
 
+    # 9. CI status (last run on current branch, requires gh)
+    if command -v gh >/dev/null 2>&1; then
+      _ci_branch=$(git -C "$CLAUDII_HOME" branch --show-current 2>/dev/null || true)
+      if [[ -n "$_ci_branch" ]]; then
+        _ci_conclusion=$(gh run list --branch "$_ci_branch" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || true)
+        if [[ "$_ci_conclusion" == "failure" ]]; then
+          _dc_add "ci" "warn" "Last CI run on branch '$_ci_branch' failed — check GitHub Actions"
+        elif [[ -n "$_ci_conclusion" ]]; then
+          _dc_add "ci" "ok" "CI: $_ci_conclusion (branch: $_ci_branch)"
+        fi
+        # If empty (no runs or gh not authenticated), skip silently
+      fi
+    fi
+
     if [[ "$_FORMAT" == "json" ]]; then
       _json_arr="["
       _first=1

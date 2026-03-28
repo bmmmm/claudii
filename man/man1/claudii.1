@@ -577,8 +577,11 @@ that the Sessionline is configured in
 that the cache directory exists,
 that completions are present,
 and that the plugin is loaded.
-Also reports the installed version and whether the local repo is behind
-.IR origin/main .
+Also reports the installed version, whether the local repo is behind
+.IR origin/main ,
+and (when
+.B gh
+is available) whether the last CI run on the current branch passed.
 Supports
 .B \-\-json
 (array of check result objects with

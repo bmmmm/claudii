@@ -22,6 +22,7 @@ jobs:
         run: pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > /tmp/Home.md
 
       - name: Push to wiki
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
