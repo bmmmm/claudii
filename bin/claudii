@@ -376,7 +376,144 @@ case "${1:-}" in
     ;;
 
   "")
-    usage
+    # Smart default: show contextual info based on current state
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    now=$(date +%s)
+
+    printf '\n'
+    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+    printf '\n'
+
+    # Collect session data
+    shopt -s nullglob
+    _sd_files=("$cache_dir"/session-*)
+    shopt -u nullglob
+
+    if [[ ${#_sd_files[@]} -eq 0 ]]; then
+      # No cache at all
+      printf '  No session data yet.\n'
+      printf '  Run \033[0;36mclaudii doctor\033[0m to check your setup.\n'
+      printf '\n'
+      printf '  \033[38;5;240mclaudii help  for all commands\033[0m\n'
+      printf '\n'
+    else
+      # Find most-recent session file and read it
+      _sd_latest="" _sd_latest_mt=0
+      for _sd_f in "${_sd_files[@]}"; do
+        [[ -f "$_sd_f" ]] || continue
+        if stat -f%m "$_sd_f" >/dev/null 2>&1; then
+          _sd_mt=$(stat -f%m "$_sd_f")
+        else
+          _sd_mt=$(stat -c%Y "$_sd_f")
+        fi
+        if (( _sd_mt > _sd_latest_mt )); then
+          _sd_latest_mt=$_sd_mt
+          _sd_latest=$_sd_f
+        fi
+      done
+
+      # Parse the latest session file
+      _sd_content="" _sd_model="" _sd_ctx="" _sd_cost="" _sd_5h="" _sd_7d="" _sd_reset=""
+      if [[ -n "$_sd_latest" ]]; then
+        _sd_content=$(cat "$_sd_latest" 2>/dev/null) || true
+        [[ $'\n'"$_sd_content" == *$'\n'model=* ]]    && _sd_model="${_sd_content#*model=}"    && _sd_model="${_sd_model%%$'\n'*}"
+        [[ $'\n'"$_sd_content" == *$'\n'ctx_pct=* ]]  && _sd_ctx="${_sd_content#*ctx_pct=}"    && _sd_ctx="${_sd_ctx%%$'\n'*}"
+        [[ $'\n'"$_sd_content" == *$'\n'cost=* ]]     && _sd_cost="${_sd_content#*cost=}"      && _sd_cost="${_sd_cost%%$'\n'*}"
+        [[ $'\n'"$_sd_content" == *$'\n'rate_5h=* ]]  && _sd_5h="${_sd_content#*rate_5h=}"     && _sd_5h="${_sd_5h%%$'\n'*}"
+        [[ $'\n'"$_sd_content" == *$'\n'rate_7d=* ]]  && _sd_7d="${_sd_content#*rate_7d=}"     && _sd_7d="${_sd_7d%%$'\n'*}"
+        [[ $'\n'"$_sd_content" == *$'\n'reset_5h=* ]] && _sd_reset="${_sd_content#*reset_5h=}" && _sd_reset="${_sd_reset%%$'\n'*}"
+      fi
+
+      _sd_age=$(( now - _sd_latest_mt ))
+      _sd_active=$(( _sd_age < 300 ))
+
+      # Check rate limit
+      _sd_5h_int="${_sd_5h%.*}"
+      _sd_rate_warn=0
+      [[ -n "$_sd_5h_int" ]] && (( _sd_5h_int >= 80 )) && _sd_rate_warn=1
+
+      if (( _sd_rate_warn )); then
+        # Rate-limited: show warning
+        _sd_reset_str=""
+        if [[ -n "$_sd_reset" && "$_sd_reset" != "0" ]]; then
+          _sd_remaining=$(( _sd_reset - now ))
+          (( _sd_remaining > 0 )) && _sd_reset_str=" — reset in $(( _sd_remaining / 60 ))min"
+        fi
+        printf '  \033[0;33m⚠\033[0m \033[1m%s\033[0m 5h:%s%%%s\n' \
+          "${_sd_model:-?}" "${_sd_5h_int}" "$_sd_reset_str"
+      else
+        # Active or stale session — show session line
+        if (( _sd_active )); then
+          _sd_icon="\033[0;32m●\033[0m"
+        else
+          _sd_icon="\033[0;90m○\033[0m"
+        fi
+
+        # Build context bar (10 blocks)
+        _sd_bar=""
+        if [[ -n "$_sd_ctx" && "$_sd_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _sd_filled=$(( ${_sd_ctx%.*} / 10 ))
+          (( _sd_filled > 10 )) && _sd_filled=10
+          _sd_empty=$(( 10 - _sd_filled ))
+          for (( _i=0; _i<_sd_filled; _i++ )); do _sd_bar+="\033[0;32m█\033[0m"; done
+          for (( _i=0; _i<_sd_empty; _i++ ));  do _sd_bar+="\033[38;5;240m░\033[0m"; done
+        fi
+
+        # Build line
+        _sd_line="  ${_sd_icon} \033[1m${_sd_model:-?}\033[0m"
+        [[ -n "$_sd_bar" ]] && _sd_line+=" ${_sd_bar} ${_sd_ctx%.*}%"
+        if [[ -n "$_sd_cost" && "$_sd_cost" != "0" ]]; then
+          _sd_line+=" \033[38;5;240m│\033[0m \033[0;36m\$$(printf '%.2f' "$_sd_cost")\033[0m"
+        fi
+        if [[ -n "$_sd_5h_int" ]]; then
+          _sd_reset_str=""
+          if [[ -n "$_sd_reset" && "$_sd_reset" != "0" ]]; then
+            _sd_remaining=$(( _sd_reset - now ))
+            (( _sd_remaining > 0 )) && _sd_reset_str=" reset $(( _sd_remaining / 60 ))min"
+          fi
+          _sd_line+=" \033[38;5;240m│\033[0m 5h:${_sd_5h_int}%${_sd_reset_str}"
+        fi
+        printf '%b\n' "${_sd_line}"
+      fi
+
+      # Rate limits summary (always if available)
+      if [[ -n "$_sd_5h" ]]; then
+        printf '\n'
+        _sd_rl_str="  Rate limits: 5h:${_sd_5h%.*}%"
+        [[ -n "$_sd_7d" ]] && _sd_rl_str+="  7d:${_sd_7d%.*}%"
+        printf '%s\n' "$_sd_rl_str"
+      fi
+
+      # Session count + total cost for today
+      _sd_today_count=0 _sd_today_cost=0
+      _sd_cutoff=$(( now - 86400 ))
+      for _sd_f in "${_sd_files[@]}"; do
+        [[ -f "$_sd_f" ]] || continue
+        if stat -f%m "$_sd_f" >/dev/null 2>&1; then
+          _sd_mt=$(stat -f%m "$_sd_f")
+        else
+          _sd_mt=$(stat -c%Y "$_sd_f")
+        fi
+        if (( _sd_mt >= _sd_cutoff )); then
+          _sd_today_count=$(( _sd_today_count + 1 ))
+          _sd_fc=$(cat "$_sd_f" 2>/dev/null) || true
+          _sd_fc_cost=""
+          [[ $'\n'"$_sd_fc" == *$'\n'cost=* ]] && _sd_fc_cost="${_sd_fc#*cost=}" && _sd_fc_cost="${_sd_fc_cost%%$'\n'*}"
+          if [[ -n "$_sd_fc_cost" && "$_sd_fc_cost" != "0" ]]; then
+            _sd_today_cost=$(echo "$_sd_today_cost + $_sd_fc_cost" | bc 2>/dev/null || echo "$_sd_today_cost")
+          fi
+        fi
+      done
+      if (( _sd_today_count > 0 )); then
+        printf '  %d session%s today, \033[0;36m$%s\033[0m total\n' \
+          "$_sd_today_count" "$( (( _sd_today_count != 1 )) && printf 's' || true)" \
+          "$(printf '%.2f' "$_sd_today_cost")"
+      fi
+
+      printf '\n'
+      printf '  \033[38;5;240mclaudii help  for all commands\033[0m\n'
+      printf '\n'
+    fi
     ;;
 
   version)
@@ -506,7 +643,7 @@ case "${1:-}" in
       mt=$(stat -f%m "$sf" 2>/dev/null || stat -c%Y "$sf" 2>/dev/null || echo 0)
       age=$(( now - mt ))
 
-      content=$(<"$sf" 2>/dev/null) || continue
+      content=$(cat "$sf" 2>/dev/null) || continue
       s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid=""
       [[ $'\n'"$content" == *$'\n'model=* ]] && s_model="${content#*model=}" && s_model="${s_model%%$'\n'*}"
       [[ $'\n'"$content" == *$'\n'ctx_pct=* ]] && s_ctx="${content#*ctx_pct=}" && s_ctx="${s_ctx%%$'\n'*}"

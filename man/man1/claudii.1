@@ -7,6 +7,17 @@ claudii \- Fast Claude Code aliases with live model status and session insights
 .SH SYNOPSIS
 .B claudii
 .IR command " [" args ]
+.PP
+When invoked with no arguments,
+.B claudii
+shows a contextual summary instead of the help text.
+The output adapts to the current state:
+an active session (cache file less than 5 minutes old) shows a compact session line
+with model, context bar, cost, and rate limits;
+a stale session shows the last known data;
+a rate-limited state (5h usage \(>= 80%) shows a warning with the reset countdown;
+and if no cache exists at all, a brief welcome message with a hint to run
+.BR "claudii doctor" .
 .
 .SH DESCRIPTION
 .B claudii
