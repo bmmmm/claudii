@@ -19,7 +19,7 @@ _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
-  cache_read cache_create worktree_name agent_name <<< "$(
+  cache_read cache_create worktree_name agent_name model_id <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -38,9 +38,24 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.context_window.current_usage.cache_read_input_tokens // "" | tostring),
     (.context_window.current_usage.cache_creation_input_tokens // "" | tostring),
     (.workspace.name // .worktree.name // .workspace.worktree_name // ""),
-    (.agent.name // .agent_name // "")
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.agent.name // .agent_name // ""),
+    (.model.id // "")
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
+
+# Burn-rate ETA: how many minutes until 100% rate limit at current burn pace
+_burn_eta=""
+_session_min=""
+if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
+  _session_min=$(awk "BEGIN { printf \"%.4f\", $duration_ms / 60000 }")
+fi
+if [[ -n "$_session_min" && -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]]; then
+  _session_min_int=${_session_min%.*}
+  _rate_int=${rate_5h%.*}
+  if (( _session_min_int >= 3 && _rate_int > 0 )); then
+    _burn_eta=$(awk "BEGIN { r=$rate_5h; m=$_session_min; printf \"%d\", int((100-r)/(r/m) + 0.5) }")
+  fi
+fi
 
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
 _sid="${session_id:+${session_id:0:8}}"
@@ -52,6 +67,8 @@ _session_file="$_cache_dir/session-${_sid:-unknown}"
   "session_id=$session_id" \
   "worktree=$worktree_name" \
   "agent=$agent_name" \
+  "model_id=$model_id" \
+  "burn_eta=$_burn_eta" \
   > "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
@@ -61,7 +78,7 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
   >> "$_cache_dir/history.tsv" 2>/dev/null || true
 
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
-_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name}"
+_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name} model_id=${model_id}"
 
 # --- helpers ---
 
@@ -171,6 +188,17 @@ fi
 # Rate limits (only when present — Pro/Max)
 if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   out+="${SEP}$(_rlc "$rate_5h")5h:${rate_5h%.*}%${RST}"
+  # Burn-rate ETA — show when calculated and < 120min
+  if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] && (( _burn_eta < 120 )); then
+    if (( _burn_eta < 10 )); then
+      _eta_color="\033[31m"    # red
+    elif (( _burn_eta < 30 )); then
+      _eta_color="\033[33m"    # yellow
+    else
+      _eta_color="${DIM}"      # dim
+    fi
+    out+=" ${_eta_color}~${_burn_eta}min${RST}"
+  fi
 fi
 if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"

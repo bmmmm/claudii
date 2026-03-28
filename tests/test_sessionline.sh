@@ -43,3 +43,35 @@ assert_eq "no rate limits: no 7d in output" "0" "$(echo "$strip" | grep -c '7d:'
 # Empty JSON
 output=$(echo '{}' | bash "$SL" 2>&1)
 assert_eq "empty json doesn't crash" "0" "$?"
+
+# Cache hit ratio (⚡) — shown when cache_read_input_tokens > 0
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000,"cache_creation_input_tokens":0}},"cost":{"total_cost_usd":0.20,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
+assert_contains "cache hit shows lightning bolt" "⚡" "$output"
+assert_contains "cache hit shows percentage" "33%" "$output"
+
+# Cache hit ratio — NOT shown when cache_read is 0
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":500}},"cost":{"total_cost_usd":0.10,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "no cache hit: no lightning bolt" "0" "$(echo "$strip" | grep -c '⚡')"
+
+# Effort mode — shown when CLAUDII_EFFORT is set to something other than "high"
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=max bash "$SL" 2>&1)
+assert_contains "effort mode max shown" "max" "$output"
+
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=medium bash "$SL" 2>&1)
+assert_contains "effort mode medium shown" "medium" "$output"
+
+# Effort mode "high" — NOT shown (it's the default)
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=high bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "effort mode high not shown" "0" "$(echo "$strip" | grep -c ' high')"
+
+# Worktree/Agent — written to session cache file
+_test_cache_dir="$(mktemp -d)"
+output=$(echo '{"session_id":"testworktreeagent","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"workspace":{"name":"my-feature-branch"},"agent":{"name":"agent-42"}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
+_test_session_file="$_test_cache_dir/session-testwork"
+assert_file_exists "worktree/agent: session cache file created" "$_test_session_file"
+_cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
+assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_cache_contents"
+assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
+rm -rf "$_test_cache_dir"

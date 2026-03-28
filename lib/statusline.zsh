@@ -103,7 +103,7 @@ function _claudii_session_bar {
   [[ -z "$sc" ]] && return
 
   # Parse all fields via pattern matching — zero subprocesses
-  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent=""
+  local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d="" s_worktree="" s_agent="" s_burn_eta=""
   [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
@@ -113,6 +113,7 @@ function _claudii_session_bar {
   [[ $'\n'"$sc" == *$'\n'reset_7d=* ]] && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'worktree=* ]] && s_worktree="${${sc#*worktree=}%%$'\n'*}"
   [[ $'\n'"$sc" == *$'\n'agent=* ]]    && s_agent="${${sc#*agent=}%%$'\n'*}"
+  [[ $'\n'"$sc" == *$'\n'burn_eta=* ]] && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
 
   [[ -z "$s_model" ]] && return
 
@@ -154,6 +155,13 @@ function _claudii_session_bar {
     (( rl_int >= 70 )) && rl_color="yellow"
     (( rl_int >= 90 )) && rl_color="red"
     bar+="${SEP}%F{${rl_color}}5h:${rl_int}%%%f"
+    # Burn-rate ETA — show when present, > 0, and < 120min
+    if [[ -n "$s_burn_eta" && "$s_burn_eta" != "" ]] && (( s_burn_eta > 0 && s_burn_eta < 120 )); then
+      local eta_color="8"
+      (( s_burn_eta < 10 )) && eta_color="red"
+      (( s_burn_eta >= 10 && s_burn_eta < 30 )) && eta_color="yellow"
+      bar+=" %F{${eta_color}}~${s_burn_eta}min%f"
+    fi
     # Reset countdown
     if [[ -n "$s_r5h" && "$s_r5h" != "0" ]]; then
       local remaining=$(( s_r5h - EPOCHSECONDS ))

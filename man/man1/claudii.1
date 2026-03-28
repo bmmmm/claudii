@@ -248,6 +248,20 @@ Equivalent to
 .TP
 .B clh
 Show the alias table and run a live model health check.
+.TP
+.B clorch
+Launch Claude Opus (high effort) with the system prompt from
+.IR ~/.claude/agents/orchestrator.md .
+Equivalent to
+.BR "_claudii_agent_launch orchestrator" .
+Prints an error and lists available agents if the file does not exist.
+.TP
+.B cle
+Launch Claude Opus (high effort) with the system prompt from
+.IR ~/.claude/agents/explorer.md .
+Equivalent to
+.BR "_claudii_agent_launch explorer" .
+Prints an error and lists available agents if the file does not exist.
 .
 .SS ClaudeStatus
 Live model health monitoring in your shell RPROMPT.
@@ -432,6 +446,39 @@ Context from the previous session is carried over but a new session ID is create
 Resume the exact same session (no fork).
 Equivalent to
 .BR "claude \-\-resume " \fIsession-id\fR .
+.
+.SS Agents
+.
+.TP
+.B agents
+List available agent roles from
+.IR ~/.claude/agents/*.md .
+For each file, shows the agent name (filename without
+.IR .md )
+and its description (first line of the file, with leading
+.B #
+stripped).
+Supports
+.B \-\-json
+(array of objects with
+.BR name ", " path ", " detail
+fields).
+When no agents are found, prints a helpful message with instructions for creating them.
+.PP
+Agent files are plain markdown files where the first line acts as the description
+and the full content is used as the system prompt when launching via
+.B clorch
+or
+.BR cle .
+.PP
+Example agent file
+.RI ( ~/.claude/agents/orchestrator.md ):
+.RS
+.nf
+# Orchestrator — breaks down complex tasks and coordinates subagents
+You are an expert orchestrator...
+.fi
+.RE
 .
 .SS Other
 .
