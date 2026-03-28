@@ -15,6 +15,16 @@ NC='\033[0m'
 echo "Installing claudii from $CLAUDII_HOME"
 echo ""
 
+# 0. Detect existing Homebrew install
+brew_prefix="$(brew --prefix 2>/dev/null || true)"
+if [[ -n "$brew_prefix" && -f "$brew_prefix/opt/claudii/libexec/claudii.plugin.zsh" ]]; then
+  echo -e "${YELLOW}⚠ Homebrew version detected at $brew_prefix/opt/claudii${NC}"
+  echo "  Manual + Homebrew installs conflict. Choose one:"
+  echo "  → brew uninstall claudii   (then re-run this script)"
+  echo "  → or skip this script and use the Homebrew version"
+  exit 1
+fi
+
 # 1. Symlink binaries — fallback to PATH entry if BIN_DIR is not writable
 bin_ok=true
 for bin in claudii claudii-status claudii-sessionline; do

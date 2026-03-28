@@ -10,6 +10,18 @@ git submodule update --init    # optional: Claude Code Status Line vendor module
 
 No build step. The plugin runs directly from source.
 
+### Dev vs Homebrew
+
+If you have claudii installed via Homebrew, replace your source line in `~/.zshrc`:
+
+```bash
+# Dev version wins when present, otherwise falls back to Homebrew
+source "${HOME}/path/to/claudii/claudii.plugin.zsh" 2>/dev/null \
+  || source "$(brew --prefix)/opt/claudii/libexec/claudii.plugin.zsh"
+```
+
+The plugin detects conflicts automatically and warns if two installs are found.
+
 ## Tests
 
 ```bash
