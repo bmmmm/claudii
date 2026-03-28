@@ -56,6 +56,7 @@ usage() {
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
   printf "    doctor · cost · debug · metrics · restart · components · about\n"
+  printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
   printf '\n'
   printf '  \033[38;5;213mshortcuts\033[0m\n'
   printf "  s=status  ss=sessions  c=cost  d=doctor\n"
@@ -708,6 +709,103 @@ case "${1:-}" in
     fi
     git -C "$CLAUDII_HOME" pull --ff-only
     printf '\033[0;32m✓ Updated. Run: claudii restart\033[0m\n'
+    ;;
+
+  watch)
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    pid_file="$cache_dir/watch.pid"
+
+    _watch_notify() {
+      local title="claudii watch" msg="$1"
+      if command -v terminal-notifier >/dev/null 2>&1; then
+        terminal-notifier -title "$title" -message "$msg" >/dev/null 2>&1
+      else
+        osascript -e "display notification \"$msg\" with title \"$title\"" >/dev/null 2>&1
+      fi
+    }
+
+    _watch_loop() {
+      local cache_dir="$1" pid_file="$2"
+      local last_notified=0
+
+      while true; do
+        sleep 60
+        local now
+        now=$(date +%s)
+
+        for sf in "$cache_dir"/session-*; do
+          [[ -f "$sf" ]] || continue
+          local reset_ts=""
+          while IFS='=' read -r key val; do
+            [[ "$key" == "reset_5h" ]] && reset_ts="$val"
+          done < "$sf"
+
+          [[ -z "$reset_ts" || "$reset_ts" == "0" ]] && continue
+          # Rate limit has reset and we haven't notified for this timestamp yet
+          if (( now >= reset_ts && reset_ts != last_notified )); then
+            _watch_notify "Rate limit reset — Claude is ready"
+            last_notified="$reset_ts"
+            break
+          fi
+        done
+      done
+    }
+
+    case "${2:-start}" in
+      start)
+        [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
+        # Check if already running
+        if [[ -f "$pid_file" ]]; then
+          existing_pid=$(<"$pid_file")
+          if kill -0 "$existing_pid" 2>/dev/null; then
+            echo "claudii watch already running (PID $existing_pid)"
+            exit 0
+          fi
+        fi
+        # Export functions needed in subshell
+        export -f _watch_notify _watch_loop 2>/dev/null || true
+        ( _watch_loop "$cache_dir" "$pid_file" &>/dev/null & echo $! > "$pid_file" ) &>/dev/null
+        disown %% 2>/dev/null || true
+        sleep 0.2
+        if [[ -f "$pid_file" ]]; then
+          watcher_pid=$(<"$pid_file")
+          echo "claudii watch started (PID $watcher_pid)"
+        else
+          echo "claudii watch started"
+        fi
+        ;;
+      stop)
+        if [[ -f "$pid_file" ]]; then
+          watcher_pid=$(<"$pid_file")
+          if kill -0 "$watcher_pid" 2>/dev/null; then
+            kill "$watcher_pid" 2>/dev/null
+            rm -f "$pid_file"
+            echo "claudii watch stopped (PID $watcher_pid)"
+          else
+            rm -f "$pid_file"
+            echo "claudii watch was not running (stale PID file removed)"
+          fi
+        else
+          echo "claudii watch is not running"
+        fi
+        ;;
+      status)
+        if [[ -f "$pid_file" ]]; then
+          watcher_pid=$(<"$pid_file")
+          if kill -0 "$watcher_pid" 2>/dev/null; then
+            echo -e "claudii watch: \033[0;32mrunning\033[0m (PID $watcher_pid)"
+          else
+            rm -f "$pid_file"
+            echo "claudii watch: not running (stale PID file removed)"
+          fi
+        else
+          echo "claudii watch: not running"
+        fi
+        ;;
+      *)
+        echo "Usage: claudii watch [start|stop|status]"; exit 1
+        ;;
+    esac
     ;;
 
   doctor)

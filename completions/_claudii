@@ -30,6 +30,7 @@ _claudii() {
         'about:About claudii'
         'version:Show version'
         'doctor:Check claudii installation health'
+        'watch:Background rate-limit reset watcher with macOS notifications'
         'help:Show help'
       )
       _describe 'command' commands
@@ -82,6 +83,16 @@ _claudii() {
             'off:Deactivate in-session statusline'
           )
           _describe 'sessionline option' sl_opts
+          ;;
+
+        watch)
+          local -a watch_cmds
+          watch_cmds=(
+            'start:Start the background watcher (default)'
+            'stop:Stop the background watcher'
+            'status:Show watcher status'
+          )
+          _describe 'watch subcommand' watch_cmds
           ;;
 
         debug)

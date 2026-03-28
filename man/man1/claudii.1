@@ -203,6 +203,36 @@ if specified.
 .BI "config import " file
 Replace current config with a JSON file (backs up the existing config first).
 .
+.SS Watch
+Background watcher that monitors session cache files and sends a macOS notification
+when a 5-hour rate limit resets.
+Uses
+.B terminal-notifier
+if installed, otherwise falls back to
+.BR osascript .
+The watcher polls every 60 seconds and only notifies once per reset timestamp.
+The process ID is stored in
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/watch.pid" .
+.
+.TP
+.B watch
+Start the background watcher (same as
+.BR "watch start" ).
+.
+.TP
+.B "watch start"
+Start the background watcher.
+Prints the PID and exits immediately.
+Does nothing if a watcher is already running.
+.
+.TP
+.B "watch stop"
+Stop the background watcher and remove the PID file.
+.
+.TP
+.B "watch status"
+Show whether the watcher is running and its PID.
+.
 .SS Other
 .
 .TP
