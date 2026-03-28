@@ -7,8 +7,8 @@ CLI="$CLAUDII_HOME/bin/claudii"
 # Top-level commands that must appear in both man page and autocomplete
 # (excludes backwards-compat aliases like install-sessionline and easter eggs like 42)
 # help is not documented separately — the man page itself is the help
-MAN_COMMANDS=(status show sessionline config debug search metrics restart about version)
-ALL_COMMANDS=(status show sessionline config debug search metrics restart about version help)
+MAN_COMMANDS=(on off status show sessionline config debug search metrics restart about version)
+ALL_COMMANDS=(on off status show sessionline config debug search metrics restart about version help)
 
 for cmd in "${MAN_COMMANDS[@]}"; do
   assert_contains "man page documents: $cmd"     "$cmd"  "$(cat "$MAN")"

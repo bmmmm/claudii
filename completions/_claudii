@@ -14,13 +14,15 @@ _claudii() {
     command)
       local -a commands
       commands=(
-        'status:Show model health (always live) / manage RPROMPT statusline'
-        'show:Manage which models appear in RPROMPT'
-        'sessionline:Manage Claude Code in-session statusline'
+        'on:Enable ClaudeStatus RPROMPT'
+        'off:Disable ClaudeStatus RPROMPT'
+        'status:Live model health check / set refresh interval'
+        'show:Select which models to monitor in RPROMPT'
+        'sessionline:Claude Code Status Line (context, cost, tokens)'
         'config:Read or write config values'
         'debug:Show or set debug level'
-        'metrics:Show session performance metrics (load time, precmd timing)'
-        'restart:Reload plugin (source ~/.zshrc, stay in current dir)'
+        'metrics:Session performance metrics'
+        'restart:Reload plugin'
         'search:Launch Claude in search mode'
         'about:About claudii'
         'version:Show version'
@@ -34,8 +36,6 @@ _claudii() {
         status)
           local -a opts
           opts=(
-            'on:Enable RPROMPT statusline'
-            'off:Disable RPROMPT statusline'
             '5m:Refresh every 5 minutes'
             '15m:Refresh every 15 minutes (default)'
             '30m:Refresh every 30 minutes'

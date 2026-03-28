@@ -25,20 +25,20 @@ else
   assert_eq "status: cache is fresh after run" "fresh (<30s)" "${cache_age}s"
 fi
 
-# ── status on/off ──
+# ── claudii on/off (top-level) ──
 
 val=$(bash "$CLI" config get statusline.enabled)
 assert_eq "default: statusline.enabled = true" "true" "$val"
 
-output=$(bash "$CLI" status off 2>&1)
-assert_contains "status off: shows deaktiviert" "deaktiviert" "$output"
+output=$(bash "$CLI" off 2>&1)
+assert_contains "off: shows deaktiviert" "deaktiviert" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
-assert_eq "after status off: enabled = false" "false" "$val"
+assert_eq "after off: enabled = false" "false" "$val"
 
-output=$(bash "$CLI" status on 2>&1)
-assert_contains "status on: shows aktiviert" "aktiviert" "$output"
+output=$(bash "$CLI" on 2>&1)
+assert_contains "on: shows aktiviert" "aktiviert" "$output"
 val=$(bash "$CLI" config get statusline.enabled)
-assert_eq "after status on: enabled = true" "true" "$val"
+assert_eq "after on: enabled = true" "true" "$val"
 
 # ── status interval ──
 
