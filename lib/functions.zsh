@@ -101,6 +101,32 @@ function clo { _claudii_launch clo "$@"; }
 function clm { _claudii_launch clm "$@"; }
 function clq { _claudii_launch clq "$@"; }
 
+# Agent launcher — launches claude with a system prompt from ~/.claude/agents/<name>.md
+function _claudii_agent_launch {
+  local agent_name="$1"; shift
+  local agent_file="${HOME}/.claude/agents/${agent_name}.md"
+
+  if [[ ! -f "$agent_file" ]]; then
+    printf '\033[0;31m✗ Agent not found: %s\033[0m\n' "$agent_file" >&2
+    printf '  Available agents:\n' >&2
+    local found=0
+    for f in "${HOME}/.claude/agents/"*.md(N); do
+      printf '    %s\n' "$(basename "$f" .md)" >&2
+      found=1
+    done
+    (( found == 0 )) && printf '    (none — create ~/.claude/agents/*.md files)\n' >&2
+    return 1
+  fi
+
+  local prompt
+  prompt=$(< "$agent_file")
+  _claudii_log info "agent launch: $agent_name"
+  claude --model opus --effort high --system-prompt "$prompt" "$@"
+}
+
+function clorch { _claudii_agent_launch orchestrator "$@"; }
+function cle    { _claudii_agent_launch explorer "$@"; }
+
 # Format microseconds as µs or ms
 function _claudii_fmt_us {
   local us=$1

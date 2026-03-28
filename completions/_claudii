@@ -36,6 +36,7 @@ _claudii() {
         'version:Show version'
         'doctor:Check claudii installation health'
         'watch:Background rate-limit reset watcher with macOS notifications'
+        'agents:List available agent roles from ~/.claude/agents/*.md'
         'help:Show help'
       )
       _describe 'command' commands
