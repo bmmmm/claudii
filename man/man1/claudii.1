@@ -195,6 +195,16 @@ Replace current config with a JSON file (backs up the existing config first).
 .SS Other
 .
 .TP
+.B cost
+Aggregate session costs from the session cache.
+Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
+and all time.
+Session cache files are read from
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+.
+.TP
 .BR "debug " "[off|error|warn|info|debug]"
 Show or set the log level (default: off).
 Can also be set via

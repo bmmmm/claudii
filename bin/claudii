@@ -55,7 +55,7 @@ usage() {
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
-  printf "    doctor · debug · metrics · restart · components · about\n"
+  printf "    doctor · cost · debug · metrics · restart · components · about\n"
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
@@ -260,6 +260,98 @@ case "${1:-}" in
           ;;
       esac
     fi
+    ;;
+
+  cost)
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    shopt -s nullglob
+    session_files=("$cache_dir"/session-*)
+    shopt -u nullglob
+
+    if [[ ${#session_files[@]} -eq 0 ]]; then
+      echo "No session data found. Start a Claude session first."
+      exit 0
+    fi
+
+    now=$(date +%s)
+    cutoff=$(( now - 86400 ))
+
+    # Associative arrays for per-model totals
+    declare -A today_cost today_count alltime_cost alltime_count
+
+    for f in "${session_files[@]}"; do
+      [[ -f "$f" ]] || continue
+
+      # Read key=value pairs
+      cost="" model=""
+      while IFS='=' read -r key val; do
+        case "$key" in
+          cost)  cost="$val"  ;;
+          model) model="$val" ;;
+        esac
+      done < "$f"
+
+      [[ -z "$model" ]] && continue
+      [[ -z "$cost" ]]  && cost="0"
+
+      # Normalize model name to short form
+      case "$model" in
+        *[Oo]pus*)   short="Opus"   ;;
+        *[Ss]onnet*) short="Sonnet" ;;
+        *[Hh]aiku*)  short="Haiku"  ;;
+        *)           short="$model" ;;
+      esac
+
+      # Get mtime
+      if stat -f%m "$f" >/dev/null 2>&1; then
+        mtime=$(stat -f%m "$f")
+      else
+        mtime=$(stat -c%Y "$f")
+      fi
+
+      # Accumulate all-time
+      alltime_cost[$short]=$(printf '%.4f' \
+        "$(echo "${alltime_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${alltime_cost[$short]:-0}")")
+      alltime_count[$short]=$(( ${alltime_count[$short]:-0} + 1 ))
+
+      # Accumulate today (mtime within last 24h)
+      if (( mtime >= cutoff )); then
+        today_cost[$short]=$(printf '%.4f' \
+          "$(echo "${today_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${today_cost[$short]:-0}")")
+        today_count[$short]=$(( ${today_count[$short]:-0} + 1 ))
+      fi
+    done
+
+    cyan='\033[0;36m'
+    reset='\033[0m'
+    line='  ─────────────────'
+
+    _print_section() {
+      local -n _costs=$1 _counts=$2
+      local total=0 has_data=0
+      for m in "${!_costs[@]}"; do
+        c="${_costs[$m]}"
+        n="${_counts[$m]}"
+        printf "    %-10s ${cyan}\$%s${reset}  (%s session%s)\n" \
+          "$m" "$(printf '%.2f' "$c")" "$n" "$( (( n != 1 )) && echo 's' || true)"
+        total=$(echo "$total + $c" | bc -l)
+        has_data=1
+      done
+      if (( has_data )); then
+        printf '%s\n' "$line"
+        printf "    %-10s ${cyan}\$%s${reset}\n" "Total" "$(printf '%.2f' "$total")"
+      else
+        printf "    (none)\n"
+      fi
+    }
+
+    printf '\n'
+    printf '  \033[38;5;213mToday\033[0m\n'
+    _print_section today_cost today_count
+    printf '\n'
+    printf '  \033[38;5;213mAll time\033[0m\n'
+    _print_section alltime_cost alltime_count
+    printf '\n'
     ;;
 
   search)
