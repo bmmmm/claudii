@@ -20,41 +20,73 @@ jobs:
 
       - name: Convert man page to markdown
         run: |
-          # Convert and clean up
+          # Convert with pandoc, then heavily post-process for readability
           pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > /tmp/raw.md
 
-          # Build clean wiki page
-          cat > /tmp/Home.md << 'HEADER'
-          # claudii ♥
+          # Post-process: add spacing, separators, breathing room
+          python3 - /tmp/raw.md /tmp/Home.md << 'PYEOF'
+          import sys, re
 
-          > Fast Claude Code aliases with live model status and session insights.
+          with open(sys.argv[1]) as f:
+              raw = f.read()
 
-          _Auto-generated from [`man claudii`](https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1) — do not edit directly._
+          # Remove everything up to and including DESCRIPTION heading
+          raw = re.sub(r'^.*?(?=# DESCRIPTION)', '', raw, flags=re.DOTALL)
+          raw = re.sub(r'^# DESCRIPTION\n+', '', raw)
 
-          ---
+          # Remove SEE ALSO and everything after
+          raw = re.sub(r'# SEE ALSO.*', '', raw, flags=re.DOTALL)
 
-          HEADER
-          # Strip leading spaces from heredoc
-          sed -i 's/^          //' /tmp/Home.md
+          # Demote headings: # → ##, ## → ###, ### → ####
+          lines = []
+          for line in raw.split('\n'):
+              if line.startswith('### '):
+                  lines.append('#### ' + line[4:])
+              elif line.startswith('## '):
+                  lines.append('### ' + line[3:])
+              elif line.startswith('# '):
+                  lines.append('## ' + line[2:])
+              else:
+                  lines.append(line)
+          raw = '\n'.join(lines)
 
-          # Extract and clean content (skip NAME heading, keep rest)
-          sed '/^# NAME/,/^# /{/^# [^N]/!d}; /^# CLAUDII/d' /tmp/raw.md \
-            | sed 's/^# /## /g; s/^## /## /g; s/^### /### /g' \
-            | sed '/^## SEE ALSO/,$d' \
-            >> /tmp/Home.md
+          # Add --- separator before each ## heading (major sections)
+          raw = re.sub(r'\n(## [A-Z])', r'\n\n---\n\n\1', raw)
 
-          # Add footer
-          cat >> /tmp/Home.md << 'FOOTER'
+          # Add extra blank line after ### headings (subsections)
+          raw = re.sub(r'(### .+)\n', r'\1\n\n', raw)
 
-          ---
+          # Make **bold** terms in definition lists more visible
+          raw = re.sub(r'^\*\*(\w+)\*\*$', r'**`\1`**', raw, flags=re.MULTILINE)
 
-          ## Links
+          # Build final page
+          header = """# claudii ♥
 
-          - [GitHub](https://github.com/bmmmm/claudii)
-          - [Install](https://github.com/bmmmm/claudii#install)
-          - [Releases](https://github.com/bmmmm/claudii/releases)
-          - [Claude Code Status Line by wynandw87](https://github.com/wynandw87/claude-code-statusline)
-          FOOTER
+> Fast Claude Code aliases with live model status and session insights.
+
+<sub>Auto-generated from <a href="https://github.com/bmmmm/claudii/blob/main/man/man1/claudii.1"><code>man claudii</code></a> — do not edit directly.</sub>
+
+---
+
+"""
+
+          footer = """
+
+---
+
+## Links
+
+| | |
+|---|---|
+| GitHub | [bmmmm/claudii](https://github.com/bmmmm/claudii) |
+| Install | `brew tap bmmmm/tap && brew install claudii` |
+| Releases | [v0.1.0+](https://github.com/bmmmm/claudii/releases) |
+| Claude Code Status Line | [wynandw87](https://github.com/wynandw87/claude-code-statusline) |
+"""
+
+          with open(sys.argv[2], 'w') as f:
+              f.write(header + raw.strip() + footer)
+          PYEOF
 
       - name: Create sidebar
         run: |
