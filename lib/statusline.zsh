@@ -146,7 +146,7 @@ function _claudii_session_bar {
   if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
     local cost_fmt
     printf -v cost_fmt '%.2f' "$s_cost" 2>/dev/null || cost_fmt="$s_cost"
-    bar+="${SEP}%F{cyan}\$${cost_fmt}%f"
+    bar+="${SEP}%F{cyan}%{\$%}${cost_fmt}%f"
   fi
 
   # Rate limits with reset countdown
