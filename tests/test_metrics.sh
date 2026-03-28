@@ -47,6 +47,7 @@ output=$(_run_zsh '
   jq ".debug.level = \"debug\"" "$XDG_CONFIG_HOME/claudii/config.json" \
     > "$XDG_CONFIG_HOME/claudii/config.json.tmp" \
     && mv "$XDG_CONFIG_HOME/claudii/config.json.tmp" "$XDG_CONFIG_HOME/claudii/config.json"
+  _CLAUDII_CFG_MTIME=0  # force reload regardless of mtime (avoids sub-second race)
   _claudii_cache_load   # first load after mtime change
   _claudii_cache_load   # second call — cache hit, should NOT log reload
 ' 2>&1)
@@ -59,6 +60,7 @@ output=$(_run_zsh '
   jq ".debug.level = \"debug\"" "$XDG_CONFIG_HOME/claudii/config.json" \
     > "$XDG_CONFIG_HOME/claudii/config.json.tmp" \
     && mv "$XDG_CONFIG_HOME/claudii/config.json.tmp" "$XDG_CONFIG_HOME/claudii/config.json"
+  _CLAUDII_CFG_MTIME=0  # force reload regardless of mtime
   _claudii_cache_load
   _claudii_statusline
 ')
@@ -66,11 +68,14 @@ assert_contains "debug: precmd timing logged"         "precmd:"              "$o
 assert_contains "debug: precmd uses ms/µs format"     "s"                    "$output"
 
 # ── info level: no timing logs (debug-only) ──
+# Reset config to defaults so plugin source-time _claudii_cache_load sees level=off
+cp "$CLAUDII_HOME/config/defaults.json" "$TEST_TMP/config/claudii/config.json"
 
 output=$(_run_zsh '
   jq ".debug.level = \"info\"" "$XDG_CONFIG_HOME/claudii/config.json" \
     > "$XDG_CONFIG_HOME/claudii/config.json.tmp" \
     && mv "$XDG_CONFIG_HOME/claudii/config.json.tmp" "$XDG_CONFIG_HOME/claudii/config.json"
+  _CLAUDII_CFG_MTIME=0  # force reload regardless of mtime
   _claudii_cache_load
   _claudii_statusline
 ')
