@@ -4,8 +4,6 @@
 claudii shows you what's happening — model health, session costs, context usage, rate limits, cache efficiency.
 No agents, no background daemons, no API calls from your prompt. Just reads local cache files.
 
-![claudii screenshot](screenshot.png)
-
 ## Highlights
 
 - **Three display layers** — model health in RPROMPT, session bar above your prompt, dense metrics line inside Claude Code
@@ -29,9 +27,7 @@ claudii is read-only. It never modifies your Claude sessions or makes API calls 
 ### 1. ClaudeStatus — RPROMPT
 Model health in your right prompt. Cache-only, never blocks.
 
-```
-➜  project (main)                       [Opus ✓ Sonnet ✓ Haiku ↓] 13m ⟳
-```
+![ClaudeStatus](screenshot-claudestatus.png)
 
 `✓` ok · `~` degraded · `↓` down · `?` unreachable · `[…]` loading · `⟳` refreshing
 
@@ -45,9 +41,7 @@ Opus ████████░░ 76% │ $0.07 │ 5h:17% reset 43min
 ### 3. Sessionline — inside Claude Code
 Dense metrics on every turn via the `statusLine` hook.
 
-```
-Opus max ████░░░░░░ 42% │ $0.55 │ 15K↑ 4K↓ ⚡73% │ 5h:23% 7d:71% │ +156 -23 │ 12m
-```
+![Sessionline](screenshot-sessionline.png)
 
 model · effort · context bar · cost · tokens + cache ratio · rate limits · lines changed · duration
 
