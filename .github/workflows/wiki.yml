@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [man/man1/claudii.1, .github/wiki-convert.sh]
+    paths: [man/man1/claudii.1]
 
 permissions:
   contents: write
@@ -18,8 +18,8 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
 
-      - name: Convert man page to wiki markdown
-        run: bash .github/wiki-convert.sh man/man1/claudii.1 /tmp/Home.md /tmp/_Sidebar.md
+      - name: Convert man page to markdown
+        run: pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > /tmp/Home.md
 
       - name: Push to wiki
         env:
@@ -30,9 +30,8 @@ jobs:
             git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.wiki.git"
           }
           cp /tmp/Home.md /tmp/wiki/Home.md
-          cp /tmp/_Sidebar.md /tmp/wiki/_Sidebar.md
           cd /tmp/wiki
-          git add Home.md _Sidebar.md
+          git add Home.md
           git diff --staged --quiet && echo "No changes" && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
