@@ -5,7 +5,7 @@
 set -euo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 command -v jq >/dev/null 2>&1 || {
   echo "claudii: jq nicht gefunden. Install: brew install jq" >&2; exit 1
@@ -49,16 +49,28 @@ usage() {
   printf "    %-33s $d %s\n" "status [5m|15m|30m]"         "live model check · refresh interval"
   printf "    %-33s $d %s\n" "show model [add|rm|<names>]" "select which models to monitor"
   printf '\n'
-  printf "  \033[38;5;213mClaude Code Status Line\033[0m  (by wynandw87)   inside Claude\n"
+  printf "  \033[38;5;213mSessionline\033[0m                               inside Claude\n"
   printf "    %-33s $d %s\n" "sessionline [on|off]"        "context · cost · tokens · rate limits"
+  printf "    %-33s $d %s\n" "sessions"                    "active sessions · costs · rate limits"
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
-  printf "    debug · metrics · restart · update · about\n"
+  printf "    doctor · cost · debug · metrics · restart · components · about\n"
+  printf '\n'
+  printf '  \033[38;5;213mshortcuts\033[0m\n'
+  printf "  s=status  ss=sessions  c=cost  d=doctor\n"
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
 }
+
+# Shorthand aliases — expand before main case statement
+case "${1:-}" in
+  s)  set -- status    "${@:2}" ;;
+  ss) set -- sessions  "${@:2}" ;;
+  c)  set -- cost      "${@:2}" ;;
+  d)  set -- doctor    "${@:2}" ;;
+esac
 
 case "${1:-}" in
   on)
@@ -261,6 +273,98 @@ case "${1:-}" in
     fi
     ;;
 
+  cost)
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    shopt -s nullglob
+    session_files=("$cache_dir"/session-*)
+    shopt -u nullglob
+
+    if [[ ${#session_files[@]} -eq 0 ]]; then
+      echo "No session data found. Start a Claude session first."
+      exit 0
+    fi
+
+    now=$(date +%s)
+    cutoff=$(( now - 86400 ))
+
+    # Associative arrays for per-model totals
+    declare -A today_cost today_count alltime_cost alltime_count
+
+    for f in "${session_files[@]}"; do
+      [[ -f "$f" ]] || continue
+
+      # Read key=value pairs
+      cost="" model=""
+      while IFS='=' read -r key val; do
+        case "$key" in
+          cost)  cost="$val"  ;;
+          model) model="$val" ;;
+        esac
+      done < "$f"
+
+      [[ -z "$model" ]] && continue
+      [[ -z "$cost" ]]  && cost="0"
+
+      # Normalize model name to short form
+      case "$model" in
+        *[Oo]pus*)   short="Opus"   ;;
+        *[Ss]onnet*) short="Sonnet" ;;
+        *[Hh]aiku*)  short="Haiku"  ;;
+        *)           short="$model" ;;
+      esac
+
+      # Get mtime
+      if stat -f%m "$f" >/dev/null 2>&1; then
+        mtime=$(stat -f%m "$f")
+      else
+        mtime=$(stat -c%Y "$f")
+      fi
+
+      # Accumulate all-time
+      alltime_cost[$short]=$(printf '%.4f' \
+        "$(echo "${alltime_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${alltime_cost[$short]:-0}")")
+      alltime_count[$short]=$(( ${alltime_count[$short]:-0} + 1 ))
+
+      # Accumulate today (mtime within last 24h)
+      if (( mtime >= cutoff )); then
+        today_cost[$short]=$(printf '%.4f' \
+          "$(echo "${today_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${today_cost[$short]:-0}")")
+        today_count[$short]=$(( ${today_count[$short]:-0} + 1 ))
+      fi
+    done
+
+    cyan='\033[0;36m'
+    reset='\033[0m'
+    line='  ─────────────────'
+
+    _print_section() {
+      local -n _costs=$1 _counts=$2
+      local total=0 has_data=0
+      for m in "${!_costs[@]}"; do
+        c="${_costs[$m]}"
+        n="${_counts[$m]}"
+        printf "    %-10s ${cyan}\$%s${reset}  (%s session%s)\n" \
+          "$m" "$(printf '%.2f' "$c")" "$n" "$( (( n != 1 )) && echo 's' || true)"
+        total=$(echo "$total + $c" | bc -l)
+        has_data=1
+      done
+      if (( has_data )); then
+        printf '%s\n' "$line"
+        printf "    %-10s ${cyan}\$%s${reset}\n" "Total" "$(printf '%.2f' "$total")"
+      else
+        printf "    (none)\n"
+      fi
+    }
+
+    printf '\n'
+    printf '  \033[38;5;213mToday\033[0m\n'
+    _print_section today_cost today_count
+    printf '\n'
+    printf '  \033[38;5;213mAll time\033[0m\n'
+    _print_section alltime_cost alltime_count
+    printf '\n'
+    ;;
+
   search)
     _cfg_init
     search_dir=$(_cfgget search.dir)
@@ -287,12 +391,94 @@ case "${1:-}" in
     printf '\n'
     printf '  zsh plugin + CLI for Claude Code power users.\n'
     printf '\n'
-    printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health monitoring in RPROMPT\n'
-    printf '  \033[0;32m◆\033[0m  Claude Code Status Line — context · cost · tokens\n'
+    printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health in RPROMPT\n'
+    printf '  \033[0;32m◆\033[0m  SessionBar — session data above prompt\n'
+    printf '  \033[0;32m◆\033[0m  Sessionline — info-dense line inside Claude Code\n'
     printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
     printf '\n'
+    printf '  \033[38;5;240mclaudii components  — component overview\033[0m\n'
     printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
-    printf '  \033[38;5;213mClaude Code Status Line by wynandw87\033[0m\n'
+    printf '\n'
+    ;;
+
+  components)
+    local_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    _cfg_init
+
+    printf '\n'
+    printf '  \033[0;36mclaudii components\033[0m\n'
+    printf '  \033[38;5;213m──────────────────────────────────────────────────────────\033[0m\n'
+    printf '\n'
+
+    # ClaudeStatus
+    cs_enabled=$(_cfgget statusline.enabled)
+    cs_models=$(_cfgget statusline.models)
+    cs_ttl=$(_cfgget status.cache_ttl)
+    cs_cache="$local_cache/status-models"
+    if [[ "$cs_enabled" == "true" ]]; then
+      cs_state="\033[0;32mon\033[0m"
+    else
+      cs_state="\033[0;33moff\033[0m"
+    fi
+    printf '  \033[1;36mClaudeStatus\033[0m                              Shell RPROMPT\n'
+    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  Model health indicators from status.claude.com\n'
+    printf '  Example:  [Opus \033[0;32m✓\033[0m Sonnet \033[0;32m✓\033[0m Haiku \033[0;32m✓\033[0m] 13m\n'
+    printf '\n'
+    printf '  Status:   %b\n' "$cs_state"
+    printf '  Models:   %s\n' "$cs_models"
+    printf '  TTL:      %ss\n' "$cs_ttl"
+    if [[ -f "$cs_cache" ]]; then
+      printf '  Cache:    %s\n' "$cs_cache"
+    else
+      printf '  Cache:    \033[38;5;240m(not yet created)\033[0m\n'
+    fi
+    printf '  Commands: claudii on/off · status · show model\n'
+    printf '\n'
+
+    # SessionBar
+    sb_count=0
+    for _sf in "$local_cache"/session-*; do
+      [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
+    done 2>/dev/null
+    printf '  \033[1;36mSessionBar\033[0m                                Shell, above prompt\n'
+    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  Session data from cache (model, context, cost, rate limits)\n'
+    printf '  Example:  \033[1mOpus\033[0m \033[0;32m████████\033[0m\033[38;5;240m░░\033[0m 76%% \033[38;5;240m│\033[0m \033[0;36m$0.07\033[0m \033[38;5;240m│\033[0m 5h:17%% reset 43min\n'
+    printf '\n'
+    printf '  Source:   Sessionline writes cache, SessionBar reads it\n'
+    printf '  Sessions: %d cache file(s)\n' "$sb_count"
+    printf '  Dedup:    only prints when data changes\n'
+    printf '\n'
+
+    # Sessionline
+    settings_file="$HOME/.claude/settings.json"
+    if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
+      sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
+      if [[ -n "$sl_cmd" && "$sl_cmd" == *claudii* ]]; then
+        sl_state="\033[0;32maktiv\033[0m"
+      else
+        sl_state="\033[38;5;240mnicht konfiguriert\033[0m"
+      fi
+    else
+      sl_state="\033[38;5;240m~/.claude/settings.json nicht gefunden\033[0m"
+    fi
+    printf '  \033[1;36mSessionline\033[0m                               Inside Claude Code\n'
+    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  Info-dense status line rendered inside Claude Code CLI\n'
+    printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
+    printf '\n'
+    printf '  Status:   %b\n' "$sl_state"
+    printf '  API:      Claude Code statusLine (stdin JSON)\n'
+    printf '  Handler:  bin/claudii-sessionline (bash+jq)\n'
+    printf '  Commands: claudii sessionline on/off\n'
+    printf '\n'
+
+    # Data flow
+    printf '  \033[1;36mData Flow\033[0m\n'
+    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  Claude Code \033[38;5;240m─JSON→\033[0m \033[1mSessionline\033[0m \033[38;5;240m─cache→\033[0m \033[1mSessionBar\033[0m\n'
+    printf '  status.claude.com \033[38;5;240m─bg→\033[0m \033[1mClaudeStatus\033[0m (RPROMPT)\n'
     printf '\n'
     ;;
 
@@ -307,6 +493,77 @@ case "${1:-}" in
     printf '\n'
     ;;
 
+  sessions)
+    _cfg_init
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    now=$(date +%s)
+    active=0 stale=0 total_cost=0
+    latest_5h="" latest_7d="" latest_reset=""
+
+    printf '\n'
+    for sf in "$cache_dir"/session-*; do
+      [[ -f "$sf" ]] || continue
+      mt=$(stat -f%m "$sf" 2>/dev/null || stat -c%Y "$sf" 2>/dev/null || echo 0)
+      age=$(( now - mt ))
+
+      content=$(<"$sf" 2>/dev/null) || continue
+      s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid=""
+      [[ $'\n'"$content" == *$'\n'model=* ]] && s_model="${content#*model=}" && s_model="${s_model%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'ctx_pct=* ]] && s_ctx="${content#*ctx_pct=}" && s_ctx="${s_ctx%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'cost=* ]] && s_cost="${content#*cost=}" && s_cost="${s_cost%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'rate_5h=* ]] && s_5h="${content#*rate_5h=}" && s_5h="${s_5h%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'rate_7d=* ]] && s_7d="${content#*rate_7d=}" && s_7d="${s_7d%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'reset_5h=* ]] && s_reset="${content#*reset_5h=}" && s_reset="${s_reset%%$'\n'*}"
+      [[ $'\n'"$content" == *$'\n'session_id=* ]] && s_sid="${content#*session_id=}" && s_sid="${s_sid%%$'\n'*}"
+
+      # Accumulate cost
+      if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
+        total_cost=$(echo "$total_cost + $s_cost" | bc 2>/dev/null || echo "$total_cost")
+      fi
+
+      # Track freshest rate limits
+      if [[ -n "$s_5h" ]] && (( age < 300 )); then
+        latest_5h="$s_5h"; latest_7d="$s_7d"; latest_reset="$s_reset"
+      fi
+
+      # Display
+      local status_icon age_str
+      if (( age < 300 )); then
+        status_icon="\033[0;32m●\033[0m"
+        (( active++ ))
+      else
+        status_icon="\033[0;90m○\033[0m"
+        (( stale++ ))
+      fi
+      if (( age < 60 )); then age_str="${age}s"
+      elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
+      elif (( age < 86400 )); then age_str="$(( age / 3600 ))h"
+      else age_str="$(( age / 86400 ))d"; fi
+
+      line="  ${status_icon} \033[1m${s_model:-?}\033[0m"
+      [[ -n "$s_ctx" ]] && line+="  ${s_ctx}%"
+      [[ -n "$s_cost" && "$s_cost" != "0" ]] && line+="  \033[36m\$$(printf '%.2f' "$s_cost")\033[0m"
+      [[ -n "$s_5h" ]] && line+="  5h:${s_5h%.*}%"
+      line+="  \033[2m${age_str} ago\033[0m"
+      [[ -n "$s_sid" ]] && line+="  \033[2m${s_sid:0:8}\033[0m"
+      printf "${line}\n"
+    done
+
+    # Summary
+    printf '\n'
+    total_fmt=$(printf '$%.2f' "$total_cost")
+    printf "  \033[38;5;213m%d aktiv, %d beendet, %s total\033[0m" "$active" "$stale" "$total_fmt"
+    if [[ -n "$latest_5h" ]]; then
+      reset_str=""
+      if [[ -n "$latest_reset" && "$latest_reset" != "0" ]]; then
+        remaining=$(( latest_reset - now ))
+        (( remaining > 0 )) && reset_str=" (Reset in $(( remaining / 60 ))min)"
+      fi
+      printf "  \033[2m5h:%s%% 7d:%s%%%s\033[0m" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
+    fi
+    printf '\n\n'
+    ;;
+
   update)
     if ! git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
       printf 'claudii: not a git repo — install via:\n'
@@ -314,6 +571,90 @@ case "${1:-}" in
     fi
     git -C "$CLAUDII_HOME" pull --ff-only
     printf '\033[0;32m✓ Updated. Run: claudii restart\033[0m\n'
+    ;;
+
+  doctor)
+    _cfg_init
+    local ok="\033[0;32m✓\033[0m"
+    local warn="\033[0;33m⚠\033[0m"
+    local fail="\033[0;31m✗\033[0m"
+    printf '\n'
+    printf '  \033[0;36mclaudii doctor\033[0m\n\n'
+
+    # 1. Claude Code
+    if command -v claude >/dev/null 2>&1; then
+      claude_ver=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+      printf "  $ok Claude Code %s\n" "$claude_ver"
+    else
+      printf "  $fail Claude Code not found  →  install from https://claude.ai/download\n"
+    fi
+
+    # 2. jq
+    if command -v jq >/dev/null 2>&1; then
+      jq_ver=$(jq --version 2>/dev/null || echo "unknown")
+      printf "  $ok jq %s\n" "$jq_ver"
+    else
+      printf "  $fail jq not installed  →  brew install jq\n"
+    fi
+
+    # 3. Sessionline config
+    settings="${HOME}/.claude/settings.json"
+    if [[ ! -f "$settings" ]]; then
+      printf "  $warn Sessionline not configured  →  claudii sessionline on\n"
+    elif jq -e '.statusLine.command == "claudii-sessionline"' "$settings" >/dev/null 2>&1; then
+      printf "  $ok Sessionline configured\n"
+    elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
+      other=$(jq -r '.statusLine.command // "unknown"' "$settings")
+      printf "  $warn Sessionline: other command (%s)  →  claudii sessionline on\n" "$other"
+    else
+      printf "  $warn Sessionline not configured  →  claudii sessionline on\n"
+    fi
+
+    # 4. Cache directory
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    if [[ -d "$cache_dir" ]]; then
+      cache_count=$(ls -1 "$cache_dir" 2>/dev/null | wc -l | tr -d ' ')
+      printf "  $ok Cache directory exists (%s files)\n" "$cache_count"
+    else
+      printf "  $warn Cache directory missing  →  it will be created on first status check\n"
+    fi
+
+    # 5. Completions — check if _claudii exists in the completions dir
+    comp_dir="$CLAUDII_HOME/completions"
+    if [[ -f "$comp_dir/_claudii" ]]; then
+      printf "  $ok Completions file present (%s)\n" "$comp_dir"
+    else
+      printf "  $fail Completions not found  →  add to .zshrc: fpath+=(%s)\n" "$comp_dir"
+    fi
+
+    # 6. Plugin loaded
+    if [[ -n "${CLAUDII_HOME:-}" ]]; then
+      printf "  $ok Plugin loaded (CLAUDII_HOME=%s)\n" "$CLAUDII_HOME"
+    else
+      printf "  $warn CLAUDII_HOME not set  →  source claudii.plugin.zsh in .zshrc\n"
+    fi
+
+    # 7. Version
+    printf "  $ok claudii v%s\n" "$VERSION"
+
+    # 8. Updates (git only, non-fatal)
+    if git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+      git -C "$CLAUDII_HOME" fetch --quiet origin main 2>/dev/null || true
+      local_ref=$(git -C "$CLAUDII_HOME" rev-parse HEAD 2>/dev/null)
+      remote_ref=$(git -C "$CLAUDII_HOME" rev-parse origin/main 2>/dev/null || echo "")
+      if [[ -z "$remote_ref" ]]; then
+        printf "  $warn Update check failed (no remote/network)\n"
+      elif [[ "$local_ref" == "$remote_ref" ]]; then
+        printf "  $ok Up to date\n"
+      else
+        behind=$(git -C "$CLAUDII_HOME" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+        printf "  $warn %s commit(s) behind origin/main  →  claudii update\n" "$behind"
+      fi
+    else
+      printf "  $warn Not a git repo — skipping update check\n"
+    fi
+
+    printf '\n'
     ;;
 
   metrics)

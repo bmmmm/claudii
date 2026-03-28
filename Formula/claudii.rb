@@ -29,11 +29,6 @@ class Claudii < Formula
     # Register zsh completions with Homebrew
     zsh_completion.install libexec/"completions/_claudii" if (libexec/"completions/_claudii").exist?
 
-    # Note: vendor/claude-code-statusline (git submodule) is not included in the
-    # Homebrew tarball. bin/claudii-sessionline falls back to its built-in
-    # implementation automatically. Users can clone the submodule manually:
-    #   git clone https://github.com/wynandw87/claude-code-statusline \
-    #     "$(brew --prefix claudii)/libexec/vendor/claude-code-statusline"
   end
 
   def caveats
@@ -44,7 +39,7 @@ class Claudii < Formula
       Then restart your shell or run:
         source ~/.zshrc
 
-      Optional — activate the Claude Code Status Line:
+      Optional — activate the sessionline:
         claudii sessionline on
     EOS
   end

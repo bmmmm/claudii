@@ -8,7 +8,7 @@ zsh plugin + CLI for Claude Code power users.
 claudii.plugin.zsh      # Entry point (sources lib/)
 bin/claudii             # CLI: on/off, status, config, search
 bin/claudii-status      # ClaudeStatus health checker (components API + RSS)
-bin/claudii-sessionline # Claude Code Status Line handler
+bin/claudii-sessionline # Sessionline handler (bash+jq, reads stdin JSON)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
@@ -21,7 +21,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 ## Naming
 
 - **ClaudeStatus** — RPROMPT health monitor (our feature)
-- **Claude Code Status Line** — in-session bar (by wynandw87, bundled)
+- **Sessionline** — in-session status bar (native implementation)
 - Commands: `claudii on/off`, `claudii status`, `claudii sessionline`
 - Config keys: `statusline.*` (internal, don't rename)
 
@@ -41,7 +41,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - All settings via config.json, nothing hardcoded
 - jq is required
 - No network calls in precmd (cache only)
-- Background jobs: always `{ cmd & } 2>/dev/null` + `disown $!` (prevents [N] PID leak)
+- Background jobs: always `( cmd & )` subshell pattern (prevents [N] PID leak — anonymous functions with no_monitor still leak)
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh`
 

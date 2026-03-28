@@ -12,8 +12,8 @@ assert_contains "man page version matches bin/claudii" "$BIN_VERSION" "$(cat "$M
 # Top-level commands that must appear in both man page and autocomplete
 # (excludes backwards-compat aliases like install-sessionline and easter eggs like 42)
 # help is not documented separately — the man page itself is the help
-MAN_COMMANDS=(on off status show sessionline config debug search metrics restart about version)
-ALL_COMMANDS=(on off status show sessionline config debug search metrics restart about version help)
+MAN_COMMANDS=(on off status show sessionline sessions cost config debug search metrics restart components about version doctor)
+ALL_COMMANDS=(on off status show sessionline sessions cost config debug search metrics restart components about version doctor help)
 
 for cmd in "${MAN_COMMANDS[@]}"; do
   assert_contains "man page documents: $cmd"     "$cmd"  "$(cat "$MAN")"

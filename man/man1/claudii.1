@@ -1,5 +1,5 @@
 .\" claudii manual — auto-synced to wiki via GitHub Actions
-.TH CLAUDII 1 "March 28, 2026" "claudii 0.2.0" "claudii manual"
+.TH CLAUDII 1 "March 28, 2026" "claudii 0.3.0" "claudii manual"
 .
 .SH NAME
 claudii \- Fast Claude Code aliases with live model status and session insights
@@ -120,29 +120,45 @@ RPROMPT indicators:
 .B \(rn
 = refreshing (stale cache).
 .
-.SS Claude Code Status Line (by wynandw87)
+.SS SessionBar
+Rendered in the shell above the prompt line via
+.IR precmd .
+Reads per-session cache files written by the Sessionline handler.
+Shows model name, context usage bar, cost, and rate limits with reset countdown.
+Only prints when data changes (deduplication).
+.PP
+Data flow:
+.RS
+Claude Code \(-> Sessionline (stdin JSON) \(-> cache file \(-> SessionBar (precmd)
+.RE
+.
+.SS Sessionline
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
-Shows model name, context usage, cost, token counts, and rate limits.
-Based on
-.UR https://github.com/wynandw87/claude-code-statusline
-wynandw87/claude-code-statusline
-.UE .
+Shows model name, context usage bar, cost, token counts, rate limits,
+lines changed, and session duration in a single info-dense line.
 .
 .TP
 .B sessionline
-Show whether the Claude Code Status Line is active.
+Show whether the sessionline is active.
 .
 .TP
 .B "sessionline on"
-Add the Claude Code Status Line to
+Add the sessionline to
 .IR ~/.claude/settings.json .
 Restart Claude Code to activate.
 .
 .TP
 .B "sessionline off"
-Remove the Claude Code Status Line from
+Remove the sessionline from
 .IR ~/.claude/settings.json .
+.
+.TP
+.B sessions
+List active and recent Claude Code sessions with model, context usage,
+cost, and rate limits.
+Shows per-session details and an aggregate summary.
+Sessions are detected from cache files written by the sessionline handler.
 .
 .SS Config
 .
@@ -179,6 +195,16 @@ Replace current config with a JSON file (backs up the existing config first).
 .SS Other
 .
 .TP
+.B cost
+Aggregate session costs from the session cache.
+Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
+and all time.
+Session cache files are read from
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+.
+.TP
 .BR "debug " "[off|error|warn|info|debug]"
 Show or set the log level (default: off).
 Can also be set via
@@ -209,12 +235,45 @@ Reload the plugin by sourcing
 Stays in the current directory.
 .
 .TP
+.B components
+Show component overview: ClaudeStatus (RPROMPT), SessionBar (above prompt),
+Sessionline (inside Claude Code). Includes current status, config, and data flow.
+.
+.TP
 .B about
 Show version, features, and project URL.
 .
 .TP
 .B version
 Print the version string.
+.
+.TP
+.B doctor
+Run an installation health check.
+Verifies that Claude Code and jq are installed,
+that the Sessionline is configured in
+.IR ~/.claude/settings.json ,
+that the cache directory exists,
+that completions are present,
+and that the plugin is loaded.
+Also reports the installed version and whether the local repo is behind
+.IR origin/main .
+.
+.SH SHORTCUTS
+Single-letter shorthands expand to their full command before processing.
+.PP
+.TS
+l l.
+s	status
+ss	sessions
+c	cost
+d	doctor
+.TE
+.PP
+Example:
+.B claudii s
+is identical to
+.BR "claudii status" .
 .
 .SH CONFIG FILE
 User config:
@@ -294,6 +353,10 @@ Shipped defaults (read-only reference).
 .I ~/.cache/claudii/status-models
 Per-model status cache.
 .TP
+.I ~/.cache/claudii/session-*
+Per-session cache files written by the sessionline handler.
+Contains model, context percentage, cost, and rate limit data.
+.TP
 .I ~/.claude/settings.json
 Claude Code settings, modified by
 .BR "claudii sessionline" .
@@ -312,11 +375,42 @@ Monitor only Opus and Sonnet:
 Check every 5 minutes:
 .B claudii status 5m
 .TP
-Enable Claude Code Status Line:
+Enable sessionline:
 .B claudii sessionline on
 .TP
 Read a config value:
 .B claudii config get aliases.cl.model
+.
+.SH VISUAL LANGUAGE
+claudii uses a consistent set of symbols across all output:
+.PP
+.TS
+l l l.
+Symbol	Meaning	Color
+_
+\(bu	active session	green
+\(ci	ended / inactive	dim
+\(tf	warning (rate limit, stale cache)	yellow
+\(mu	error / failure	red
+\(OK	ok / success	green
+\(da	down (model unavailable)	red
+~	degraded (partial outage)	yellow
+|	separator	\(em
+\[u2588]	progress bar \(em filled block	context-sensitive
+\[u2591]	progress bar \(em empty block	dim
+.TE
+.PP
+The helper function
+.B _claudii_sym
+.RI ( lib/visual.sh )
+accepts a name
+.RB ( active ", " inactive ", " warn ", " error ", " ok ", " down ", " degraded ", " sep )
+and prints the corresponding colored symbol.
+Constants are prefixed
+.B CLAUDII_SYM_
+(symbols) and
+.B CLAUDII_CLR_
+(ANSI colors).
 .
 .SH SEE ALSO
 .BR claude (1),

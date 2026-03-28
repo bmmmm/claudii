@@ -1,29 +1,24 @@
 #!/bin/bash
-# claudii-sessionline — Claude Code native statusLine handler
-# Receives JSON session metrics via stdin, outputs formatted status
-# Inspired by wynandw87/claude-code-statusline (MIT)
-#
+# claudii-sessionline — Claude Code statusLine handler
+# Reads JSON session metrics from stdin, outputs a single info-dense line.
 # Configure in settings.json:
 #   "statusLine": { "type": "command", "command": "claudii-sessionline" }
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
-
-# Use upstream vendor script when available (kept fresh via claudii update)
-for _vendor in \
-  "$CLAUDII_HOME/vendor/claude-code-statusline/statusline.sh" \
-  "$CLAUDII_HOME/vendor/claude-code-statusline/claude-code-statusline.sh" \
-  "$CLAUDII_HOME/vendor/claude-code-statusline/claude-code-statusline" \
-  "$CLAUDII_HOME/vendor/claude-code-statusline/bin/claude-code-statusline"; do
-  [[ -x "$_vendor" ]] && exec "$_vendor" "$@"
-done
-unset _vendor
 # shellcheck source=lib/log.sh
 source "$CLAUDII_HOME/lib/log.sh"
 
 read -r json
 
-# Parse all fields in one jq call
-IFS=$'\t' read -r model context_pct cost input_tok output_tok rate_5h rate_7d < <(
+# Write session data to cache (key=value) — RPROMPT reads this without jq
+_cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+[[ -d "$_cache_dir" ]] || mkdir -p "$_cache_dir"
+
+# Parse all fields in one jq call — single process, max efficiency
+# Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
+_D=$'\x1f'
+IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
+  duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -31,14 +26,36 @@ IFS=$'\t' read -r model context_pct cost input_tok output_tok rate_5h rate_7d < 
     (.context_window.total_input_tokens // "" | tostring),
     (.context_window.total_output_tokens // "" | tostring),
     (.rate_limits.five_hour.used_percentage // "" | tostring),
-    (.rate_limits.seven_day.used_percentage // "" | tostring)
-  ] | join("\t")' 2>/dev/null || printf '\t\t\t\t\t\t'
-)
+    (.rate_limits.seven_day.used_percentage // "" | tostring),
+    (.cost.total_duration_ms // "" | tostring),
+    (.cost.total_lines_added // "" | tostring),
+    (.cost.total_lines_removed // "" | tostring),
+    (.context_window.context_window_size // "" | tostring),
+    (.session_id // ""),
+    (.rate_limits.five_hour.resets_at // "" | tostring),
+    (.rate_limits.seven_day.resets_at // "" | tostring)
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+)"
 
-# Format tokens (K/M)
-_fmt_tok() {
+# Write per-session cache (key=value) — RPROMPT + aliases read without jq
+_sid="${session_id:+${session_id:0:8}}"
+_session_file="$_cache_dir/session-${_sid:-unknown}"
+{ printf '%s\n' \
+  "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
+  "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
+  "reset_5h=$reset_5h" "reset_7d=$reset_7d" \
+  "session_id=$session_id" \
+  > "$_session_file"; } 2>/dev/null || true
+
+_claudii_log debug "input: $(echo "$json" | head -c 200)"
+_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d}"
+
+# --- helpers ---
+
+# Format token count: 1234→1.2K  1234567→1.2M
+_tok() {
   local n=$1
-  [[ -z "$n" ]] && echo "~" && return
+  [[ -z "$n" || "$n" == "null" ]] && return
   if (( n >= 1000000 )); then
     printf "%.1fM" "$(echo "scale=1; $n/1000000" | bc)"
   elif (( n >= 1000 )); then
@@ -48,64 +65,100 @@ _fmt_tok() {
   fi
 }
 
-# Context bar (10 chars)
-_ctx_bar() {
-  local pct=${1:-0}
-  local filled=$(( pct / 10 ))
-  local empty=$(( 10 - filled ))
-  local color="\033[32m"  # green
-  (( pct >= 70 )) && color="\033[33m"  # yellow
-  (( pct >= 90 )) && color="\033[31m"  # red
-  printf "${color}"
-  printf '█%.0s' $(seq 1 $filled 2>/dev/null) || true
-  printf "\033[2m"
-  (( empty > 0 )) && printf '░%.0s' $(seq 1 $empty 2>/dev/null) || true
-  printf "\033[0m"
-}
-
-# Rate limit color
-_rate_color() {
-  local pct=${1:-0}
-  local int_pct=${pct%.*}
-  if (( int_pct >= 90 )); then echo "\033[31m"
-  elif (( int_pct >= 70 )); then echo "\033[33m"
-  else echo "\033[36m"
+# Format duration: ms → "<1m", "5m", "1h 23m"
+_dur() {
+  local ms=$1
+  [[ -z "$ms" || "$ms" == "null" ]] && return
+  local sec=$(( ${ms%.*} / 1000 ))
+  if (( sec < 60 )); then printf "<1m"
+  elif (( sec < 3600 )); then printf "%dm" $(( sec / 60 ))
+  else printf "%dh %dm" $(( sec / 3600 )) $(( (sec % 3600) / 60 ))
   fi
 }
 
-_claudii_log debug "input: $(echo "$json" | head -c 200)"
-_claudii_log debug "parsed: model=${model} ctx=${context_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d}"
+# Threshold color: green < 70, yellow 70-89, red 90+
+_thr() {
+  local pct=${1%.*}
+  [[ -z "$pct" ]] && pct=0
+  if (( pct >= 90 )); then printf "\033[31m"
+  elif (( pct >= 70 )); then printf "\033[33m"
+  else printf "\033[32m"
+  fi
+}
 
-# Build output
+# Rate limit color: cyan < 70, yellow 70-89, red 90+
+_rlc() {
+  local pct=${1%.*}
+  [[ -z "$pct" ]] && pct=0
+  if (( pct >= 90 )); then printf "\033[31m"
+  elif (( pct >= 70 )); then printf "\033[33m"
+  else printf "\033[36m"
+  fi
+}
+
+RST="\033[0m"
+DIM="\033[2m"
+SEP="${DIM} │${RST} "
+
+# --- build output ---
 out=""
 
-# Model
-[[ -n "$model" ]] && out+="\033[1;34m${model}\033[0m"
+# Model (bold)
+[[ -n "$model" ]] && out+="\033[1m${model}${RST}"
 
-# Context bar
-if [[ -n "$context_pct" ]]; then
-  out+=" $(_ctx_bar "$context_pct") \033[2m${context_pct}%\033[0m"
+# Context bar (10 chars) + percentage
+if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
+  local_pct=${ctx_pct%.*}
+  (( local_pct < 0 )) && local_pct=0
+  (( local_pct > 100 )) && local_pct=100
+  filled=$(( local_pct / 10 ))
+  empty=$(( 10 - filled ))
+  bar=""
+  (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
+  (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
+  # Context window size indicator (1M = extended)
+  win=""
+  if [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
+    win=" ${DIM}1M${RST}"
+  fi
+  out+=" $(_thr "$local_pct")${bar}${RST} ${DIM}${local_pct}%${RST}${win}"
 fi
 
 # Cost
-if [[ -n "$cost" ]]; then
-  out+=" \033[36m\$$(printf '%.2f' "$cost")\033[0m"
+if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
+  out+="${SEP}\033[36m\$$(printf '%.2f' "$cost")${RST}"
 fi
 
-# Tokens
-if [[ -n "$input_tok" || -n "$output_tok" ]]; then
-  out+=" \033[2min:\033[0m\033[36m$(_fmt_tok "$input_tok")\033[0m"
-  out+=" \033[2mout:\033[0m\033[36m$(_fmt_tok "$output_tok")\033[0m"
+# Tokens (compact: 15K↑ 4K↓)
+if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
+  in_fmt=$(_tok "$input_tok")
+  out_fmt=$(_tok "$output_tok")
+  out+="${SEP}${DIM}${in_fmt}↑${RST}"
+  [[ -n "$out_fmt" ]] && out+=" ${DIM}${out_fmt}↓${RST}"
 fi
 
-# Rate limits
-if [[ -n "$rate_5h" ]]; then
-  c5=$(_rate_color "$rate_5h")
-  out+=" \033[2m5h:\033[0m${c5}${rate_5h%.*}%\033[0m"
+# Rate limits (only when present — Pro/Max)
+if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+  out+="${SEP}$(_rlc "$rate_5h")5h:${rate_5h%.*}%${RST}"
 fi
-if [[ -n "$rate_7d" ]]; then
-  c7=$(_rate_color "$rate_7d")
-  out+=" \033[2m7d:\033[0m${c7}${rate_7d%.*}%\033[0m"
+if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
+  [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"
+  out+=" $(_rlc "$rate_7d")7d:${rate_7d%.*}%${RST}"
+fi
+
+# Lines changed (only when > 0)
+if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
+   [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
+  lns=""
+  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && lns+="\033[32m+${lines_add}${RST}"
+  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && lns+=" \033[31m-${lines_rm}${RST}"
+  out+="${SEP}${lns}"
+fi
+
+# Duration
+if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
+  dur=$(_dur "$duration_ms")
+  [[ -n "$dur" ]] && out+="${SEP}${DIM}${dur}${RST}"
 fi
 
 echo -e "$out"
