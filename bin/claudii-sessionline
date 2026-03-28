@@ -18,7 +18,8 @@ _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 # Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
 _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
-  duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d <<< "$(
+  duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
+  cache_read cache_create worktree_name agent_name <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -33,8 +34,12 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.context_window.context_window_size // "" | tostring),
     (.session_id // ""),
     (.rate_limits.five_hour.resets_at // "" | tostring),
-    (.rate_limits.seven_day.resets_at // "" | tostring)
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.rate_limits.seven_day.resets_at // "" | tostring),
+    (.context_window.current_usage.cache_read_input_tokens // "" | tostring),
+    (.context_window.current_usage.cache_creation_input_tokens // "" | tostring),
+    (.workspace.name // .worktree.name // .workspace.worktree_name // ""),
+    (.agent.name // .agent_name // "")
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
@@ -45,10 +50,12 @@ _session_file="$_cache_dir/session-${_sid:-unknown}"
   "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
   "reset_5h=$reset_5h" "reset_7d=$reset_7d" \
   "session_id=$session_id" \
+  "worktree=$worktree_name" \
+  "agent=$agent_name" \
   > "$_session_file"; } 2>/dev/null || true
 
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
-_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d}"
+_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name}"
 
 # --- helpers ---
 
@@ -129,12 +136,24 @@ if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
   out+="${SEP}\033[36m\$$(printf '%.2f' "$cost")${RST}"
 fi
 
-# Tokens (compact: 15K↑ 4K↓)
+# Tokens (compact: 15K↑ 4K↓ ⚡73%)
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
   in_fmt=$(_tok "$input_tok")
   out_fmt=$(_tok "$output_tok")
   out+="${SEP}${DIM}${in_fmt}↑${RST}"
   [[ -n "$out_fmt" ]] && out+=" ${DIM}${out_fmt}↓${RST}"
+  # Cache hit ratio — only show when cache_read > 0
+  if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
+    _cr=${cache_read%.*}
+    _ci=${input_tok%.*}
+    if (( _ci + _cr > 0 )); then
+      _cache_pct=$(( _cr * 100 / (_cr + _ci) ))
+      if (( _cache_pct >= 60 )); then _cc="\033[32m"
+      elif (( _cache_pct < 30 )); then _cc="\033[33m"
+      else _cc="${DIM}"; fi
+      out+=" ${_cc}⚡${_cache_pct}%${RST}"
+    fi
+  fi
 fi
 
 # Rate limits (only when present — Pro/Max)
