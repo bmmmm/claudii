@@ -246,6 +246,16 @@ Session cache files are read from
 .BR CLAUDII_CACHE_DIR ).
 .
 .TP
+.B stats
+Efficiency metrics from the session cache.
+Shows session count and cost breakdown by model for today (sessions written in the last 24 hours)
+and all time, plus an all-time model distribution split (Opus / Sonnet / Haiku percentage).
+Session cache files are read from
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+.
+.TP
 .BR "debug " "[off|error|warn|info|debug]"
 Show or set the log level (default: off).
 Can also be set via

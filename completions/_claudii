@@ -22,6 +22,7 @@ _claudii() {
         'sessions:Active sessions, costs, rate limits'
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'
+        'stats:Session efficiency metrics: counts, costs, model distribution'
         'debug:Show or set debug level'
         'metrics:Session performance metrics'
         'restart:Reload plugin'

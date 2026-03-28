@@ -55,7 +55,7 @@ usage() {
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
-  printf "    doctor · cost · debug · metrics · restart · components · about\n"
+  printf "    doctor · cost · stats · debug · metrics · restart · components · about\n"
   printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
   printf '\n'
   printf '  \033[38;5;213mshortcuts\033[0m\n'
@@ -363,6 +363,146 @@ case "${1:-}" in
     printf '\n'
     printf '  \033[38;5;213mAll time\033[0m\n'
     _print_section alltime_cost alltime_count
+    printf '\n'
+    ;;
+
+  stats)
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    shopt -s nullglob
+    session_files=("$cache_dir"/session-*)
+    shopt -u nullglob
+
+    if [[ ${#session_files[@]} -eq 0 ]]; then
+      echo "No session data found. Start a Claude session first."
+      exit 0
+    fi
+
+    now=$(date +%s)
+    cutoff=$(( now - 86400 ))
+
+    # Associative arrays for per-model totals
+    declare -A today_cost today_count alltime_cost alltime_count
+
+    for f in "${session_files[@]}"; do
+      [[ -f "$f" ]] || continue
+
+      # Read key=value pairs
+      cost="" model=""
+      while IFS='=' read -r key val; do
+        case "$key" in
+          cost)  cost="$val"  ;;
+          model) model="$val" ;;
+        esac
+      done < "$f"
+
+      [[ -z "$model" ]] && continue
+      [[ -z "$cost" ]]  && cost="0"
+
+      # Normalize model name to short form
+      case "$model" in
+        *[Oo]pus*)   short="Opus"   ;;
+        *[Ss]onnet*) short="Sonnet" ;;
+        *[Hh]aiku*)  short="Haiku"  ;;
+        *)           short="$model" ;;
+      esac
+
+      # Get mtime
+      if stat -f%m "$f" >/dev/null 2>&1; then
+        mtime=$(stat -f%m "$f")
+      else
+        mtime=$(stat -c%Y "$f")
+      fi
+
+      # Accumulate all-time
+      alltime_cost[$short]=$(printf '%.4f' \
+        "$(echo "${alltime_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${alltime_cost[$short]:-0}")")
+      alltime_count[$short]=$(( ${alltime_count[$short]:-0} + 1 ))
+
+      # Accumulate today (mtime within last 24h)
+      if (( mtime >= cutoff )); then
+        today_cost[$short]=$(printf '%.4f' \
+          "$(echo "${today_cost[$short]:-0} + $cost" | bc -l 2>/dev/null || echo "${today_cost[$short]:-0}")")
+        today_count[$short]=$(( ${today_count[$short]:-0} + 1 ))
+      fi
+    done
+
+    cyan='\033[0;36m'
+    reset='\033[0m'
+    line='  ─────────────────────────────────'
+
+    # Count totals for section headers
+    today_total_count=0
+    for m in "${!today_count[@]}"; do
+      today_total_count=$(( today_total_count + today_count[$m] ))
+    done
+    alltime_total_count=0
+    for m in "${!alltime_count[@]}"; do
+      alltime_total_count=$(( alltime_total_count + alltime_count[$m] ))
+    done
+
+    _stats_section() {
+      local -n _costs=$1 _counts=$2
+      local total=0 has_data=0
+      for m in Opus Sonnet Haiku; do
+        [[ -z "${_counts[$m]+x}" ]] && continue
+        c="${_costs[$m]}"
+        n="${_counts[$m]}"
+        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
+          "$m" "$n" "$( (( n != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$c")"
+        total=$(echo "$total + $c" | bc -l)
+        has_data=1
+      done
+      # Catch any unknown model names not in the ordered list above
+      for m in "${!_counts[@]}"; do
+        [[ "$m" == "Opus" || "$m" == "Sonnet" || "$m" == "Haiku" ]] && continue
+        c="${_costs[$m]}"
+        n="${_counts[$m]}"
+        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
+          "$m" "$n" "$( (( n != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$c")"
+        total=$(echo "$total + $c" | bc -l)
+        has_data=1
+      done
+      if (( has_data )); then
+        printf '%s\n' "$line"
+        local tot_count=0
+        for m in "${!_counts[@]}"; do tot_count=$(( tot_count + _counts[$m] )); done
+        printf "    %-10s %2d session%s  ${cyan}\$%s${reset}\n" \
+          "Total" "$tot_count" "$( (( tot_count != 1 )) && echo 's' || echo ' ')" "$(printf '%.2f' "$total")"
+      else
+        printf "    (none)\n"
+      fi
+    }
+
+    printf '\n'
+    printf '  \033[0;36mclaudii stats\033[0m\n'
+    printf '\n'
+    printf '  \033[38;5;213mToday\033[0m (%d session%s)\n' \
+      "$today_total_count" "$( (( today_total_count != 1 )) && echo 's' || true)"
+    _stats_section today_cost today_count
+    printf '\n'
+    printf '  \033[38;5;213mAll time\033[0m (%d session%s)\n' \
+      "$alltime_total_count" "$( (( alltime_total_count != 1 )) && echo 's' || true)"
+    _stats_section alltime_cost alltime_count
+
+    # Model split (all-time)
+    if [[ ${#alltime_count[@]} -gt 0 ]]; then
+      printf '\n'
+      split_str=""
+      for m in Opus Sonnet Haiku; do
+        [[ -z "${alltime_count[$m]+x}" ]] && continue
+        pct=$(printf '%.0f' "$(echo "${alltime_count[$m]} * 100 / $alltime_total_count" | bc -l)")
+        [[ -n "$split_str" ]] && split_str+=" · "
+        split_str+="${m} ${pct}%"
+      done
+      # Unknown models
+      for m in "${!alltime_count[@]}"; do
+        [[ "$m" == "Opus" || "$m" == "Sonnet" || "$m" == "Haiku" ]] && continue
+        pct=$(printf '%.0f' "$(echo "${alltime_count[$m]} * 100 / $alltime_total_count" | bc -l)")
+        [[ -n "$split_str" ]] && split_str+=" · "
+        split_str+="${m} ${pct}%"
+      done
+      printf '  Model split: %s\n' "$split_str"
+    fi
     printf '\n'
     ;;
 
