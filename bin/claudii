@@ -1182,6 +1182,8 @@ case "${1:-}" in
     ;;
 
   explore)
+    # Internal dev tool — not shipped, not documented
+    [[ -x "$CLAUDII_HOME/bin/claudii-explore" ]] || { echo "claudii-explore not found (internal tool)"; exit 1; }
     exec "$CLAUDII_HOME/bin/claudii-explore" "${@:2}"
     ;;
 
