@@ -81,7 +81,7 @@ usage() {
   printf '    config [get|set|reset|export|import]\n'
   printf "    doctor · cost · stats · trends · debug · metrics · restart · components · about\n"
   printf "    continue [--launch|--resume]  — session handoff\n"
-  printf "    agents  — list ~/.claude/agents/*.md (clorch, cle)\n"
+  printf "    agents  — configured agents (alias→skill) or onboarding\n"
   printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
   printf "    release <version> [--dry-run]  — tag, push, create GitHub release\n"
   printf '\n'
@@ -1850,58 +1850,86 @@ case "${1:-}" in
     ;;
 
   agents)
-    agents_dir="${HOME}/.claude/agents"
-    shopt -s nullglob
-    agent_files=("$agents_dir"/*.md)
-    shopt -u nullglob
+    _cfg_init
+    # Read agents object from config (user config first, then defaults)
+    agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$CONFIG" 2>/dev/null)
+    [[ -z "$agents_json" ]] && agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
 
-    if [[ ${#agent_files[@]} -eq 0 ]]; then
+    if [[ -z "$agents_json" ]]; then
+      # No agents configured — show onboarding text
       if [[ "$_FORMAT" == "json" ]]; then
         echo "[]"
-      else
-        echo "No agents found in $agents_dir"
-        echo ""
-        echo "Create agent files as ~/.claude/agents/<name>.md"
-        echo "The first line of each file is used as the description."
-        echo ""
-        echo "Example:"
-        echo "  ~/.claude/agents/orchestrator.md"
-        echo "  ~/.claude/agents/explorer.md"
-        echo ""
-        echo "Then launch with: clorch  or  cle"
+        exit 0
       fi
+
+      printf '\nNo agents configured.\n\n'
+      printf 'Agents let you launch Claude with a specific skill as system prompt — using a short\n'
+      printf 'alias instead of a long --append-system-prompt flag.\n'
+      printf '\n'
+      printf 'Without agents:\n'
+      printf '  claude --model opus --effort high --append-system-prompt "$(cat .claude/skills/orchestrate/SKILL.md)"\n'
+      printf '\n'
+      printf 'With agents (after setup):\n'
+      printf '  clorch\n'
+      printf '\n'
+      printf 'Setup:\n'
+      printf '  claudii config set agents.clorch.skill orchestrate\n'
+      printf '  claudii config set agents.clorch.model opus\n'
+      printf '  claudii config set agents.clorch.effort high\n'
+      printf '\n'
+
+      # Scan for skills in current directory
+      printf 'Available skills in this project:\n'
+      shopt -s nullglob
+      skill_files=(.claude/skills/*/SKILL.md)
+      shopt -u nullglob
+      if [[ ${#skill_files[@]} -eq 0 ]]; then
+        printf '  (none found)   — add skills to .claude/skills/<name>/SKILL.md\n'
+      else
+        for sf in "${skill_files[@]}"; do
+          skill_name=$(basename "$(dirname "$sf")")
+          printf '  %-14s %s\n' "$skill_name" "$sf"
+        done
+      fi
+      printf '\n'
       exit 0
     fi
 
+    # Agents are configured — show table
     if [[ "$_FORMAT" == "json" ]]; then
-      first=1
-      printf '['
-      for f in "${agent_files[@]}"; do
-        name=$(basename "$f" .md)
-        desc=$(head -1 "$f" 2>/dev/null | sed 's/^#* *//')
-        [[ "$first" -eq 0 ]] && printf ','
-        printf '%s' "$(jq -n --arg name "$name" --arg path "$f" --arg desc "$desc" \
-          '{"name":$name,"path":$path,"description":$desc}')"
-        first=0
-      done
-      printf ']\n'
+      echo "$agents_json" | jq 'to_entries | map({alias: .key} + .value)'
+      exit 0
+    fi
+
+    if _plain; then
+      # TSV / piped output
+      printf "alias\tskill\tmodel\teffort\n"
+      echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv'
     else
-      if _plain; then
-        for f in "${agent_files[@]}"; do
-          name=$(basename "$f" .md)
-          desc=$(head -1 "$f" 2>/dev/null | sed 's/^#* *//')
-          printf "%s\t%s\n" "$name" "$desc"
-        done
-      else
-        printf '\n'
-        printf '  \033[38;5;213mAgents\033[0m  (~/.claude/agents/)\n'
-        for f in "${agent_files[@]}"; do
-          name=$(basename "$f" .md)
-          desc=$(head -1 "$f" 2>/dev/null | sed 's/^#* *//')
-          printf "    %-20s  \033[38;5;240m%s\033[0m\n" "$name" "$desc"
-        done
-        printf '\n'
-      fi
+      # Pretty table: compute column widths
+      aliases_list=$(echo "$agents_json" | jq -r 'keys[]')
+      max_alias=5   # min "ALIAS"
+      max_skill=5   # min "SKILL"
+      max_model=5   # min "MODEL"
+
+      while IFS= read -r alias; do
+        [[ ${#alias} -gt $max_alias ]] && max_alias=${#alias}
+        skill=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].skill // ""')
+        model=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].model // ""')
+        [[ ${#skill} -gt $max_skill ]] && max_skill=${#skill}
+        [[ ${#model} -gt $max_model ]] && max_model=${#model}
+      done <<< "$aliases_list"
+
+      printf '\n'
+      printf "  \033[38;5;213m%-${max_alias}s  %-${max_skill}s  %-${max_model}s  EFFORT\033[0m\n" "ALIAS" "SKILL" "MODEL"
+      while IFS= read -r alias; do
+        skill=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].skill // ""')
+        model=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].model // ""')
+        effort=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].effort // ""')
+        printf "  %-${max_alias}s  %-${max_skill}s  %-${max_model}s  %s\n" "$alias" "$skill" "$model" "$effort"
+      done <<< "$aliases_list"
+      printf '\n'
+      printf 'Type the alias to launch. Example: %s\n\n' "$(echo "$aliases_list" | head -1)"
     fi
     ;;
 

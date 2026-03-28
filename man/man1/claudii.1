@@ -282,18 +282,22 @@ Equivalent to
 Show the alias table and run a live model health check.
 .TP
 .B clorch
-Launch Claude Opus (high effort) with the system prompt from
-.IR ~/.claude/agents/orchestrator.md .
-Equivalent to
-.BR "_claudii_agent_launch orchestrator" .
-Prints an error and lists available agents if the file does not exist.
+Example agent alias: launches Claude Opus (high effort) with the
+.B orchestrate
+skill as system prompt.
+Configured via
+.BR "claudii config set agents.clorch.*" .
+See
+.BR "claudii agents" .
 .TP
 .B cle
-Launch Claude Opus (high effort) with the system prompt from
-.IR ~/.claude/agents/explorer.md .
-Equivalent to
-.BR "_claudii_agent_launch explorer" .
-Prints an error and lists available agents if the file does not exist.
+Example agent alias: launches Claude Sonnet (medium effort) with the
+.B explorer
+skill as system prompt.
+Configured via
+.BR "claudii config set agents.cle.*" .
+See
+.BR "claudii agents" .
 .
 .SS ClaudeStatus
 Live model health monitoring in your shell RPROMPT.
@@ -522,32 +526,44 @@ Equivalent to
 .
 .TP
 .B agents
-List available agent roles from
-.IR ~/.claude/agents/*.md .
-For each file, shows the agent name (filename without
-.IR .md )
-and its description (first line of the file, with leading
-.B #
-stripped).
+List configured agents (alias \(-> skill mapping) or show onboarding instructions.
+Agents let you launch Claude with a specific skill as the system prompt using a short
+alias instead of a long
+.B \-\-append\-system\-prompt
+flag.
+.PP
+When agents are configured in
+.I config.json
+under the
+.B agents
+key, a left-aligned table is shown:
+.RS
+.nf
+ALIAS     SKILL         MODEL   EFFORT
+clorch    orchestrate   opus    high
+cle       explorer      sonnet  medium
+.fi
+.RE
+.PP
+Followed by the hint: \(dqType the alias to launch.\(dq
+.PP
+When no agents are configured, an onboarding message is shown with the equivalent
+manual command, setup instructions, and a list of skills found in
+.I .claude/skills/*/SKILL.md
+in the current directory.
+.PP
 Supports
 .B \-\-json
 (array of objects with
-.BR name ", " path ", " detail
+.BR alias ", " skill ", " model ", " effort
 fields).
-When no agents are found, prints a helpful message with instructions for creating them.
 .PP
-Agent files are plain markdown files where the first line acts as the description
-and the full content is used as the system prompt when launching via
-.B clorch
-or
-.BR cle .
-.PP
-Example agent file
-.RI ( ~/.claude/agents/orchestrator.md ):
+Configure agents via:
 .RS
 .nf
-# Orchestrator — breaks down complex tasks and coordinates subagents
-You are an expert orchestrator...
+claudii config set agents.clorch.skill orchestrate
+claudii config set agents.clorch.model opus
+claudii config set agents.clorch.effort high
 .fi
 .RE
 .
