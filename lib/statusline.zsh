@@ -271,7 +271,7 @@ function _claudii_dashboard {
     _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
     _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
     _vis=${#_vis_str}
-    _pad=$(( _cols - _vis ))
+    _pad=$(( _cols - _vis - 1 ))  # -1: safety margin for ambiguous-width chars (e.g. ⚡)
     (( _pad < 0 )) && _pad=0
     dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
   done
