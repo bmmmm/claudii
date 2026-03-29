@@ -279,17 +279,17 @@ function _claudii_dashboard {
 
   # Deduplicate — only update PROMPT if dashboard changed
   [[ "$dash_lines" == "$_CLAUDII_LAST_DASHBOARD" ]] && {
-    # Still need to append cached dashboard to PROMPT
+    # Still need to re-apply cached dashboard to PROMPT (cursor save/restore)
     if [[ -n "$_CLAUDII_LAST_DASHBOARD" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}"
+      PROMPT="${_CLAUDII_USER_PROMPT}%{$'\033[s'$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}"$'\033[u'%}"
     fi
     return
   }
   _CLAUDII_LAST_DASHBOARD="$dash_lines"
 
-  # Append dashboard below PROMPT
+  # Render dashboard below prompt; cursor save/restore keeps input on prompt line
   if [[ -n "$dash_lines" ]]; then
-    PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${dash_lines%$'\n'}"
+    PROMPT="${_CLAUDII_USER_PROMPT}%{$'\033[s'$'\n'"${dash_lines%$'\n'}"$'\033[u'%}"
   fi
 }
 
