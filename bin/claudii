@@ -32,6 +32,39 @@ command -v jq >/dev/null 2>&1 || {
   echo "claudii: jq nicht gefunden. Install: brew install jq" >&2; exit 1
 }
 
+# Resolve project path (cwd) for a given session_id from JSONL transcript.
+# Outputs shortened path (~ for home, truncated to 40 chars) or empty string.
+_session_project_path() {
+  local sid="$1"
+  [[ -z "$sid" ]] && return
+  local jsonl=""
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
+  done
+  [[ -z "$jsonl" ]] && return
+  local cwd
+  cwd=$(grep -m5 '"cwd"' "$jsonl" 2>/dev/null | head -1 | grep -o '"cwd":"[^"]*"' | sed 's/"cwd":"//; s/"$//')
+  [[ -z "$cwd" ]] && return
+  local short="${cwd/#$HOME/\~}"
+  if (( ${#short} > 40 )); then
+    short="...${short: -37}"
+  fi
+  echo "$short"
+}
+
+# Extract session name from rename entries in JSONL transcript.
+# Returns last rename name or empty string.
+_session_name() {
+  local sid="$1"
+  [[ -z "$sid" ]] && return
+  local jsonl=""
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
+  done
+  [[ -z "$jsonl" ]] && return
+  grep -o 'Session renamed to: [^<]*' "$jsonl" 2>/dev/null | tail -1 | sed 's/Session renamed to: //'
+}
+
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
 _cfg_init() {
   CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
@@ -1041,7 +1074,7 @@ case "${1:-}" in
         # Parse key=value pairs
         _ov_content=$(cat "$_ov_f" 2>/dev/null) || continue
         _ov_model="" _ov_ctx="" _ov_cost="" _ov_5h="" _ov_7d="" _ov_reset_ts="" _ov_reset_7d_ts="" _ov_ppid=""
-        _ov_worktree="" _ov_agent="" _ov_cache_pct="" _ov_7d_start=""
+        _ov_worktree="" _ov_agent="" _ov_cache_pct="" _ov_7d_start="" _ov_sid=""
         while IFS='=' read -r _k _v; do
           case "$_k" in
             model)         _ov_model="$_v" ;;
@@ -1056,6 +1089,7 @@ case "${1:-}" in
             agent)         _ov_agent="$_v" ;;
             cache_pct)     _ov_cache_pct="$_v" ;;
             rate_7d_start) _ov_7d_start="$_v" ;;
+            session_id)    _ov_sid="$_v" ;;
           esac
         done <<< "$_ov_content"
 
@@ -1116,8 +1150,15 @@ case "${1:-}" in
           _ov_bar=" ${_ov_bc}${_ov_bar_str}${_ov_reset} ${_ov_dim}${_ov_pct}%${_ov_reset}"
         fi
 
-        # Build line: icon + model + bar + cost + cache + worktree + agent
-        _ov_line="  ${_ov_green}●${_ov_reset} ${_ov_bold}${_ov_model}${_ov_reset}${_ov_bar}"
+        # Build line: icon + model + project path + session name + bar + cost + cache + worktree + agent
+        _ov_line="  ${_ov_green}●${_ov_reset} ${_ov_bold}${_ov_model}${_ov_reset}"
+        if [[ -n "$_ov_sid" ]]; then
+          _ov_projpath=$(_session_project_path "$_ov_sid")
+          _ov_sesname=$(_session_name "$_ov_sid")
+          [[ -n "$_ov_projpath" ]] && _ov_line+="  ${_ov_dim}${_ov_projpath}${_ov_reset}"
+          [[ -n "$_ov_sesname" ]] && _ov_line+="  ${_ov_dim}\"${_ov_sesname}\"${_ov_reset}"
+        fi
+        _ov_line+="${_ov_bar}"
 
         if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
           _ov_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$$(printf '%.2f' "$_ov_cost")${_ov_reset}"
@@ -1529,7 +1570,7 @@ case "${1:-}" in
     latest_5h="" latest_7d="" latest_reset=""
 
     # Collect all session data into parallel arrays
-    declare -a _sf_model _sf_ctx _sf_cost _sf_5h _sf_7d _sf_reset _sf_sid _sf_age _sf_active _sf_worktree _sf_agent
+    declare -a _sf_model _sf_ctx _sf_cost _sf_5h _sf_7d _sf_reset _sf_sid _sf_age _sf_active _sf_worktree _sf_agent _sf_projpath _sf_sesname
     _sf_count=0
 
     for sf in "$cache_dir"/session-*; do
@@ -1569,6 +1610,14 @@ case "${1:-}" in
       _sf_worktree[$_sf_count]="$s_worktree"
       _sf_agent[$_sf_count]="$s_agent"
       _sf_age[$_sf_count]="$age"
+      # Resolve project path + session name from JSONL (only for pretty output)
+      if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+        _sf_projpath[$_sf_count]=$(_session_project_path "$s_sid")
+        _sf_sesname[$_sf_count]=$(_session_name "$s_sid")
+      else
+        _sf_projpath[$_sf_count]=""
+        _sf_sesname[$_sf_count]=""
+      fi
       if (( age < 300 )); then
         _sf_active[$_sf_count]="active"
         (( active++ ))
@@ -1637,6 +1686,8 @@ case "${1:-}" in
       else age_str="$(( age / 86400 ))d"; fi
 
       line="  ${status_icon} \033[1m${_sf_model[$i]:-?}\033[0m"
+      [[ -n "${_sf_projpath[$i]}" ]] && line+="  \033[38;5;240m${_sf_projpath[$i]}\033[0m"
+      [[ -n "${_sf_sesname[$i]}" ]] && line+="  \033[38;5;240m\"${_sf_sesname[$i]}\"\033[0m"
       [[ -n "${_sf_worktree[$i]}" ]] && line+=" \033[2m[wt:${_sf_worktree[$i]}]\033[0m"
       [[ -n "${_sf_agent[$i]}" ]] && line+=" \033[2m[agent:${_sf_agent[$i]}]\033[0m"
       [[ -n "${_sf_ctx[$i]}" ]] && line+="  ${_sf_ctx[$i]}%"
