@@ -3,7 +3,7 @@
 source "${CLAUDII_HOME}/lib/visual.sh"
 
 # Capture the user's original PROMPT once at load time.
-# Every precmd cycle restores PROMPT to this, then prepends dashboard lines.
+# Every precmd cycle restores PROMPT to this, then appends dashboard lines below it.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 function _claudii_statusline {
@@ -279,17 +279,17 @@ function _claudii_dashboard {
 
   # Deduplicate — only update PROMPT if dashboard changed
   [[ "$dash_lines" == "$_CLAUDII_LAST_DASHBOARD" ]] && {
-    # Still need to prepend cached dashboard to PROMPT
+    # Still need to append cached dashboard to PROMPT
     if [[ -n "$_CLAUDII_LAST_DASHBOARD" ]]; then
-      PROMPT="${_CLAUDII_LAST_DASHBOARD}${_CLAUDII_USER_PROMPT}"
+      PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}"
     fi
     return
   }
   _CLAUDII_LAST_DASHBOARD="$dash_lines"
 
-  # Prepend dashboard to PROMPT
+  # Append dashboard below PROMPT
   if [[ -n "$dash_lines" ]]; then
-    PROMPT="${dash_lines}${_CLAUDII_USER_PROMPT}"
+    PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${dash_lines%$'\n'}"
   fi
 }
 

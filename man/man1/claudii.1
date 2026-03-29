@@ -326,6 +326,11 @@ Modifies
 .IR ~/.claude/settings.json .
 Without subcommand: show current state.
 .
+.TP
+.B layers
+Show component overview: ClaudeStatus (RPROMPT), Dashboard (above prompt),
+CC-Statusline (inside Claude Code). Includes current status, config, and data flow.
+.
 .SS ClaudeStatus
 Live model health monitoring in your shell RPROMPT.
 Uses the Statuspage components API; falls back to the RSS feed for per-model incident details.
@@ -393,6 +398,8 @@ Restart Claude Code to activate.
 Remove the CC-Statusline from
 .IR ~/.claude/settings.json .
 .
+.SS Sessions and Cost
+.
 .TP
 .B sessions
 List active and recent Claude Code sessions with model, context usage,
@@ -414,6 +421,34 @@ overview, but without filtering: both running (green \(bu) and recently stopped
 (dim \(ci) sessions are listed, with the age of inactive sessions appended.
 Useful for a quick answer to \(lqwhat is Claude doing?\(rq when background or
 finished sessions are also of interest.
+.
+.TP
+.B cost
+Aggregate session costs from the session cache.
+Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
+and all time.
+Session cache files are read from
+.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
+(overrideable via
+.BR CLAUDII_CACHE_DIR ).
+Supports
+.B \-\-json
+(object with today/alltime breakdown) and
+.B \-\-tsv
+(period/model/cost/sessions rows).
+.
+.TP
+.B trends
+Weekly and daily cost trends from persistent history (Flight Recorder).
+The CC-Statusline handler appends a line to
+.I ~/.cache/claudii/history.tsv
+on every update.
+.B trends
+reads this file, deduplicates by session (takes the max cost per session_id),
+and shows a per-day breakdown for the current week, a total for last week,
+a 30-day model distribution split, and the costliest day.
+Supports
+.BR \-\-json .
 .
 .SS Config
 .
@@ -558,35 +593,7 @@ claudii config set agents.clorch.effort high
 .fi
 .RE
 .
-.SS Other
-.
-.TP
-.B cost
-Aggregate session costs from the session cache.
-Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
-and all time.
-Session cache files are read from
-.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
-(overrideable via
-.BR CLAUDII_CACHE_DIR ).
-Supports
-.B \-\-json
-(object with today/alltime breakdown) and
-.B \-\-tsv
-(period/model/cost/sessions rows).
-.
-.TP
-.B trends
-Weekly and daily cost trends from persistent history (Flight Recorder).
-The CC-Statusline handler appends a line to
-.I ~/.cache/claudii/history.tsv
-on every update.
-.B trends
-reads this file, deduplicates by session (takes the max cost per session_id),
-and shows a per-day breakdown for the current week, a total for last week,
-a 30-day model distribution split, and the costliest day.
-Supports
-.BR \-\-json .
+.SS System
 .
 .TP
 .BI "search " "['query']"
@@ -619,11 +626,6 @@ otherwise prints instructions for both methods and exits with an error.
 After updating, run
 .B claudii restart
 to reload the plugin.
-.
-.TP
-.B layers
-Show component overview: ClaudeStatus (RPROMPT), Dashboard (above prompt),
-CC-Statusline (inside Claude Code). Includes current status, config, and data flow.
 .
 .TP
 .B version

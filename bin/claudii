@@ -70,22 +70,29 @@ usage() {
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
+  printf "    %-33s $d %s\n" "layers"                          "component overview with status"
   printf '\n'
-  printf '  \033[38;5;213mClaudeStatus\033[0m                              RPROMPT\n'
+  printf '  \033[38;5;213mSessions & Cost\033[0m\n'
+  printf "    %-33s $d %s\n" "sessions (se|ss)"                "active sessions · costs · rate limits"
+  printf "    %-33s $d %s\n" "is"                              "all sessions — active + inactive"
+  printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
+  printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
+  printf '\n'
+  printf '  \033[38;5;213mWatch\033[0m\n'
+  printf "    %-33s $d %s\n" "watch [start|stop|status|test|volume|sound]" "rate-limit reset notifications"
+  printf '\n'
+  printf '  \033[38;5;213mConfig\033[0m\n'
+  printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
+  printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
+  printf '\n'
+  printf '  \033[38;5;213mSystem\033[0m\n'
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
+  printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
+  printf "    %-33s $d %s\n" "version"                         "version info"
+  printf "    %-33s $d %s\n" "restart"                         "reload plugin"
+  printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
-  printf "  \033[38;5;213mCC-Statusline\033[0m                             inside Claude\n"
-  printf "    %-33s $d %s\n" "sessions (se|ss)"                 "active sessions · costs · rate limits"
-  printf "    %-33s $d %s\n" "is"                               "all sessions — active + inactive"
-  printf '\n'
-  printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
-  printf '\n'
-  printf '  \033[38;5;213mtools\033[0m\n'
-  printf '    config [get|set|reset|export|import]\n'
-  printf "    cost (c) · trends (t) · doctor (d) · restart · layers · version\n"
-  printf "    agents  — configured agents (alias→skill) or onboarding\n"
-  printf "    watch [start|stop|status|test|volume|sound]  — rate-limit reset notifications\n"
-  printf "    search ['query']  — launch Claude in search mode\n"
+  printf '  \033[38;5;240ms=status  ss|se=sessions  c=cost  t=trends  d=doctor\033[0m\n'
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
