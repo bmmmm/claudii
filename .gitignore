@@ -1,8 +1,8 @@
 tmp/
 TODO.md
 ROADMAP.md
-bin/claudii-explore
-.DS_Store
+CLAUDE.md
+**/.DS_Store
 *.swp
 *.swo
 .env
