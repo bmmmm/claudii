@@ -82,6 +82,20 @@ assert_eq "about: removed or merged (no 'Unknown command' in output)" "0" "$abou
 about_has_old_heading=$(echo "$about_out" | grep -c "Claude Interaction Intelligence" || true)
 assert_eq "about: old standalone about block is gone" "0" "$about_has_old_heading"
 
+# si: shorthand for sessions-inactive — must not be unknown command
+si_out=$(bash "$CLAUDII_HOME/bin/claudii" si 2>&1 || true)
+assert_eq "si: not 'Unknown command'" "0" "$(echo "$si_out" | grep -c 'Unknown command' || true)"
+
+# sessions-inactive: must produce output (not empty, not crash)
+si_long_out=$(bash "$CLAUDII_HOME/bin/claudii" sessions-inactive 2>&1 || true)
+assert_eq "sessions-inactive: produces output" "0" "$([ -z "$si_long_out" ] && echo 1 || echo 0)"
+
+# changelog: must contain the current VERSION number
+_changelog_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | cut -d'"' -f2)
+changelog_out=$(bash "$CLAUDII_HOME/bin/claudii" changelog 2>&1 || true)
+assert_contains "changelog: contains version" "$_changelog_version" "$changelog_out"
+unset _changelog_version changelog_out si_out si_long_out
+
 # cost: must run without declare -A error (bash 3.2 compat — macOS default shell)
 CLI_TMP="$(mktemp -d)"
 export CLAUDII_CACHE_DIR="$CLI_TMP"
