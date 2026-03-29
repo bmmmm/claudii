@@ -226,7 +226,7 @@ function _claudii_dashboard {
       fi
     done
     [[ -n "$global_line" ]] && global_line+="${SEP}"
-    global_line+="%F{cyan}%{\$%}${today_cost}%f %F{8}today (${active_count} session"
+    global_line+="%F{cyan}"'\$'"${today_cost}%f %F{8}today (${active_count} session"
     (( active_count != 1 )) && global_line+="s"
     global_line+=")%f"
   fi
@@ -259,7 +259,7 @@ function _claudii_dashboard {
     # Cost
     if [[ -n "${active_costs[$_si]}" && "${active_costs[$_si]}" != "0" ]]; then
       _cost_fmt_s=$(printf '%.2f' "${active_costs[$_si]}" 2>/dev/null) || _cost_fmt_s="${active_costs[$_si]}"
-      s_line+="${SEP}%F{cyan}%{\$%}${_cost_fmt_s}%f"
+      s_line+="${SEP}%F{cyan}"'\$'"${_cost_fmt_s}%f"
     fi
 
     # Cache hit ratio

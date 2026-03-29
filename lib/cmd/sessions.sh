@@ -24,9 +24,9 @@ _cmd_cost() {
 
   # Helper: find index of model in _cost_models, returns -1 if not found
   _cost_model_idx() {
-    local needle="$1" i
-    for (( i=0; i<${#_cost_models[@]}; i++ )); do
-      [[ "${_cost_models[$i]}" == "$needle" ]] && echo "$i" && return
+    local needle="$1" _i
+    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
+      [[ "${_cost_models[$_i]}" == "$needle" ]] && echo "$_i" && return
     done
     echo "-1"
   }
@@ -89,13 +89,13 @@ _cmd_cost() {
     # Build JSON with today + alltime breakdown
     today_obj="{}"
     alltime_obj="{}"
-    for (( i=0; i<${#_cost_models[@]}; i++ )); do
-      m="${_cost_models[$i]}"
-      if [[ "${_today_count[$i]}" != "0" ]]; then
-        today_obj=$(echo "$today_obj" | jq --arg m "$m" --argjson c "${_today_cost[$i]}" --argjson n "${_today_count[$i]}" \
+    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
+      m="${_cost_models[$_i]}"
+      if [[ "${_today_count[$_i]}" != "0" ]]; then
+        today_obj=$(echo "$today_obj" | jq --arg m "$m" --argjson c "${_today_cost[$_i]}" --argjson n "${_today_count[$_i]}" \
           '.[$m] = {cost: $c, sessions: $n}')
       fi
-      alltime_obj=$(echo "$alltime_obj" | jq --arg m "$m" --argjson c "${_alltime_cost[$i]}" --argjson n "${_alltime_count[$i]}" \
+      alltime_obj=$(echo "$alltime_obj" | jq --arg m "$m" --argjson c "${_alltime_cost[$_i]}" --argjson n "${_alltime_count[$_i]}" \
         '.[$m] = {cost: $c, sessions: $n}')
     done
     jq -n --argjson today "$today_obj" --argjson alltime "$alltime_obj" \
@@ -103,11 +103,11 @@ _cmd_cost() {
     exit 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
     printf "period\tmodel\tcost\tsessions\n"
-    for (( i=0; i<${#_cost_models[@]}; i++ )); do
-      m="${_cost_models[$i]}"
-      [[ "${_today_count[$i]}" != "0" ]] && \
-        printf "today\t%s\t%s\t%s\n" "$m" "${_today_cost[$i]}" "${_today_count[$i]}"
-      printf "alltime\t%s\t%s\t%s\n" "$m" "${_alltime_cost[$i]}" "${_alltime_count[$i]}"
+    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
+      m="${_cost_models[$_i]}"
+      [[ "${_today_count[$_i]}" != "0" ]] && \
+        printf "today\t%s\t%s\t%s\n" "$m" "${_today_cost[$_i]}" "${_today_count[$_i]}"
+      printf "alltime\t%s\t%s\t%s\n" "$m" "${_alltime_cost[$_i]}" "${_alltime_count[$_i]}"
     done
     exit 0
   fi
@@ -285,20 +285,20 @@ _cmd_sessions() {
     # Build JSON array from collected data
     _json_arr="["
     _first=1
-    for (( i=0; i<_sf_count; i++ )); do
+    for (( _i=0; _i<_sf_count; _i++ )); do
       [[ "$_first" -eq 0 ]] && _json_arr+=","
       _json_arr+=$(jq -n \
-        --arg model "${_sf_model[$i]}" \
-        --arg ctx_pct "${_sf_ctx[$i]}" \
-        --arg cost "${_sf_cost[$i]:-0}" \
-        --arg rate_5h "${_sf_rate5h[$i]}" \
-        --arg rate_7d "${_sf_rate7d[$i]}" \
-        --arg reset_5h "${_sf_reset5h[$i]}" \
-        --arg session_id "${_sf_sid[$i]}" \
-        --arg worktree "${_sf_worktree[$i]}" \
-        --arg agent "${_sf_agent[$i]}" \
-        --arg age "${_sf_age[$i]}" \
-        --arg status "${_sf_is_active[$i]}" \
+        --arg model "${_sf_model[$_i]}" \
+        --arg ctx_pct "${_sf_ctx[$_i]}" \
+        --arg cost "${_sf_cost[$_i]:-0}" \
+        --arg rate_5h "${_sf_rate5h[$_i]}" \
+        --arg rate_7d "${_sf_rate7d[$_i]}" \
+        --arg reset_5h "${_sf_reset5h[$_i]}" \
+        --arg session_id "${_sf_sid[$_i]}" \
+        --arg worktree "${_sf_worktree[$_i]}" \
+        --arg agent "${_sf_agent[$_i]}" \
+        --arg age "${_sf_age[$_i]}" \
+        --arg status "${_sf_is_active[$_i]}" \
         '{model:$model, ctx_pct:($ctx_pct|if .=="" then null else tonumber? end),
           cost:($cost|tonumber? // 0), rate_5h:($rate_5h|if .=="" then null else tonumber? end),
           rate_7d:($rate_7d|if .=="" then null else tonumber? end),
@@ -312,37 +312,37 @@ _cmd_sessions() {
     exit 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
     printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\n"
-    for (( i=0; i<_sf_count; i++ )); do
+    for (( _i=0; _i<_sf_count; _i++ )); do
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "${_sf_model[$i]}" "${_sf_ctx[$i]}" "${_sf_cost[$i]:-0}" \
-        "${_sf_rate5h[$i]}" "${_sf_rate7d[$i]}" "${_sf_reset5h[$i]}" \
-        "${_sf_sid[$i]}" "${_sf_worktree[$i]}" "${_sf_agent[$i]}" \
-        "${_sf_age[$i]}" "${_sf_is_active[$i]}"
+        "${_sf_model[$_i]}" "${_sf_ctx[$_i]}" "${_sf_cost[$_i]:-0}" \
+        "${_sf_rate5h[$_i]}" "${_sf_rate7d[$_i]}" "${_sf_reset5h[$_i]}" \
+        "${_sf_sid[$_i]}" "${_sf_worktree[$_i]}" "${_sf_agent[$_i]}" \
+        "${_sf_age[$_i]}" "${_sf_is_active[$_i]}"
     done
     exit 0
   fi
 
   # Pretty output
   printf '\n'
-  for (( i=0; i<_sf_count; i++ )); do
+  for (( _i=0; _i<_sf_count; _i++ )); do
     status_icon=""
-    if [[ "${_sf_is_active[$i]}" -eq 1 ]]; then
+    if [[ "${_sf_is_active[$_i]}" -eq 1 ]]; then
       status_icon="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET}"
     else
       status_icon="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET}"
     fi
-    _render_age "${_sf_age[$i]}"
+    _render_age "${_sf_age[$_i]}"
 
-    line="  ${status_icon} ${CLAUDII_CLR_BOLD}${_sf_model[$i]:-?}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_projpath[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$i]}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_sesname[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}\"${_sf_sesname[$i]}\"${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_worktree[$i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[wt:${_sf_worktree[$i]}]${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_agent[$i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[agent:${_sf_agent[$i]}]${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_ctx[$i]}" ]] && line+="  ${_sf_ctx[$i]}%"
-    [[ -n "${_sf_cost[$i]}" && "${_sf_cost[$i]}" != "0" ]] && line+="  ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "${_sf_cost[$i]}")${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_rate5h[$i]}" ]] && line+="  5h:${_sf_rate5h[$i]%.*}%"
+    line="  ${status_icon} ${CLAUDII_CLR_BOLD}${_sf_model[$_i]:-?}${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_projpath[$_i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_sesname[$_i]}" ]] && line+="  ${CLAUDII_CLR_DIM}\"${_sf_sesname[$_i]}\"${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_worktree[$_i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[wt:${_sf_worktree[$_i]}]${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_agent[$_i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[agent:${_sf_agent[$_i]}]${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_ctx[$_i]}" ]] && line+="  ${_sf_ctx[$_i]}%"
+    [[ -n "${_sf_cost[$_i]}" && "${_sf_cost[$_i]}" != "0" ]] && line+="  ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "${_sf_cost[$_i]}")${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_rate5h[$_i]}" ]] && line+="  5h:${_sf_rate5h[$_i]%.*}%"
     line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_sid[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_sid[$i]:0:8}${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_sid[$_i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$line"
   done
 
