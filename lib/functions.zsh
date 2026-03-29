@@ -62,15 +62,15 @@ function _claudii_launch {
       fi
     fi
 
-    local _color="\033[33m"  # yellow
-    (( _rl_int >= 90 )) && _color="\033[31m"  # red
+    local _color="$CLAUDII_CLR_YELLOW"
+    (( _rl_int >= 90 )) && _color="$CLAUDII_CLR_RED"
 
-    printf "${_color}⚠ ${(C)model} 5h bei ${_rl_int}%%${_reset_str}\033[0m\n"
+    printf "${_color}⚠ ${(C)model} 5h bei ${_rl_int}%%${_reset_str}${CLAUDII_CLR_RESET}\n"
     # Suggest alternative if launching opus
     if [[ "$model" == "opus" ]]; then
       local _fb_model=$(claudii_config_get "fallback.opus.model")
       [[ -z "$_fb_model" ]] && _fb_model="sonnet"
-      printf "  ${_fb_model} stattdessen? \033[2m[Enter] starten · [s] ${_fb_model} · [w] warten\033[0m "
+      printf "  ${_fb_model} stattdessen? ${CLAUDII_CLR_DIM}[Enter] starten · [s] ${_fb_model} · [w] warten${CLAUDII_CLR_RESET} "
       local _choice=""
       read -k1 _choice
       echo ""
@@ -79,10 +79,10 @@ function _claudii_launch {
           model="$_fb_model"
           local _fb_effort=$(claudii_config_get "fallback.opus.effort")
           [[ -n "$_fb_effort" ]] && effort="$_fb_effort"
-          printf "→ \033[36m${_fb_model} ${effort}\033[0m\n"
+          printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${effort}${CLAUDII_CLR_RESET}\n"
           ;;
         w|W)
-          printf "\033[2mAbgebrochen.\033[0m\n"
+          printf "${CLAUDII_CLR_DIM}Abgebrochen.${CLAUDII_CLR_RESET}\n"
           return 0
           ;;
       esac
@@ -104,7 +104,8 @@ function clq { _claudii_launch clq "$@"; }
 # Agent launcher — starts claude with a skill as system prompt
 # Looks in: .claude/skills/<name>/SKILL.md (project) → ~/.claude/agents/<name>.md (global)
 function _claudii_agent_launch {
-  local agent_name="$1"; shift
+  local agent_name="$1" model="${2:-opus}" effort="${3:-high}"
+  shift 3 2>/dev/null || shift $#
   local agent_file=""
 
   # Project skill first, then global agents
@@ -115,7 +116,7 @@ function _claudii_agent_launch {
   fi
 
   if [[ -z "$agent_file" ]]; then
-    printf '\033[0;31m✗ Agent not found: %s\033[0m\n' "$agent_name" >&2
+    printf "${CLAUDII_CLR_RED}✗ Agent not found: %s${CLAUDII_CLR_RESET}\n" "$agent_name" >&2
     printf '  Available:\n' >&2
     local found=0
     for f in .claude/skills/*/SKILL.md(N); do
@@ -132,7 +133,6 @@ function _claudii_agent_launch {
 
   local prompt
   prompt=$(< "$agent_file")
-  local model=${2:-opus} effort=${3:-high}
   _claudii_log info "agent launch: $agent_name ($agent_file) model=$model effort=$effort"
   CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" --append-system-prompt "$prompt" "$@"
 }
@@ -176,7 +176,7 @@ function _claudii_show_metrics {
   local reloads=${_CLAUDII_METRICS[config.reloads]:-0}
 
   printf '\n'
-  printf '  \033[0;36mclaudii — performance metrics\033[0m\n'
+  printf "  ${CLAUDII_CLR_CYAN}claudii — performance metrics${CLAUDII_CLR_RESET}\n"
   printf '  ──────────────────────────────────────────\n'
   printf '  %-30s  %s\n' "plugin load"           "$(_claudii_fmt_us ${_CLAUDII_METRICS[plugin.load_us]:-0})"
   printf '  %-30s  %s\n' "config defaults (jq)"  "$(_claudii_fmt_us ${_CLAUDII_METRICS[config.defaults_us]:-0})"
@@ -198,18 +198,18 @@ function claudii {
   case "${1:-}" in
     restart)
       local _dir="$PWD"
-      printf '\033[0;36mReloading claudii...\033[0m\n'
+      printf "${CLAUDII_CLR_CYAN}Reloading claudii...${CLAUDII_CLR_RESET}\n"
       source "$HOME/.zshrc"
       cd "$_dir"
-      printf '\033[0;32m✓ claudii neu geladen  (%s)\033[0m\n' "$(basename "$_dir")"
+      printf "${CLAUDII_CLR_GREEN}✓ claudii neu geladen  (%s)${CLAUDII_CLR_RESET}\n" "$(basename "$_dir")"
       ;;
     update)
       local _dir="$PWD"
       command claudii update || return $?
-      printf '\033[0;36mReloading...\033[0m\n'
+      printf "${CLAUDII_CLR_CYAN}Reloading...${CLAUDII_CLR_RESET}\n"
       source "$HOME/.zshrc"
       cd "$_dir"
-      printf '\033[0;32m✓ claudii reloaded  (%s)\033[0m\n' "$(basename "$_dir")"
+      printf "${CLAUDII_CLR_GREEN}✓ claudii reloaded  (%s)${CLAUDII_CLR_RESET}\n" "$(basename "$_dir")"
       ;;
     metrics)
       _claudii_show_metrics
@@ -241,7 +241,7 @@ function clh {
   done
   printf '  └───────┴────────┴────────┴────────────────────────────┘\n'
   echo ""
-  "$CLAUDII_HOME/bin/claudii-status" 2>&1
-  [[ $? -eq 0 ]] && printf '  \033[0;32m✓ Alle Modelle verfügbar\033[0m\n'
-  return 0
+  "$CLAUDII_HOME/bin/claudii-status" 2>&1; local _status_exit=$?
+  [[ $_status_exit -eq 0 ]] && printf "${CLAUDII_CLR_GREEN}  ✓ Alle Modelle verfügbar${CLAUDII_CLR_RESET}\n"
+  return $_status_exit
 }

@@ -90,36 +90,36 @@ _cfgget() {
 usage() {
   local d="${CLAUDII_CLR_DIM}›${CLAUDII_CLR_RESET}"  # dim separator
   printf '\n'
-  printf '  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET} — Claude Interaction Intelligence\n' "$VERSION"
+  printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET} — Claude Interaction Intelligence\n" "$VERSION"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}aliases${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}aliases${CLAUDII_CLR_RESET}\n"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "cl"  "sonnet" "high"   "default"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clo" "opus"   "high"   "complex tasks"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clm" "opus"   "max"    "max effort"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
   printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + live status"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
   printf "    %-33s $d %s\n" "layers"                          "component overview with status"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
   printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}Watch${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Watch${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "watch [start|stop|status|test|volume|sound]" "rate-limit reset notifications"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}Config${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Config${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n'
+  printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
   printf "    %-33s $d %s\n" "version"                         "show version number"
@@ -128,7 +128,7 @@ usage() {
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
   printf '\n'
-  printf '  ${CLAUDII_CLR_ACCENT}man claudii${CLAUDII_CLR_RESET}  full reference\n'
+  printf "  ${CLAUDII_CLR_ACCENT}man claudii${CLAUDII_CLR_RESET}  full reference\n"
   printf '\n'
 }
 
@@ -612,10 +612,10 @@ case "${1:-}" in
     }
 
     printf '\n'
-    printf '  ${CLAUDII_CLR_ACCENT}Today${CLAUDII_CLR_RESET}\n'
+    printf "  ${CLAUDII_CLR_ACCENT}Today${CLAUDII_CLR_RESET}\n"
     _print_section today
     printf '\n'
-    printf '  ${CLAUDII_CLR_ACCENT}All time${CLAUDII_CLR_RESET}\n'
+    printf "  ${CLAUDII_CLR_ACCENT}All time${CLAUDII_CLR_RESET}\n"
     _print_section alltime
     printf '\n'
     ;;
@@ -712,6 +712,10 @@ case "${1:-}" in
       -v thirty="$thirty_days_ago_str" \
       -v week_days="$_week_days" \
       -v fmt="${_FORMAT:-}" \
+      -v cyan="$CLAUDII_CLR_CYAN" \
+      -v dim="$CLAUDII_CLR_DIM" \
+      -v pink="$CLAUDII_CLR_ACCENT" \
+      -v reset="$CLAUDII_CLR_RESET" \
       '
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4
@@ -808,10 +812,7 @@ case "${1:-}" in
       }
 
       # --- Pretty output ---
-      cyan  = "${CLAUDII_CLR_CYAN}"
-      dim   = "${CLAUDII_CLR_DIM}"
-      pink  = "${CLAUDII_CLR_ACCENT}"
-      reset = "${CLAUDII_CLR_RESET}"
+      # cyan, dim, pink, reset passed as -v args from bash
       sep   = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
 
       printf "\n"
@@ -1129,7 +1130,7 @@ case "${1:-}" in
 
   changelog)
     printf '\n'
-    printf '  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n' "$VERSION"
+    printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
     printf '\n'
     _changelog="$CLAUDII_HOME/CHANGELOG.md"
     if [[ -f "$_changelog" ]]; then
@@ -1142,13 +1143,13 @@ case "${1:-}" in
       ' "$_changelog")
       if [[ -n "$_notes" ]]; then
         while IFS= read -r _rline; do
-          printf '  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n' "$_rline"
+          printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rline"
         done <<< "$_notes"
       else
-        printf '  ${CLAUDII_CLR_DIM}No changelog entry for v%s${CLAUDII_CLR_RESET}\n' "$VERSION"
+        printf "  ${CLAUDII_CLR_DIM}No changelog entry for v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
       fi
     else
-      printf '  ${CLAUDII_CLR_DIM}CHANGELOG.md not found${CLAUDII_CLR_RESET}\n'
+      printf "  ${CLAUDII_CLR_DIM}CHANGELOG.md not found${CLAUDII_CLR_RESET}\n"
     fi
     printf '\n'
     ;;
@@ -1158,8 +1159,8 @@ case "${1:-}" in
     _cfg_init
 
     printf '\n'
-    printf '  ${CLAUDII_CLR_CYAN}claudii layers${CLAUDII_CLR_RESET}\n'
-    printf '  ${CLAUDII_CLR_ACCENT}──────────────────────────────────────────────────────────${CLAUDII_CLR_RESET}\n'
+    printf "  ${CLAUDII_CLR_CYAN}claudii layers${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_ACCENT}──────────────────────────────────────────────────────────${CLAUDII_CLR_RESET}\n"
     printf '\n'
 
     # ClaudeStatus
@@ -1172,10 +1173,10 @@ case "${1:-}" in
     else
       cs_state="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
     fi
-    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n'
-    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
+    printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n"
+    printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
     printf '  Model health indicators from status.claude.com\n'
-    printf '  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n'
+    printf "  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n"
     printf '\n'
     printf '  Status:   %b\n' "$cs_state"
     printf '  Models:   %s\n' "$cs_models"
@@ -1183,7 +1184,7 @@ case "${1:-}" in
     if [[ -f "$cs_cache" ]]; then
       printf '  Cache:    %s\n' "$cs_cache"
     else
-      printf '  Cache:    ${CLAUDII_CLR_DIM}(not yet created)${CLAUDII_CLR_RESET}\n'
+      printf "  Cache:    ${CLAUDII_CLR_DIM}(not yet created)${CLAUDII_CLR_RESET}\n"
     fi
     printf '  Commands: claudii on/off · claudii status\n'
     printf '\n'
@@ -1193,10 +1194,10 @@ case "${1:-}" in
     for _sf in "$local_cache"/session-*; do
       [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
     done 2>/dev/null
-    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n'
-    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
+    printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
+    printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
     printf '  Session data from cache (model, context, cost, rate limits)\n'
-    printf '  Example:  ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} 76%% ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:17%% reset 43min\n'
+    printf "  Example:  ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} 76%% ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:17%% reset 43min\n"
     printf '\n'
     printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
     printf '  Sessions: %d cache file(s)\n' "$sb_count"
@@ -1215,8 +1216,8 @@ case "${1:-}" in
     else
       sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json nicht gefunden${CLAUDII_CLR_RESET}"
     fi
-    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n'
-    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
+    printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n"
+    printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
     printf '  Info-dense status line rendered inside Claude Code CLI\n'
     printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
     printf '\n'
@@ -1227,15 +1228,15 @@ case "${1:-}" in
     printf '\n'
 
     # Data flow
-    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n'
-    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
-    printf '  Claude Code ${CLAUDII_CLR_DIM}─JSON→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}CC-Statusline${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}─cache→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Dashboard${CLAUDII_CLR_RESET}\n'
-    printf '  status.claude.com ${CLAUDII_CLR_DIM}─bg→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}ClaudeStatus${CLAUDII_CLR_RESET} (RPROMPT)\n'
+    printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+    printf "  Claude Code ${CLAUDII_CLR_DIM}─JSON→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}CC-Statusline${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}─cache→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Dashboard${CLAUDII_CLR_RESET}\n"
+    printf "  status.claude.com ${CLAUDII_CLR_DIM}─bg→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}ClaudeStatus${CLAUDII_CLR_RESET} (RPROMPT)\n"
     printf '\n'
 
     # Symbol & field reference
-    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n'
-    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
+    printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
     printf '\n'
     printf '  CC-Statusline\n'
     printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (10 blocks = 100%)"
@@ -1263,12 +1264,12 @@ case "${1:-}" in
 
   42)
     printf '\n'
-    printf '  ${CLAUDII_CLR_CYAN}✦  The answer is 42.${CLAUDII_CLR_RESET}\n'
+    printf "  ${CLAUDII_CLR_CYAN}✦  The answer is 42.${CLAUDII_CLR_RESET}\n"
     printf '\n'
     printf '  It was also the number of times Opus was down\n'
     printf '  while this tool was being built.\n'
     printf '\n'
-    printf '  ${CLAUDII_CLR_ACCENT}(We monitor all three now. You'\''re welcome.)${CLAUDII_CLR_RESET}\n'
+    printf "  ${CLAUDII_CLR_ACCENT}(We monitor all three now. You're welcome.)${CLAUDII_CLR_RESET}\n"
     printf '\n'
     ;;
 
@@ -1322,7 +1323,7 @@ case "${1:-}" in
 
         # Rate limits
         if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] || [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]]; then
-          _is_line+="${CLAUDII_CLR_DIM} 5h:${_PSC_rate_5h}% 7d:${_PSC_rate_7d}%${CLAUDII_CLR_RESET}"
+          _is_line+="${CLAUDII_CLR_DIM} 5h:${_PSC_rate_5h%.*}% 7d:${_PSC_rate_7d%.*}%${CLAUDII_CLR_RESET}"
         fi
 
         if [[ -n "$_PSC_worktree" ]]; then
@@ -1450,7 +1451,7 @@ case "${1:-}" in
     # Pretty output
     printf '\n'
     for (( i=0; i<_sf_count; i++ )); do
-      local status_icon
+      status_icon=""
       if [[ "${_sf_is_active[$i]}" -eq 1 ]]; then
         status_icon="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET}"
       else
@@ -1499,7 +1500,7 @@ case "${1:-}" in
       echo "  Git:      cd $CLAUDII_HOME && git pull"
       exit 1
     fi
-    printf '${CLAUDII_CLR_GREEN}✓ Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n'
+    printf "${CLAUDII_CLR_GREEN}✓ Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
     ;;
 
   watch)
@@ -1727,7 +1728,7 @@ case "${1:-}" in
     warn="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}"
     fail="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}"
     printf '\n'
-    printf '  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n'
+    printf "  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n"
     for (( i=0; i<_dc_count; i++ )); do
       case "${_dc_status[$i]}" in
         ok)   icon="$ok"   ;;
