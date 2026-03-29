@@ -39,8 +39,8 @@ class Claudii < Formula
       Then restart your shell or run:
         source ~/.zshrc
 
-      Optional — activate the sessionline:
-        claudii sessionline on
+      Optional — activate the CC-Statusline:
+        claudii cc-statusline on
     EOS
   end
 
