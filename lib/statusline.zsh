@@ -261,14 +261,15 @@ function _claudii_dashboard {
     return
   fi
 
-  # Right-align each line: expand %F{}/%f/%B/%b prompt codes, strip ANSI, measure visible width
+  # Right-align each line: expand prompt codes, then strip ANSI to measure visible width.
+  # (S) flag = shortest match so [0-9;]* does not greedily consume across sequences.
   local dash_padded="" _dl _vis_str _vis _pad
   local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
   for _dl in "${_dash_lines[@]}"; do
     [[ -z "$_dl" ]] && continue
-    _vis_str="${(%)_dl}"                      # expand zsh prompt codes to ANSI
-    _vis_str="${_vis_str//$'\e'\[[0-9;]*m/}"  # strip CSI color/attr sequences
-    _vis_str="${_vis_str//\\\$/\$}"           # \$ → $ (literal dollar in cost display)
+    _vis_str="${(%)_dl}"                        # expand %F{} %f %B %b %% etc. → ANSI
+    _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
+    _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
     _vis=${#_vis_str}
     _pad=$(( _cols - _vis ))
     (( _pad < 0 )) && _pad=0
