@@ -6,12 +6,13 @@ zsh plugin + CLI for Claude Code power users.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI: on/off, status, config, search
+bin/claudii             # CLI: sessions, cost, trends, dashboard, watch, agents, config, search, on/off
 bin/claudii-status      # ClaudeStatus health checker (components API + RSS)
 bin/claudii-sessionline # Sessionline handler (bash+jq, reads stdin JSON)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
+lib/visual.sh           # Color/symbol constants (CLAUDII_CLR_*, CLAUDII_SYM_*)
 lib/log.sh              # Shared logging (bash + zsh)
 config/defaults.json    # Shipped defaults
 completions/_claudii    # zsh completions
@@ -22,7 +23,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 
 - **ClaudeStatus** — RPROMPT health monitor (our feature)
 - **Sessionline** — in-session status bar (native implementation)
-- Commands: `claudii on/off`, `claudii status`, `claudii sessionline`
+- Commands: `claudii on/off`, `claudii status`, `claudii cc-statusline`
 - Config keys: `statusline.*` (internal, don't rename)
 
 ## Status Cache
