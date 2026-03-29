@@ -54,3 +54,20 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 4. Add test in `tests/test_*.sh`
 5. `test_docs.sh` verifies all four stay in sync
 6. Wiki is auto-generated from the man page — never edit the wiki directly
+7. Update `CHANGELOG.md` unreleased block
+8. Check `memory/watchlist.md` Key Insights — remove entries for features now implemented
+
+## When removing or renaming a command
+
+1. `Formula/claudii.rb` — check caveats
+2. `CHANGELOG.md` — update unreleased block
+3. `tests/test_<command>.sh` — delete if exists
+4. `.gitignore` — clean up stale rules if files were removed
+
+## When committing
+
+Only check what the commit actually touches — skip checks that don't apply:
+
+- Touched `bin/claudii` commands? → `bash tests/run.sh` + verify man page, completions, CHANGELOG in sync
+- Removed a command? → orphaned `tests/test_<command>.sh` deleted?
+- Docs/config only? → no checks needed
