@@ -69,16 +69,15 @@ usage() {
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
-  printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "Sessionline inside Claude toggle"
+  printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
   printf '\n'
   printf '  \033[38;5;213mClaudeStatus\033[0m                              RPROMPT\n'
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf '\n'
-  printf "  \033[38;5;213mSessionline\033[0m                               inside Claude\n"
+  printf "  \033[38;5;213mCC-Statusline\033[0m                             inside Claude\n"
   printf "    %-33s $d %s\n" "sessions (se|ss)"                 "active sessions · costs · rate limits"
   printf '\n'
   printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
-  printf "    %-33s $d %s\n" "dash [on|off|auto|show]"         "multi-session dashboard toggle"
   printf '\n'
   printf '  \033[38;5;213mtools\033[0m\n'
   printf '    config [get|set|reset|export|import]\n'
@@ -112,7 +111,7 @@ case "${1:-}" in
         echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
       fi
     fi
-    echo -e "\033[0;32mAll layers enabled\033[0m  (ClaudeStatus · Dashboard · Sessionline)"
+    echo -e "\033[0;32mAll layers enabled\033[0m  (ClaudeStatus · Dashboard · CC-Statusline)"
     ;;
   off)
     _cfg_init
@@ -122,7 +121,7 @@ case "${1:-}" in
     if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
       echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
     fi
-    echo -e "\033[0;33mAll layers disabled\033[0m  (ClaudeStatus · Dashboard · Sessionline)"
+    echo -e "\033[0;33mAll layers disabled\033[0m  (ClaudeStatus · Dashboard · CC-Statusline)"
     ;;
 
   claudestatus)
@@ -407,10 +406,10 @@ case "${1:-}" in
           echo "Fehler: $SETTINGS nicht gefunden — ist Claude Code installiert?"; exit 1
         fi
         if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-          echo -e "\033[0;36mSessionline bereits aktiv\033[0m"
+          echo -e "\033[0;36mCC-Statusline bereits aktiv\033[0m"
         else
           echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
-          echo -e "\033[0;32mSessionline aktiviert\033[0m  → Claude Code neu starten zum Aktivieren"
+          echo -e "\033[0;32mCC-Statusline aktiviert\033[0m  → Claude Code neu starten zum Aktivieren"
         fi
         ;;
       off)
@@ -419,21 +418,21 @@ case "${1:-}" in
         fi
         if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
           echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
-          echo -e "\033[0;33mSessionline deaktiviert\033[0m  → Claude Code neu starten"
+          echo -e "\033[0;33mCC-Statusline deaktiviert\033[0m  → Claude Code neu starten"
         else
-          echo "Sessionline war nicht konfiguriert"
+          echo "CC-Statusline war nicht konfiguriert"
         fi
         ;;
       "")
         if [[ ! -f "$SETTINGS" ]]; then
-          echo "Sessionline: nicht konfiguriert  ($SETTINGS fehlt)"
+          echo "CC-Statusline: nicht konfiguriert  ($SETTINGS fehlt)"
         elif jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-          echo -e "Sessionline: \033[0;32maktiv\033[0m  ($SETTINGS)"
+          echo -e "CC-Statusline: \033[0;32maktiv\033[0m  ($SETTINGS)"
         elif jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
           other=$(jq -r '.statusLine.command // .statusLine' "$SETTINGS")
-          echo -e "Sessionline: \033[0;33mandere Konfiguration\033[0m  ($other)"
+          echo -e "CC-Statusline: \033[0;33mandere Konfiguration\033[0m  ($other)"
         else
-          echo "Sessionline: nicht konfiguriert"
+          echo "CC-Statusline: nicht konfiguriert"
           echo "  → claudii cc-statusline on  zum Aktivieren"
         fi
         ;;
@@ -662,7 +661,7 @@ case "${1:-}" in
     history_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/history.tsv"
 
     if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
-      echo "No history data yet. Start a Claude session with sessionline enabled."
+      echo "No history data yet. Start a Claude session with CC-Statusline enabled."
       exit 0
     fi
 
@@ -1210,7 +1209,7 @@ case "${1:-}" in
       printf '\n'
       printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health in RPROMPT\n'
       printf '  \033[0;32m◆\033[0m  Dashboard — multi-session view above prompt\n'
-      printf '  \033[0;32m◆\033[0m  Sessionline — info-dense line inside Claude Code\n'
+      printf '  \033[0;32m◆\033[0m  CC-Statusline — info-dense line inside Claude Code\n'
       printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
       printf '\n'
       printf '  \033[38;5;240mclaudii layers  — component overview\033[0m\n'
@@ -1281,17 +1280,17 @@ case "${1:-}" in
     for _sf in "$local_cache"/session-*; do
       [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
     done 2>/dev/null
-    printf '  \033[1;36mSessionBar\033[0m                                Shell, above prompt\n'
+    printf '  \033[1;36mDashboard\033[0m                                  Shell, above prompt\n'
     printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
     printf '  Session data from cache (model, context, cost, rate limits)\n'
     printf '  Example:  \033[1mOpus\033[0m \033[0;32m████████\033[0m\033[38;5;240m░░\033[0m 76%% \033[38;5;240m│\033[0m \033[0;36m$0.07\033[0m \033[38;5;240m│\033[0m 5h:17%% reset 43min\n'
     printf '\n'
-    printf '  Source:   Sessionline writes cache, SessionBar reads it\n'
+    printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
     printf '  Sessions: %d cache file(s)\n' "$sb_count"
     printf '  Dedup:    only prints when data changes\n'
     printf '\n'
 
-    # Sessionline
+    # CC-Statusline
     settings_file="$HOME/.claude/settings.json"
     if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
       sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
@@ -1303,7 +1302,7 @@ case "${1:-}" in
     else
       sl_state="\033[38;5;240m~/.claude/settings.json nicht gefunden\033[0m"
     fi
-    printf '  \033[1;36mSessionline\033[0m                               Inside Claude Code\n'
+    printf '  \033[1;36mCC-Statusline\033[0m                             Inside Claude Code\n'
     printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
     printf '  Info-dense status line rendered inside Claude Code CLI\n'
     printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
@@ -1311,13 +1310,13 @@ case "${1:-}" in
     printf '  Status:   %b\n' "$sl_state"
     printf '  API:      Claude Code statusLine (stdin JSON)\n'
     printf '  Handler:  bin/claudii-sessionline (bash+jq)\n'
-    printf '  Commands: claudii sessionline on/off\n'
+    printf '  Commands: claudii cc-statusline on/off\n'
     printf '\n'
 
     # Data flow
     printf '  \033[1;36mData Flow\033[0m\n'
     printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
-    printf '  Claude Code \033[38;5;240m─JSON→\033[0m \033[1mSessionline\033[0m \033[38;5;240m─cache→\033[0m \033[1mSessionBar\033[0m\n'
+    printf '  Claude Code \033[38;5;240m─JSON→\033[0m \033[1mCC-Statusline\033[0m \033[38;5;240m─cache→\033[0m \033[1mDashboard\033[0m\n'
     printf '  status.claude.com \033[38;5;240m─bg→\033[0m \033[1mClaudeStatus\033[0m (RPROMPT)\n'
     printf '\n'
     ;;
@@ -1459,7 +1458,7 @@ case "${1:-}" in
       [[ -n "${_sf_5h[$i]}" ]] && line+="  5h:${_sf_5h[$i]%.*}%"
       line+="  \033[2m${age_str} ago\033[0m"
       [[ -n "${_sf_sid[$i]}" ]] && line+="  \033[2m${_sf_sid[$i]:0:8}\033[0m"
-      printf "${line}\n"
+      printf '%s\n' "$line"
     done
 
     # Summary
@@ -1626,17 +1625,17 @@ case "${1:-}" in
       _dc_add "jq" "fail" "jq not installed — brew install jq"
     fi
 
-    # 3. Sessionline config
+    # 3. CC-Statusline config
     settings="${HOME}/.claude/settings.json"
     if [[ ! -f "$settings" ]]; then
-      _dc_add "sessionline" "warn" "Sessionline not configured — claudii sessionline on"
+      _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
     elif jq -e '.statusLine.command == "claudii-sessionline"' "$settings" >/dev/null 2>&1; then
-      _dc_add "sessionline" "ok" "Sessionline configured"
+      _dc_add "cc_statusline" "ok" "CC-Statusline configured"
     elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
       other=$(jq -r '.statusLine.command // "unknown"' "$settings")
-      _dc_add "sessionline" "warn" "Sessionline: other command ($other) — claudii sessionline on"
+      _dc_add "cc_statusline" "warn" "CC-Statusline: other command ($other) — claudii cc-statusline on"
     else
-      _dc_add "sessionline" "warn" "Sessionline not configured — claudii sessionline on"
+      _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
     fi
 
     # 4. Cache directory
@@ -1665,23 +1664,6 @@ case "${1:-}" in
 
     # 7. Version
     _dc_add "version" "ok" "claudii v$VERSION"
-
-    # 8. Updates (git only, non-fatal)
-    if git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
-      git -C "$CLAUDII_HOME" fetch --quiet origin main 2>/dev/null || true
-      local_ref=$(git -C "$CLAUDII_HOME" rev-parse HEAD 2>/dev/null)
-      remote_ref=$(git -C "$CLAUDII_HOME" rev-parse origin/main 2>/dev/null || echo "")
-      if [[ -z "$remote_ref" ]]; then
-        _dc_add "updates" "warn" "Update check failed (no remote/network)"
-      elif [[ "$local_ref" == "$remote_ref" ]]; then
-        _dc_add "updates" "ok" "Up to date"
-      else
-        behind=$(git -C "$CLAUDII_HOME" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
-        _dc_add "updates" "warn" "$behind commit(s) behind origin/main — claudii update"
-      fi
-    else
-      _dc_add "updates" "warn" "Not a git repo — skipping update check"
-    fi
 
     if [[ "$_FORMAT" == "json" ]]; then
       _json_arr="["

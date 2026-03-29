@@ -111,9 +111,7 @@ an 8-block context bar with percentage, cost, cache hit ratio
 .RB ( \[u26A1]XX% ),
 and worktree/agent context.
 The RPROMPT (ClaudeStatus) appears next to the last dashboard line.
-Controlled via
-.B "claudii dash"
-(see below) or the
+Controlled via the
 .B dashboard.enabled
 config key (values:
 .BR auto ", " true ", " off ;
@@ -371,45 +369,6 @@ Data flow:
 Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Dashboard (precmd)
 .RE
 .
-.SS Dashboard
-Multi-session dashboard rendered above the prompt.
-Shows aggregated rate limits, cost summary, and per-session context bars.
-.
-.TP
-.B dash
-Show current dashboard mode and a detail view of all sessions
-(same as
-.BR "dash show" ).
-.
-.TP
-.B "dash on"
-Always show the dashboard (even with a single session).
-Sets
-.B dashboard.enabled
-to
-.BR true .
-.
-.TP
-.B "dash off"
-Never show the dashboard.
-Sets
-.B dashboard.enabled
-to
-.BR off .
-.
-.TP
-.B "dash auto"
-Show dashboard only when sessions are active (default).
-Sets
-.B dashboard.enabled
-to
-.BR auto .
-.
-.TP
-.B "dash show"
-Detail view of all sessions with context bars, costs, cache hit ratios,
-rate limits, 7-day deltas, worktree/agent context, and session age.
-.
 .SS CC-Statusline
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
@@ -642,8 +601,7 @@ that the CC-Statusline is configured in
 that the cache directory exists,
 that completions are present,
 and that the plugin is loaded.
-Also reports the installed version and whether the local repo is behind
-.IR origin/main .
+Also reports the installed version.
 Supports
 .B \-\-json
 (array of check result objects with
