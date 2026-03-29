@@ -329,7 +329,37 @@ Without subcommand: show current state.
 .TP
 .B layers
 Show component overview: ClaudeStatus (RPROMPT), Dashboard (above prompt),
-CC-Statusline (inside Claude Code). Includes current status, config, and data flow.
+CC-Statusline (inside Claude Code). Includes current status, config, data flow,
+and a reference legend for all symbols and fields used in the output.
+.PP
+.B CC-Statusline fields:
+.PP
+.RS
+.nf
+\[u2588]\[u2591]  context bar      context window fill (10 blocks = 100%)
+$    cost             session cost USD
+5h:  5h rate limit    token budget used %
+7d:  7d rate limit    token budget used %
+\[u21BA]    reset            minutes until rate limit refreshes
+\[u2191]    input tokens     tokens sent to model this session
+\[u2193]    output tokens    tokens received from model
+\[u26A1]    cache ratio      % of input served from prompt cache
++/-  lines changed    code added / removed
+     duration         total session time
+.fi
+.RE
+.PP
+.B ClaudeStatus (RPROMPT) indicators:
+.PP
+.RS
+.nf
+\[u2713]    ok               model operational
+\[u26A0]    degraded         partial outage
+\[u2717]    down             major outage
+\[u27F3]    refreshing       background check running
+?    unreachable      status.claude.com not reachable
+.fi
+.RE
 .
 .SS ClaudeStatus
 Live model health monitoring in your shell RPROMPT.

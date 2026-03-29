@@ -1424,6 +1424,30 @@ case "${1:-}" in
     printf '  Claude Code \033[38;5;240m─JSON→\033[0m \033[1mCC-Statusline\033[0m \033[38;5;240m─cache→\033[0m \033[1mDashboard\033[0m\n'
     printf '  status.claude.com \033[38;5;240m─bg→\033[0m \033[1mClaudeStatus\033[0m (RPROMPT)\n'
     printf '\n'
+
+    # Symbol & field reference
+    printf '  \033[1;36mSymbols & Fields\033[0m\n'
+    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '\n'
+    printf '  CC-Statusline\n'
+    printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (10 blocks = 100%)"
+    printf '  %-4s %-20s %s\n' '$'   "cost"             "session cost USD"
+    printf '  %-4s %-20s %s\n' "5h:" "5h rate limit"    "token budget used %"
+    printf '  %-4s %-20s %s\n' "7d:" "7d rate limit"    "token budget used %"
+    printf '  %-4s %-20s %s\n' "↺"   "reset"            "minutes until rate limit refreshes"
+    printf '  %-4s %-20s %s\n' "↑"   "input tokens"     "tokens sent to model this session"
+    printf '  %-4s %-20s %s\n' "↓"   "output tokens"    "tokens received from model"
+    printf '  %-4s %-20s %s\n' "⚡"  "cache ratio"      "% of input served from prompt cache"
+    printf '  %-4s %-20s %s\n' "+/-" "lines changed"    "code added / removed"
+    printf '  %-4s %-20s %s\n' ""    "duration"         "total session time"
+    printf '\n'
+    printf '  ClaudeStatus (RPROMPT)\n'
+    printf '  %-4s %-20s %s\n' "✓"  "ok"               "model operational"
+    printf '  %-4s %-20s %s\n' "⚠"  "degraded"         "partial outage"
+    printf '  %-4s %-20s %s\n' "✗"  "down"             "major outage"
+    printf '  %-4s %-20s %s\n' "⟳"  "refreshing"       "background check running"
+    printf '  %-4s %-20s %s\n' "?"   "unreachable"      "status.claude.com not reachable"
+    printf '\n'
     ;;
 
   # Backward-compat shim: components → layers
