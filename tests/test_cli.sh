@@ -39,7 +39,7 @@ assert_eq "sessions: no 'local' outside function error" "0" "$(echo "$sess_err" 
 # doctor: must produce output (was silently empty)
 doc_out=$(bash "$CLAUDII_HOME/bin/claudii" doctor 2>&1)
 assert_eq "doctor: produces output" "0" "$([ -z "$doc_out" ] && echo 1 || echo 0)"
-assert_contains "doctor: mentions claude" "claude\|Claude" "$doc_out"
+assert_matches "doctor: mentions claude" "claude|Claude" "$doc_out"
 
 # layers: must not show obsolete 'show model' command
 layers_out=$(bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
@@ -55,11 +55,11 @@ mkdir -p "$DASH_CLI_TMP/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$DASH_CLI_TMP/claudii/config.json"
 
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard off 2>&1)
-assert_contains "dashboard off: success message" "disabled\|off" "$out"
+assert_matches "dashboard off: success message" "disabled|off" "$out"
 assert_eq "dashboard off: no error exit" "0" "$(bash "$CLAUDII_HOME/bin/claudii" dashboard off >/dev/null 2>&1; echo $?)"
 
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1)
-assert_contains "dashboard on: success message" "enabled\|on" "$out"
+assert_matches "dashboard on: success message" "enabled|on" "$out"
 
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard auto 2>&1 || true)
 assert_eq "dashboard auto: not 'Usage' error" "0" "$(echo "$out" | grep -c 'Usage:' || true)"
@@ -67,7 +67,7 @@ assert_contains "dashboard auto: shows auto" "auto" "$out"
 
 # dash command should be removed (use dashboard instead)
 dash_out=$(bash "$CLAUDII_HOME/bin/claudii" dash 2>&1 || true)
-assert_contains "dash: removed or redirected to dashboard" "Unknown command\|dashboard\|Dashboard" "$dash_out"
+assert_matches "dash: removed or redirected to dashboard" "Unknown command|dashboard|Dashboard" "$dash_out"
 
 rm -rf "$DASH_CLI_TMP"
 unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME DASH_CLI_TMP out
@@ -108,3 +108,45 @@ assert_eq "cost: no declare -A error on bash 3.2" "" "$(echo "$cost_err" | grep 
 assert_eq "cost: no invalid option error" "0" "$(echo "$cost_err" | grep -c 'invalid option' || true)"
 rm -rf "$CLI_TMP"
 unset CLAUDII_CACHE_DIR CLI_TMP cost_out cost_err
+
+# bare claudii — ANSI guard + injection guard
+bare_out=$(bash "$CLAUDII_HOME/bin/claudii" 2>&1)
+assert_no_literal_ansi "bare claudii: no literal \\033 in output" "$bare_out"
+
+_inj_tmp="$(mktemp -d)"
+printf 'model=Sonnet 4.6\nctx_pct=50\ncost=0.50\nrate_5h=40\nrate_7d=60\nreset_5h=\nreset_7d=\nsession_id=injtest00\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$$" > "$_inj_tmp/session-injtest"
+inj_out=$(CLAUDII_CACHE_DIR="$_inj_tmp" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
+assert_no_literal_ansi "bare claudii: no literal \\033 even with injected session" "$inj_out"
+assert_eq "bare claudii: no shell source leak" "0" \
+  "$(echo "$inj_out" | grep -cF '_cfg_init' || true)"
+rm -rf "$_inj_tmp"
+unset bare_out _inj_tmp inj_out
+
+# sessions — ANSI guard
+sess_out=$(bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
+assert_no_literal_ansi "sessions: no literal \\033 in output" "$sess_out"
+unset sess_out
+
+# cost — ANSI guard + content check
+_cost_tmp2="$(mktemp -d)"
+cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
+assert_no_literal_ansi "cost: no literal \\033 in output" "$cost_out2"
+assert_matches "cost: shows no-sessions text" "No session|keine" "$cost_out2"
+rm -rf "$_cost_tmp2"
+unset _cost_tmp2 cost_out2
+
+# trends — ANSI guard
+trends_out=$(bash "$CLAUDII_HOME/bin/claudii" trends 2>&1 || true)
+assert_eq "trends: produces output" "0" "$([ -z "$trends_out" ] && echo 1 || echo 0)"
+assert_no_literal_ansi "trends: no literal \\033 in output" "$trends_out"
+unset trends_out
+
+# doctor — ANSI guard
+doc_out2=$(bash "$CLAUDII_HOME/bin/claudii" doctor 2>&1 || true)
+assert_no_literal_ansi "doctor: no literal \\033 in output" "$doc_out2"
+unset doc_out2
+
+# agents — produces output
+agents_out=$(bash "$CLAUDII_HOME/bin/claudii" agents 2>&1 || true)
+assert_eq "agents: produces output" "0" "$([ -z "$agents_out" ] && echo 1 || echo 0)"
+unset agents_out
