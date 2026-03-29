@@ -1,0 +1,250 @@
+# lib/cmd/display.sh — display/visualization commands (trends, layers, version, changelog, 42)
+# Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
+
+_cmd_trends() {
+  # Flight Recorder — weekly/daily aggregates from persistent history
+  history_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/history.tsv"
+
+  if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+    echo "No history data yet. Start a Claude session with CC-Statusline enabled."
+    exit 0
+  fi
+
+  # Strategy: bash does date conversions (portable macOS/GNU), awk does
+  # all aggregation and formatting (no associative arrays needed in bash).
+  now=$(date +%s)
+
+  # Detect macOS vs GNU date
+  if date -j -f '%s' "$now" '+%u' >/dev/null 2>&1; then
+    _date_cmd="macos"
+  else
+    _date_cmd="gnu"
+  fi
+
+  # Precompute date boundaries
+  if [[ "$_date_cmd" == "macos" ]]; then
+    today_str=$(date -j -f '%s' "$now" '+%Y-%m-%d')
+    today_dow=$(date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
+    this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
+    this_monday_str=$(date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
+    last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
+    last_monday_str=$(date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
+    last_sunday_ts=$(( this_monday_ts - 86400 ))
+    last_sunday_str=$(date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
+    thirty_days_ago_ts=$(( now - 30 * 86400 ))
+    thirty_days_ago_str=$(date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
+  else
+    today_str=$(date -d "@$now" '+%Y-%m-%d')
+    today_dow=$(date -d "@$now" '+%u')
+    this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
+    this_monday_str=$(date -d "@$this_monday_ts" '+%Y-%m-%d')
+    last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
+    last_monday_str=$(date -d "@$last_monday_ts" '+%Y-%m-%d')
+    last_sunday_ts=$(( this_monday_ts - 86400 ))
+    last_sunday_str=$(date -d "@$last_sunday_ts" '+%Y-%m-%d')
+    thirty_days_ago_ts=$(( now - 30 * 86400 ))
+    thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
+  fi
+
+  # Build week_days string: "date:name,date:name,..." for Mon..Sun (up to today)
+  _week_days=""
+  for (( d=0; d<7; d++ )); do
+    day_ts=$(( this_monday_ts + d * 86400 ))
+    if [[ "$_date_cmd" == "macos" ]]; then
+      _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
+      _wn=$(date -j -f '%s' "$day_ts" '+%a')
+    else
+      _wd=$(date -d "@$day_ts" '+%Y-%m-%d')
+      _wn=$(date -d "@$day_ts" '+%a')
+    fi
+    [[ -n "$_week_days" ]] && _week_days+=","
+    _week_days+="${_wd}:${_wn}"
+    [[ "$_wd" == "$today_str" ]] && break
+  done
+
+  # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names
+  # Use a while loop (portable across macOS/GNU date)
+  _trends_augmented=$(
+    while IFS=$'\t' read -r ts _t_model cost ctx rate sid; do
+      [[ -z "$ts" || "$ts" == "timestamp" ]] && continue
+      if [[ "$_date_cmd" == "macos" ]]; then
+        _t_day=$(date -j -f '%s' "$ts" '+%Y-%m-%d' 2>/dev/null) || continue
+      else
+        _t_day=$(date -d "@$ts" '+%Y-%m-%d' 2>/dev/null) || continue
+      fi
+      # Normalize model name (opening parens prevent ) from closing $())
+      case "$_t_model" in
+        (*[Oo]pus*)   _t_short="Opus"   ;;
+        (*[Ss]onnet*) _t_short="Sonnet" ;;
+        (*[Hh]aiku*)  _t_short="Haiku"  ;;
+        (*)           _t_short="$_t_model" ;;
+      esac
+      printf '%s\t%s\t%s\t%s\n' "$_t_day" "$_t_short" "$cost" "$sid"
+    done < "$history_file"
+  )
+
+  # Step 2: awk does dedup, aggregation, and ALL output formatting
+  echo "$_trends_augmented" | awk -F'\t' \
+    -v today="$today_str" \
+    -v this_mon="$this_monday_str" \
+    -v last_mon="$last_monday_str" \
+    -v last_sun="$last_sunday_str" \
+    -v thirty="$thirty_days_ago_str" \
+    -v week_days="$_week_days" \
+    -v fmt="${_FORMAT:-}" \
+    -v cyan="$CLAUDII_CLR_CYAN" \
+    -v dim="$CLAUDII_CLR_DIM" \
+    -v pink="$CLAUDII_CLR_ACCENT" \
+    -v reset="$CLAUDII_CLR_RESET" \
+    -f "$CLAUDII_HOME/lib/trends.awk"
+}
+
+_cmd_version() {
+  if [[ "$_FORMAT" == "json" ]]; then
+    jq -n --arg v "$VERSION" '{"version": $v}'
+  else
+    echo "$VERSION"
+  fi
+}
+
+_cmd_changelog() {
+  printf '\n'
+  printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
+  printf '\n'
+  _changelog="$CLAUDII_HOME/CHANGELOG.md"
+  if [[ -f "$_changelog" ]]; then
+    _notes=$(awk -v ver="$VERSION" '
+      /^## \[/ {
+        if (found) { exit }
+        if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+      }
+      found { print }
+    ' "$_changelog")
+    if [[ -n "$_notes" ]]; then
+      while IFS= read -r _rline; do
+        printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rline"
+      done <<< "$_notes"
+    else
+      printf "  ${CLAUDII_CLR_DIM}No changelog entry for v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
+    fi
+  else
+    printf "  ${CLAUDII_CLR_DIM}CHANGELOG.md not found${CLAUDII_CLR_RESET}\n"
+  fi
+  printf '\n'
+}
+
+_cmd_layers() {
+  local_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _cfg_init
+
+  printf '\n'
+  printf "  ${CLAUDII_CLR_CYAN}claudii layers${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_ACCENT}──────────────────────────────────────────────────────────${CLAUDII_CLR_RESET}\n"
+  printf '\n'
+
+  # ClaudeStatus
+  cs_enabled=$(_cfgget statusline.enabled)
+  cs_models=$(_cfgget statusline.models)
+  cs_ttl=$(_cfgget status.cache_ttl)
+  cs_cache="$local_cache/status-models"
+  if [[ "$cs_enabled" == "true" ]]; then
+    cs_state="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+  else
+    cs_state="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
+  fi
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '  Model health indicators from status.claude.com\n'
+  printf "  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n"
+  printf '\n'
+  printf '  Status:   %b\n' "$cs_state"
+  printf '  Models:   %s\n' "$cs_models"
+  printf '  TTL:      %ss\n' "$cs_ttl"
+  if [[ -f "$cs_cache" ]]; then
+    printf '  Cache:    %s\n' "$cs_cache"
+  else
+    printf "  Cache:    ${CLAUDII_CLR_DIM}(not yet created)${CLAUDII_CLR_RESET}\n"
+  fi
+  printf '  Commands: claudii on/off · claudii status\n'
+  printf '\n'
+
+  # SessionBar
+  sb_count=0
+  for _sf in "$local_cache"/session-*; do
+    [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
+  done 2>/dev/null
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '  Session data from cache (model, context, cost, rate limits)\n'
+  printf "  Example:  ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} 76%% ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:17%% reset 43min\n"
+  printf '\n'
+  printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
+  printf '  Sessions: %d cache file(s)\n' "$sb_count"
+  printf '  Dedup:    only prints when data changes\n'
+  printf '\n'
+
+  # CC-Statusline
+  settings_file="$HOME/.claude/settings.json"
+  if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
+    sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
+    if [[ -n "$sl_cmd" && "$sl_cmd" == *claudii* ]]; then
+      sl_state="${CLAUDII_CLR_GREEN}aktiv${CLAUDII_CLR_RESET}"
+    else
+      sl_state="${CLAUDII_CLR_DIM}nicht konfiguriert${CLAUDII_CLR_RESET}"
+    fi
+  else
+    sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json nicht gefunden${CLAUDII_CLR_RESET}"
+  fi
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '  Info-dense status line rendered inside Claude Code CLI\n'
+  printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
+  printf '\n'
+  printf '  Status:   %b\n' "$sl_state"
+  printf '  API:      Claude Code statusLine (stdin JSON)\n'
+  printf '  Handler:  bin/claudii-sessionline (bash+jq)\n'
+  printf '  Commands: claudii cc-statusline on/off\n'
+  printf '\n'
+
+  # Data flow
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  Claude Code ${CLAUDII_CLR_DIM}─JSON→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}CC-Statusline${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}─cache→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Dashboard${CLAUDII_CLR_RESET}\n"
+  printf "  status.claude.com ${CLAUDII_CLR_DIM}─bg→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}ClaudeStatus${CLAUDII_CLR_RESET} (RPROMPT)\n"
+  printf '\n'
+
+  # Symbol & field reference
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '\n'
+  printf '  CC-Statusline\n'
+  printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (10 blocks = 100%)"
+  printf '  %-4s %-20s %s\n' '$'   "cost"             "session cost USD"
+  printf '  %-4s %-20s %s\n' "5h:" "5h rate limit"    "token budget used %"
+  printf '  %-4s %-20s %s\n' "7d:" "7d rate limit"    "token budget used %"
+  printf '  %-4s %-20s %s\n' "↺"   "reset"            "minutes until rate limit refreshes"
+  printf '  %-4s %-20s %s\n' "↑"   "input tokens"     "tokens sent to model this session"
+  printf '  %-4s %-20s %s\n' "↓"   "output tokens"    "tokens received from model"
+  printf '  %-4s %-20s %s\n' "⚡"  "cache ratio"      "% of input served from prompt cache"
+  printf '  %-4s %-20s %s\n' "+/-" "lines changed"    "code added / removed"
+  printf '  %-4s %-20s %s\n' ""    "duration"         "total session time"
+  printf '\n'
+  printf '  ClaudeStatus (RPROMPT)\n'
+  printf '  %-4s %-20s %s\n' "✓"  "ok"               "model operational"
+  printf '  %-4s %-20s %s\n' "⚠"  "degraded"         "partial outage"
+  printf '  %-4s %-20s %s\n' "✗"  "down"             "major outage"
+  printf '  %-4s %-20s %s\n' "⟳"  "refreshing"       "background check running"
+  printf '  %-4s %-20s %s\n' "?"   "unreachable"      "status.claude.com not reachable"
+  printf '\n'
+}
+
+_cmd_42() {
+  printf '\n'
+  printf "  ${CLAUDII_CLR_CYAN}✦  The answer is 42.${CLAUDII_CLR_RESET}\n"
+  printf '\n'
+  printf '  It was also the number of times Opus was down\n'
+  printf '  while this tool was being built.\n'
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}(We monitor all three now. You're welcome.)${CLAUDII_CLR_RESET}\n"
+  printf '\n'
+}

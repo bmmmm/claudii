@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Helper functions: `_parse_session_cache`, `_render_ctx_bar`, `_render_age` for consistent session rendering
 
 ### Changed
+- **Modular architecture:** `bin/claudii` split from 1835-line monolith into thin dispatcher (262 lines) + 4 command modules (`lib/cmd/system.sh`, `lib/cmd/sessions.sh`, `lib/cmd/display.sh`, `lib/cmd/config.sh`) + `lib/trends.awk`
 - All raw `\033[` ANSI codes in `bin/claudii` replaced with `CLAUDII_CLR_*`/`CLAUDII_SYM_*` constants from `lib/visual.sh`
 - All raw ANSI codes in `lib/functions.zsh` replaced with `CLAUDII_CLR_*` constants
 - Sessions section uses ●/○ indicators with 8-block context bar, color-coded by usage
@@ -26,6 +27,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - `bin/claudii-explore` (replaced by `/explore` skill)
 
 ### Fixed
+- **Security:** `printf '%b'` → `%s` in 3 session-rendering calls — prevents escape-sequence injection via JSONL session names
+- `_session_name()` sanitizes output: strips non-printable chars, trims to 60 chars
 - Printf single-quote regression: 38 printf calls with CLR vars in single quotes now use double quotes
 - Awk trends colors: pass ANSI codes via `-v` args instead of inline assignments in single-quoted awk
 - `local` outside function in `sessions)` block causing crash under `set -euo pipefail`

@@ -6,9 +6,14 @@ zsh plugin + CLI for Claude Code power users.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI: sessions, cost, trends, dashboard, watch, agents, config, search, on/off
+bin/claudii             # CLI dispatcher + shared helpers (<300 lines)
 bin/claudii-status      # ClaudeStatus health checker (components API + RSS)
 bin/claudii-sessionline # Sessionline handler (bash+jq, reads stdin JSON)
+lib/cmd/system.sh       # Commands: on/off, claudestatus, dashboard, status, cc-statusline, update, watch, doctor
+lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default
+lib/cmd/display.sh      # Commands: trends, version, changelog, layers, 42
+lib/cmd/config.sh       # Commands: config, agents, search
+lib/trends.awk          # awk program for trends aggregation
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
@@ -48,14 +53,15 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 
 ## When adding features
 
-1. Add code in `bin/claudii` or `lib/`
-2. Add completion in `completions/_claudii`
-3. **Update `man/man1/claudii.1`** — this is the single source of truth
-4. Add test in `tests/test_*.sh`
-5. `test_docs.sh` verifies all four stay in sync
-6. Wiki is auto-generated from the man page — never edit the wiki directly
-7. Update `CHANGELOG.md` unreleased block
-8. Check `memory/watchlist.md` Key Insights — remove entries for features now implemented
+1. Add command function `_cmd_<name>()` in the appropriate `lib/cmd/*.sh` file
+2. Add dispatch entry in `bin/claudii` main case statement
+3. Add completion in `completions/_claudii`
+4. **Update `man/man1/claudii.1`** — this is the single source of truth
+5. Add test in `tests/test_*.sh`
+6. `test_docs.sh` verifies all five stay in sync
+7. Wiki is auto-generated from the man page — never edit the wiki directly
+8. Update `CHANGELOG.md` unreleased block
+9. Check `memory/watchlist.md` Key Insights — remove entries for features now implemented
 
 ## When removing or renaming a command
 
@@ -69,6 +75,6 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 
 Only check what the commit actually touches — skip checks that don't apply:
 
-- Touched `bin/claudii` commands? → `bash tests/run.sh` + verify man page, completions, CHANGELOG in sync
+- Touched `bin/claudii` or `lib/cmd/*.sh`? → `bash tests/run.sh` + verify man page, completions, CHANGELOG in sync
 - Removed a command? → orphaned `tests/test_<command>.sh` deleted?
 - Docs/config only? → no checks needed
