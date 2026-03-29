@@ -15,14 +15,14 @@ CLAUDII_SYM_BAR_FULL="█"   # progress bar — filled block
 CLAUDII_SYM_BAR_EMPTY="░"  # progress bar — empty block
 
 # ── ANSI colors ───────────────────────────────────────────────────────────────
-CLAUDII_CLR_GREEN="\033[0;32m"
-CLAUDII_CLR_YELLOW="\033[0;33m"
-CLAUDII_CLR_RED="\033[0;31m"
-CLAUDII_CLR_CYAN="\033[0;36m"
-CLAUDII_CLR_DIM="\033[2m"
-CLAUDII_CLR_BOLD="\033[1m"
-CLAUDII_CLR_ACCENT="\033[38;5;213m"
-CLAUDII_CLR_RESET="\033[0m"
+CLAUDII_CLR_GREEN=$'\033[0;32m'
+CLAUDII_CLR_YELLOW=$'\033[0;33m'
+CLAUDII_CLR_RED=$'\033[0;31m'
+CLAUDII_CLR_CYAN=$'\033[0;36m'
+CLAUDII_CLR_DIM=$'\033[2m'
+CLAUDII_CLR_BOLD=$'\033[1m'
+CLAUDII_CLR_ACCENT=$'\033[38;5;213m'
+CLAUDII_CLR_RESET=$'\033[0m'
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 # _claudii_sym <name>
