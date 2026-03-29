@@ -55,13 +55,25 @@ _claudii() {
           _describe 'status option' opts
           ;;
 
-        claudestatus|dashboard)
+        claudestatus)
           local -a toggle_opts
           toggle_opts=(
             'on:Enable'
             'off:Disable'
           )
           _describe 'toggle option' toggle_opts
+          ;;
+
+        dashboard)
+          local -a dash_cmds
+          dash_cmds=(
+            'mini:Compact session line below prompt'
+            'big:Full session overview (like claudii sessions)'
+            'auto:Mini when sessions active, off when none'
+            'on:Enable dashboard (alias for mini)'
+            'off:Disable dashboard'
+          )
+          _describe 'dashboard subcommand' dash_cmds
           ;;
 
         cc-statusline|sessionline)

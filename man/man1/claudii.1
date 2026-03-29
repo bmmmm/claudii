@@ -312,12 +312,28 @@ in config.
 Without subcommand: show current state.
 .
 .TP
-.BR "dashboard " [on|off]
-Toggle only the Dashboard above the prompt.
-Reads/sets
-.B dashboard.enabled
-in config.
-Without subcommand: show current state.
+.BR "dashboard " [mini|big|auto|on|off]
+Control the Dashboard display mode.
+Without subcommand: show current mode.
+.RS
+.TP
+.B mini
+Compact session line below the prompt (default when enabled).
+.TP
+.B big
+Full session overview, equivalent to
+.BR "claudii sessions" .
+.TP
+.B auto
+Mini when sessions are active, off when none are running.
+.TP
+.B on
+Enable dashboard (alias for
+.BR mini ).
+.TP
+.B off
+Disable the dashboard.
+.RE
 .
 .TP
 .BR "cc-statusline " [on|off]

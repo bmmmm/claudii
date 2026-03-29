@@ -193,25 +193,41 @@ case "${1:-}" in
   dashboard)
     _cfg_init
     case "${2:-}" in
-      on)
-        echo "$(jq '.dashboard.enabled = "true"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mDashboard enabled\033[0m"
+      mini)
+        echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mDashboard: mini\033[0m  (compact line below prompt)"
         ;;
-      off)
-        echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;33mDashboard disabled\033[0m"
+      big)
+        echo "$(jq '.dashboard.enabled = "big"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mDashboard: big\033[0m  (full session overview)"
         ;;
       auto)
         echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;36mDashboard auto mode (shows when sessions active)\033[0m"
+        echo -e "\033[0;36mDashboard: auto\033[0m  (mini when sessions active, off when none)"
+        ;;
+      on)
+        echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;32mDashboard: mini\033[0m  (on = mini)"
+        ;;
+      off)
+        echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+        echo -e "\033[0;33mDashboard: off\033[0m"
         ;;
       "")
         current=$(_cfgget dashboard.enabled)
-        [[ -z "$current" ]] && current="auto"
-        echo "Dashboard: $current"
+        current="${current:-off}"
+        case "$current" in
+          mini)  echo -e "Dashboard: \033[0;32mmini\033[0m  (compact line below prompt)" ;;
+          big)   echo -e "Dashboard: \033[0;32mbig\033[0m  (full session overview)" ;;
+          auto)  echo -e "Dashboard: \033[0;36mauto\033[0m  (mini when sessions active, off when none)" ;;
+          off)   echo -e "Dashboard: \033[0;33moff\033[0m" ;;
+          true)  echo -e "Dashboard: \033[0;32mmini\033[0m  (legacy: true → mini)" ;;
+          *)     echo -e "Dashboard: \033[0;33m${current}\033[0m" ;;
+        esac
         ;;
       *)
-        echo "Usage: claudii dashboard [on|off|auto]"; exit 1
+        echo "Unknown dashboard subcommand: ${2}"
+        echo "Usage: claudii dashboard [mini|big|auto|on|off]"; exit 1
         ;;
     esac
     ;;
