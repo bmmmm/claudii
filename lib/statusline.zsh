@@ -89,7 +89,8 @@ typeset -ga _CLAUDII_DASH_WORKTREES _CLAUDII_DASH_AGENTS _CLAUDII_DASH_BURN_ETAS
 typeset -ga _CLAUDII_DASH_CACHE_PCTS _CLAUDII_DASH_7D_STARTS
 typeset -gi _CLAUDII_DASH_COUNT=0
 typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
-typeset -g _CLAUDII_LAST_DASHBOARD=""
+typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
+typeset -gi _CLAUDII_LAST_DASH_COLS=0
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
@@ -233,33 +234,52 @@ function _claudii_render_session_lines {
 
 function _claudii_dashboard {
   local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
-  [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; return; }
+  [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return; }
 
   _claudii_collect_sessions
   local active_count=$_CLAUDII_DASH_COUNT
 
   if [[ "$dash_mode" == "auto" && active_count -eq 0 ]] || (( active_count == 0 )); then
-    _CLAUDII_LAST_DASHBOARD=""; return
+    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return
   fi
 
   _claudii_render_global_line
   _claudii_render_session_lines
 
-  local dash_lines=""
-  [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && dash_lines="${_CLAUDII_DASH_GLOBAL_LINE}"$'\n'
-  dash_lines+="$_CLAUDII_DASH_SESSION_LINES"
+  local dash_raw=""
+  [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && dash_raw="${_CLAUDII_DASH_GLOBAL_LINE}"$'\n'
+  dash_raw+="$_CLAUDII_DASH_SESSION_LINES"
 
-  # Cursor save/restore — ESC chars must expand correctly inside "..."
   local _CS=$'\033[s' _CR=$'\033[u' _RS=$'\033[0m'
+  local _cols=${COLUMNS:-80}
 
-  [[ "$dash_lines" == "$_CLAUDII_LAST_DASHBOARD" ]] && {
-    if [[ -n "$_CLAUDII_LAST_DASHBOARD" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}${_RS}${_CR}%}"
+  # Reuse padded version if content and terminal width unchanged
+  if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
+    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
+      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}${_RS}${_CR}%}"
     fi
     return
-  }
-  _CLAUDII_LAST_DASHBOARD="$dash_lines"
-  [[ -n "$dash_lines" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_lines%$'\n'}${_RS}${_CR}%}"
+  fi
+
+  # Right-align each line: expand %F{}/%f/%B/%b prompt codes, strip ANSI, measure visible width
+  local dash_padded="" _dl _vis_str _vis _pad
+  local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
+  for _dl in "${_dash_lines[@]}"; do
+    [[ -z "$_dl" ]] && continue
+    _vis_str="${(%)_dl}"                      # expand zsh prompt codes to ANSI
+    _vis_str="${_vis_str//$'\e'\[[0-9;]*m/}"  # strip CSI color/attr sequences
+    _vis_str="${_vis_str//\\\$/\$}"           # \$ → $ (literal dollar in cost display)
+    _vis=${#_vis_str}
+    _pad=$(( _cols - _vis ))
+    (( _pad < 0 )) && _pad=0
+    dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
+  done
+
+  _CLAUDII_LAST_DASHBOARD="$dash_raw"
+  _CLAUDII_LAST_DASH_PADDED="$dash_padded"
+  _CLAUDII_LAST_DASH_COLS=$_cols
+
+  [[ -n "$dash_padded" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_padded%$'\n'}${_RS}${_CR}%}"
 }
 
 autoload -Uz add-zsh-hook
