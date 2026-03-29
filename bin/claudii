@@ -1118,116 +1118,68 @@ case "${1:-}" in
       for _ov_f in "${_ov_files[@]}"; do
         [[ -f "$_ov_f" ]] || continue
 
-        # mtime
-        if stat -f%m "$_ov_f" >/dev/null 2>&1; then
-          _ov_mt=$(stat -f%m "$_ov_f")
-        else
-          _ov_mt=$(stat -c%Y "$_ov_f")
-        fi
-        _ov_age=$(( now - _ov_mt ))
-
-        # Parse key=value pairs
-        _ov_content=$(cat "$_ov_f" 2>/dev/null) || continue
-        _ov_model="" _ov_ctx="" _ov_cost="" _ov_5h="" _ov_7d="" _ov_reset_ts="" _ov_reset_7d_ts="" _ov_ppid=""
-        _ov_worktree="" _ov_agent="" _ov_cache_pct="" _ov_7d_start="" _ov_sid=""
-        while IFS='=' read -r _k _v; do
-          case "$_k" in
-            model)         _ov_model="$_v" ;;
-            ctx_pct)       _ov_ctx="$_v" ;;
-            cost)          _ov_cost="$_v" ;;
-            rate_5h)       _ov_5h="$_v" ;;
-            rate_7d)       _ov_7d="$_v" ;;
-            reset_5h)      _ov_reset_ts="$_v" ;;
-            reset_7d)      _ov_reset_7d_ts="$_v" ;;
-            ppid)          _ov_ppid="$_v" ;;
-            worktree)      _ov_worktree="$_v" ;;
-            agent)         _ov_agent="$_v" ;;
-            cache_pct)     _ov_cache_pct="$_v" ;;
-            rate_7d_start) _ov_7d_start="$_v" ;;
-            session_id)    _ov_sid="$_v" ;;
-          esac
-        done <<< "$_ov_content"
+        _parse_session_cache "$_ov_f"
 
         # Skip if no model (corrupt/empty file)
-        [[ -z "$_ov_model" ]] && continue
+        [[ -z "$_PSC_model" ]] && continue
         _ov_any_session=1
 
-        # Active check: mtime < 300s AND PID alive
-        _ov_is_active=0
-        if (( _ov_age < 300 )); then
-          if [[ -n "$_ov_ppid" && "$_ov_ppid" != "0" ]]; then
-            kill -0 "$_ov_ppid" 2>/dev/null && _ov_is_active=1
-          else
-            _ov_is_active=1
-          fi
-        fi
-
         # Track freshest rate-limit data (from most-recently-modified file)
-        if (( _ov_mt > _ov_acct_mt )) && [[ -n "$_ov_5h" ]]; then
-          _ov_acct_mt=$_ov_mt
-          _ov_acct_5h="$_ov_5h"
-          _ov_acct_7d="$_ov_7d"
-          _ov_acct_reset="$_ov_reset_ts"
-          _ov_acct_reset_7d="$_ov_reset_7d_ts"
-          _ov_acct_7d_start="$_ov_7d_start"
+        if (( _PSC_mtime > _ov_acct_mt )) && [[ -n "$_PSC_rate_5h" ]]; then
+          _ov_acct_mt=$_PSC_mtime
+          _ov_acct_5h="$_PSC_rate_5h"
+          _ov_acct_7d="$_PSC_rate_7d"
+          _ov_acct_reset="$_PSC_reset_5h"
+          _ov_acct_reset_7d="$_PSC_reset_7d"
+          _ov_acct_7d_start="$_PSC_rate_7d_start"
         fi
 
         # Today's cost accumulation
-        if (( _ov_mt >= _ov_cutoff )); then
+        if (( _PSC_mtime >= _ov_cutoff )); then
           _ov_today_count=$(( _ov_today_count + 1 ))
-          if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
-            _ov_today_cost=$(echo "$_ov_today_cost + $_ov_cost" | bc 2>/dev/null || echo "$_ov_today_cost")
+          if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
+            _ov_today_cost=$(echo "$_ov_today_cost + $_PSC_cost" | bc 2>/dev/null || echo "$_ov_today_cost")
           fi
         fi
 
         # Count active vs inactive
-        if (( _ov_is_active )); then
+        if [[ "$_PSC_is_active" -eq 1 ]]; then
           (( _ov_active_count++ ))
         else
           (( _ov_inactive_count++ ))
           continue  # skip rendering inactive sessions in bare view
         fi
 
-        # Context bar (8 blocks), color by usage
+        # Context bar
         _ov_bar=""
-        if [[ -n "$_ov_ctx" && "$_ov_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-          _ov_pct=${_ov_ctx%.*}
-          (( _ov_pct > 100 )) && _ov_pct=100
-          (( _ov_pct < 0 ))   && _ov_pct=0
-          _ov_filled=$(( _ov_pct * 8 / 100 ))
-          _ov_empty=$(( 8 - _ov_filled ))
-          if (( _ov_pct >= 90 )); then _ov_bc="${CLAUDII_CLR_RED}"
-          elif (( _ov_pct >= 70 )); then _ov_bc="${CLAUDII_CLR_YELLOW}"
-          else _ov_bc="${CLAUDII_CLR_GREEN}"; fi
-          _ov_bar_str=""
-          for (( _bi=0; _bi<_ov_filled; _bi++ )); do _ov_bar_str+="█"; done
-          for (( _bi=0; _bi<_ov_empty;  _bi++ )); do _ov_bar_str+="░"; done
-          _ov_bar=" ${_ov_bc}${_ov_bar_str}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_ov_pct}%${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _render_ctx_bar "${_PSC_ctx_pct%.*}"
+          _ov_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_PSC_ctx_pct%.*}%${CLAUDII_CLR_RESET}"
         fi
 
         # Build line: icon + model + project path + session name + bar + cost + cache + worktree + agent
-        _ov_line="  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_ov_model}${CLAUDII_CLR_RESET}"
-        if [[ -n "$_ov_sid" ]]; then
-          _ov_projpath=$(_session_project_path "$_ov_sid")
-          _ov_sesname=$(_session_name "$_ov_sid")
+        _ov_line="  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_session_id" ]]; then
+          _ov_projpath=$(_session_project_path "$_PSC_session_id")
+          _ov_sesname=$(_session_name "$_PSC_session_id")
           [[ -n "$_ov_projpath" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}${_ov_projpath}${CLAUDII_CLR_RESET}"
           [[ -n "$_ov_sesname" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}\"${_ov_sesname}\"${CLAUDII_CLR_RESET}"
         fi
         _ov_line+="${_ov_bar}"
 
-        if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
-          _ov_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_ov_cost")${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_PSC_cost")${CLAUDII_CLR_RESET}"
         fi
 
-        if [[ -n "$_ov_cache_pct" && "$_ov_cache_pct" != "0" ]]; then
-          _ov_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_ov_cache_pct}%${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
         fi
 
-        if [[ -n "$_ov_worktree" ]]; then
-          _ov_line+=" ${CLAUDII_CLR_DIM}[wt:${_ov_worktree}]${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_worktree" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
         fi
-        if [[ -n "$_ov_agent" ]]; then
-          _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_ov_agent}]${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_agent" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
         fi
 
         printf '%b\n' "$_ov_line"
@@ -1510,8 +1462,6 @@ case "${1:-}" in
     # "claudii sessions-inactive" — shows only inactive (stale/dead) sessions
     _cfg_init
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-    now=$(date +%s)
-
 
     printf '\n'
     printf "  ${CLAUDII_CLR_BOLD}Inactive Sessions${CLAUDII_CLR_RESET}\n"
@@ -1520,97 +1470,67 @@ case "${1:-}" in
     _is_files=("$cache_dir"/session-*)
     shopt -u nullglob
 
-    _is_any=0
+    _has_files=0
+    _rendered_any=0
 
-    if [[ ${#_is_files[@]} -gt 0 ]]; then
+    [[ ${#_is_files[@]} -gt 0 ]] && _has_files=1
+
+    if [[ $_has_files -eq 1 ]]; then
       for _is_f in "${_is_files[@]}"; do
         [[ -f "$_is_f" ]] || continue
 
-        if stat -f%m "$_is_f" >/dev/null 2>&1; then
-          _is_mt=$(stat -f%m "$_is_f")
-        else
-          _is_mt=$(stat -c%Y "$_is_f")
-        fi
-        _is_age=$(( now - _is_mt ))
+        _parse_session_cache "$_is_f"
 
-        _is_content=$(cat "$_is_f" 2>/dev/null) || continue
-        _is_model="" _is_ctx="" _is_cost="" _is_cache_pct="" _is_ppid="" _is_worktree="" _is_agent=""
-        while IFS='=' read -r _ik _iv; do
-          case "$_ik" in
-            model)     _is_model="$_iv" ;;
-            ctx_pct)   _is_ctx="$_iv" ;;
-            cost)      _is_cost="$_iv" ;;
-            cache_pct) _is_cache_pct="$_iv" ;;
-            ppid)      _is_ppid="$_iv" ;;
-            worktree)  _is_worktree="$_iv" ;;
-            agent)     _is_agent="$_iv" ;;
-          esac
-        done <<< "$_is_content"
-
-        [[ -z "$_is_model" ]] && continue
-        _is_any=1
-
-        # Active check
-        _is_active=0
-        if (( _is_age < 300 )); then
-          if [[ -n "$_is_ppid" && "$_is_ppid" != "0" ]]; then
-            kill -0 "$_is_ppid" 2>/dev/null && _is_active=1
-          else
-            _is_active=1
-          fi
-        fi
-
-        # Context bar (8 blocks)
-        _is_bar=""
-        if [[ -n "$_is_ctx" && "$_is_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-          _is_pct=${_is_ctx%.*}
-          (( _is_pct > 100 )) && _is_pct=100
-          (( _is_pct < 0 ))   && _is_pct=0
-          _is_filled=$(( _is_pct * 8 / 100 ))
-          _is_empty=$(( 8 - _is_filled ))
-          if (( _is_pct >= 90 )); then _is_bc="${CLAUDII_CLR_RED}"
-          elif (( _is_pct >= 70 )); then _is_bc="${CLAUDII_CLR_YELLOW}"
-          else _is_bc="${CLAUDII_CLR_GREEN}"; fi
-          _is_bar_str=""
-          for (( _ibi=0; _ibi<_is_filled; _ibi++ )); do _is_bar_str+="█"; done
-          for (( _ibi=0; _ibi<_is_empty;  _ibi++ )); do _is_bar_str+="░"; done
-          _is_bar=" ${_is_bc}${_is_bar_str}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
-        fi
+        [[ -z "$_PSC_model" ]] && continue
 
         # Skip active sessions — this command shows only inactive
-        if (( _is_active )); then continue; fi
+        if [[ $_PSC_is_active -eq 1 ]]; then continue; fi
 
-        _is_line="  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_is_model}${CLAUDII_CLR_RESET}${_is_bar}"
-
-        if [[ -n "$_is_cost" && "$_is_cost" != "0" ]]; then
-          _is_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_is_cost")${CLAUDII_CLR_RESET}"
+        # Context bar
+        _is_bar=""
+        if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _is_pct=${_PSC_ctx_pct%.*}
+          (( _is_pct > 100 )) && _is_pct=100
+          (( _is_pct < 0 ))   && _is_pct=0
+          _render_ctx_bar "$_is_pct"
+          _is_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
         fi
 
-        if [[ -n "$_is_cache_pct" && "$_is_cache_pct" != "0" ]]; then
-          _is_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_is_cache_pct}%${CLAUDII_CLR_RESET}"
+        _is_line="  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
+
+        if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
+          _is_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_PSC_cost")${CLAUDII_CLR_RESET}"
         fi
 
-        if [[ -n "$_is_worktree" ]]; then
-          _is_line+=" ${CLAUDII_CLR_DIM}[wt:${_is_worktree}]${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
+          _is_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
         fi
-        if [[ -n "$_is_agent" ]]; then
-          _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_is_agent}]${CLAUDII_CLR_RESET}"
+
+        # Rate limits
+        if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] || [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]]; then
+          _is_line+="${CLAUDII_CLR_DIM} 5h:${_PSC_rate_5h}% 7d:${_PSC_rate_7d}%${CLAUDII_CLR_RESET}"
+        fi
+
+        if [[ -n "$_PSC_worktree" ]]; then
+          _is_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
+        fi
+        if [[ -n "$_PSC_agent" ]]; then
+          _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
         fi
 
         # Age
-        if (( _is_age < 60 )); then _is_age_str="${_is_age}s ago"
-        elif (( _is_age < 3600 )); then _is_age_str="$(( _is_age / 60 ))m ago"
-        elif (( _is_age < 86400 )); then _is_age_str="$(( _is_age / 3600 ))h ago"
-        else _is_age_str="$(( _is_age / 86400 ))d ago"; fi
-        _is_line+="  ${CLAUDII_CLR_DIM}${_is_age_str}${CLAUDII_CLR_RESET}"
+        _render_age "$_PSC_age"
+        _is_line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
 
         printf '%b\n' "$_is_line"
-        _is_any=1
+        _rendered_any=1
       done
     fi
 
-    if (( ! _is_any )); then
-      printf "  ${CLAUDII_CLR_DIM}No inactive sessions.${CLAUDII_CLR_RESET}\n"
+    if [[ $_has_files -eq 1 ]] && [[ $_rendered_any -eq 0 ]]; then
+      printf "  No inactive sessions.\n"
+    elif [[ $_has_files -eq 0 ]]; then
+      printf "  No session data found.\n"
     fi
 
     printf '\n'
@@ -1624,59 +1544,49 @@ case "${1:-}" in
     latest_5h="" latest_7d="" latest_reset=""
 
     # Collect all session data into parallel arrays
-    declare -a _sf_model _sf_ctx _sf_cost _sf_5h _sf_7d _sf_reset _sf_sid _sf_age _sf_active _sf_worktree _sf_agent _sf_projpath _sf_sesname
+    declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
+               _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
+               _sf_is_active _sf_age _sf_projpath _sf_sesname
     _sf_count=0
 
     for sf in "$cache_dir"/session-*; do
       [[ -f "$sf" ]] || continue
-      mt=$(stat -f%m "$sf" 2>/dev/null || stat -c%Y "$sf" 2>/dev/null || echo 0)
-      age=$(( now - mt ))
-
-      content=$(cat "$sf" 2>/dev/null) || continue
-      s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid="" s_worktree="" s_agent=""
-      [[ $'\n'"$content" == *$'\n'model=* ]] && s_model="${content#*model=}" && s_model="${s_model%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'ctx_pct=* ]] && s_ctx="${content#*ctx_pct=}" && s_ctx="${s_ctx%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'cost=* ]] && s_cost="${content#*cost=}" && s_cost="${s_cost%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'rate_5h=* ]] && s_5h="${content#*rate_5h=}" && s_5h="${s_5h%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'rate_7d=* ]] && s_7d="${content#*rate_7d=}" && s_7d="${s_7d%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'reset_5h=* ]] && s_reset="${content#*reset_5h=}" && s_reset="${s_reset%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'session_id=* ]] && s_sid="${content#*session_id=}" && s_sid="${s_sid%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'worktree=* ]] && s_worktree="${content#*worktree=}" && s_worktree="${s_worktree%%$'\n'*}"
-      [[ $'\n'"$content" == *$'\n'agent=* ]] && s_agent="${content#*agent=}" && s_agent="${s_agent%%$'\n'*}"
+      _parse_session_cache "$sf"
 
       # Accumulate cost
-      if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
-        total_cost=$(echo "$total_cost + $s_cost" | bc 2>/dev/null || echo "$total_cost")
+      if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
+        total_cost=$(echo "$total_cost + $_PSC_cost" | bc 2>/dev/null || echo "$total_cost")
       fi
 
       # Track freshest rate limits
-      if [[ -n "$s_5h" ]] && (( age < 300 )); then
-        latest_5h="$s_5h"; latest_7d="$s_7d"; latest_reset="$s_reset"
+      if [[ -n "$_PSC_rate_5h" ]] && [[ "$_PSC_is_active" -eq 1 ]]; then
+        latest_5h="$_PSC_rate_5h"; latest_7d="$_PSC_rate_7d"; latest_reset="$_PSC_reset_5h"
       fi
 
-      _sf_model[$_sf_count]="$s_model"
-      _sf_ctx[$_sf_count]="$s_ctx"
-      _sf_cost[$_sf_count]="$s_cost"
-      _sf_5h[$_sf_count]="$s_5h"
-      _sf_7d[$_sf_count]="$s_7d"
-      _sf_reset[$_sf_count]="$s_reset"
-      _sf_sid[$_sf_count]="$s_sid"
-      _sf_worktree[$_sf_count]="$s_worktree"
-      _sf_agent[$_sf_count]="$s_agent"
-      _sf_age[$_sf_count]="$age"
+      _sf_model[$_sf_count]="$_PSC_model"
+      _sf_ctx[$_sf_count]="$_PSC_ctx_pct"
+      _sf_cost[$_sf_count]="$_PSC_cost"
+      _sf_rate5h[$_sf_count]="$_PSC_rate_5h"
+      _sf_rate7d[$_sf_count]="$_PSC_rate_7d"
+      _sf_reset5h[$_sf_count]="$_PSC_reset_5h"
+      _sf_ppid[$_sf_count]="$_PSC_ppid"
+      _sf_sid[$_sf_count]="$_PSC_session_id"
+      _sf_worktree[$_sf_count]="$_PSC_worktree"
+      _sf_agent[$_sf_count]="$_PSC_agent"
+      _sf_cache[$_sf_count]="$_PSC_cache_pct"
+      _sf_age[$_sf_count]="$_PSC_age"
+      _sf_is_active[$_sf_count]="$_PSC_is_active"
       # Resolve project path + session name from JSONL (only for pretty output)
       if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
-        _sf_projpath[$_sf_count]=$(_session_project_path "$s_sid")
-        _sf_sesname[$_sf_count]=$(_session_name "$s_sid")
+        _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
+        _sf_sesname[$_sf_count]=$(_session_name "$_PSC_session_id")
       else
         _sf_projpath[$_sf_count]=""
         _sf_sesname[$_sf_count]=""
       fi
-      if (( age < 300 )); then
-        _sf_active[$_sf_count]="active"
+      if [[ "$_PSC_is_active" -eq 1 ]]; then
         (( active++ ))
       else
-        _sf_active[$_sf_count]="stale"
         (( stale++ ))
       fi
       (( _sf_count++ ))
@@ -1692,14 +1602,14 @@ case "${1:-}" in
           --arg model "${_sf_model[$i]}" \
           --arg ctx_pct "${_sf_ctx[$i]}" \
           --arg cost "${_sf_cost[$i]:-0}" \
-          --arg rate_5h "${_sf_5h[$i]}" \
-          --arg rate_7d "${_sf_7d[$i]}" \
-          --arg reset_5h "${_sf_reset[$i]}" \
+          --arg rate_5h "${_sf_rate5h[$i]}" \
+          --arg rate_7d "${_sf_rate7d[$i]}" \
+          --arg reset_5h "${_sf_reset5h[$i]}" \
           --arg session_id "${_sf_sid[$i]}" \
           --arg worktree "${_sf_worktree[$i]}" \
           --arg agent "${_sf_agent[$i]}" \
           --arg age "${_sf_age[$i]}" \
-          --arg status "${_sf_active[$i]}" \
+          --arg status "${_sf_is_active[$i]}" \
           '{model:$model, ctx_pct:($ctx_pct|if .=="" then null else tonumber? end),
             cost:($cost|tonumber? // 0), rate_5h:($rate_5h|if .=="" then null else tonumber? end),
             rate_7d:($rate_7d|if .=="" then null else tonumber? end),
@@ -1716,9 +1626,9 @@ case "${1:-}" in
       for (( i=0; i<_sf_count; i++ )); do
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
           "${_sf_model[$i]}" "${_sf_ctx[$i]}" "${_sf_cost[$i]:-0}" \
-          "${_sf_5h[$i]}" "${_sf_7d[$i]}" "${_sf_reset[$i]}" \
+          "${_sf_rate5h[$i]}" "${_sf_rate7d[$i]}" "${_sf_reset5h[$i]}" \
           "${_sf_sid[$i]}" "${_sf_worktree[$i]}" "${_sf_agent[$i]}" \
-          "${_sf_age[$i]}" "${_sf_active[$i]}"
+          "${_sf_age[$i]}" "${_sf_is_active[$i]}"
       done
       exit 0
     fi
@@ -1726,29 +1636,24 @@ case "${1:-}" in
     # Pretty output
     printf '\n'
     for (( i=0; i<_sf_count; i++ )); do
-      status_icon=""
-      age_str=""
-      age="${_sf_age[$i]}"
-      if [[ "${_sf_active[$i]}" == "active" ]]; then
-        status_icon="\033[0;32m●\033[0m"
+      local status_icon
+      if [[ "${_sf_is_active[$i]}" -eq 1 ]]; then
+        status_icon="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET}"
       else
-        status_icon="\033[0;90m○\033[0m"
+        status_icon="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET}"
       fi
-      if (( age < 60 )); then age_str="${age}s"
-      elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
-      elif (( age < 86400 )); then age_str="$(( age / 3600 ))h"
-      else age_str="$(( age / 86400 ))d"; fi
+      _render_age "${_sf_age[$i]}"
 
-      line="  ${status_icon} \033[1m${_sf_model[$i]:-?}\033[0m"
-      [[ -n "${_sf_projpath[$i]}" ]] && line+="  \033[38;5;240m${_sf_projpath[$i]}\033[0m"
-      [[ -n "${_sf_sesname[$i]}" ]] && line+="  \033[38;5;240m\"${_sf_sesname[$i]}\"\033[0m"
-      [[ -n "${_sf_worktree[$i]}" ]] && line+=" \033[2m[wt:${_sf_worktree[$i]}]\033[0m"
-      [[ -n "${_sf_agent[$i]}" ]] && line+=" \033[2m[agent:${_sf_agent[$i]}]\033[0m"
+      line="  ${status_icon} ${CLAUDII_CLR_BOLD}${_sf_model[$i]:-?}${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_projpath[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$i]}${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_sesname[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}\"${_sf_sesname[$i]}\"${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_worktree[$i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[wt:${_sf_worktree[$i]}]${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_agent[$i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[agent:${_sf_agent[$i]}]${CLAUDII_CLR_RESET}"
       [[ -n "${_sf_ctx[$i]}" ]] && line+="  ${_sf_ctx[$i]}%"
-      [[ -n "${_sf_cost[$i]}" && "${_sf_cost[$i]}" != "0" ]] && line+="  \033[36m\$$(printf '%.2f' "${_sf_cost[$i]}")\033[0m"
-      [[ -n "${_sf_5h[$i]}" ]] && line+="  5h:${_sf_5h[$i]%.*}%"
-      line+="  \033[2m${age_str} ago\033[0m"
-      [[ -n "${_sf_sid[$i]}" ]] && line+="  \033[2m${_sf_sid[$i]:0:8}\033[0m"
+      [[ -n "${_sf_cost[$i]}" && "${_sf_cost[$i]}" != "0" ]] && line+="  ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "${_sf_cost[$i]}")${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_rate5h[$i]}" ]] && line+="  5h:${_sf_rate5h[$i]%.*}%"
+      line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
+      [[ -n "${_sf_sid[$i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_sid[$i]:0:8}${CLAUDII_CLR_RESET}"
       printf '%s\n' "$line"
     done
 
