@@ -26,15 +26,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Dead command stubs: `show`, `debug`, `stats`, `continue`, `release`, `metrics`, `is`
 - `bin/claudii-explore` (replaced by `/explore` skill)
 
+### Refactored
+- `_claudii_dashboard` split into `_claudii_collect_sessions`, `_claudii_render_global_line`, `_claudii_render_session_lines` (coordinator now ~30 lines)
+- `_claudii_launch` rate-limit warning block extracted into `_claudii_rl_warn`
+
 ### Fixed
 - **Security:** `printf '%b'` → `%s` in 3 session-rendering calls — prevents escape-sequence injection via JSONL session names
-- `_session_name()` sanitizes output: strips non-printable chars, trims to 60 chars
+- `_session_name()` sanitizes output: strips non-printable chars, strips literal `\033[...m` sequences, trims to 60 chars
+- **ANSI rendering:** `CLAUDII_CLR_*` in `lib/visual.sh`, `lib/log.sh`, `lib/config.zsh` use `$'...'` syntax (real ESC bytes); `printf` uses `%s` for color args
+- Dollar sign invisible in dashboard cost display (`%{\$%}` → `'\$` in statusline.zsh)
+- Loop variable `i` leaking into terminal after `sessions`/`cost` commands (renamed to `_i`)
 - Printf single-quote regression: 38 printf calls with CLR vars in single quotes now use double quotes
 - Awk trends colors: pass ANSI codes via `-v` args instead of inline assignments in single-quoted awk
 - `local` outside function in `sessions)` block causing crash under `set -euo pipefail`
 - `_claudii_agent_launch` reading wrong positional args after premature shift
 - Rate limit decimal display in `sessions-inactive` (now integer)
 - `clh` swallowing `claudii-status` exit code
+
+### Tests
+- 246 tests (was 236): `assert_no_literal_ansi` + `assert_matches` helpers; `assert_contains` → `grep -qF`; ANSI guards for bare claudii/sessions/cost/trends/doctor; session-name injection guard; agents/trends/cost content coverage
 
 ---
 
