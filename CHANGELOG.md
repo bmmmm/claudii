@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
-## [0.7.0] — Unreleased
+## [0.7.0] — 2026-03-30
 
 ### Added
 - Bare `claudii` command shows smart account overview: sessions, account rate limits, agents, services
