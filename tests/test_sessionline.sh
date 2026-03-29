@@ -67,7 +67,8 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "effort mode high not shown" "0" "$(echo "$strip" | grep -c ' high')"
 
 # Worktree/Agent — written to session cache file
-_test_cache_dir="$(mktemp -d)"
+mkdir -p "$CLAUDII_HOME/tmp"
+_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
 output=$(echo '{"session_id":"testworktreeagent","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"workspace":{"name":"my-feature-branch"},"agent":{"name":"agent-42"}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
 _test_session_file="$_test_cache_dir/session-testwork"
 assert_file_exists "worktree/agent: session cache file created" "$_test_session_file"
