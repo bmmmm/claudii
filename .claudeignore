@@ -1,6 +1,6 @@
 .git/
 tmp/
 .DS_Store
-LICENSE
+*.png
 *.swp
 *.swo
