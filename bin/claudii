@@ -83,7 +83,7 @@ usage() {
   printf '    config [get|set|reset|export|import]\n'
   printf "    cost (c) · trends (t) · doctor (d) · restart · layers · version\n"
   printf "    agents  — configured agents (alias→skill) or onboarding\n"
-  printf "    watch [start|stop|status]  — rate-limit reset notifications\n"
+  printf "    watch [start|stop|status|test|volume|sound]  — rate-limit reset notifications\n"
   printf "    search ['query']  — launch Claude in search mode\n"
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
@@ -188,18 +188,58 @@ case "${1:-}" in
         echo "Refresh-Intervall: ${interval} (${seconds}s)"
         ;;
       "")
-        rm -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-        "$CLAUDII_HOME/bin/claudii-status"
-        exit_code=$?
+        cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+        rm -f "$cache_file"
+        "$CLAUDII_HOME/bin/claudii-status" --quiet
         if [[ "$_FORMAT" == "json" ]]; then
-          cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
           if [[ -f "$cache_file" ]]; then
             jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
           else
             echo "[]"
           fi
         else
-          [[ $exit_code -eq 0 ]] && echo -e "\033[0;32m✓ Alle Modelle verfügbar\033[0m"
+          # Per-model status display
+          printf '\n'
+          models_cfg=$(_cfgget statusline.models)
+          models_cfg="${models_cfg:-opus,sonnet,haiku}"
+          IFS=',' read -ra _status_models <<< "$models_cfg"
+
+          if [[ ! -f "$cache_file" ]]; then
+            printf '  no cache — run: claudii status 5m\n'
+          else
+            for _sm in "${_status_models[@]}"; do
+              _sm="${_sm// /}"
+              _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2)
+              _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
+              case "${_sm_state:-unknown}" in
+                ok)       _sm_icon="\033[0;32m✓\033[0m" ; _sm_text="\033[0;32mok\033[0m"       ;;
+                degraded) _sm_icon="\033[0;33m⚠\033[0m" ; _sm_text="\033[0;33mdegraded\033[0m" ;;
+                down)     _sm_icon="\033[0;31m✗\033[0m" ; _sm_text="\033[0;31mdown\033[0m"     ;;
+                *)        _sm_icon="\033[38;5;240m?\033[0m" ; _sm_text="\033[38;5;240munknown\033[0m" ;;
+              esac
+              printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
+            done
+
+            printf '\n'
+            _cache_mtime=0
+            if stat -f%m "$cache_file" >/dev/null 2>&1; then
+              _cache_mtime=$(stat -f%m "$cache_file")
+            else
+              _cache_mtime=$(stat -c%Y "$cache_file" 2>/dev/null || echo 0)
+            fi
+            _now=$(date +%s)
+            _cache_age=$(( _now - _cache_mtime ))
+            if (( _cache_age < 60 )); then
+              _age_str="just now"
+            else
+              _age_str="$(( _cache_age / 60 ))m ago"
+            fi
+            _ttl_val=$(_cfgget status.cache_ttl)
+            _ttl_val="${_ttl_val:-900}"
+            _ttl_min=$(( _ttl_val / 60 ))
+            printf "  \033[38;5;240mLast check: %s  ·  refreshes every %sm\033[0m\n" "$_age_str" "$_ttl_min"
+          fi
+          printf '\n'
         fi
         ;;
       *)
@@ -1594,8 +1634,42 @@ case "${1:-}" in
         _watch_notify "claudii watch is active"
         echo "claudii watch: test notification sent"
         ;;
+      volume)
+        _cfg_init
+        if [[ -z "${3:-}" ]]; then
+          val=$(_cfgget watch.volume)
+          [[ -z "$val" ]] && val="50"
+          echo "watch.volume: $val"
+        else
+          vol="${3}"
+          if ! [[ "$vol" =~ ^[0-9]+$ ]] || (( vol < 0 || vol > 100 )); then
+            echo "Invalid volume: $vol (must be 0-100)"; exit 1
+          fi
+          echo "$(jq --argjson v "$vol" '.watch.volume = $v' "$CONFIG")" > "$CONFIG"
+          echo "watch.volume: $vol"
+        fi
+        ;;
+      sound)
+        _cfg_init
+        if [[ -z "${3:-}" ]]; then
+          val=$(_cfgget watch.sound)
+          if [[ -z "$val" ]]; then
+            echo "watch.sound: (default)"
+          else
+            echo "watch.sound: $val"
+          fi
+        elif [[ "${3}" == "default" ]]; then
+          echo "$(jq '.watch.sound = ""' "$CONFIG")" > "$CONFIG"
+          echo "watch.sound: (default)"
+        else
+          sound_file="${3}"
+          [[ -f "$sound_file" ]] || { echo "File not found: $sound_file"; exit 1; }
+          echo "$(jq --arg v "$sound_file" '.watch.sound = $v' "$CONFIG")" > "$CONFIG"
+          echo "watch.sound: $sound_file"
+        fi
+        ;;
       *)
-        echo "Usage: claudii watch [start|stop|status|test]"; exit 1
+        echo "Usage: claudii watch [start|stop|status|test|volume|sound]"; exit 1
         ;;
     esac
     ;;

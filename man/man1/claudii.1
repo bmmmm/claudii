@@ -333,6 +333,9 @@ Uses the Statuspage components API; falls back to the RSS feed for per-model inc
 .TP
 .B status
 Live model health check (always bypasses the cache).
+Displays a per-model status table with icons and labels for each configured model
+(ok \(en green, degraded \(en yellow, down \(en red, unknown \(en dim).
+Shows the time since the last check and the configured refresh interval.
 Supports
 .B \-\-json
 (array of model/status objects).
@@ -470,6 +473,35 @@ Send a test notification immediately to verify that notifications work.
 Useful for checking
 .B watch.sound
 configuration.
+.
+.TP
+.B "watch volume"
+Show the current notification volume (0\(en100).
+.
+.TP
+.BI "watch volume " N
+Set the notification volume to
+.I N
+(0\(en100).
+Example:
+.BR "claudii watch volume 75" .
+.
+.TP
+.B "watch sound"
+Show the current notification sound file path, or
+.B (default)
+if none is set.
+.
+.TP
+.BI "watch sound " file
+Set a custom sound file to play on notification.
+The file must exist.
+Example:
+.BR "claudii watch sound /System/Library/Sounds/Glass.aiff" .
+.
+.TP
+.B "watch sound default"
+Reset the notification sound to the system default (no custom sound file).
 .
 .SS Agents
 .

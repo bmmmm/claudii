@@ -90,6 +90,8 @@ _claudii() {
             'stop:Stop the background watcher'
             'status:Show watcher status'
             'test:Send a test notification to verify watch works'
+            'volume:Show or set notification volume (0-100)'
+            'sound:Show or set notification sound file'
           )
           _describe 'watch subcommand' watch_cmds
           ;;
