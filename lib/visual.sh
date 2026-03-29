@@ -21,6 +21,7 @@ CLAUDII_CLR_RED="\033[0;31m"
 CLAUDII_CLR_CYAN="\033[0;36m"
 CLAUDII_CLR_DIM="\033[2m"
 CLAUDII_CLR_BOLD="\033[1m"
+CLAUDII_CLR_ACCENT="\033[38;5;213m"
 CLAUDII_CLR_RESET="\033[0m"
 
 # ── Helper ────────────────────────────────────────────────────────────────────

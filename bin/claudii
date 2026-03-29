@@ -88,38 +88,38 @@ _cfgget() {
 }
 
 usage() {
-  local d="\033[38;5;240m›\033[0m"  # dim separator
+  local d="${CLAUDII_CLR_DIM}›${CLAUDII_CLR_RESET}"  # dim separator
   printf '\n'
-  printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m — Claude Interaction Intelligence\n' "$VERSION"
+  printf '  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET} — Claude Interaction Intelligence\n' "$VERSION"
   printf '\n'
-  printf '  \033[38;5;213maliases\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}aliases${CLAUDII_CLR_RESET}\n'
   printf "    %-5s  %-7s  %-6s  $d %s\n" "cl"  "sonnet" "high"   "default"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clo" "opus"   "high"   "complex tasks"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clm" "opus"   "max"    "max effort"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
   printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + live status"
   printf '\n'
-  printf '  \033[38;5;213mDisplay Layers\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n'
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
   printf "    %-33s $d %s\n" "layers"                          "component overview with status"
   printf '\n'
-  printf '  \033[38;5;213mSessions & Cost\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n'
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
   printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
   printf '\n'
-  printf '  \033[38;5;213mWatch\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}Watch${CLAUDII_CLR_RESET}\n'
   printf "    %-33s $d %s\n" "watch [start|stop|status|test|volume|sound]" "rate-limit reset notifications"
   printf '\n'
-  printf '  \033[38;5;213mConfig\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}Config${CLAUDII_CLR_RESET}\n'
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
   printf '\n'
-  printf '  \033[38;5;213mSystem\033[0m\n'
+  printf '  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n'
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
   printf "    %-33s $d %s\n" "version"                         "show version number"
@@ -128,7 +128,7 @@ usage() {
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
   printf '\n'
-  printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
+  printf '  ${CLAUDII_CLR_ACCENT}man claudii${CLAUDII_CLR_RESET}  full reference\n'
   printf '\n'
 }
 
@@ -220,7 +220,7 @@ case "${1:-}" in
         echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
       fi
     fi
-    echo -e "\033[0;32mAll layers enabled\033[0m  (ClaudeStatus · Dashboard · CC-Statusline)"
+    echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Dashboard · CC-Statusline)"
     ;;
   off)
     _cfg_init
@@ -230,7 +230,7 @@ case "${1:-}" in
     if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
       echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
     fi
-    echo -e "\033[0;33mAll layers disabled\033[0m  (ClaudeStatus · Dashboard · CC-Statusline)"
+    echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Dashboard · CC-Statusline)"
     ;;
 
   claudestatus)
@@ -238,18 +238,18 @@ case "${1:-}" in
     case "${2:-}" in
       on)
         echo "$(jq '.statusline.enabled = true' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mClaudeStatus aktiviert\033[0m"
+        echo -e "${CLAUDII_CLR_GREEN}ClaudeStatus aktiviert${CLAUDII_CLR_RESET}"
         ;;
       off)
         echo "$(jq '.statusline.enabled = false' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;33mClaudeStatus deaktiviert\033[0m"
+        echo -e "${CLAUDII_CLR_YELLOW}ClaudeStatus deaktiviert${CLAUDII_CLR_RESET}"
         ;;
       "")
         enabled=$(_cfgget statusline.enabled)
         if [[ "$enabled" == "true" ]]; then
-          echo -e "ClaudeStatus: \033[0;32mon\033[0m"
+          echo -e "ClaudeStatus: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
         else
-          echo -e "ClaudeStatus: \033[0;33moff\033[0m"
+          echo -e "ClaudeStatus: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
         fi
         ;;
       *)
@@ -263,34 +263,34 @@ case "${1:-}" in
     case "${2:-}" in
       mini)
         echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mDashboard: mini\033[0m  (compact line below prompt)"
+        echo -e "${CLAUDII_CLR_GREEN}Dashboard: mini${CLAUDII_CLR_RESET}  (compact line below prompt)"
         ;;
       big)
         echo "$(jq '.dashboard.enabled = "big"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mDashboard: big\033[0m  (full session overview)"
+        echo -e "${CLAUDII_CLR_GREEN}Dashboard: big${CLAUDII_CLR_RESET}  (full session overview)"
         ;;
       auto)
         echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;36mDashboard: auto\033[0m  (mini when sessions active, off when none)"
+        echo -e "${CLAUDII_CLR_CYAN}Dashboard: auto${CLAUDII_CLR_RESET}  (mini when sessions active, off when none)"
         ;;
       on)
         echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mDashboard: mini\033[0m  (on = mini)"
+        echo -e "${CLAUDII_CLR_GREEN}Dashboard: mini${CLAUDII_CLR_RESET}  (on = mini)"
         ;;
       off)
         echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;33mDashboard: off\033[0m"
+        echo -e "${CLAUDII_CLR_YELLOW}Dashboard: off${CLAUDII_CLR_RESET}"
         ;;
       "")
         current=$(_cfgget dashboard.enabled)
         current="${current:-off}"
         case "$current" in
-          mini)  echo -e "Dashboard: \033[0;32mmini\033[0m  (compact line below prompt)" ;;
-          big)   echo -e "Dashboard: \033[0;32mbig\033[0m  (full session overview)" ;;
-          auto)  echo -e "Dashboard: \033[0;36mauto\033[0m  (mini when sessions active, off when none)" ;;
-          off)   echo -e "Dashboard: \033[0;33moff\033[0m" ;;
-          true)  echo -e "Dashboard: \033[0;32mmini\033[0m  (legacy: true → mini)" ;;
-          *)     echo -e "Dashboard: \033[0;33m${current}\033[0m" ;;
+          mini)  echo -e "Dashboard: ${CLAUDII_CLR_GREEN}mini${CLAUDII_CLR_RESET}  (compact line below prompt)" ;;
+          big)   echo -e "Dashboard: ${CLAUDII_CLR_GREEN}big${CLAUDII_CLR_RESET}  (full session overview)" ;;
+          auto)  echo -e "Dashboard: ${CLAUDII_CLR_CYAN}auto${CLAUDII_CLR_RESET}  (mini when sessions active, off when none)" ;;
+          off)   echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" ;;
+          true)  echo -e "Dashboard: ${CLAUDII_CLR_GREEN}mini${CLAUDII_CLR_RESET}  (legacy: true → mini)" ;;
+          *)     echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}${current}${CLAUDII_CLR_RESET}" ;;
         esac
         ;;
       *)
@@ -337,10 +337,10 @@ case "${1:-}" in
               _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2)
               _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
               case "${_sm_state:-unknown}" in
-                ok)       _sm_icon="\033[0;32m✓\033[0m" ; _sm_text="\033[0;32mok\033[0m"       ;;
-                degraded) _sm_icon="\033[0;33m⚠\033[0m" ; _sm_text="\033[0;33mdegraded\033[0m" ;;
-                down)     _sm_icon="\033[0;31m✗\033[0m" ; _sm_text="\033[0;31mdown\033[0m"     ;;
-                *)        _sm_icon="\033[38;5;240m?\033[0m" ; _sm_text="\033[38;5;240munknown\033[0m" ;;
+                ok)       _sm_icon="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
+                degraded) _sm_icon="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ;;
+                down)     _sm_icon="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ;;
+                *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
               esac
               printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
             done
@@ -362,7 +362,7 @@ case "${1:-}" in
             _ttl_val=$(_cfgget status.cache_ttl)
             _ttl_val="${_ttl_val:-900}"
             _ttl_min=$(( _ttl_val / 60 ))
-            printf "  \033[38;5;240mLast check: %s  ·  refreshes every %sm\033[0m\n" "$_age_str" "$_ttl_min"
+            printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
           fi
           printf '\n'
         fi
@@ -370,190 +370,6 @@ case "${1:-}" in
       *)
         echo "Unbekannte status-Option: ${2}"
         echo "Usage: claudii status [5m|15m|30m]"; exit 1
-        ;;
-    esac
-    ;;
-
-  dash)
-    _cfg_init
-    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-    now=$(date +%s)
-
-    case "${2:-}" in
-      on)
-        echo "$(jq '.dashboard.enabled = "true"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;32mDashboard enabled (always on)\033[0m"
-        ;;
-      off)
-        echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;33mDashboard disabled\033[0m"
-        ;;
-      auto)
-        echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
-        echo -e "\033[0;36mDashboard auto mode (shows when sessions active)\033[0m"
-        ;;
-      show|"")
-        # Show current mode + detail view of all sessions
-        current=$(_cfgget dashboard.enabled)
-        [[ -z "$current" ]] && current="auto"
-
-        printf '\n'
-        printf '  \033[0;36mclaudii dashboard\033[0m  mode: %s\n' "$current"
-        printf '\n'
-
-        shopt -s nullglob
-        session_files=("$cache_dir"/session-*)
-        shopt -u nullglob
-
-        if [[ ${#session_files[@]} -eq 0 ]]; then
-          printf '  No session data.\n\n'
-        else
-          cyan='\033[0;36m'
-          dim='\033[38;5;240m'
-          bold='\033[1m'
-          reset='\033[0m'
-          green='\033[0;32m'
-          yellow='\033[0;33m'
-          red='\033[0;31m'
-
-          total_cost=0
-          active_count=0
-          all_count=0
-
-          for f in "${session_files[@]}"; do
-            [[ -f "$f" ]] || continue
-            mt=$(stat -f%m "$f" 2>/dev/null || stat -c%Y "$f" 2>/dev/null || echo 0)
-            age=$(( now - mt ))
-
-            content=$(cat "$f" 2>/dev/null) || continue
-            s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_reset="" s_sid=""
-            s_worktree="" s_agent="" s_cache_pct="" s_7d_start="" s_ppid=""
-            while IFS='=' read -r key val; do
-              case "$key" in
-                model)          s_model="$val" ;;
-                ctx_pct)        s_ctx="$val" ;;
-                cost)           s_cost="$val" ;;
-                rate_5h)        s_5h="$val" ;;
-                rate_7d)        s_7d="$val" ;;
-                reset_5h)       s_reset="$val" ;;
-                session_id)     s_sid="$val" ;;
-                worktree)       s_worktree="$val" ;;
-                agent)          s_agent="$val" ;;
-                cache_pct)      s_cache_pct="$val" ;;
-                rate_7d_start)  s_7d_start="$val" ;;
-                ppid)           s_ppid="$val" ;;
-              esac
-            done < "$f"
-
-            [[ -z "$s_model" ]] && continue
-            (( all_count++ ))
-
-            # Active check: mtime < 300s and PID alive (if available)
-            is_active=0
-            if (( age < 300 )); then
-              if [[ -n "$s_ppid" && "$s_ppid" != "0" && "$s_ppid" != "" ]]; then
-                kill -0 "$s_ppid" 2>/dev/null && is_active=1
-              else
-                is_active=1
-              fi
-            fi
-            (( is_active )) && (( active_count++ ))
-
-            # Cost
-            if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
-              total_cost=$(echo "$total_cost + $s_cost" | bc 2>/dev/null || echo "$total_cost")
-            fi
-
-            # Status icon
-            if (( is_active )); then
-              icon="${green}●${reset}"
-            else
-              icon="${dim}○${reset}"
-            fi
-
-            # Build context bar (8 blocks)
-            ctx_bar=""
-            if [[ -n "$s_ctx" && "$s_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-              pct_int=${s_ctx%.*}
-              (( pct_int > 100 )) && pct_int=100
-              (( pct_int < 0 )) && pct_int=0
-              filled=$(( pct_int * 8 / 100 ))
-              empty=$(( 8 - filled ))
-              if (( pct_int >= 90 )); then bc_color="$red"
-              elif (( pct_int >= 70 )); then bc_color="$yellow"
-              else bc_color="$green"; fi
-              bar_str=""
-              for (( bi=0; bi<filled; bi++ )); do bar_str+="█"; done
-              for (( bi=0; bi<empty; bi++ )); do bar_str+="░"; done
-              ctx_bar=" ${bc_color}${bar_str}${reset} ${dim}${pct_int}%${reset}"
-            fi
-
-            line="  ${icon} ${bold}${s_model}${reset}${ctx_bar}"
-
-            # Cost
-            if [[ -n "$s_cost" && "$s_cost" != "0" ]]; then
-              line+=" ${dim}│${reset} ${cyan}\$$(printf '%.2f' "$s_cost")${reset}"
-            fi
-
-            # Cache hit
-            if [[ -n "$s_cache_pct" && "$s_cache_pct" != "0" && "$s_cache_pct" != "" ]]; then
-              line+=" ${dim}│${reset} ${dim}⚡${s_cache_pct}%${reset}"
-            fi
-
-            # Rate limits
-            if [[ -n "$s_5h" && "$s_5h" != "" ]]; then
-              rl_int=${s_5h%.*}
-              if (( rl_int >= 90 )); then rl_c="$red"
-              elif (( rl_int >= 70 )); then rl_c="$yellow"
-              else rl_c="$cyan"; fi
-              line+=" ${dim}│${reset} ${rl_c}5h:${rl_int}%${reset}"
-              # Reset countdown
-              if [[ -n "$s_reset" && "$s_reset" != "0" ]]; then
-                remaining=$(( s_reset - now ))
-                (( remaining > 0 )) && line+=" ${dim}reset $(( remaining / 60 ))min${reset}"
-              fi
-            fi
-            if [[ -n "$s_7d" && "$s_7d" != "" ]]; then
-              rl7_int=${s_7d%.*}
-              if (( rl7_int >= 90 )); then rl7_c="$red"
-              elif (( rl7_int >= 70 )); then rl7_c="$yellow"
-              else rl7_c="$cyan"; fi
-              line+=" ${rl7_c}7d:${rl7_int}%${reset}"
-              # 7d delta
-              if [[ -n "$s_7d_start" && "$s_7d_start" != "" ]]; then
-                delta=$(( rl7_int - ${s_7d_start%.*} ))
-                (( delta > 0 )) && line+=" ${dim}(+${delta}%)${reset}"
-              fi
-            fi
-
-            # Context
-            [[ -n "$s_worktree" ]] && line+=" ${dim}[wt:${s_worktree}]${reset}"
-            [[ -n "$s_agent" ]]    && line+=" ${dim}[agent:${s_agent}]${reset}"
-
-            # Age
-            if (( age < 60 )); then age_str="${age}s"
-            elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
-            elif (( age < 86400 )); then age_str="$(( age / 3600 ))h"
-            else age_str="$(( age / 86400 ))d"; fi
-            line+="  ${dim}${age_str} ago${reset}"
-
-            # Session ID
-            [[ -n "$s_sid" ]] && line+="  ${dim}${s_sid:0:8}${reset}"
-
-            printf '%b\n' "$line"
-          done
-
-          # Summary
-          printf '\n'
-          printf "  ${dim}%d active, %d total, \$%s${reset}\n" \
-            "$active_count" "$all_count" "$(printf '%.2f' "$total_cost")"
-          printf '\n'
-          printf "  ${dim}claudii dashboard on|off|auto  to change mode${reset}\n"
-        fi
-        printf '\n'
-        ;;
-      *)
-        echo "Usage: claudii dashboard [on|off|auto]"; exit 1
         ;;
     esac
     ;;
@@ -566,10 +382,10 @@ case "${1:-}" in
           echo "Fehler: $SETTINGS nicht gefunden — ist Claude Code installiert?"; exit 1
         fi
         if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-          echo -e "\033[0;36mCC-Statusline bereits aktiv\033[0m"
+          echo -e "${CLAUDII_CLR_CYAN}CC-Statusline bereits aktiv${CLAUDII_CLR_RESET}"
         else
           echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
-          echo -e "\033[0;32mCC-Statusline aktiviert\033[0m  → Claude Code neu starten zum Aktivieren"
+          echo -e "${CLAUDII_CLR_GREEN}CC-Statusline aktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten zum Aktivieren"
         fi
         ;;
       off)
@@ -578,7 +394,7 @@ case "${1:-}" in
         fi
         if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
           echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
-          echo -e "\033[0;33mCC-Statusline deaktiviert\033[0m  → Claude Code neu starten"
+          echo -e "${CLAUDII_CLR_YELLOW}CC-Statusline deaktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten"
         else
           echo "CC-Statusline war nicht konfiguriert"
         fi
@@ -587,10 +403,10 @@ case "${1:-}" in
         if [[ ! -f "$SETTINGS" ]]; then
           echo "CC-Statusline: nicht konfiguriert  ($SETTINGS fehlt)"
         elif jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-          echo -e "CC-Statusline: \033[0;32maktiv\033[0m  ($SETTINGS)"
+          echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}aktiv${CLAUDII_CLR_RESET}  ($SETTINGS)"
         elif jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
           other=$(jq -r '.statusLine.command // .statusLine' "$SETTINGS")
-          echo -e "CC-Statusline: \033[0;33mandere Konfiguration\033[0m  ($other)"
+          echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}andere Konfiguration${CLAUDII_CLR_RESET}  ($other)"
         else
           echo "CC-Statusline: nicht konfiguriert"
           echo "  → claudii cc-statusline on  zum Aktivieren"
@@ -769,8 +585,6 @@ case "${1:-}" in
       exit 0
     fi
 
-    cyan='\033[0;36m'
-    reset='\033[0m'
     line='  ─────────────────'
 
     _print_section() {
@@ -784,24 +598,24 @@ case "${1:-}" in
           local _pc="${_alltime_cost[$_pi]}" _pn="${_alltime_count[$_pi]}"
         fi
         [[ "$_pn" == "0" ]] && continue
-        printf "    %-10s ${cyan}\$%s${reset}  (%s session%s)\n" \
+        printf "    %-10s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}  (%s session%s)\n" \
           "$_pm" "$(printf '%.2f' "$_pc")" "$_pn" "$( (( _pn != 1 )) && echo 's' || true)"
         total=$(echo "$total + $_pc" | bc -l)
         has_data=1
       done
       if (( has_data )); then
         printf '%s\n' "$line"
-        printf "    %-10s ${cyan}\$%s${reset}\n" "Total" "$(printf '%.2f' "$total")"
+        printf "    %-10s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}\n" "Total" "$(printf '%.2f' "$total")"
       else
         printf "    (none)\n"
       fi
     }
 
     printf '\n'
-    printf '  \033[38;5;213mToday\033[0m\n'
+    printf '  ${CLAUDII_CLR_ACCENT}Today${CLAUDII_CLR_RESET}\n'
     _print_section today
     printf '\n'
-    printf '  \033[38;5;213mAll time\033[0m\n'
+    printf '  ${CLAUDII_CLR_ACCENT}All time${CLAUDII_CLR_RESET}\n'
     _print_section alltime
     printf '\n'
     ;;
@@ -994,10 +808,10 @@ case "${1:-}" in
       }
 
       # --- Pretty output ---
-      cyan  = "\033[0;36m"
-      dim   = "\033[38;5;240m"
-      pink  = "\033[38;5;213m"
-      reset = "\033[0m"
+      cyan  = "${CLAUDII_CLR_CYAN}"
+      dim   = "${CLAUDII_CLR_DIM}"
+      pink  = "${CLAUDII_CLR_ACCENT}"
+      reset = "${CLAUDII_CLR_RESET}"
       sep   = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
 
       printf "\n"
@@ -1315,7 +1129,7 @@ case "${1:-}" in
 
   changelog)
     printf '\n'
-    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+    printf '  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n' "$VERSION"
     printf '\n'
     _changelog="$CLAUDII_HOME/CHANGELOG.md"
     if [[ -f "$_changelog" ]]; then
@@ -1328,13 +1142,13 @@ case "${1:-}" in
       ' "$_changelog")
       if [[ -n "$_notes" ]]; then
         while IFS= read -r _rline; do
-          printf '  \033[38;5;240m%s\033[0m\n' "$_rline"
+          printf '  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n' "$_rline"
         done <<< "$_notes"
       else
-        printf '  \033[38;5;240mNo changelog entry for v%s\033[0m\n' "$VERSION"
+        printf '  ${CLAUDII_CLR_DIM}No changelog entry for v%s${CLAUDII_CLR_RESET}\n' "$VERSION"
       fi
     else
-      printf '  \033[38;5;240mCHANGELOG.md not found\033[0m\n'
+      printf '  ${CLAUDII_CLR_DIM}CHANGELOG.md not found${CLAUDII_CLR_RESET}\n'
     fi
     printf '\n'
     ;;
@@ -1344,8 +1158,8 @@ case "${1:-}" in
     _cfg_init
 
     printf '\n'
-    printf '  \033[0;36mclaudii layers\033[0m\n'
-    printf '  \033[38;5;213m──────────────────────────────────────────────────────────\033[0m\n'
+    printf '  ${CLAUDII_CLR_CYAN}claudii layers${CLAUDII_CLR_RESET}\n'
+    printf '  ${CLAUDII_CLR_ACCENT}──────────────────────────────────────────────────────────${CLAUDII_CLR_RESET}\n'
     printf '\n'
 
     # ClaudeStatus
@@ -1354,14 +1168,14 @@ case "${1:-}" in
     cs_ttl=$(_cfgget status.cache_ttl)
     cs_cache="$local_cache/status-models"
     if [[ "$cs_enabled" == "true" ]]; then
-      cs_state="\033[0;32mon\033[0m"
+      cs_state="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
     else
-      cs_state="\033[0;33moff\033[0m"
+      cs_state="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
     fi
-    printf '  \033[1;36mClaudeStatus\033[0m                              Shell RPROMPT\n'
-    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n'
+    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
     printf '  Model health indicators from status.claude.com\n'
-    printf '  Example:  [Opus \033[0;32m✓\033[0m Sonnet \033[0;32m✓\033[0m Haiku \033[0;32m✓\033[0m] 13m\n'
+    printf '  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n'
     printf '\n'
     printf '  Status:   %b\n' "$cs_state"
     printf '  Models:   %s\n' "$cs_models"
@@ -1369,7 +1183,7 @@ case "${1:-}" in
     if [[ -f "$cs_cache" ]]; then
       printf '  Cache:    %s\n' "$cs_cache"
     else
-      printf '  Cache:    \033[38;5;240m(not yet created)\033[0m\n'
+      printf '  Cache:    ${CLAUDII_CLR_DIM}(not yet created)${CLAUDII_CLR_RESET}\n'
     fi
     printf '  Commands: claudii on/off · claudii status\n'
     printf '\n'
@@ -1379,10 +1193,10 @@ case "${1:-}" in
     for _sf in "$local_cache"/session-*; do
       [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
     done 2>/dev/null
-    printf '  \033[1;36mDashboard\033[0m                                  Shell, above prompt\n'
-    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n'
+    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
     printf '  Session data from cache (model, context, cost, rate limits)\n'
-    printf '  Example:  \033[1mOpus\033[0m \033[0;32m████████\033[0m\033[38;5;240m░░\033[0m 76%% \033[38;5;240m│\033[0m \033[0;36m$0.07\033[0m \033[38;5;240m│\033[0m 5h:17%% reset 43min\n'
+    printf '  Example:  ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} 76%% ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:17%% reset 43min\n'
     printf '\n'
     printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
     printf '  Sessions: %d cache file(s)\n' "$sb_count"
@@ -1394,15 +1208,15 @@ case "${1:-}" in
     if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
       sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
       if [[ -n "$sl_cmd" && "$sl_cmd" == *claudii* ]]; then
-        sl_state="\033[0;32maktiv\033[0m"
+        sl_state="${CLAUDII_CLR_GREEN}aktiv${CLAUDII_CLR_RESET}"
       else
-        sl_state="\033[38;5;240mnicht konfiguriert\033[0m"
+        sl_state="${CLAUDII_CLR_DIM}nicht konfiguriert${CLAUDII_CLR_RESET}"
       fi
     else
-      sl_state="\033[38;5;240m~/.claude/settings.json nicht gefunden\033[0m"
+      sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json nicht gefunden${CLAUDII_CLR_RESET}"
     fi
-    printf '  \033[1;36mCC-Statusline\033[0m                             Inside Claude Code\n'
-    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n'
+    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
     printf '  Info-dense status line rendered inside Claude Code CLI\n'
     printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
     printf '\n'
@@ -1413,15 +1227,15 @@ case "${1:-}" in
     printf '\n'
 
     # Data flow
-    printf '  \033[1;36mData Flow\033[0m\n'
-    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
-    printf '  Claude Code \033[38;5;240m─JSON→\033[0m \033[1mCC-Statusline\033[0m \033[38;5;240m─cache→\033[0m \033[1mDashboard\033[0m\n'
-    printf '  status.claude.com \033[38;5;240m─bg→\033[0m \033[1mClaudeStatus\033[0m (RPROMPT)\n'
+    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n'
+    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
+    printf '  Claude Code ${CLAUDII_CLR_DIM}─JSON→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}CC-Statusline${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}─cache→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Dashboard${CLAUDII_CLR_RESET}\n'
+    printf '  status.claude.com ${CLAUDII_CLR_DIM}─bg→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}ClaudeStatus${CLAUDII_CLR_RESET} (RPROMPT)\n'
     printf '\n'
 
     # Symbol & field reference
-    printf '  \033[1;36mSymbols & Fields\033[0m\n'
-    printf '  \033[38;5;240m%.56s\033[0m\n' "────────────────────────────────────────────────────────"
+    printf '  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n'
+    printf '  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n' "────────────────────────────────────────────────────────"
     printf '\n'
     printf '  CC-Statusline\n'
     printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (10 blocks = 100%)"
@@ -1449,12 +1263,12 @@ case "${1:-}" in
 
   42)
     printf '\n'
-    printf '  \033[0;36m✦  The answer is 42.\033[0m\n'
+    printf '  ${CLAUDII_CLR_CYAN}✦  The answer is 42.${CLAUDII_CLR_RESET}\n'
     printf '\n'
     printf '  It was also the number of times Opus was down\n'
     printf '  while this tool was being built.\n'
     printf '\n'
-    printf '  \033[38;5;213m(We monitor all three now. You'\''re welcome.)\033[0m\n'
+    printf '  ${CLAUDII_CLR_ACCENT}(We monitor all three now. You'\''re welcome.)${CLAUDII_CLR_RESET}\n'
     printf '\n'
     ;;
 
@@ -1660,14 +1474,14 @@ case "${1:-}" in
     # Summary
     printf '\n'
     total_fmt=$(printf '$%.2f' "$total_cost")
-    printf "  \033[38;5;213m%d aktiv, %d beendet, %s total\033[0m" "$active" "$stale" "$total_fmt"
+    printf "  ${CLAUDII_CLR_ACCENT}%d aktiv, %d beendet, %s total${CLAUDII_CLR_RESET}" "$active" "$stale" "$total_fmt"
     if [[ -n "$latest_5h" ]]; then
       reset_str=""
       if [[ -n "$latest_reset" && "$latest_reset" != "0" ]]; then
         remaining=$(( latest_reset - now ))
         (( remaining > 0 )) && reset_str=" (Reset in $(( remaining / 60 ))min)"
       fi
-      printf "  \033[2m5h:%s%% 7d:%s%%%s\033[0m" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
+      printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
     fi
     printf '\n\n'
     ;;
@@ -1685,7 +1499,7 @@ case "${1:-}" in
       echo "  Git:      cd $CLAUDII_HOME && git pull"
       exit 1
     fi
-    printf '\033[0;32m✓ Updated. Run: claudii restart\033[0m\n'
+    printf '${CLAUDII_CLR_GREEN}✓ Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n'
     ;;
 
   watch)
@@ -1777,7 +1591,7 @@ case "${1:-}" in
         if [[ -f "$pid_file" ]]; then
           watcher_pid=$(<"$pid_file")
           if kill -0 "$watcher_pid" 2>/dev/null; then
-            echo -e "claudii watch: \033[0;32mrunning\033[0m (PID $watcher_pid)"
+            echo -e "claudii watch: ${CLAUDII_CLR_GREEN}running${CLAUDII_CLR_RESET} (PID $watcher_pid)"
           else
             rm -f "$pid_file"
             echo "claudii watch: not running (stale PID file removed)"
@@ -1909,11 +1723,11 @@ case "${1:-}" in
       exit 0
     fi
 
-    ok="\033[0;32m✓\033[0m"
-    warn="\033[0;33m⚠\033[0m"
-    fail="\033[0;31m✗\033[0m"
+    ok="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}"
+    warn="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}"
+    fail="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}"
     printf '\n'
-    printf '  \033[0;36mclaudii doctor\033[0m\n\n'
+    printf '  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n'
     for (( i=0; i<_dc_count; i++ )); do
       case "${_dc_status[$i]}" in
         ok)   icon="$ok"   ;;
@@ -1997,7 +1811,7 @@ case "${1:-}" in
       done <<< "$aliases_list"
 
       printf '\n'
-      printf "  \033[38;5;213m%-${max_alias}s  %-${max_skill}s  %-${max_model}s  EFFORT\033[0m\n" "ALIAS" "SKILL" "MODEL"
+      printf "  ${CLAUDII_CLR_ACCENT}%-${max_alias}s  %-${max_skill}s  %-${max_model}s  EFFORT${CLAUDII_CLR_RESET}\n" "ALIAS" "SKILL" "MODEL"
       while IFS= read -r alias; do
         skill=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].skill // ""')
         model=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].model // ""')
