@@ -43,20 +43,6 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
-# Burn-rate ETA: how many minutes until 100% rate limit at current burn pace
-_burn_eta=""
-_session_min=""
-if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
-  _session_min=$(awk "BEGIN { printf \"%.4f\", $duration_ms / 60000 }")
-fi
-if [[ -n "$_session_min" && -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]]; then
-  _session_min_int=${_session_min%.*}
-  _rate_int=${rate_5h%.*}
-  if (( _session_min_int >= 3 && _rate_int > 0 )); then
-    _burn_eta=$(awk "BEGIN { r=$rate_5h; m=$_session_min; printf \"%d\", int((100-r)/(r/m) + 0.5) }")
-  fi
-fi
-
 # Cache hit percentage — computed from cache_read vs input tokens
 _cache_pct=""
 if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
@@ -105,7 +91,6 @@ _ppid="${PPID:-}"
   "worktree=$worktree_name" \
   "agent=$agent_name" \
   "model_id=$model_id" \
-  "burn_eta=$_burn_eta" \
   "cache_pct=$_cache_pct" \
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
@@ -238,18 +223,6 @@ if (( _cols >= 80 )); then
 
     out+="${SEP}$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}${_delta_str}"
 
-    # Burn-rate ETA — show when calculated and < 120min
-    if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] && (( _burn_eta < 120 )); then
-      if (( _burn_eta < 10 )); then
-        _eta_color="\033[31m"    # red
-      elif (( _burn_eta < 30 )); then
-        _eta_color="\033[33m"    # yellow
-      else
-        _eta_color="${DIM}"      # dim
-      fi
-      out+=" ${_eta_color}~${_burn_eta}min${RST}"
-    fi
-
     # Reset countdown ↺Xm — color depends on rate level and time remaining
     if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
       _now=$(date +%s)
@@ -270,9 +243,59 @@ if (( _cols >= 80 )); then
       fi
     fi
   fi
+
   if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
     [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"
-    out+=" $(_rlc "$rate_7d")7d:${rate_7d%.*}%${RST}"
+    _rate_7d_pct=${rate_7d%.*}
+
+    # 7d delta vs session start
+    _delta_7d_str=""
+    if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" ]]; then
+      _start_7d_pct=${_rate_7d_start%.*}
+      _delta_7d=$(( _rate_7d_pct - _start_7d_pct ))
+      if (( _delta_7d > 0 )); then
+        _delta_7d_str=" ${DIM}(+${_delta_7d}%)${RST}"
+      elif (( _delta_7d < 0 )); then
+        _delta_7d_str=" ${DIM}(${_delta_7d}%)${RST}"
+      fi
+    fi
+
+    out+=" $(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}${_delta_7d_str}"
+
+    # 7d reset countdown — format depends on remaining time
+    if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
+      _now=$(date +%s)
+      _reset_7d_sec=$(awk "BEGIN { d=$reset_7d - $_now; printf \"%d\", (d > 0 ? int(d + 0.5) : 0) }")
+      if (( _reset_7d_sec > 0 )); then
+        _reset_7d_min=$(( _reset_7d_sec / 60 ))
+        _reset_7d_hr=$(( _reset_7d_sec / 3600 ))
+        if (( _reset_7d_sec < 3600 )); then
+          _reset_7d_fmt="${_reset_7d_min}m"
+        elif (( _reset_7d_sec < 86400 )); then
+          _reset_7d_fmt="${_reset_7d_hr}h"
+        else
+          _r7d_days=$(( _reset_7d_sec / 86400 ))
+          _r7d_hours=$(( (_reset_7d_sec % 86400) / 3600 ))
+          if (( _r7d_hours > 0 )); then
+            _reset_7d_fmt="${_r7d_days}d${_r7d_hours}h"
+          else
+            _reset_7d_fmt="${_r7d_days}d"
+          fi
+        fi
+        if (( _rate_7d_pct < 50 )); then
+          _reset_7d_color="${DIM}"         # dim — not relevant
+        elif (( _reset_7d_min < 5 )); then
+          _reset_7d_color="\033[0;32m"    # green — refresh imminent!
+        elif (( _reset_7d_min < 30 )); then
+          _reset_7d_color="\033[0;97m"    # bright white — getting close
+        elif (( _reset_7d_sec < 3600 )); then
+          _reset_7d_color=""              # default — moderate
+        else
+          _reset_7d_color="${DIM}"        # dim — plenty of time
+        fi
+        out+=" ${_reset_7d_color}↺${_reset_7d_fmt}${RST}"
+      fi
+    fi
   fi
 fi
 
