@@ -24,13 +24,14 @@ _claudii() {
         'status:Live model health check / set refresh interval'
         'sessions:Active sessions, costs, rate limits'
         'se:Shorthand for sessions'
-        'is:All sessions — active and inactive'
-        'dash:Multi-session dashboard toggle and detail view'
+        'sessions-inactive:Inactive sessions with age, context and rate limits'
+        'si:Shorthand for sessions-inactive'
         'config:Read or write config values'
         'cost:Show session costs (today and all-time)'
         'trends:Weekly and daily cost trends from persistent history (Flight Recorder)'
         'layers:Component overview (ClaudeStatus, Dashboard, Sessionline)'
-        'version:Show version and about info'
+        'version:Show version number'
+        'changelog:Release notes for current version'
         'doctor:Check claudii installation health'
         'restart:Reload plugin'
         'update:Update claudii (auto-detects Homebrew or git install)'
@@ -83,17 +84,6 @@ _claudii() {
             'off:Deactivate in-session statusline'
           )
           _describe 'cc-statusline option' sl_opts
-          ;;
-
-        dash)
-          local -a dash_opts
-          dash_opts=(
-            'on:Always show dashboard'
-            'off:Never show dashboard'
-            'auto:Show when sessions active (default)'
-            'show:Detail view of all sessions'
-          )
-          _describe 'dash option' dash_opts
           ;;
 
         watch)

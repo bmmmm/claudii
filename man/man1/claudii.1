@@ -459,14 +459,11 @@ Supports
 (tab-separated rows).
 .
 .TP
-.B is
-Show all sessions \(em active and inactive.
-Same session detail format as the bare
-.B claudii
-overview, but without filtering: both running (green \(bu) and recently stopped
-(dim \(ci) sessions are listed, with the age of inactive sessions appended.
-Useful for a quick answer to \(lqwhat is Claude doing?\(rq when background or
-finished sessions are also of interest.
+.B sessions-inactive
+Show inactive (ended or stale) Claude Code sessions.
+Lists sessions that are no longer active, with age, context usage, and rate-limit data.
+Alias:
+.BR si .
 .
 .TP
 .B cost
@@ -681,6 +678,12 @@ When piped (stdout is not a terminal), prints the bare version number without th
 prefix.
 Supports
 .BR \-\-json .
+.
+.TP
+.B changelog
+Shows release notes for the current version from CHANGELOG.md.
+Alias:
+.BR about .
 .
 .TP
 .B doctor

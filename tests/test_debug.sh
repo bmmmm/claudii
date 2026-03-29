@@ -16,7 +16,7 @@ JSON='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"t
 # ── debug command is removed ──
 
 output=$(bash "$CLI" debug 2>&1 || true)
-assert_contains "debug command removed: shows config redirect" "config set" "$output"
+assert_contains "debug command removed: shows config redirect" "Unknown command" "$output"
 
 # ── Use config set to manage debug.level ──
 

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+source "$CLAUDII_HOME/lib/visual.sh"
 VERSION="0.6.0"
 
 # TTY detection — 1 if stdout is a terminal, 0 if piped
@@ -129,6 +130,71 @@ usage() {
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
+}
+
+# ── Parse session cache file into _PSC_* variables ──────────────────────────
+_parse_session_cache() {
+  _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
+  _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
+  _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
+  _PSC_model_id= _PSC_burn_eta= _PSC_rate_5h_start=
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      model)          _PSC_model="$_v" ;;
+      ctx_pct)        _PSC_ctx_pct="$_v" ;;
+      cost)           _PSC_cost="$_v" ;;
+      rate_5h)        _PSC_rate_5h="$_v" ;;
+      rate_7d)        _PSC_rate_7d="$_v" ;;
+      reset_5h)       _PSC_reset_5h="$_v" ;;
+      reset_7d)       _PSC_reset_7d="$_v" ;;
+      session_id)     _PSC_session_id="$_v" ;;
+      ppid)           _PSC_ppid="$_v" ;;
+      worktree)       _PSC_worktree="$_v" ;;
+      agent)          _PSC_agent="$_v" ;;
+      cache_pct)      _PSC_cache_pct="$_v" ;;
+      rate_7d_start)  _PSC_rate_7d_start="$_v" ;;
+      model_id)       _PSC_model_id="$_v" ;;
+      burn_eta)       _PSC_burn_eta="$_v" ;;
+      rate_5h_start)  _PSC_rate_5h_start="$_v" ;;
+    esac
+  done < "$1"
+  if stat -f %m "$1" >/dev/null 2>&1; then
+    _PSC_mtime=$(stat -f %m "$1")
+  else
+    _PSC_mtime=$(stat -c %Y "$1")
+  fi
+  _PSC_age=$(( $(date +%s) - _PSC_mtime ))
+  _PSC_is_active=0
+  if [[ $_PSC_age -lt 300 ]] && [[ -n "$_PSC_ppid" ]] && kill -0 "$_PSC_ppid" 2>/dev/null; then
+    _PSC_is_active=1
+  fi
+}
+
+# ── Render context bar (8 blocks) into _CTX_BAR ─────────────────────────────
+_render_ctx_bar() {
+  local _pct=${1:-0}
+  local _filled=$(( _pct * 8 / 100 ))
+  [[ $_filled -gt 8 ]] && _filled=8
+  local _empty=$(( 8 - _filled ))
+  local _clr
+  if   [[ $_pct -ge 90 ]]; then _clr=$CLAUDII_CLR_RED
+  elif [[ $_pct -ge 70 ]]; then _clr=$CLAUDII_CLR_YELLOW
+  else                          _clr=$CLAUDII_CLR_GREEN
+  fi
+  local _bar="" i
+  for ((i=0; i<_filled; i++)); do _bar+="$CLAUDII_SYM_BAR_FULL"; done
+  for ((i=0; i<_empty;  i++)); do _bar+="$CLAUDII_SYM_BAR_EMPTY"; done
+  _CTX_BAR="${_clr}${_bar}${CLAUDII_CLR_RESET}"
+}
+
+# ── Render age into _AGE_STR ─────────────────────────────────────────────────
+_render_age() {
+  local _s=${1:-0}
+  if   [[ $_s -lt 60    ]]; then _AGE_STR="${_s}s ago"
+  elif [[ $_s -lt 3600  ]]; then _AGE_STR="$(( _s / 60 ))m ago"
+  elif [[ $_s -lt 86400 ]]; then _AGE_STR="$(( _s / 3600 ))h ago"
+  else                           _AGE_STR="$(( _s / 86400 ))d ago"
+  fi
 }
 
 # Shorthand aliases — expand before main case statement
@@ -306,11 +372,6 @@ case "${1:-}" in
         echo "Usage: claudii status [5m|15m|30m]"; exit 1
         ;;
     esac
-    ;;
-
-  show)
-    echo "claudii show is removed. Use: claudii config set statusline.models <models>"
-    exit 1
     ;;
 
   dash)
@@ -597,11 +658,6 @@ case "${1:-}" in
     esac
     ;;
 
-  debug)
-    echo "claudii debug is removed. Use: claudii config set debug.level <level>"
-    exit 1
-    ;;
-
   cost)
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     shopt -s nullglob
@@ -748,11 +804,6 @@ case "${1:-}" in
     printf '  \033[38;5;213mAll time\033[0m\n'
     _print_section alltime
     printf '\n'
-    ;;
-
-  stats)
-    echo "claudii stats is removed."
-    exit 1
     ;;
 
   trends)
@@ -1030,11 +1081,6 @@ case "${1:-}" in
     }'
     ;;
 
-  continue)
-    echo "claudii continue is removed. Use: claude --continue"
-    exit 1
-    ;;
-
   search)
     _cfg_init
     search_dir=$(_cfgget search.dir)
@@ -1051,21 +1097,12 @@ case "${1:-}" in
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     now=$(date +%s)
 
-    # ANSI colors (stdout output, not PROMPT)
-    _ov_green='\033[0;32m'
-    _ov_yellow='\033[0;33m'
-    _ov_red='\033[0;31m'
-    _ov_cyan='\033[0;36m'
-    _ov_dim='\033[38;5;240m'
-    _ov_bold='\033[1m'
-    _ov_reset='\033[0m'
-
     printf '\n'
-    printf "  ${_ov_cyan}claudii${_ov_reset} ${_ov_bold}v%s${_ov_reset}\n" "$VERSION"
+    printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
     printf '\n'
 
     # ── Sessions ──────────────────────────────────────────────────────
-    printf "  ${_ov_bold}Sessions${_ov_reset}\n"
+    printf "  ${CLAUDII_CLR_BOLD}Sessions${CLAUDII_CLR_RESET}\n"
 
     shopt -s nullglob
     _ov_files=("$cache_dir"/session-*)
@@ -1159,38 +1196,38 @@ case "${1:-}" in
           (( _ov_pct < 0 ))   && _ov_pct=0
           _ov_filled=$(( _ov_pct * 8 / 100 ))
           _ov_empty=$(( 8 - _ov_filled ))
-          if (( _ov_pct >= 90 )); then _ov_bc="${_ov_red}"
-          elif (( _ov_pct >= 70 )); then _ov_bc="${_ov_yellow}"
-          else _ov_bc="${_ov_green}"; fi
+          if (( _ov_pct >= 90 )); then _ov_bc="${CLAUDII_CLR_RED}"
+          elif (( _ov_pct >= 70 )); then _ov_bc="${CLAUDII_CLR_YELLOW}"
+          else _ov_bc="${CLAUDII_CLR_GREEN}"; fi
           _ov_bar_str=""
           for (( _bi=0; _bi<_ov_filled; _bi++ )); do _ov_bar_str+="█"; done
           for (( _bi=0; _bi<_ov_empty;  _bi++ )); do _ov_bar_str+="░"; done
-          _ov_bar=" ${_ov_bc}${_ov_bar_str}${_ov_reset} ${_ov_dim}${_ov_pct}%${_ov_reset}"
+          _ov_bar=" ${_ov_bc}${_ov_bar_str}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_ov_pct}%${CLAUDII_CLR_RESET}"
         fi
 
         # Build line: icon + model + project path + session name + bar + cost + cache + worktree + agent
-        _ov_line="  ${_ov_green}●${_ov_reset} ${_ov_bold}${_ov_model}${_ov_reset}"
+        _ov_line="  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_ov_model}${CLAUDII_CLR_RESET}"
         if [[ -n "$_ov_sid" ]]; then
           _ov_projpath=$(_session_project_path "$_ov_sid")
           _ov_sesname=$(_session_name "$_ov_sid")
-          [[ -n "$_ov_projpath" ]] && _ov_line+="  ${_ov_dim}${_ov_projpath}${_ov_reset}"
-          [[ -n "$_ov_sesname" ]] && _ov_line+="  ${_ov_dim}\"${_ov_sesname}\"${_ov_reset}"
+          [[ -n "$_ov_projpath" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}${_ov_projpath}${CLAUDII_CLR_RESET}"
+          [[ -n "$_ov_sesname" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}\"${_ov_sesname}\"${CLAUDII_CLR_RESET}"
         fi
         _ov_line+="${_ov_bar}"
 
         if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
-          _ov_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$$(printf '%.2f' "$_ov_cost")${_ov_reset}"
+          _ov_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_ov_cost")${CLAUDII_CLR_RESET}"
         fi
 
         if [[ -n "$_ov_cache_pct" && "$_ov_cache_pct" != "0" ]]; then
-          _ov_line+=" ${_ov_dim}│ ⚡${_ov_cache_pct}%${_ov_reset}"
+          _ov_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_ov_cache_pct}%${CLAUDII_CLR_RESET}"
         fi
 
         if [[ -n "$_ov_worktree" ]]; then
-          _ov_line+=" ${_ov_dim}[wt:${_ov_worktree}]${_ov_reset}"
+          _ov_line+=" ${CLAUDII_CLR_DIM}[wt:${_ov_worktree}]${CLAUDII_CLR_RESET}"
         fi
         if [[ -n "$_ov_agent" ]]; then
-          _ov_line+=" ${_ov_dim}[agent:${_ov_agent}]${_ov_reset}"
+          _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_ov_agent}]${CLAUDII_CLR_RESET}"
         fi
 
         printf '%b\n' "$_ov_line"
@@ -1198,17 +1235,17 @@ case "${1:-}" in
 
       # Summary line for inactive sessions
       if (( _ov_inactive_count > 0 )); then
-        printf "  ${_ov_dim}○ %d inactive  (claudii si — show inactive)${_ov_reset}\n" "$_ov_inactive_count"
+        printf "  ${CLAUDII_CLR_DIM}○ %d inactive  (claudii si — show inactive)${CLAUDII_CLR_RESET}\n" "$_ov_inactive_count"
       fi
     fi
 
     if (( ! _ov_any_session )); then
-      printf "  ${_ov_dim}No sessions yet. Start Claude to see data here.${_ov_reset}\n"
+      printf "  ${CLAUDII_CLR_DIM}No sessions yet. Start Claude to see data here.${CLAUDII_CLR_RESET}\n"
     fi
 
     # ── Account ───────────────────────────────────────────────────────
     printf '\n'
-    printf "  ${_ov_bold}Account${_ov_reset}\n"
+    printf "  ${CLAUDII_CLR_BOLD}Account${CLAUDII_CLR_RESET}\n"
 
     if [[ -n "$_ov_acct_5h" ]]; then
       _ov_5h_int=${_ov_acct_5h%.*}
@@ -1220,11 +1257,11 @@ case "${1:-}" in
       fi
       if [[ -n "$_ov_acct_7d" ]]; then
         _ov_7d_int=${_ov_acct_7d%.*}
-        _ov_acct_line+=" ${_ov_dim}│${_ov_reset} 7d: ${_ov_7d_int}%"
+        _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 7d: ${_ov_7d_int}%"
         # 7d delta
         if [[ -n "$_ov_acct_7d_start" ]]; then
           _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
-          (( _ov_delta > 0 )) && _ov_acct_line+=" ${_ov_dim}(+${_ov_delta}%)${_ov_reset}"
+          (( _ov_delta > 0 )) && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(+${_ov_delta}%)${CLAUDII_CLR_RESET}"
         fi
         # 7d reset countdown
         if [[ -n "$_ov_acct_reset_7d" && "$_ov_acct_reset_7d" != "0" ]]; then
@@ -1233,12 +1270,12 @@ case "${1:-}" in
             if (( _ov_r7d_rem >= 86400 )); then
               _ov_r7d_d=$(( _ov_r7d_rem / 86400 ))
               _ov_r7d_h=$(( (_ov_r7d_rem % 86400) / 3600 ))
-              _ov_acct_line+=" ${_ov_dim}reset ${_ov_r7d_d}d${_ov_r7d_h}h${_ov_reset}"
+              _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset ${_ov_r7d_d}d${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
             elif (( _ov_r7d_rem >= 3600 )); then
               _ov_r7d_h=$(( _ov_r7d_rem / 3600 ))
-              _ov_acct_line+=" ${_ov_dim}reset ${_ov_r7d_h}h${_ov_reset}"
+              _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset ${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
             else
-              _ov_acct_line+=" ${_ov_dim}reset $(( _ov_r7d_rem / 60 ))min${_ov_reset}"
+              _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset $(( _ov_r7d_rem / 60 ))min${CLAUDII_CLR_RESET}"
             fi
           fi
         fi
@@ -1247,16 +1284,16 @@ case "${1:-}" in
       if (( _ov_today_count > 0 )); then
         _ov_today_fmt=$(printf '%.2f' "$_ov_today_cost")
         _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
-        _ov_acct_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$${_ov_today_fmt}${_ov_reset} today (${_ov_today_count} session${_ov_s})"
+        _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
       fi
       printf '%b\n' "$_ov_acct_line"
     else
-      printf "  ${_ov_dim}No rate limit data yet.${_ov_reset}\n"
+      printf "  ${CLAUDII_CLR_DIM}No rate limit data yet.${CLAUDII_CLR_RESET}\n"
     fi
 
     # ── Agents ────────────────────────────────────────────────────────
     printf '\n'
-    printf "  ${_ov_bold}Agents${_ov_reset}\n"
+    printf "  ${CLAUDII_CLR_BOLD}Agents${CLAUDII_CLR_RESET}\n"
 
     _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$CONFIG" 2>/dev/null)
     [[ -z "$_ov_agents_json" ]] && _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
@@ -1266,53 +1303,53 @@ case "${1:-}" in
         printf "  %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
       done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
     else
-      printf "  ${_ov_dim}No agents configured. See: claudii agents${_ov_reset}\n"
+      printf "  ${CLAUDII_CLR_DIM}No agents configured. See: claudii agents${CLAUDII_CLR_RESET}\n"
     fi
 
     # ── Services ──────────────────────────────────────────────────────
     printf '\n'
-    printf "  ${_ov_bold}Services${_ov_reset}\n"
+    printf "  ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
 
     # ClaudeStatus
     _ov_cs_en=$(_cfgget statusline.enabled)
     if [[ "$_ov_cs_en" == "true" ]]; then
-      _ov_cs_str="${_ov_green}●${_ov_reset} on"
+      _ov_cs_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
     else
-      _ov_cs_str="${_ov_dim}○${_ov_reset} off"
+      _ov_cs_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
     fi
 
     # Dashboard
     _ov_dash_en=$(_cfgget dashboard.enabled)
     [[ -z "$_ov_dash_en" ]] && _ov_dash_en="auto"
     if [[ "$_ov_dash_en" == "off" ]]; then
-      _ov_dash_str="${_ov_dim}○${_ov_reset} off"
+      _ov_dash_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
     elif [[ "$_ov_dash_en" == "auto" ]]; then
-      _ov_dash_str="${_ov_green}●${_ov_reset} auto"
+      _ov_dash_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} auto"
     else
-      _ov_dash_str="${_ov_green}●${_ov_reset} on"
+      _ov_dash_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
     fi
 
     # CC-Statusline
     _ov_sl_settings="${HOME}/.claude/settings.json"
     if [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1; then
-      _ov_sl_str="${_ov_green}●${_ov_reset} on"
+      _ov_sl_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
     else
-      _ov_sl_str="${_ov_dim}○${_ov_reset} off"
+      _ov_sl_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
     fi
 
     # Watch
     _ov_watch_pid="$cache_dir/watch.pid"
     if [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null; then
-      _ov_watch_str="${_ov_green}●${_ov_reset} on"
+      _ov_watch_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
     else
-      _ov_watch_str="${_ov_dim}○${_ov_reset} off"
+      _ov_watch_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
     fi
 
-    printf "  ClaudeStatus %b  ${_ov_dim}│${_ov_reset}  Dashboard %b  ${_ov_dim}│${_ov_reset}  CC-Statusline %b  ${_ov_dim}│${_ov_reset}  Watch %b\n" \
+    printf "  ClaudeStatus %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Dashboard %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  CC-Statusline %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Watch %b\n" \
       "$_ov_cs_str" "$_ov_dash_str" "$_ov_sl_str" "$_ov_watch_str"
 
     printf '\n'
-    printf "  ${_ov_dim}claudii help  for all commands${_ov_reset}\n"
+    printf "  ${CLAUDII_CLR_DIM}claudii help  for all commands${CLAUDII_CLR_RESET}\n"
     printf '\n'
     ;;
 
@@ -1475,16 +1512,9 @@ case "${1:-}" in
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     now=$(date +%s)
 
-    _is_green='\033[0;32m'
-    _is_yellow='\033[0;33m'
-    _is_red='\033[0;31m'
-    _is_cyan='\033[0;36m'
-    _is_dim='\033[38;5;240m'
-    _is_bold='\033[1m'
-    _is_reset='\033[0m'
 
     printf '\n'
-    printf "  ${_is_bold}Inactive Sessions${_is_reset}\n"
+    printf "  ${CLAUDII_CLR_BOLD}Inactive Sessions${CLAUDII_CLR_RESET}\n"
 
     shopt -s nullglob
     _is_files=("$cache_dir"/session-*)
@@ -1538,33 +1568,33 @@ case "${1:-}" in
           (( _is_pct < 0 ))   && _is_pct=0
           _is_filled=$(( _is_pct * 8 / 100 ))
           _is_empty=$(( 8 - _is_filled ))
-          if (( _is_pct >= 90 )); then _is_bc="${_is_red}"
-          elif (( _is_pct >= 70 )); then _is_bc="${_is_yellow}"
-          else _is_bc="${_is_green}"; fi
+          if (( _is_pct >= 90 )); then _is_bc="${CLAUDII_CLR_RED}"
+          elif (( _is_pct >= 70 )); then _is_bc="${CLAUDII_CLR_YELLOW}"
+          else _is_bc="${CLAUDII_CLR_GREEN}"; fi
           _is_bar_str=""
           for (( _ibi=0; _ibi<_is_filled; _ibi++ )); do _is_bar_str+="█"; done
           for (( _ibi=0; _ibi<_is_empty;  _ibi++ )); do _is_bar_str+="░"; done
-          _is_bar=" ${_is_bc}${_is_bar_str}${_is_reset} ${_is_dim}${_is_pct}%${_is_reset}"
+          _is_bar=" ${_is_bc}${_is_bar_str}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
         fi
 
         # Skip active sessions — this command shows only inactive
         if (( _is_active )); then continue; fi
 
-        _is_line="  ${_is_dim}○${_is_reset} ${_is_bold}${_is_model}${_is_reset}${_is_bar}"
+        _is_line="  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_is_model}${CLAUDII_CLR_RESET}${_is_bar}"
 
         if [[ -n "$_is_cost" && "$_is_cost" != "0" ]]; then
-          _is_line+=" ${_is_dim}│${_is_reset} ${_is_cyan}\$$(printf '%.2f' "$_is_cost")${_is_reset}"
+          _is_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_is_cost")${CLAUDII_CLR_RESET}"
         fi
 
         if [[ -n "$_is_cache_pct" && "$_is_cache_pct" != "0" ]]; then
-          _is_line+=" ${_is_dim}│ ⚡${_is_cache_pct}%${_is_reset}"
+          _is_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_is_cache_pct}%${CLAUDII_CLR_RESET}"
         fi
 
         if [[ -n "$_is_worktree" ]]; then
-          _is_line+=" ${_is_dim}[wt:${_is_worktree}]${_is_reset}"
+          _is_line+=" ${CLAUDII_CLR_DIM}[wt:${_is_worktree}]${CLAUDII_CLR_RESET}"
         fi
         if [[ -n "$_is_agent" ]]; then
-          _is_line+=" ${_is_dim}[agent:${_is_agent}]${_is_reset}"
+          _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_is_agent}]${CLAUDII_CLR_RESET}"
         fi
 
         # Age
@@ -1572,7 +1602,7 @@ case "${1:-}" in
         elif (( _is_age < 3600 )); then _is_age_str="$(( _is_age / 60 ))m ago"
         elif (( _is_age < 86400 )); then _is_age_str="$(( _is_age / 3600 ))h ago"
         else _is_age_str="$(( _is_age / 86400 ))d ago"; fi
-        _is_line+="  ${_is_dim}${_is_age_str}${_is_reset}"
+        _is_line+="  ${CLAUDII_CLR_DIM}${_is_age_str}${CLAUDII_CLR_RESET}"
 
         printf '%b\n' "$_is_line"
         _is_any=1
@@ -1580,7 +1610,7 @@ case "${1:-}" in
     fi
 
     if (( ! _is_any )); then
-      printf "  ${_is_dim}No inactive sessions.${_is_reset}\n"
+      printf "  ${CLAUDII_CLR_DIM}No inactive sessions.${CLAUDII_CLR_RESET}\n"
     fi
 
     printf '\n'
@@ -2072,16 +2102,6 @@ case "${1:-}" in
       printf '\n'
       printf 'Type the alias to launch. Example: %s\n\n' "$(echo "$aliases_list" | head -1)"
     fi
-    ;;
-
-  release)
-    echo "Moved to: scripts/release.sh"
-    exit 1
-    ;;
-
-  metrics)
-    echo "claudii metrics ist eine zsh-Shell-Funktion."
-    echo "Führe sie direkt im Terminal aus (nicht als Subprozess)."
     ;;
 
   help|--help|-h)
