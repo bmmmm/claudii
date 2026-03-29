@@ -72,12 +72,12 @@ function _claudii_log {
 
   local color
   case "$level" in
-    error) color="\033[0;31m" ;;
-    warn)  color="\033[0;33m" ;;
-    info)  color="\033[0;36m" ;;
-    debug) color="\033[0;90m" ;;
+    error) color=$'\033[0;31m' ;;
+    warn)  color=$'\033[0;33m' ;;
+    info)  color=$'\033[0;36m' ;;
+    debug) color=$'\033[0;90m' ;;
   esac
-  printf "${color}[claudii:%s] %s\033[0m\n" "$level" "$*" >&2
+  printf "%s[claudii:%s] %s"$'\033[0m\n' "$color" "$level" "$*" >&2
 }
 
 # Boot: load defaults immediately (once), user config on first access
