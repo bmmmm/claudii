@@ -9,7 +9,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 - Bare `claudii` command shows smart account overview: sessions, account rate limits, agents, services
-- `version` now shows release notes for the current version when run interactively
+- `changelog` (shortcut: `about`) shows release notes for the current version from CHANGELOG.md
+- `sessions-inactive` (shortcut: `si`) lists only inactive/stale sessions with context bar, cost, and rate-limit info
 
 ### Changed
 - Sessions section uses ●/○ indicators with 8-block context bar, color-coded by usage
