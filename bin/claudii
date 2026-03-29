@@ -76,6 +76,7 @@ usage() {
   printf '\n'
   printf "  \033[38;5;213mCC-Statusline\033[0m                             inside Claude\n"
   printf "    %-33s $d %s\n" "sessions (se|ss)"                 "active sessions · costs · rate limits"
+  printf "    %-33s $d %s\n" "is"                               "all sessions — active + inactive"
   printf '\n'
   printf '  \033[38;5;213mDashboard\033[0m                                above prompt\n'
   printf '\n'
@@ -1012,10 +1013,11 @@ case "${1:-}" in
     _ov_files=("$cache_dir"/session-*)
     shopt -u nullglob
 
-    _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_mt=0
+    _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
     _ov_today_cost=0 _ov_today_count=0
     _ov_cutoff=$(( now - 86400 ))
     _ov_any_session=0
+    _ov_active_count=0 _ov_inactive_count=0
 
     if [[ ${#_ov_files[@]} -gt 0 ]]; then
       for _ov_f in "${_ov_files[@]}"; do
@@ -1031,7 +1033,7 @@ case "${1:-}" in
 
         # Parse key=value pairs
         _ov_content=$(cat "$_ov_f" 2>/dev/null) || continue
-        _ov_model="" _ov_ctx="" _ov_cost="" _ov_5h="" _ov_7d="" _ov_reset_ts="" _ov_ppid=""
+        _ov_model="" _ov_ctx="" _ov_cost="" _ov_5h="" _ov_7d="" _ov_reset_ts="" _ov_reset_7d_ts="" _ov_ppid=""
         _ov_worktree="" _ov_agent="" _ov_cache_pct="" _ov_7d_start=""
         while IFS='=' read -r _k _v; do
           case "$_k" in
@@ -1041,6 +1043,7 @@ case "${1:-}" in
             rate_5h)       _ov_5h="$_v" ;;
             rate_7d)       _ov_7d="$_v" ;;
             reset_5h)      _ov_reset_ts="$_v" ;;
+            reset_7d)      _ov_reset_7d_ts="$_v" ;;
             ppid)          _ov_ppid="$_v" ;;
             worktree)      _ov_worktree="$_v" ;;
             agent)         _ov_agent="$_v" ;;
@@ -1069,6 +1072,7 @@ case "${1:-}" in
           _ov_acct_5h="$_ov_5h"
           _ov_acct_7d="$_ov_7d"
           _ov_acct_reset="$_ov_reset_ts"
+          _ov_acct_reset_7d="$_ov_reset_7d_ts"
           _ov_acct_7d_start="$_ov_7d_start"
         fi
 
@@ -1080,11 +1084,12 @@ case "${1:-}" in
           fi
         fi
 
-        # Status icon
+        # Count active vs inactive
         if (( _ov_is_active )); then
-          _ov_icon="${_ov_green}●${_ov_reset}"
+          (( _ov_active_count++ ))
         else
-          _ov_icon="${_ov_dim}○${_ov_reset}"
+          (( _ov_inactive_count++ ))
+          continue  # skip rendering inactive sessions in bare view
         fi
 
         # Context bar (8 blocks), color by usage
@@ -1104,8 +1109,8 @@ case "${1:-}" in
           _ov_bar=" ${_ov_bc}${_ov_bar_str}${_ov_reset} ${_ov_dim}${_ov_pct}%${_ov_reset}"
         fi
 
-        # Build line: icon + model + bar + cost + cache + worktree + agent + age
-        _ov_line="  ${_ov_icon} ${_ov_bold}${_ov_model}${_ov_reset}${_ov_bar}"
+        # Build line: icon + model + bar + cost + cache + worktree + agent
+        _ov_line="  ${_ov_green}●${_ov_reset} ${_ov_bold}${_ov_model}${_ov_reset}${_ov_bar}"
 
         if [[ -n "$_ov_cost" && "$_ov_cost" != "0" ]]; then
           _ov_line+=" ${_ov_dim}│${_ov_reset} ${_ov_cyan}\$$(printf '%.2f' "$_ov_cost")${_ov_reset}"
@@ -1122,17 +1127,13 @@ case "${1:-}" in
           _ov_line+=" ${_ov_dim}[agent:${_ov_agent}]${_ov_reset}"
         fi
 
-        # Age (only for non-active sessions)
-        if (( ! _ov_is_active )); then
-          if (( _ov_age < 60 )); then _ov_age_str="${_ov_age}s ago"
-          elif (( _ov_age < 3600 )); then _ov_age_str="$(( _ov_age / 60 ))m ago"
-          elif (( _ov_age < 86400 )); then _ov_age_str="$(( _ov_age / 3600 ))h ago"
-          else _ov_age_str="$(( _ov_age / 86400 ))d ago"; fi
-          _ov_line+="  ${_ov_dim}${_ov_age_str}${_ov_reset}"
-        fi
-
         printf '%b\n' "$_ov_line"
       done
+
+      # Summary line for inactive sessions
+      if (( _ov_inactive_count > 0 )); then
+        printf "  ${_ov_dim}○ %d inactive  (claudii is — show all)${_ov_reset}\n" "$_ov_inactive_count"
+      fi
     fi
 
     if (( ! _ov_any_session )); then
@@ -1158,6 +1159,22 @@ case "${1:-}" in
         if [[ -n "$_ov_acct_7d_start" ]]; then
           _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
           (( _ov_delta > 0 )) && _ov_acct_line+=" ${_ov_dim}(+${_ov_delta}%)${_ov_reset}"
+        fi
+        # 7d reset countdown
+        if [[ -n "$_ov_acct_reset_7d" && "$_ov_acct_reset_7d" != "0" ]]; then
+          _ov_r7d_rem=$(( _ov_acct_reset_7d - now ))
+          if (( _ov_r7d_rem > 0 )); then
+            if (( _ov_r7d_rem >= 86400 )); then
+              _ov_r7d_d=$(( _ov_r7d_rem / 86400 ))
+              _ov_r7d_h=$(( (_ov_r7d_rem % 86400) / 3600 ))
+              _ov_acct_line+=" ${_ov_dim}reset ${_ov_r7d_d}d${_ov_r7d_h}h${_ov_reset}"
+            elif (( _ov_r7d_rem >= 3600 )); then
+              _ov_r7d_h=$(( _ov_r7d_rem / 3600 ))
+              _ov_acct_line+=" ${_ov_dim}reset ${_ov_r7d_h}h${_ov_reset}"
+            else
+              _ov_acct_line+=" ${_ov_dim}reset $(( _ov_r7d_rem / 60 ))min${_ov_reset}"
+            fi
+          fi
         fi
       fi
       # Today's cost and session count
@@ -1372,6 +1389,128 @@ case "${1:-}" in
     printf '  while this tool was being built.\n'
     printf '\n'
     printf '  \033[38;5;213m(We monitor all three now. You'\''re welcome.)\033[0m\n'
+    printf '\n'
+    ;;
+
+  is)
+    # "claudii is" — what is Claude doing? Shows ALL sessions (active + inactive).
+    _cfg_init
+    cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+    now=$(date +%s)
+
+    _is_green='\033[0;32m'
+    _is_yellow='\033[0;33m'
+    _is_red='\033[0;31m'
+    _is_cyan='\033[0;36m'
+    _is_dim='\033[38;5;240m'
+    _is_bold='\033[1m'
+    _is_reset='\033[0m'
+
+    printf '\n'
+    printf "  ${_is_bold}Sessions${_is_reset}\n"
+
+    shopt -s nullglob
+    _is_files=("$cache_dir"/session-*)
+    shopt -u nullglob
+
+    _is_any=0
+
+    if [[ ${#_is_files[@]} -gt 0 ]]; then
+      for _is_f in "${_is_files[@]}"; do
+        [[ -f "$_is_f" ]] || continue
+
+        if stat -f%m "$_is_f" >/dev/null 2>&1; then
+          _is_mt=$(stat -f%m "$_is_f")
+        else
+          _is_mt=$(stat -c%Y "$_is_f")
+        fi
+        _is_age=$(( now - _is_mt ))
+
+        _is_content=$(cat "$_is_f" 2>/dev/null) || continue
+        _is_model="" _is_ctx="" _is_cost="" _is_cache_pct="" _is_ppid="" _is_worktree="" _is_agent=""
+        while IFS='=' read -r _ik _iv; do
+          case "$_ik" in
+            model)     _is_model="$_iv" ;;
+            ctx_pct)   _is_ctx="$_iv" ;;
+            cost)      _is_cost="$_iv" ;;
+            cache_pct) _is_cache_pct="$_iv" ;;
+            ppid)      _is_ppid="$_iv" ;;
+            worktree)  _is_worktree="$_iv" ;;
+            agent)     _is_agent="$_iv" ;;
+          esac
+        done <<< "$_is_content"
+
+        [[ -z "$_is_model" ]] && continue
+        _is_any=1
+
+        # Active check
+        _is_active=0
+        if (( _is_age < 300 )); then
+          if [[ -n "$_is_ppid" && "$_is_ppid" != "0" ]]; then
+            kill -0 "$_is_ppid" 2>/dev/null && _is_active=1
+          else
+            _is_active=1
+          fi
+        fi
+
+        # Context bar (8 blocks)
+        _is_bar=""
+        if [[ -n "$_is_ctx" && "$_is_ctx" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _is_pct=${_is_ctx%.*}
+          (( _is_pct > 100 )) && _is_pct=100
+          (( _is_pct < 0 ))   && _is_pct=0
+          _is_filled=$(( _is_pct * 8 / 100 ))
+          _is_empty=$(( 8 - _is_filled ))
+          if (( _is_pct >= 90 )); then _is_bc="${_is_red}"
+          elif (( _is_pct >= 70 )); then _is_bc="${_is_yellow}"
+          else _is_bc="${_is_green}"; fi
+          _is_bar_str=""
+          for (( _ibi=0; _ibi<_is_filled; _ibi++ )); do _is_bar_str+="█"; done
+          for (( _ibi=0; _ibi<_is_empty;  _ibi++ )); do _is_bar_str+="░"; done
+          _is_bar=" ${_is_bc}${_is_bar_str}${_is_reset} ${_is_dim}${_is_pct}%${_is_reset}"
+        fi
+
+        # Icon
+        if (( _is_active )); then
+          _is_icon="${_is_green}●${_is_reset}"
+        else
+          _is_icon="${_is_dim}○${_is_reset}"
+        fi
+
+        _is_line="  ${_is_icon} ${_is_bold}${_is_model}${_is_reset}${_is_bar}"
+
+        if [[ -n "$_is_cost" && "$_is_cost" != "0" ]]; then
+          _is_line+=" ${_is_dim}│${_is_reset} ${_is_cyan}\$$(printf '%.2f' "$_is_cost")${_is_reset}"
+        fi
+
+        if [[ -n "$_is_cache_pct" && "$_is_cache_pct" != "0" ]]; then
+          _is_line+=" ${_is_dim}│ ⚡${_is_cache_pct}%${_is_reset}"
+        fi
+
+        if [[ -n "$_is_worktree" ]]; then
+          _is_line+=" ${_is_dim}[wt:${_is_worktree}]${_is_reset}"
+        fi
+        if [[ -n "$_is_agent" ]]; then
+          _is_line+=" ${_is_dim}[agent:${_is_agent}]${_is_reset}"
+        fi
+
+        # Age for inactive sessions
+        if (( ! _is_active )); then
+          if (( _is_age < 60 )); then _is_age_str="${_is_age}s ago"
+          elif (( _is_age < 3600 )); then _is_age_str="$(( _is_age / 60 ))m ago"
+          elif (( _is_age < 86400 )); then _is_age_str="$(( _is_age / 3600 ))h ago"
+          else _is_age_str="$(( _is_age / 86400 ))d ago"; fi
+          _is_line+="  ${_is_dim}${_is_age_str}${_is_reset}"
+        fi
+
+        printf '%b\n' "$_is_line"
+      done
+    fi
+
+    if (( ! _is_any )); then
+      printf "  ${_is_dim}No sessions yet. Start Claude to see data here.${_is_reset}\n"
+    fi
+
     printf '\n'
     ;;
 
