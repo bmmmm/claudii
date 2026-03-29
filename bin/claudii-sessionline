@@ -85,6 +85,15 @@ if [[ -n "$rate_7d" && "$rate_7d" != "null" && "$rate_7d" != "" ]]; then
   [[ -z "$_rate_7d_start" ]] && _rate_7d_start="$rate_7d"
 fi
 
+# Track 5h rate-limit start value for delta display — set once, never overwritten
+_rate_5h_start=""
+if [[ -n "$rate_5h" && "$rate_5h" != "null" && -f "$_session_file" ]]; then
+  _rate_5h_start=$(grep '^rate_5h_start=' "$_session_file" 2>/dev/null | cut -d= -f2-)
+fi
+if [[ -z "$_rate_5h_start" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+  _rate_5h_start="$rate_5h"
+fi
+
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
 # Include ppid so dashboard can check if Claude process is still alive
 _ppid="${PPID:-}"
@@ -100,6 +109,7 @@ _ppid="${PPID:-}"
   "cache_pct=$_cache_pct" \
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
+  "rate_5h_start=$_rate_5h_start" \
   > "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
@@ -147,12 +157,12 @@ _thr() {
   fi
 }
 
-# Rate limit color: cyan < 70, yellow 70-89, red 90+
+# Rate limit color: cyan < 50, yellow 50-79, red 80+
 _rlc() {
   local pct=${1%.*}
   [[ -z "$pct" ]] && pct=0
-  if (( pct >= 90 )); then printf "\033[31m"
-  elif (( pct >= 70 )); then printf "\033[33m"
+  if (( pct >= 80 )); then printf "\033[31m"
+  elif (( pct >= 50 )); then printf "\033[33m"
   else printf "\033[36m"
   fi
 }
@@ -212,7 +222,22 @@ fi
 # Rate limits — shown when cols >= 80
 if (( _cols >= 80 )); then
   if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-    out+="${SEP}$(_rlc "$rate_5h")5h:${rate_5h%.*}%${RST}"
+    _rate_5h_pct=${rate_5h%.*}
+
+    # 5h delta vs session start
+    _delta_str=""
+    if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" ]]; then
+      _start_pct=${_rate_5h_start%.*}
+      _delta=$(( _rate_5h_pct - _start_pct ))
+      if (( _delta > 0 )); then
+        _delta_str=" ${DIM}(+${_delta}%)${RST}"
+      elif (( _delta < 0 )); then
+        _delta_str=" ${DIM}(${_delta}%)${RST}"
+      fi
+    fi
+
+    out+="${SEP}$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}${_delta_str}"
+
     # Burn-rate ETA — show when calculated and < 120min
     if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] && (( _burn_eta < 120 )); then
       if (( _burn_eta < 10 )); then
@@ -224,19 +249,24 @@ if (( _cols >= 80 )); then
       fi
       out+=" ${_eta_color}~${_burn_eta}min${RST}"
     fi
-    # Reset countdown — show minutes until 5h rate limit resets
+
+    # Reset countdown ↺Xm — color depends on rate level and time remaining
     if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
       _now=$(date +%s)
       _reset_min=$(awk "BEGIN { d=$reset_5h - $_now; printf \"%d\", (d > 0 ? int(d/60 + 0.5) : 0) }")
       if (( _reset_min > 0 )); then
-        if (( _reset_min < 10 )); then
-          _reset_color="\033[31m"   # red
+        if (( _rate_5h_pct < 50 )); then
+          _reset_color="${DIM}"         # dim — not relevant
+        elif (( _reset_min < 5 )); then
+          _reset_color="\033[0;32m"    # green — refresh imminent!
         elif (( _reset_min < 30 )); then
-          _reset_color="\033[33m"   # yellow
+          _reset_color="\033[0;97m"    # bright white — getting close
+        elif (( _reset_min < 60 )); then
+          _reset_color=""              # default — moderate
         else
-          _reset_color="\033[32m"   # green
+          _reset_color="${DIM}"        # dim — plenty of time
         fi
-        out+=" ${_reset_color}reset ${_reset_min}min${RST}"
+        out+=" ${_reset_color}↺${_reset_min}m${RST}"
       fi
     fi
   fi
