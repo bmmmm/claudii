@@ -11,10 +11,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Bare `claudii` command shows smart account overview: sessions, account rate limits, agents, services
 - `changelog` (shortcut: `about`) shows release notes for the current version from CHANGELOG.md
 - `sessions-inactive` (shortcut: `si`) lists only inactive/stale sessions with context bar, cost, and rate-limit info
+- `CLAUDII_CLR_ACCENT` constant (magenta 38;5;213m) in `lib/visual.sh`
+- Helper functions: `_parse_session_cache`, `_render_ctx_bar`, `_render_age` for consistent session rendering
 
 ### Changed
+- All raw `\033[` ANSI codes in `bin/claudii` replaced with `CLAUDII_CLR_*`/`CLAUDII_SYM_*` constants from `lib/visual.sh`
+- All raw ANSI codes in `lib/functions.zsh` replaced with `CLAUDII_CLR_*` constants
 - Sessions section uses ●/○ indicators with 8-block context bar, color-coded by usage
 - Services section reflects ClaudeStatus, Dashboard, CC-Statusline, and Watch state
+
+### Removed
+- `dash` command (duplicated by `dashboard`)
+- Dead command stubs: `show`, `debug`, `stats`, `continue`, `release`, `metrics`, `is`
+- `bin/claudii-explore` (replaced by `/explore` skill)
+
+### Fixed
+- Printf single-quote regression: 38 printf calls with CLR vars in single quotes now use double quotes
+- Awk trends colors: pass ANSI codes via `-v` args instead of inline assignments in single-quoted awk
+- `local` outside function in `sessions)` block causing crash under `set -euo pipefail`
+- `_claudii_agent_launch` reading wrong positional args after premature shift
+- Rate limit decimal display in `sessions-inactive` (now integer)
+- `clh` swallowing `claudii-status` exit code
 
 ---
 
