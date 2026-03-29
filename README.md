@@ -40,7 +40,7 @@ Sonnet   ████░░░░ 42% │ $1.20  │ [wt:feat-xyz]
 Opus 4.6 ██░░░░░░ 15% │ $0.30  │ [agent:explorer]     [Opus ✓ Sonnet ✓ Haiku ✓] 21m
 ```
 
-Toggle with `claudii dash on/off/auto`. Detail view: `claudii dash show`
+Toggle with `claudii dashboard on/off/auto`.
 
 ### 3. CC-Statusline — inside Claude Code
 Dense metrics on every turn via the `statusLine` hook.
@@ -114,7 +114,7 @@ claudii dashboard [on|off]       # toggle Dashboard only
 claudii cc-statusline [on|off]   # toggle CC-Statusline only
 claudii status                   # live model health check     (shortcut: s)
 claudii sessions                 # active + recent sessions    (shortcut: ss)
-claudii dash                     # dashboard detail view
+claudii sessions-inactive        # stale sessions              (shortcut: si)
 claudii cost                     # per-model cost breakdown    (shortcut: c)
 claudii trends                   # weekly/daily cost history   (shortcut: t)
 claudii watch                    # notify when rate limit resets

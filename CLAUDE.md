@@ -63,6 +63,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 2. `CHANGELOG.md` — update unreleased block
 3. `tests/test_<command>.sh` — delete if exists
 4. `.gitignore` — clean up stale rules if files were removed
+5. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry
 
 ## When committing
 

@@ -63,7 +63,7 @@ _session_name() {
     [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
   done
   [[ -z "$jsonl" ]] && return
-  grep -o 'Session renamed to: [^<]*' "$jsonl" 2>/dev/null | tail -1 | sed 's/Session renamed to: //'
+  grep -o 'Session renamed to: [^<]*' "$jsonl" 2>/dev/null | tail -1 | sed 's/Session renamed to: //' | LC_ALL=C tr -cd '[:print:]' | cut -c1-60 | tr -d '\n'
 }
 
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
@@ -997,7 +997,7 @@ case "${1:-}" in
           _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
         fi
 
-        printf '%b\n' "$_ov_line"
+        printf '%s\n' "$_ov_line"
       done
 
       # Summary line for inactive sessions
@@ -1053,7 +1053,7 @@ case "${1:-}" in
         _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
         _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
       fi
-      printf '%b\n' "$_ov_acct_line"
+      printf '%s\n' "$_ov_acct_line"
     else
       printf "  ${CLAUDII_CLR_DIM}No rate limit data yet.${CLAUDII_CLR_RESET}\n"
     fi
@@ -1337,7 +1337,7 @@ case "${1:-}" in
         _render_age "$_PSC_age"
         _is_line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
 
-        printf '%b\n' "$_is_line"
+        printf '%s\n' "$_is_line"
         _rendered_any=1
       done
     fi
