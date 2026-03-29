@@ -280,12 +280,13 @@ function _claudii_dashboard {
   # Cursor save/restore — defined as locals so ESC chars expand correctly inside "..."
   local _CS=$'\033[s'
   local _CR=$'\033[u'
+  local _RS=$'\033[0m'   # full reset before cursor restore — prevents color bleed into typed input
 
   # Deduplicate — only update PROMPT if dashboard changed
   [[ "$dash_lines" == "$_CLAUDII_LAST_DASHBOARD" ]] && {
     # Still need to re-apply cached dashboard to PROMPT (cursor save/restore)
     if [[ -n "$_CLAUDII_LAST_DASHBOARD" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}${_CR}%}"
+      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASHBOARD%$'\n'}${_RS}${_CR}%}"
     fi
     return
   }
@@ -293,7 +294,7 @@ function _claudii_dashboard {
 
   # Render dashboard below prompt; cursor save/restore keeps input on prompt line
   if [[ -n "$dash_lines" ]]; then
-    PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_lines%$'\n'}${_CR}%}"
+    PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_lines%$'\n'}${_RS}${_CR}%}"
   fi
 }
 

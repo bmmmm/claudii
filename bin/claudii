@@ -106,8 +106,8 @@ usage() {
   printf "    %-33s $d %s\n" "layers"                          "component overview with status"
   printf '\n'
   printf '  \033[38;5;213mSessions & Cost\033[0m\n'
-  printf "    %-33s $d %s\n" "sessions (se|ss)"                "active sessions · costs · rate limits"
-  printf "    %-33s $d %s\n" "is"                              "all sessions — active + inactive"
+  printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
+  printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
   printf '\n'
@@ -121,11 +121,11 @@ usage() {
   printf '  \033[38;5;213mSystem\033[0m\n'
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
-  printf "    %-33s $d %s\n" "version"                         "version info"
+  printf "    %-33s $d %s\n" "version"                         "show version number"
+  printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
   printf "    %-33s $d %s\n" "restart"                         "reload plugin"
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
-  printf '  \033[38;5;240ms=status  ss|se=sessions  c=cost  t=trends  d=doctor\033[0m\n'
   printf '\n'
   printf '  \033[38;5;213mman claudii\033[0m  full reference\n'
   printf '\n'
@@ -134,8 +134,10 @@ usage() {
 # Shorthand aliases — expand before main case statement
 case "${1:-}" in
   s)  set -- status    "${@:2}" ;;
-  se) set -- sessions  "${@:2}" ;;
-  ss) set -- sessions  "${@:2}" ;;
+  se) set -- sessions           "${@:2}" ;;
+  ss) set -- sessions           "${@:2}" ;;
+  si)    set -- sessions-inactive  "${@:2}" ;;
+  about) set -- changelog          "${@:2}" ;;
   c)  set -- cost      "${@:2}" ;;
   t)  set -- trends    "${@:2}" ;;
   d)  set -- doctor    "${@:2}" ;;
@@ -1196,7 +1198,7 @@ case "${1:-}" in
 
       # Summary line for inactive sessions
       if (( _ov_inactive_count > 0 )); then
-        printf "  ${_ov_dim}○ %d inactive  (claudii is — show all)${_ov_reset}\n" "$_ov_inactive_count"
+        printf "  ${_ov_dim}○ %d inactive  (claudii si — show inactive)${_ov_reset}\n" "$_ov_inactive_count"
       fi
     fi
 
@@ -1314,51 +1316,38 @@ case "${1:-}" in
     printf '\n'
     ;;
 
-  version|about)
+  version)
     if [[ "$_FORMAT" == "json" ]]; then
       jq -n --arg v "$VERSION" '{"version": $v}'
-    elif _plain; then
-      echo "$VERSION"
     else
-      # Interactive: about-style output + release notes for current version
-      printf '\n'
-      printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
-      printf '  \033[38;5;213m──────────────────────────────────────\033[0m\n'
-      printf '  Claude Interaction Intelligence\n'
-      printf '\n'
-      printf '  zsh plugin + CLI for Claude Code power users.\n'
-      printf '\n'
-      printf '  \033[0;32m◆\033[0m  ClaudeStatus — model health in RPROMPT\n'
-      printf '  \033[0;32m◆\033[0m  Dashboard — multi-session view above prompt\n'
-      printf '  \033[0;32m◆\033[0m  CC-Statusline — info-dense line inside Claude Code\n'
-      printf '  \033[0;32m◆\033[0m  Auto-fallback · debug logging · zsh autocomplete\n'
-      printf '\n'
-      printf '  \033[38;5;240mclaudii layers  — component overview\033[0m\n'
-      printf '  \033[38;5;213mhttps://github.com/bmmmm/claudii\033[0m\n'
-      printf '\n'
-
-      # Release notes: extract the block for the current version from CHANGELOG.md
-      _changelog="$CLAUDII_HOME/CHANGELOG.md"
-      if [[ -f "$_changelog" ]]; then
-        # Extract lines between the current version header and the next ## header
-        _notes=$(awk -v ver="$VERSION" '
-          /^## \[/ {
-            if (found) { exit }
-            if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
-          }
-          found { print }
-        ' "$_changelog")
-        if [[ -n "$_notes" ]]; then
-          printf '  \033[38;5;213mWhat'\''s in v%s\033[0m\n' "$VERSION"
-          printf '\n'
-          while IFS= read -r _rline; do
-            # Skip blank lines at start, render the rest indented
-            printf '  \033[38;5;240m%s\033[0m\n' "$_rline"
-          done <<< "$_notes"
-          printf '\n'
-        fi
-      fi
+      echo "$VERSION"
     fi
+    ;;
+
+  changelog)
+    printf '\n'
+    printf '  \033[0;36mclaudii\033[0m \033[38;5;213mv%s\033[0m\n' "$VERSION"
+    printf '\n'
+    _changelog="$CLAUDII_HOME/CHANGELOG.md"
+    if [[ -f "$_changelog" ]]; then
+      _notes=$(awk -v ver="$VERSION" '
+        /^## \[/ {
+          if (found) { exit }
+          if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+        }
+        found { print }
+      ' "$_changelog")
+      if [[ -n "$_notes" ]]; then
+        while IFS= read -r _rline; do
+          printf '  \033[38;5;240m%s\033[0m\n' "$_rline"
+        done <<< "$_notes"
+      else
+        printf '  \033[38;5;240mNo changelog entry for v%s\033[0m\n' "$VERSION"
+      fi
+    else
+      printf '  \033[38;5;240mCHANGELOG.md not found\033[0m\n'
+    fi
+    printf '\n'
     ;;
 
   layers)
@@ -1480,8 +1469,8 @@ case "${1:-}" in
     printf '\n'
     ;;
 
-  is)
-    # "claudii is" — what is Claude doing? Shows ALL sessions (active + inactive).
+  sessions-inactive)
+    # "claudii sessions-inactive" — shows only inactive (stale/dead) sessions
     _cfg_init
     cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
     now=$(date +%s)
@@ -1495,7 +1484,7 @@ case "${1:-}" in
     _is_reset='\033[0m'
 
     printf '\n'
-    printf "  ${_is_bold}Sessions${_is_reset}\n"
+    printf "  ${_is_bold}Inactive Sessions${_is_reset}\n"
 
     shopt -s nullglob
     _is_files=("$cache_dir"/session-*)
@@ -1558,14 +1547,10 @@ case "${1:-}" in
           _is_bar=" ${_is_bc}${_is_bar_str}${_is_reset} ${_is_dim}${_is_pct}%${_is_reset}"
         fi
 
-        # Icon
-        if (( _is_active )); then
-          _is_icon="${_is_green}●${_is_reset}"
-        else
-          _is_icon="${_is_dim}○${_is_reset}"
-        fi
+        # Skip active sessions — this command shows only inactive
+        if (( _is_active )); then continue; fi
 
-        _is_line="  ${_is_icon} ${_is_bold}${_is_model}${_is_reset}${_is_bar}"
+        _is_line="  ${_is_dim}○${_is_reset} ${_is_bold}${_is_model}${_is_reset}${_is_bar}"
 
         if [[ -n "$_is_cost" && "$_is_cost" != "0" ]]; then
           _is_line+=" ${_is_dim}│${_is_reset} ${_is_cyan}\$$(printf '%.2f' "$_is_cost")${_is_reset}"
@@ -1582,21 +1567,20 @@ case "${1:-}" in
           _is_line+=" ${_is_dim}[agent:${_is_agent}]${_is_reset}"
         fi
 
-        # Age for inactive sessions
-        if (( ! _is_active )); then
-          if (( _is_age < 60 )); then _is_age_str="${_is_age}s ago"
-          elif (( _is_age < 3600 )); then _is_age_str="$(( _is_age / 60 ))m ago"
-          elif (( _is_age < 86400 )); then _is_age_str="$(( _is_age / 3600 ))h ago"
-          else _is_age_str="$(( _is_age / 86400 ))d ago"; fi
-          _is_line+="  ${_is_dim}${_is_age_str}${_is_reset}"
-        fi
+        # Age
+        if (( _is_age < 60 )); then _is_age_str="${_is_age}s ago"
+        elif (( _is_age < 3600 )); then _is_age_str="$(( _is_age / 60 ))m ago"
+        elif (( _is_age < 86400 )); then _is_age_str="$(( _is_age / 3600 ))h ago"
+        else _is_age_str="$(( _is_age / 86400 ))d ago"; fi
+        _is_line+="  ${_is_dim}${_is_age_str}${_is_reset}"
 
         printf '%b\n' "$_is_line"
+        _is_any=1
       done
     fi
 
     if (( ! _is_any )); then
-      printf "  ${_is_dim}No sessions yet. Start Claude to see data here.${_is_reset}\n"
+      printf "  ${_is_dim}No inactive sessions.${_is_reset}\n"
     fi
 
     printf '\n'

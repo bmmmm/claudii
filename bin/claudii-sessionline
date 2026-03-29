@@ -80,6 +80,18 @@ if [[ -z "$_rate_5h_start" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _rate_5h_start="$rate_5h"
 fi
 
+# Burn-rate ETA — computed for dashboard cache, not rendered in sessionline
+_burn_eta=""
+if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
+  _session_min_f=$(awk "BEGIN { printf \"%.4f\", $duration_ms / 60000 }")
+  _session_min_int=${_session_min_f%.*}
+  _rate_5h_int=${rate_5h%.*}
+  if [[ -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]] && \
+     (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
+    _burn_eta=$(awk "BEGIN { r=$rate_5h; m=$_session_min_f; printf \"%d\", int((100-r)/(r/m) + 0.5) }")
+  fi
+fi
+
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
 # Include ppid so dashboard can check if Claude process is still alive
 _ppid="${PPID:-}"
@@ -91,6 +103,7 @@ _ppid="${PPID:-}"
   "worktree=$worktree_name" \
   "agent=$agent_name" \
   "model_id=$model_id" \
+  "burn_eta=$_burn_eta" \
   "cache_pct=$_cache_pct" \
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
@@ -221,7 +234,7 @@ if (( _cols >= 80 )); then
       fi
     fi
 
-    out+="${SEP}$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}${_delta_str}"
+    out+="${SEP}$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
 
     # Reset countdown ↺Xm — color depends on rate level and time remaining
     if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
@@ -232,10 +245,10 @@ if (( _cols >= 80 )); then
           _reset_color="${DIM}"         # dim — not relevant
         elif (( _reset_min < 5 )); then
           _reset_color="\033[0;32m"    # green — refresh imminent!
-        elif (( _reset_min < 30 )); then
-          _reset_color="\033[0;97m"    # bright white — getting close
         elif (( _reset_min < 60 )); then
-          _reset_color=""              # default — moderate
+          _reset_color="\033[0;97m"    # bright white — getting close
+        elif (( _reset_min < 120 )); then
+          _reset_color=""              # default — light at end of tunnel
         else
           _reset_color="${DIM}"        # dim — plenty of time
         fi
@@ -260,7 +273,7 @@ if (( _cols >= 80 )); then
       fi
     fi
 
-    out+=" $(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}${_delta_7d_str}"
+    out+=" $(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
 
     # 7d reset countdown — format depends on remaining time
     if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
@@ -286,10 +299,10 @@ if (( _cols >= 80 )); then
           _reset_7d_color="${DIM}"         # dim — not relevant
         elif (( _reset_7d_min < 5 )); then
           _reset_7d_color="\033[0;32m"    # green — refresh imminent!
-        elif (( _reset_7d_min < 30 )); then
+        elif (( _reset_7d_min < 60 )); then
           _reset_7d_color="\033[0;97m"    # bright white — getting close
-        elif (( _reset_7d_sec < 3600 )); then
-          _reset_7d_color=""              # default — moderate
+        elif (( _reset_7d_min < 120 )); then
+          _reset_7d_color=""              # default — light at end of tunnel
         else
           _reset_7d_color="${DIM}"        # dim — plenty of time
         fi

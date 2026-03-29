@@ -116,28 +116,30 @@ output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percenta
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "burn-ETA ~Xmin not shown" "0" "$(echo "$strip" | grep -cE '~[0-9]+min' || true)"
 
-# 7d-Delta — shown when rate_7d changes within session
+# 7d-Delta tracking — rate_7d_start persisted in cache; delta NOT rendered in sessionline output
 _test_cache_dir="$(mktemp -d)"
 # First call: establishes rate_7d_start=60
 echo '{"session_id":"test7ddelta12","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":60}}}' \
   | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
-# Second call: rate_7d is now 62 → delta = +2%
+# Second call: rate_7d is now 62 → delta not in output, but start cached
 output=$(echo '{"session_id":"test7ddelta12","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":62}}}' \
   | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "7d delta shows +2%" "(+2%)" "$strip"
+assert_eq "7d delta not shown in sessionline output" "0" "$(echo "$strip" | grep -cE '\(\+[0-9]+%\)' || true)"
+_cache_7d="$(cat "$_test_cache_dir/session-test7dde" 2>/dev/null)"
+assert_contains "7d_start cached from first call" "rate_7d_start=60" "$_cache_7d"
 rm -rf "$_test_cache_dir"
 
-# 7d-Delta negative — shown when rate_7d decreases (reset happened)
+# burn_eta written to session cache (non-empty when rate > 0 and duration > 0)
 _test_cache_dir="$(mktemp -d)"
-# First call: establishes rate_7d_start=70
-echo '{"session_id":"test7ddelta99","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":70}}}' \
+echo '{"session_id":"testburneta1","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":70},"seven_day":{"used_percentage":65}}}' \
   | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
-# Second call: rate_7d is now 65 → delta = -5%
-output=$(echo '{"session_id":"test7ddelta99","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":65}}}' \
-  | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
-strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "7d delta shows -5%" "(-5%)" "$strip"
+_cache_be="$(cat "$_test_cache_dir/session-testburn" 2>/dev/null)"
+assert_contains "burn_eta key present in session cache" "burn_eta=" "$_cache_be"
+_burn_val="$(echo "$_cache_be" | grep '^burn_eta=' | cut -d= -f2)"
+[[ "$_burn_val" =~ ^[0-9]+$ ]] \
+  && assert_eq "burn_eta is a non-empty integer" "true" "true" \
+  || assert_eq "burn_eta is a non-empty integer" "true" "false (got: $_burn_val)"
 rm -rf "$_test_cache_dir"
 
 # 7d-Countdown — shown when reset_7d is set (< 1h → Xm format)
