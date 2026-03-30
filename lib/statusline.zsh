@@ -17,10 +17,11 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
-  # On empty Enter (no command ran): cursor is 1 line below the prompt line, inside the
-  # old dashboard area. Move up 1 line and erase to end of screen before rendering fresh.
+  # On empty Enter (no command ran): cursor is on the prompt line itself (cursor-up in
+  # PROMPT already moved it back). Erase N+1 lines down to clear the old dashboard area
+  # before rendering fresh. Only needed while dashboard was active last cycle.
   if (( _CLAUDII_CMD_RAN == 0 && _CLAUDII_LAST_DASH_LINE_COUNT > 0 )); then
-    printf '\e[1A\e[J'
+    printf '\e[J'
   fi
   _CLAUDII_CMD_RAN=0
 
