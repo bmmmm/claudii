@@ -17,12 +17,6 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
-  # On empty Enter: cursor is 1 line below the prompt (line L+1).
-  # Dashboard occupies lines L-N..L-1, prompt at L.
-  # Move up N+1 lines to L-N and erase to end of screen before reprinting.
-  if (( _CLAUDII_CMD_RAN == 0 && _CLAUDII_LAST_DASH_LINE_COUNT > 0 )); then
-    printf '\e[%dA\e[J' $(( _CLAUDII_LAST_DASH_LINE_COUNT + 1 ))
-  fi
   _CLAUDII_CMD_RAN=0
 
   # Restore PROMPT to the user's original every cycle
