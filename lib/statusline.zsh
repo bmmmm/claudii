@@ -196,11 +196,11 @@ function _claudii_build_title {
     # Multi-session format: {N} sessions [{m1},{m2},...] · ${total_cost}
     local _t_total_cost="0"
     local _t_models_list="" _mi
+    local _c_fmt=""  # declared outside loop — re-declaring local inside a loop leaks assignment to stdout in zsh
     for (( _mi=1; _mi<=_CLAUDII_DASH_COUNT; _mi++ )); do
       [[ -n "$_t_models_list" ]] && _t_models_list+=","
       _t_models_list+="${_CLAUDII_DASH_MODELS[$_mi]}"
       if [[ -n "${_CLAUDII_DASH_COSTS[$_mi]}" && "${_CLAUDII_DASH_COSTS[$_mi]}" != "null" && "${_CLAUDII_DASH_COSTS[$_mi]}" != "0" ]]; then
-        local _c_fmt
         _c_fmt=$(printf '%.2f' "${_CLAUDII_DASH_COSTS[$_mi]}" 2>/dev/null) || _c_fmt="0.00"
         _t_total_cost=$(awk "BEGIN { printf \"%.2f\", ${_t_total_cost} + ${_c_fmt} }" 2>/dev/null || echo "$_t_total_cost")
       fi
