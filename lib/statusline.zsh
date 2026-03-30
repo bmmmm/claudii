@@ -3,7 +3,7 @@
 source "${CLAUDII_HOME}/lib/visual.sh"
 
 # Capture the user's original PROMPT once at load time.
-# Every precmd cycle restores PROMPT to this, then appends dashboard lines below it.
+# Every precmd cycle restores PROMPT to this, or prepends dashboard lines.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 function _claudii_statusline {
@@ -17,8 +17,6 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
-  _CLAUDII_CMD_RAN=0
-
   # Restore PROMPT to the user's original every cycle
   PROMPT="${_CLAUDII_USER_PROMPT}"
 
@@ -81,7 +79,7 @@ function _claudii_statusline_render {
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Dashboard — multi-session lines prepended to PROMPT
+  # Dashboard — multi-session lines embedded in PROMPT above the user prompt
   _claudii_dashboard
 }
 
@@ -93,8 +91,6 @@ typeset -gi _CLAUDII_DASH_COUNT=0
 typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
 typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
 typeset -gi _CLAUDII_LAST_DASH_COLS=0
-typeset -gi _CLAUDII_LAST_DASH_LINE_COUNT=0
-typeset -gi _CLAUDII_CMD_RAN=0
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
@@ -239,7 +235,7 @@ function _claudii_render_session_lines {
 function _claudii_dashboard {
   local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
   if [[ "$dash_mode" == "off" ]]; then
-    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; _CLAUDII_LAST_DASH_LINE_COUNT=0
+    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
 
@@ -247,7 +243,7 @@ function _claudii_dashboard {
   local active_count=$_CLAUDII_DASH_COUNT
 
   if [[ "$dash_mode" == "auto" && active_count -eq 0 ]] || (( active_count == 0 )); then
-    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; _CLAUDII_LAST_DASH_LINE_COUNT=0
+    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
 
@@ -262,8 +258,11 @@ function _claudii_dashboard {
 
   # Reuse padded version if content and terminal width unchanged
   if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
-    [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]] && print -Pn "${_CLAUDII_LAST_DASH_PADDED}"
-    PROMPT="${_CLAUDII_USER_PROMPT}"
+    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
+      PROMPT="${_CLAUDII_LAST_DASH_PADDED}${_CLAUDII_USER_PROMPT}"
+    else
+      PROMPT="${_CLAUDII_USER_PROMPT}"
+    fi
     return
   fi
 
@@ -287,10 +286,9 @@ function _claudii_dashboard {
     _wide=${#${_vis_str//[^⚡]/}}                 # count EAW=W chars (each costs +1 col)
     _pad=$(( _cols - _vis - _wide ))
     if (( _pad < 0 )); then
-      # Line overflows terminal width — truncate and escape % for print -P
+      # Line overflows — truncate plain text, escape % for PROMPT expansion
       local _trunc="${_vis_str[1,$(( _cols - 1 ))]}"
-      local _trunc_escaped="${_trunc//%/%%}"
-      dash_padded+="${_trunc_escaped}…"$'\n'
+      dash_padded+="${_trunc//%/%%}…"$'\n'
     else
       dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
     fi
@@ -300,36 +298,18 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_PADDED="$dash_padded"
   _CLAUDII_LAST_DASH_COLS=$_cols
 
-  # Count lines for the erase calculation on next precmd cycle.
-  local _n_lines
-  _n_lines=$(printf '%s' "$dash_padded" | wc -l | tr -d ' ')
-  _CLAUDII_LAST_DASH_LINE_COUNT=$(( _n_lines ))
-
-  # Print dashboard ABOVE the prompt via precmd stdout.
-  # No cursor tricks — precmd output naturally appears above the rendered prompt.
-  print -Pn "$dash_padded"
-  PROMPT="${_CLAUDII_USER_PROMPT}"
-}
-
-# Preexec: fires when a real command is submitted.
-# Erase the dashboard (same N+1 move-up as empty Enter) so command output
-# starts cleanly at the top of where the dashboard was.
-function _claudii_preexec {
-  _CLAUDII_CMD_RAN=1
-  (( _CLAUDII_LAST_DASH_LINE_COUNT > 0 )) && \
-    printf '\e[%dA\e[J' $(( _CLAUDII_LAST_DASH_LINE_COUNT + 1 ))
+  # Embed dashboard as the first N lines of a multi-line PROMPT.
+  # ZLE manages the full prompt area — Enter scrolls naturally, no cursor tricks.
+  # RPROMPT appears on the last line (the user's actual prompt line).
+  PROMPT="${dash_padded}${_CLAUDII_USER_PROMPT}"
 }
 
 # On terminal resize: invalidate the width cache so the next precmd recomputes
-# right-alignment. TRAPWINCH sets CMD_RAN=1 to prevent the empty-Enter erase
-# from firing on the resize-triggered precmd cycle.
-# Dashboard reflows on next Enter (next precmd cycle).
+# right-alignment and redraw the prompt immediately if ZLE is active.
 function TRAPWINCH {
   _CLAUDII_LAST_DASH_COLS=0
-  _CLAUDII_CMD_RAN=1
   zle reset-prompt 2>/dev/null
 }
 
 autoload -Uz add-zsh-hook
-add-zsh-hook preexec _claudii_preexec
 add-zsh-hook precmd _claudii_statusline
