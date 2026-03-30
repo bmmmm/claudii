@@ -17,6 +17,13 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
+  # On empty Enter (no command ran): cursor is 1 line below the prompt line, inside the
+  # old dashboard area. Move up 1 line and erase to end of screen before rendering fresh.
+  if (( _CLAUDII_CMD_RAN == 0 && _CLAUDII_LAST_DASH_LINE_COUNT > 0 )); then
+    printf '\e[1A\e[J'
+  fi
+  _CLAUDII_CMD_RAN=0
+
   # Restore PROMPT to the user's original every cycle
   PROMPT="${_CLAUDII_USER_PROMPT}"
 
@@ -91,6 +98,8 @@ typeset -gi _CLAUDII_DASH_COUNT=0
 typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
 typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
 typeset -gi _CLAUDII_LAST_DASH_COLS=0
+typeset -gi _CLAUDII_LAST_DASH_LINE_COUNT=0
+typeset -gi _CLAUDII_CMD_RAN=0
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
@@ -234,13 +243,17 @@ function _claudii_render_session_lines {
 
 function _claudii_dashboard {
   local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
-  [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return; }
+  if [[ "$dash_mode" == "off" ]]; then
+    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; _CLAUDII_LAST_DASH_LINE_COUNT=0
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
 
   _claudii_collect_sessions
   local active_count=$_CLAUDII_DASH_COUNT
 
   if [[ "$dash_mode" == "auto" && active_count -eq 0 ]] || (( active_count == 0 )); then
-    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return
+    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; _CLAUDII_LAST_DASH_LINE_COUNT=0
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
 
   _claudii_render_global_line
@@ -254,8 +267,12 @@ function _claudii_dashboard {
 
   # Reuse padded version if content and terminal width unchanged
   if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
-    [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]] && print -Pn "${_CLAUDII_LAST_DASH_PADDED}"
-    PROMPT="${_CLAUDII_USER_PROMPT}"
+    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
+      local _cu_cached=$'\e['"${_CLAUDII_LAST_DASH_LINE_COUNT}A"
+      PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}%{${_cu_cached}%}"
+    else
+      PROMPT="${_CLAUDII_USER_PROMPT}"
+    fi
     return
   fi
 
@@ -292,16 +309,36 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_PADDED="$dash_padded"
   _CLAUDII_LAST_DASH_COLS=$_cols
 
-  [[ -n "$dash_padded" ]] && print -Pn "$dash_padded"
-  PROMPT="${_CLAUDII_USER_PROMPT}"
+  # Calculate line count from dash_padded (with trailing \n, wc -l gives correct count).
+  local _n_lines
+  _n_lines=$(printf '%s' "$dash_padded" | wc -l | tr -d ' ')
+  _CLAUDII_LAST_DASH_LINE_COUNT=$(( _n_lines ))
+
+  # Embed dashboard BELOW the prompt: user prompt on line L, dashboard on L+1..L+N,
+  # then cursor-up N lines so input appears on line L.
+  # Uses relative cursor movement (\e[NA) — safe even when terminal scrolls.
+  local _cu=$'\e['"${_n_lines}A"
+  PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${dash_padded%$'\n'}%{${_cu}%}"
+}
+
+# Preexec: fires when a real command is submitted.
+# Sets CMD_RAN so precmd skips the empty-Enter erase, and erases the dashboard
+# below the prompt so command output starts cleanly on the first dashboard line.
+function _claudii_preexec {
+  _CLAUDII_CMD_RAN=1
+  (( _CLAUDII_LAST_DASH_LINE_COUNT > 0 )) && printf '\e[J'
 }
 
 # On terminal resize: invalidate the width cache so the next precmd recomputes
-# right-alignment, and redraw the prompt immediately if ZLE is active.
+# right-alignment. TRAPWINCH sets CMD_RAN=1 to prevent the empty-Enter erase
+# from firing on the resize-triggered precmd cycle.
+# Dashboard reflows on next Enter (next precmd cycle).
 function TRAPWINCH {
   _CLAUDII_LAST_DASH_COLS=0
+  _CLAUDII_CMD_RAN=1
   zle reset-prompt 2>/dev/null
 }
 
 autoload -Uz add-zsh-hook
+add-zsh-hook preexec _claudii_preexec
 add-zsh-hook precmd _claudii_statusline
