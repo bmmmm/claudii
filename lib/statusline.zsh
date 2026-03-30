@@ -263,6 +263,19 @@ function _claudii_dashboard {
 
   # Right-align each line: expand prompt codes, then strip ANSI to measure visible width.
   # (S) flag = shortest match so [0-9;]* does not greedily consume across sequences.
+  #
+  # EAW audit (python3 unicodedata.east_asian_width):
+  #   ⚡ U+26A1  EAW=W  → 2 terminal cols, zsh ${#} counts as 1  ← needs margin
+  #   ● U+25CF  EAW=A  → 1 col in non-CJK terminals (no margin needed)
+  #   ○ U+25CB  EAW=A  → 1 col
+  #   █ U+2588  EAW=A  → 1 col
+  #   ✓ U+2713  EAW=N  → 1 col
+  #   ⚠ U+26A0  EAW=N  → 1 col
+  #   ✗ U+2717  EAW=N  → 1 col
+  # wcswidth via Python is not reliable for terminal width (terminal emulators vary);
+  # the safety margin below is intentionally simple and robust.
+  # -1 accounts for ⚡ appearing at most once per session line (cache_pct segment).
+  local _eaw_margin=1  # ⚡ U+26A1 (EAW=W) renders as 2 cols; ${#} counts it as 1
   local dash_padded="" _dl _vis_str _vis _pad
   local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
   for _dl in "${_dash_lines[@]}"; do
@@ -271,7 +284,7 @@ function _claudii_dashboard {
     _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
     _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
     _vis=${#_vis_str}
-    _pad=$(( _cols - _vis - 1 ))  # -1: ⚡ U+26A1 is EAW=W (Wide, always 2 cols); ${#} counts it as 1
+    _pad=$(( _cols - _vis - _eaw_margin ))
     (( _pad < 0 )) && _pad=0
     dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
   done
