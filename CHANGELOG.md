@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- `claudii trends` awk syntax error (missing `}` in END block)
+- Session name in `claudii sessions` / bare `claudii` showing raw sed code from JSONL tool-result transcripts
+
+---
+
 ## [0.7.0] — 2026-03-30
 
 ### Added
