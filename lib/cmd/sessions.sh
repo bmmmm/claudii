@@ -154,6 +154,7 @@ _cmd_sessions_inactive() {
 
   printf '\n'
   printf "  ${CLAUDII_CLR_BOLD}Inactive Sessions${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}Sessions whose Claude Code process has ended. Cache kept until GC runs.${CLAUDII_CLR_RESET}\n"
 
   shopt -s nullglob
   _is_files=("$cache_dir"/session-*)
@@ -220,6 +221,22 @@ _cmd_sessions_inactive() {
     printf "  No inactive sessions.\n"
   elif [[ $_has_files -eq 0 ]]; then
     printf "  No session data found.\n"
+  fi
+
+  # GC footer: count stale files (ppid dead AND age > 3600s)
+  _is_now=$(date +%s)
+  _is_stale=0
+  for _is_gc_f in "${_is_files[@]}"; do
+    [[ -f "$_is_gc_f" ]] || continue
+    _is_gc_ppid=$(grep '^ppid=' "$_is_gc_f" 2>/dev/null | cut -d= -f2)
+    _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
+    (( _is_now - _is_gc_mtime < 3600 )) && continue
+    [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
+    (( _is_stale++ ))
+  done
+  if (( _is_stale > 0 )); then
+    printf "  ${CLAUDII_CLR_DIM}%d stale session%s pending GC${CLAUDII_CLR_RESET}\n" \
+      "$_is_stale" "$( (( _is_stale != 1 )) && printf 's' || true)"
   fi
 
   printf '\n'

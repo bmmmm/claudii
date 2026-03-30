@@ -416,6 +416,22 @@ _cmd_doctor() {
     _dc_add "cache" "warn" "Cache directory missing — will be created on first status check"
   fi
 
+  # 4b. Session cache GC — stale files (ppid dead AND age > 24h)
+  _dc_now=$(date +%s)
+  _dc_stale=0
+  for _dc_sf in "$cache_dir"/session-*; do
+    [[ -f "$_dc_sf" ]] || continue
+    _dc_sf_ppid=$(grep '^ppid=' "$_dc_sf" 2>/dev/null | cut -d= -f2)
+    _dc_sf_mt=$(stat -f%m "$_dc_sf" 2>/dev/null || stat -c%Y "$_dc_sf" 2>/dev/null || echo 0)
+    (( _dc_now - _dc_sf_mt < 86400 )) && continue
+    [[ -n "$_dc_sf_ppid" ]] && kill -0 "$_dc_sf_ppid" 2>/dev/null && continue
+    (( _dc_stale++ ))
+  done
+  if (( _dc_stale > 0 )); then
+    _dc_s=""; (( _dc_stale != 1 )) && _dc_s="s"
+    _dc_add "session_gc" "info" "Session cache: ${_dc_stale} stale file${_dc_s}, GC runs on next shell load"
+  fi
+
   # 5. Completions
   comp_dir="$CLAUDII_HOME/completions"
   if [[ -f "$comp_dir/_claudii" ]]; then
@@ -451,12 +467,14 @@ _cmd_doctor() {
   ok="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}"
   warn="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}"
   fail="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}"
+  info="${CLAUDII_CLR_DIM}·${CLAUDII_CLR_RESET}"
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n"
   for (( i=0; i<_dc_count; i++ )); do
     case "${_dc_status[$i]}" in
       ok)   icon="$ok"   ;;
       warn) icon="$warn" ;;
+      info) icon="$info" ;;
       *)    icon="$fail" ;;
     esac
     printf "  %b %s\n" "$icon" "${_dc_detail[$i]}"

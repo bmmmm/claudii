@@ -45,3 +45,26 @@ unset _claudii_t0
 # job has more time to finish before the first prompt renders.
 [[ -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models" ]] || \
   ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+
+# Session cache GC — runs at most once per hour, silently removes stale session
+# files whose Claude Code process has ended and that are older than 1 hour.
+_claudii_session_gc() {
+  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local lock="$cache_dir/gc.last"
+  local now; now=$(date +%s)
+  # Run at most once per hour (lockfile mtime check)
+  [[ -f "$lock" ]] && (( now - $(stat -f%m "$lock" 2>/dev/null || stat -c%Y "$lock" 2>/dev/null || echo 0) < 3600 )) && return
+  touch "$lock"
+  local f ppid mtime
+  for f in "$cache_dir"/session-*; do
+    [[ -f "$f" ]] || continue
+    ppid=$(grep '^ppid=' "$f" 2>/dev/null | cut -d= -f2)
+    mtime=$(stat -f%m "$f" 2>/dev/null || stat -c%Y "$f" 2>/dev/null || echo 0)
+    # Safety: never delete files modified < 1h ago
+    (( now - mtime < 3600 )) && continue
+    # Never delete if ppid alive
+    [[ -n "$ppid" ]] && kill -0 "$ppid" 2>/dev/null && continue
+    rm -f "$f"
+  done
+}
+( _claudii_session_gc &>/dev/null & )
