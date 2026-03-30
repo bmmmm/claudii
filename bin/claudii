@@ -99,7 +99,7 @@ usage() {
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clo" "opus"   "high"   "complex tasks"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clm" "opus"   "max"    "max effort"
   printf "    %-5s  %-7s  %-6s  $d %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
-  printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + live status"
+  printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "this alias table + current model status"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
@@ -124,6 +124,7 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
+  printf "    %-33s $d %s\n" "update"                          "update to latest version"
   printf "    %-33s $d %s\n" "version"                         "show version number"
   printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
   printf "    %-33s $d %s\n" "restart"                         "reload plugin"

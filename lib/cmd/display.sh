@@ -176,7 +176,10 @@ _cmd_layers() {
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
   printf '  Session data from cache (model, context, cost, rate limits)\n'
-  printf "  Example:  ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} 76%% ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:17%% reset 43min\n"
+  printf "  Example (global line):\n"
+  printf "    5h:51%% ${CLAUDII_CLR_DIM}reset 158min │${CLAUDII_CLR_RESET} 7d:92%% ${CLAUDII_CLR_DIM}(+18%%) │${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$24.73${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}today (2 sessions)${CLAUDII_CLR_RESET}\n"
+  printf "  Example (session line):\n"
+  printf "    ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}76%%${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│ ⚡38%%${CLAUDII_CLR_RESET}\n"
   printf '\n'
   printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
   printf '  Sessions: %d cache file(s)\n' "$sb_count"
@@ -216,6 +219,13 @@ _cmd_layers() {
   # Symbol & field reference
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '\n'
+  printf '  Dashboard\n'
+  printf '  %-4s %-20s %s\n' "●"   "active"           "session or service is active"
+  printf '  %-4s %-20s %s\n' "○"   "inactive"         "session ended or service is off"
+  printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (8 blocks = 100%)"
+  printf '  %-4s %-20s %s\n' "⚡"  "cache ratio"      "% of input served from prompt cache"
+  printf '  %-4s %-20s %s\n' "│"   "separator"        "field separator (dim)"
   printf '\n'
   printf '  CC-Statusline\n'
   printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (10 blocks = 100%)"

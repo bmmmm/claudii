@@ -371,9 +371,7 @@ _cmd_default() {
   printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
   printf '\n'
 
-  # ── Sessions ──────────────────────────────────────────────────────
-  printf "  ${CLAUDII_CLR_BOLD}Sessions${CLAUDII_CLR_RESET}\n"
-
+  # ── Gather session data ────────────────────────────────────────────
   shopt -s nullglob
   _ov_files=("$cache_dir"/session-*)
   shopt -u nullglob
@@ -417,61 +415,73 @@ _cmd_default() {
         (( _ov_active_count++ ))
       else
         (( _ov_inactive_count++ ))
-        continue  # skip rendering inactive sessions in bare view
       fi
-
-      # Context bar
-      _ov_bar=""
-      if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        _render_ctx_bar "${_PSC_ctx_pct%.*}"
-        _ov_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_PSC_ctx_pct%.*}%${CLAUDII_CLR_RESET}"
-      fi
-
-      # Build line: icon + model + project path + session name + bar + cost + cache + worktree + agent
-      _ov_line="  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}"
-      if [[ -n "$_PSC_session_id" ]]; then
-        _ov_projpath=$(_session_project_path "$_PSC_session_id")
-        _ov_sesname=$(_session_name "$_PSC_session_id")
-        [[ -n "$_ov_projpath" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}${_ov_projpath}${CLAUDII_CLR_RESET}"
-        [[ -n "$_ov_sesname" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}\"${_ov_sesname}\"${CLAUDII_CLR_RESET}"
-      fi
-      _ov_line+="${_ov_bar}"
-
-      if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-        _ov_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_PSC_cost")${CLAUDII_CLR_RESET}"
-      fi
-
-      if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
-        _ov_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
-      fi
-
-      if [[ -n "$_PSC_worktree" ]]; then
-        _ov_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
-      fi
-      if [[ -n "$_PSC_agent" ]]; then
-        _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
-      fi
-
-      printf '%s\n' "$_ov_line"
     done
+  fi
+
+  # ── Sessions ──────────────────────────────────────────────────────
+  if (( _ov_any_session )); then
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Sessions${CLAUDII_CLR_RESET}\n"
+
+    # Render active sessions
+    if [[ ${#_ov_files[@]} -gt 0 ]]; then
+      for _ov_f in "${_ov_files[@]}"; do
+        [[ -f "$_ov_f" ]] || continue
+        _parse_session_cache "$_ov_f"
+        [[ -z "$_PSC_model" ]] && continue
+        [[ "$_PSC_is_active" -ne 1 ]] && continue
+
+        # Context bar
+        _ov_bar=""
+        if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          _render_ctx_bar "${_PSC_ctx_pct%.*}"
+          _ov_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_PSC_ctx_pct%.*}%${CLAUDII_CLR_RESET}"
+        fi
+
+        # Build line: icon + model + project path + session name + bar + cost + cache + worktree + agent
+        _ov_line="    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}"
+        if [[ -n "$_PSC_session_id" ]]; then
+          _ov_projpath=$(_session_project_path "$_PSC_session_id")
+          _ov_sesname=$(_session_name "$_PSC_session_id")
+          [[ -n "$_ov_projpath" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}${_ov_projpath}${CLAUDII_CLR_RESET}"
+          [[ -n "$_ov_sesname" ]] && _ov_line+="  ${CLAUDII_CLR_DIM}\"${_ov_sesname}\"${CLAUDII_CLR_RESET}"
+        fi
+        _ov_line+="${_ov_bar}"
+
+        if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_PSC_cost")${CLAUDII_CLR_RESET}"
+        fi
+
+        if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
+        fi
+
+        if [[ -n "$_PSC_worktree" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
+        fi
+        if [[ -n "$_PSC_agent" ]]; then
+          _ov_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
+        fi
+
+        printf '%s\n' "$_ov_line"
+      done
+    fi
 
     # Summary line for inactive sessions
     if (( _ov_inactive_count > 0 )); then
-      printf "  ${CLAUDII_CLR_DIM}○ %d inactive  (claudii si — show inactive)${CLAUDII_CLR_RESET}\n" "$_ov_inactive_count"
+      printf "    ${CLAUDII_CLR_DIM}○ %d inactive  (claudii si)${CLAUDII_CLR_RESET}\n" "$_ov_inactive_count"
     fi
-  fi
-
-  if (( ! _ov_any_session )); then
-    printf "  ${CLAUDII_CLR_DIM}No sessions yet. Start Claude to see data here.${CLAUDII_CLR_RESET}\n"
+  else
+    printf "  ${CLAUDII_CLR_DIM}○ Sessions                        start Claude to see data here${CLAUDII_CLR_RESET}\n"
   fi
 
   # ── Account ───────────────────────────────────────────────────────
   printf '\n'
-  printf "  ${CLAUDII_CLR_BOLD}Account${CLAUDII_CLR_RESET}\n"
-
   if [[ -n "$_ov_acct_5h" ]]; then
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Account${CLAUDII_CLR_RESET}\n"
+
     _ov_5h_int=${_ov_acct_5h%.*}
-    _ov_acct_line="  5h: ${_ov_5h_int}%"
+    _ov_acct_line="    5h: ${_ov_5h_int}%"
     # Reset countdown
     if [[ -n "$_ov_acct_reset" && "$_ov_acct_reset" != "0" ]]; then
       _ov_remaining=$(( _ov_acct_reset - now ))
@@ -510,27 +520,25 @@ _cmd_default() {
     fi
     printf '%s\n' "$_ov_acct_line"
   else
-    printf "  ${CLAUDII_CLR_DIM}No rate limit data yet.${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}○ Account                         rate limits appear after first session${CLAUDII_CLR_RESET}\n"
   fi
 
   # ── Agents ────────────────────────────────────────────────────────
   printf '\n'
-  printf "  ${CLAUDII_CLR_BOLD}Agents${CLAUDII_CLR_RESET}\n"
-
   _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$CONFIG" 2>/dev/null)
   [[ -z "$_ov_agents_json" ]] && _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
 
   if [[ -n "$_ov_agents_json" ]]; then
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Agents${CLAUDII_CLR_RESET}\n"
     while IFS=$'\t' read -r _a_alias _a_skill _a_model _a_effort; do
-      printf "  %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
+      printf "    %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
     done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
   else
-    printf "  ${CLAUDII_CLR_DIM}No agents configured. See: claudii agents${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}○ Agents                          claudii agents to configure${CLAUDII_CLR_RESET}\n"
   fi
 
   # ── Services ──────────────────────────────────────────────────────
   printf '\n'
-  printf "  ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
 
   # ClaudeStatus
   _ov_cs_en=$(_cfgget statusline.enabled)
@@ -567,8 +575,48 @@ _cmd_default() {
     _ov_watch_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
   fi
 
-  printf "  ClaudeStatus %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Dashboard %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  CC-Statusline %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Watch %b\n" \
-    "$_ov_cs_str" "$_ov_dash_str" "$_ov_sl_str" "$_ov_watch_str"
+  # Services header: ● if any layer is active, ○ if all off
+  _ov_svc_any=0
+  [[ "$_ov_cs_en" == "true" ]] && _ov_svc_any=1
+  [[ "$_ov_dash_en" != "off" ]] && _ov_svc_any=1
+  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_svc_any=1
+  [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null && _ov_svc_any=1
+
+  if (( _ov_svc_any )); then
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
+  else
+    printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
+  fi
+
+  # Model health cache inline with ClaudeStatus
+  _ov_model_health=""
+  _ov_status_cache="$cache_dir/status-models"
+  if [[ -f "$_ov_status_cache" ]]; then
+    _ov_health_str=""
+    while IFS='=' read -r _om _os; do
+      [[ -z "$_om" || "$_om" == _* ]] && continue
+      # Normalize to display name
+      case "$_om" in
+        opus)   _om_cap="Opus"   ;;
+        sonnet) _om_cap="Sonnet" ;;
+        haiku)  _om_cap="Haiku"  ;;
+        *)      _om_cap="$_om"   ;;
+      esac
+      case "$_os" in
+        ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ✓${CLAUDII_CLR_RESET} " ;;
+        degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ⚠${CLAUDII_CLR_RESET} " ;;
+        down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ✗${CLAUDII_CLR_RESET} " ;;
+      esac
+    done < "$_ov_status_cache"
+    [[ -n "$_ov_health_str" ]] && _ov_model_health=" ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
+  fi
+
+  printf "    ClaudeStatus %b%s  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Dashboard %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  CC-Statusline %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Watch %b\n" \
+    "$_ov_cs_str" "$_ov_model_health" "$_ov_dash_str" "$_ov_sl_str" "$_ov_watch_str"
+
+  if (( ! _ov_svc_any )); then
+    printf "    ${CLAUDII_CLR_DIM}claudii on to enable${CLAUDII_CLR_RESET}\n"
+  fi
 
   printf '\n'
   printf "  ${CLAUDII_CLR_DIM}claudii help  for all commands${CLAUDII_CLR_RESET}\n"

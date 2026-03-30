@@ -262,7 +262,7 @@ Equivalent to
 .BR "claudii search" .
 .TP
 .B clh
-Show the alias table and run a live model health check.
+Show the alias table and run a live model health check (current model status).
 .TP
 .B clorch
 Example agent alias: launches Claude Opus (high effort) with the
@@ -347,6 +347,18 @@ Without subcommand: show current state.
 Show component overview: ClaudeStatus (RPROMPT), Dashboard (above prompt),
 CC-Statusline (inside Claude Code). Includes current status, config, data flow,
 and a reference legend for all symbols and fields used in the output.
+.PP
+.B Dashboard symbols:
+.PP
+.RS
+.nf
+\[u25CF]    active           session or service is active
+\[u25CB]    inactive         session ended or service is off
+\[u2588]\[u2591]  context bar      context window fill (8 blocks = 100%)
+\[u26A1]    cache ratio      % of input served from prompt cache
+|    separator        field separator (dim)
+.fi
+.RE
 .PP
 .B CC-Statusline fields:
 .PP
