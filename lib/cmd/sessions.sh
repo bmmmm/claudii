@@ -13,7 +13,12 @@ _cmd_cost() {
   fi
 
   now=$(date +%s)
-  cutoff=$(( now - 86400 ))
+  # Use calendar midnight as cutoff (not rolling 24h)
+  if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
+    cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
+  else
+    cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
+  fi
 
   # Parallel indexed arrays for per-model totals (bash 3.2 compatible, no declare -A)
   _cost_models=()
@@ -395,7 +400,12 @@ _cmd_default() {
 
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
   _ov_today_cost=0 _ov_today_count=0
-  _ov_cutoff=$(( now - 86400 ))
+  # Use calendar midnight as cutoff (not rolling 24h)
+  if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
+    _ov_cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
+  else
+    _ov_cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
+  fi
   _ov_any_session=0
   _ov_active_count=0 _ov_inactive_count=0
 
