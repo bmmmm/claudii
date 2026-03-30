@@ -71,6 +71,20 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 4. `.gitignore` — clean up stale rules if files were removed
 5. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry (local only — never commit, never `git add .claude/`)
 
+## Available skills for this project
+
+| Skill | When to use |
+|-------|-------------|
+| `/shape` | Hygiene check + feature ideas → TODOs |
+| `/orchestrate` | Implement tasks from TODO.md via parallel agents |
+| `/explore` | Competitive intelligence, ecosystem scan, upstream skill tracking |
+| `/commit` | Auto-generate commit message and commit |
+| `/commit-push-pr` | Commit + push + open PR in one step |
+| `/clean_gone` | Clean up stale remote-deleted branches |
+| `/revise-claude-md` | Update this CLAUDE.md with session learnings |
+| `/claude-md-improver` | Audit and improve CLAUDE.md quality |
+| `/skill-creator` | Create or improve skills in `.claude/skills/` |
+
 ## When committing
 
 Only check what the commit actually touches — skip checks that don't apply:
