@@ -150,3 +150,43 @@ unset doc_out2
 agents_out=$(bash "$CLAUDII_HOME/bin/claudii" agents 2>&1 || true)
 assert_eq "agents: produces output" "0" "$([ -z "$agents_out" ] && echo 1 || echo 0)"
 unset agents_out
+
+# _session_name — returns real name, not source code patterns
+_SN_TMP="$(mktemp -d)"
+_SN_PROJ="$_SN_TMP/.claude/projects/test-project"
+mkdir -p "$_SN_PROJ"
+
+# Real rename entry (the name we expect back)
+printf '%s\n' \
+  '{"type":"message","role":"assistant","content":[{"type":"text","text":"Session renamed to: my-session"}]}' \
+  > "$_SN_PROJ/sntest01.jsonl"
+
+# Append a tool-result line that contains the old grep pattern (simulates source code in transcript)
+printf '%s\n' \
+  '{"type":"tool_result","content":"grep -o '\''Session renamed to: [^<]*'\'' \"$jsonl\""}' \
+  >> "$_SN_PROJ/sntest01.jsonl"
+
+# Helper: source only the _session_name function from bin/claudii and call it
+_sn_result=$(bash -c '
+  CLAUDII_HOME="$1" HOME="$2"
+  source "$CLAUDII_HOME/lib/visual.sh"
+  '"$(sed -n '/^# Extract session name/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  _session_name sntest01
+' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
+
+assert_eq "_session_name: returns real name" "my-session" "$_sn_result"
+assert_eq "_session_name: does not leak grep pattern" "0" \
+  "$(echo "$_sn_result" | grep -cF '[^<]*' || true)"
+
+# Empty JSONL — must return empty, no crash
+printf '' > "$_SN_PROJ/sntest02.jsonl"
+_sn_empty=$(bash -c '
+  CLAUDII_HOME="$1" HOME="$2"
+  source "$CLAUDII_HOME/lib/visual.sh"
+  '"$(sed -n '/^# Extract session name/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  _session_name sntest02
+' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
+assert_eq "_session_name: empty JSONL → empty output" "" "$_sn_empty"
+
+rm -rf "$_SN_TMP"
+unset _SN_TMP _SN_PROJ _sn_result _sn_empty
