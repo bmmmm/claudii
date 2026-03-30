@@ -273,6 +273,82 @@ zsh_session_bar_live=$(
 assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
 rm -rf "$SESSION_BAR_TMP"
 
+# ── Dashboard right-alignment width tests ──
+# Verify that each padded dashboard line fits within COLUMNS.
+# Measurement: _CLAUDII_LAST_DASH_PADDED holds raw zsh prompt strings (%F{} %B etc.).
+# Must expand prompt codes via (%) first, then strip ANSI, then count codepoints.
+# ⚡ U+26A1 is EAW=W (always 2 terminal columns); ${#} counts it as 1 → add 1 per occurrence.
+DASH_WIDTH_TMP="$CLAUDII_HOME/tmp/test_statusline_dashwidth"
+rm -rf "$DASH_WIDTH_TMP"
+mkdir -p "$DASH_WIDTH_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$DASH_WIDTH_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$DASH_WIDTH_TMP/status-models"
+_live_pid=$$
+
+# Test: session with worktree segment — [wt:...] — no wide chars, verify line ≤ COLUMNS
+printf 'model=Sonnet\nctx_pct=55\ncost=1.23\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=wt1\nworktree=my-feature\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$DASH_WIDTH_TMP/session-wt1"
+dash_wt_result=$(
+  CLAUDII_CACHE_DIR="$DASH_WIDTH_TMP" XDG_CONFIG_HOME="$DASH_WIDTH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    # _CLAUDII_LAST_DASH_PADDED contains raw zsh prompt strings; expand via (%) then strip ANSI
+    local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
+    for line in \"\${lines[@]}\"; do
+      [[ -z \"\$line\" ]] && continue
+      vis=\"\${(%)line}\"                          # expand %F{} %B %b %% etc. → ANSI
+      vis=\"\${(S)vis//\$'\\e'\[[0-9;]*m/}\"       # strip ANSI CSI sequences
+      vis=\"\${vis//\$'\\e'\[s/}\" ; vis=\"\${vis//\$'\\e'\[u/}\"  # strip cursor-save/restore
+      vis=\"\${vis//\\\\\$/\\\$}\"                 # \\$ → \$
+      printf '%d\n' \"\${#vis}\"
+    done
+  " 2>/dev/null
+)
+wt_overflow=0
+while IFS= read -r w; do
+  [[ -z "$w" ]] && continue
+  (( w > 80 )) && wt_overflow=$(( wt_overflow + 1 ))
+done <<< "$dash_wt_result"
+assert_eq "dashboard worktree line: visible width ≤ COLUMNS=80" "0" "$wt_overflow"
+
+# Test: session with cache_pct — triggers ⚡ (EAW=W, 2 cols) — margin must absorb it
+printf 'model=Sonnet\nctx_pct=55\ncost=1.23\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=cp1\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=73\nppid=%s\n' "$_live_pid" \
+  > "$DASH_WIDTH_TMP/session-cp1"
+rm -f "$DASH_WIDTH_TMP/session-wt1"
+dash_cp_result=$(
+  CLAUDII_CACHE_DIR="$DASH_WIDTH_TMP" XDG_CONFIG_HOME="$DASH_WIDTH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
+    for line in \"\${lines[@]}\"; do
+      [[ -z \"\$line\" ]] && continue
+      vis=\"\${(%)line}\"
+      vis=\"\${(S)vis//\$'\\e'\[[0-9;]*m/}\"
+      vis=\"\${vis//\$'\\e'\[s/}\" ; vis=\"\${vis//\$'\\e'\[u/}\"
+      vis=\"\${vis//\\\\\$/\\\$}\"
+      # ⚡ (U+26A1, EAW=W) renders as 2 cols but counts as 1 codepoint — add 1 per occurrence
+      lightning_count=\$(printf '%s' \"\$vis\" | tr -cd '⚡' | wc -c)
+      # Each ⚡ is 3 UTF-8 bytes; wc -c returns byte count — divide by 3
+      lightning_count=\$(( lightning_count / 3 ))
+      printf '%d\n' \"\$(( \${#vis} + lightning_count ))\"
+    done
+  " 2>/dev/null
+)
+cp_overflow=0
+while IFS= read -r w; do
+  [[ -z "$w" ]] && continue
+  (( w > 80 )) && cp_overflow=$(( cp_overflow + 1 ))
+done <<< "$dash_cp_result"
+assert_eq "dashboard cache_pct line (⚡ EAW=W): true display width ≤ COLUMNS=80" "0" "$cp_overflow"
+
+rm -rf "$DASH_WIDTH_TMP"
+
 # Cleanup
 rm -rf "$ZSH_TMP"
 
