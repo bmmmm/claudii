@@ -17,11 +17,11 @@ function _claudii_statusline {
 }
 
 function _claudii_statusline_render {
-  # On empty Enter (no command ran): cursor is on the prompt line itself (cursor-up in
-  # PROMPT already moved it back). Erase N+1 lines down to clear the old dashboard area
-  # before rendering fresh. Only needed while dashboard was active last cycle.
+  # On empty Enter: cursor is 1 line below the prompt (line L+1).
+  # Dashboard occupies lines L-N..L-1, prompt at L.
+  # Move up N+1 lines to L-N and erase to end of screen before reprinting.
   if (( _CLAUDII_CMD_RAN == 0 && _CLAUDII_LAST_DASH_LINE_COUNT > 0 )); then
-    printf '\e[J'
+    printf '\e[%dA\e[J' $(( _CLAUDII_LAST_DASH_LINE_COUNT + 1 ))
   fi
   _CLAUDII_CMD_RAN=0
 
@@ -268,12 +268,8 @@ function _claudii_dashboard {
 
   # Reuse padded version if content and terminal width unchanged
   if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
-    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
-      local _cu_cached=$'\e['"${_CLAUDII_LAST_DASH_LINE_COUNT}A"
-      PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}%{${_cu_cached}%}"
-    else
-      PROMPT="${_CLAUDII_USER_PROMPT}"
-    fi
+    [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]] && print -Pn "${_CLAUDII_LAST_DASH_PADDED}"
+    PROMPT="${_CLAUDII_USER_PROMPT}"
     return
   fi
 
@@ -310,24 +306,24 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_PADDED="$dash_padded"
   _CLAUDII_LAST_DASH_COLS=$_cols
 
-  # Calculate line count from dash_padded (with trailing \n, wc -l gives correct count).
+  # Count lines for the erase calculation on next precmd cycle.
   local _n_lines
   _n_lines=$(printf '%s' "$dash_padded" | wc -l | tr -d ' ')
   _CLAUDII_LAST_DASH_LINE_COUNT=$(( _n_lines ))
 
-  # Embed dashboard BELOW the prompt: user prompt on line L, dashboard on L+1..L+N,
-  # then cursor-up N lines so input appears on line L.
-  # Uses relative cursor movement (\e[NA) — safe even when terminal scrolls.
-  local _cu=$'\e['"${_n_lines}A"
-  PROMPT="${_CLAUDII_USER_PROMPT}"$'\n'"${dash_padded%$'\n'}%{${_cu}%}"
+  # Print dashboard ABOVE the prompt via precmd stdout.
+  # No cursor tricks — precmd output naturally appears above the rendered prompt.
+  print -Pn "$dash_padded"
+  PROMPT="${_CLAUDII_USER_PROMPT}"
 }
 
 # Preexec: fires when a real command is submitted.
-# Sets CMD_RAN so precmd skips the empty-Enter erase, and erases the dashboard
-# below the prompt so command output starts cleanly on the first dashboard line.
+# Erase the dashboard (same N+1 move-up as empty Enter) so command output
+# starts cleanly at the top of where the dashboard was.
 function _claudii_preexec {
   _CLAUDII_CMD_RAN=1
-  (( _CLAUDII_LAST_DASH_LINE_COUNT > 0 )) && printf '\e[J'
+  (( _CLAUDII_LAST_DASH_LINE_COUNT > 0 )) && \
+    printf '\e[%dA\e[J' $(( _CLAUDII_LAST_DASH_LINE_COUNT + 1 ))
 }
 
 # On terminal resize: invalidate the width cache so the next precmd recomputes
