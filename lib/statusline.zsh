@@ -250,14 +250,12 @@ function _claudii_dashboard {
   [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && dash_raw="${_CLAUDII_DASH_GLOBAL_LINE}"$'\n'
   dash_raw+="$_CLAUDII_DASH_SESSION_LINES"
 
-  local _CS=$'\033[s' _CR=$'\033[u' _RS=$'\033[0m'
   local _cols=${COLUMNS:-80}
 
   # Reuse padded version if content and terminal width unchanged
   if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
-    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}${_RS}${_CR}%}"
-    fi
+    [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]] && print -Pn "${_CLAUDII_LAST_DASH_PADDED}"
+    PROMPT="${_CLAUDII_USER_PROMPT}"
     return
   fi
 
@@ -281,10 +279,10 @@ function _claudii_dashboard {
     _wide=${#${_vis_str//[^⚡]/}}                 # count EAW=W chars (each costs +1 col)
     _pad=$(( _cols - _vis - _wide ))
     if (( _pad < 0 )); then
-      # Line overflows terminal width — truncate plain text to avoid wrap
-      (( _cols > 4 )) \
-        && dash_padded+="${_vis_str[1,$(( _cols - 2 ))]}…"$'\n' \
-        || dash_padded+="${_vis_str}…"$'\n'
+      # Line overflows terminal width — truncate and escape % for print -P
+      local _trunc="${_vis_str[1,$(( _cols - 1 ))]}"
+      local _trunc_escaped="${_trunc//%/%%}"
+      dash_padded+="${_trunc_escaped}…"$'\n'
     else
       dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
     fi
@@ -294,7 +292,8 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_PADDED="$dash_padded"
   _CLAUDII_LAST_DASH_COLS=$_cols
 
-  [[ -n "$dash_padded" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_padded%$'\n'}${_RS}${_CR}%}"
+  [[ -n "$dash_padded" ]] && print -Pn "$dash_padded"
+  PROMPT="${_CLAUDII_USER_PROMPT}"
 }
 
 # On terminal resize: invalidate the width cache so the next precmd recomputes
