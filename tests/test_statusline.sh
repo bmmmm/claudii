@@ -309,7 +309,7 @@ dash_wt_result=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     # _CLAUDII_LAST_DASH_PADDED contains raw zsh prompt strings; expand via (%) then strip ANSI
     local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
     for line in \"\${lines[@]}\"; do
@@ -339,7 +339,7 @@ dash_cp_result=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
     for line in \"\${lines[@]}\"; do
       [[ -z \"\$line\" ]] && continue
@@ -379,7 +379,7 @@ trapwinch_out=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     # _CLAUDII_LAST_DASH_COLS should now be 80 — call TRAPWINCH to reset it
     TRAPWINCH
     printf '%d\n' \"\$_CLAUDII_LAST_DASH_COLS\"
@@ -405,7 +405,7 @@ overflow_result=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
     local overflowed_lines=0 has_ellipsis=0 total_lines=0
     for line in \"\${lines[@]}\"; do
@@ -448,7 +448,7 @@ multi_result=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     printf '%s' \"\$_CLAUDII_LAST_DASH_PADDED\"
   " 2>/dev/null
 )
@@ -462,7 +462,7 @@ multi_overflow=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
     local overflowed=0
     for line in \"\${lines[@]}\"; do
@@ -498,14 +498,14 @@ cache_reuse_result=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     # First run — populates cache
     _CLAUDII_LAST_DASHBOARD=''
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     first_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
     # Second run — same data + same COLUMNS → cache hit, padded unchanged
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     second_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
     # Third run — different COLUMNS → cache miss, new padded
     COLUMNS=60
-    _claudii_dashboard
+    _claudii_dashboard >/dev/null
     third_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
     # Output: 'same' if first==second, then 'diff' if second!=third
     [[ \"\$first_padded\" == \"\$second_padded\" ]] && printf 'same\\n' || printf 'not_same\\n'
