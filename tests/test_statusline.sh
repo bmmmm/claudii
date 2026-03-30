@@ -148,6 +148,7 @@ zsh_out=$(
   CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
     _claudii_statusline
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
@@ -162,6 +163,7 @@ zsh_out=$(
   CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
     _claudii_statusline
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
@@ -176,6 +178,7 @@ zsh_out=$(
   zsh -c "
     cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
     _claudii_statusline
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
@@ -247,7 +250,7 @@ else
     CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
     zsh -c "
       source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-      _CLAUDII_LAST_DASHBOARD=''
+      _CLAUDII_CMD_RAN=1
       _claudii_dashboard
     " 2>/dev/null
   )
@@ -265,13 +268,120 @@ zsh_session_bar_live=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    _CLAUDII_LAST_DASHBOARD=''
+    _CLAUDII_CMD_RAN=1
     _claudii_dashboard
     print -P \"\$PROMPT\"
   " 2>/dev/null
 )
 assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
 rm -rf "$SESSION_BAR_TMP"
+
+# ── Conditional rendering tests ──
+
+COND_TMP="$CLAUDII_HOME/tmp/test_statusline_cond"
+rm -rf "$COND_TMP"
+mkdir -p "$COND_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$COND_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$COND_TMP/status-models"
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=76\ncost=0.66\nrate_5h=28\nreset_5h=\nppid=%s\n' "$_live_pid" \
+  > "$COND_TMP/session-condtest"
+
+# 1. CMD_RAN=0 → no dashboard, plain PROMPT
+cond_out=$(
+  CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_USER_PROMPT='TESTPROMPT> '
+    _CLAUDII_CMD_RAN=0
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_eq "conditional: CMD_RAN=0 → plain PROMPT, no session lines" "TESTPROMPT> " "$cond_out"
+
+# 2. CMD_RAN=1 → dashboard shown, contains model name
+cond_out=$(
+  CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_USER_PROMPT='TESTPROMPT> '
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    print -P \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "conditional: CMD_RAN=1 → dashboard shown with model" "Sonnet" "$cond_out"
+
+# 3. Format test: model, ctx%, cost, 5h-rate all present
+format_out=$(
+  CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_USER_PROMPT='TESTPROMPT> '
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    print -P \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard format: contains model name" "Sonnet" "$format_out"
+assert_contains "dashboard format: contains ctx%" "76%" "$format_out"
+assert_contains "dashboard format: contains cost" "\$0.66" "$format_out"
+assert_contains "dashboard format: contains 5h rate" "5h:28%" "$format_out"
+
+# 4. dashboard off → plain PROMPT
+off_out=$(
+  CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_USER_PROMPT='TESTPROMPT> '
+    _CLAUDII_CFG_CACHE[dashboard.enabled]=off
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_eq "dashboard off → plain PROMPT" "TESTPROMPT> " "$off_out"
+
+# 5. TRAPWINCH sets CMD_RAN=1
+trapwinch_out=$(
+  CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=0
+    TRAPWINCH
+    printf '%d' \"\$_CLAUDII_CMD_RAN\"
+  " 2>/dev/null
+)
+assert_eq "TRAPWINCH sets _CLAUDII_CMD_RAN=1" "1" "$trapwinch_out"
+
+rm -rf "$COND_TMP"
+
+# ── PROMPT must not contain literal ESC[s (cursor save) ──
+ESC_TMP="$CLAUDII_HOME/tmp/test_statusline_esc"
+rm -rf "$ESC_TMP"
+mkdir -p "$ESC_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$ESC_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ESC_TMP/status-models"
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=50\ncost=0.10\nrate_5h=\nreset_5h=\nppid=%s\n' "$_live_pid" \
+  > "$ESC_TMP/session-esctest"
+esc_prompt=$(
+  CLAUDII_CACHE_DIR="$ESC_TMP" XDG_CONFIG_HOME="$ESC_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+# ESC[s = \033[s — cursor save must not appear in new minimal dashboard
+if printf '%s' "$esc_prompt" | grep -qF $'\033[s'; then
+  assert_eq "PROMPT must not contain ESC[s (cursor save)" "no ESC[s" "found ESC[s"
+else
+  assert_eq "PROMPT must not contain ESC[s (cursor save)" "no ESC[s" "no ESC[s"
+fi
+rm -rf "$ESC_TMP"
 
 # Cleanup
 rm -rf "$ZSH_TMP"

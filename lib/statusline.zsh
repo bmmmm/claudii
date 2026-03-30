@@ -3,8 +3,18 @@
 source "${CLAUDII_HOME}/lib/visual.sh"
 
 # Capture the user's original PROMPT once at load time.
-# Every precmd cycle restores PROMPT to this, then appends dashboard lines below it.
+# Every precmd cycle restores PROMPT to this, then prepends dashboard lines.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
+
+# 1 = show dashboard on next precmd (initial: show on first prompt)
+typeset -gi _CLAUDII_CMD_RAN=1
+
+function _claudii_preexec { _CLAUDII_CMD_RAN=1; }
+
+function TRAPWINCH {
+  _CLAUDII_CMD_RAN=1
+  zle reset-prompt 2>/dev/null
+}
 
 function _claudii_statusline {
   local _t=$EPOCHREALTIME
@@ -79,27 +89,20 @@ function _claudii_statusline_render {
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Dashboard — multi-session lines prepended to PROMPT
+  # Dashboard — session lines prepended to PROMPT (conditional: only after real commands)
   _claudii_dashboard
 }
 
 typeset -ga _CLAUDII_DASH_MODELS _CLAUDII_DASH_CTXS _CLAUDII_DASH_COSTS
-typeset -ga _CLAUDII_DASH_5HS _CLAUDII_DASH_7DS _CLAUDII_DASH_R5HS _CLAUDII_DASH_R7DS
-typeset -ga _CLAUDII_DASH_WORKTREES _CLAUDII_DASH_AGENTS _CLAUDII_DASH_BURN_ETAS
-typeset -ga _CLAUDII_DASH_CACHE_PCTS _CLAUDII_DASH_7D_STARTS
+typeset -ga _CLAUDII_DASH_5HS _CLAUDII_DASH_R5HS
 typeset -gi _CLAUDII_DASH_COUNT=0
-typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
-typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
-typeset -gi _CLAUDII_LAST_DASH_COLS=0
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _CLAUDII_DASH_MODELS=() _CLAUDII_DASH_CTXS=() _CLAUDII_DASH_COSTS=()
-  _CLAUDII_DASH_5HS=() _CLAUDII_DASH_7DS=() _CLAUDII_DASH_R5HS=() _CLAUDII_DASH_R7DS=()
-  _CLAUDII_DASH_WORKTREES=() _CLAUDII_DASH_AGENTS=() _CLAUDII_DASH_BURN_ETAS=()
-  _CLAUDII_DASH_CACHE_PCTS=() _CLAUDII_DASH_7D_STARTS=()
+  _CLAUDII_DASH_5HS=() _CLAUDII_DASH_R5HS=()
   _CLAUDII_DASH_COUNT=0
 
   for _sf in "$_cache_base"/session-*(N); do
@@ -123,165 +126,66 @@ function _claudii_collect_sessions {
       kill -0 "$s_ppid" 2>/dev/null || continue
     fi
 
-    local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
-    local s_worktree="" s_agent="" s_burn_eta="" s_cache_pct="" s_7d_start=""
-    [[ $'\n'"$sc" == *$'\n'model=* ]]         && s_model="${${sc#*model=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]       && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'cost=* ]]          && s_cost="${${sc#*cost=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]       && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'rate_7d=* ]]       && s_7d="${${sc#*rate_7d=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]]      && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'reset_7d=* ]]      && s_r7d="${${sc#*reset_7d=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'worktree=* ]]      && s_worktree="${${sc#*worktree=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'agent=* ]]         && s_agent="${${sc#*agent=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'burn_eta=* ]]      && s_burn_eta="${${sc#*burn_eta=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'cache_pct=* ]]     && s_cache_pct="${${sc#*cache_pct=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'rate_7d_start=* ]] && s_7d_start="${${sc#*rate_7d_start=}%%$'\n'*}"
+    local s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
+    [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
-    _CLAUDII_DASH_MODELS+=("$s_model");     _CLAUDII_DASH_CTXS+=("$s_ctx")
-    _CLAUDII_DASH_COSTS+=("$s_cost");       _CLAUDII_DASH_5HS+=("$s_5h")
-    _CLAUDII_DASH_7DS+=("$s_7d");           _CLAUDII_DASH_R5HS+=("$s_r5h")
-    _CLAUDII_DASH_R7DS+=("$s_r7d");         _CLAUDII_DASH_WORKTREES+=("$s_worktree")
-    _CLAUDII_DASH_AGENTS+=("$s_agent");     _CLAUDII_DASH_BURN_ETAS+=("$s_burn_eta")
-    _CLAUDII_DASH_CACHE_PCTS+=("$s_cache_pct"); _CLAUDII_DASH_7D_STARTS+=("$s_7d_start")
+    _CLAUDII_DASH_MODELS+=("$s_model")
+    _CLAUDII_DASH_CTXS+=("$s_ctx")
+    _CLAUDII_DASH_COSTS+=("$s_cost")
+    _CLAUDII_DASH_5HS+=("$s_5h")
+    _CLAUDII_DASH_R5HS+=("$s_r5h")
     (( _CLAUDII_DASH_COUNT++ ))
   done
   (( _CLAUDII_DASH_COUNT > 0 ))
 }
 
-# Builds the aggregate rate/cost header into _CLAUDII_DASH_GLOBAL_LINE.
-function _claudii_render_global_line {
-  local SEP="%F{8} │%f "
-  _CLAUDII_DASH_GLOBAL_LINE=""
-  local g_5h="${_CLAUDII_DASH_5HS[1]}"  g_7d="${_CLAUDII_DASH_7DS[1]}"
-  local g_r5h="${_CLAUDII_DASH_R5HS[1]}" g_7d_start="${_CLAUDII_DASH_7D_STARTS[1]}"
-
-  if [[ -n "$g_5h" && "$g_5h" != "null" ]]; then
-    local rl_color="cyan" rl_int=${g_5h%.*}
-    (( rl_int >= 70 )) && rl_color="yellow"
-    (( rl_int >= 90 )) && rl_color="red"
-    _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl_color}}5h:${rl_int}%%%f"
-    if [[ -n "$g_r5h" && "$g_r5h" != "0" ]]; then
-      local remaining=$(( g_r5h - EPOCHSECONDS ))
-      (( remaining > 0 )) && _CLAUDII_DASH_GLOBAL_LINE+=" %F{8}reset $(( remaining / 60 ))min%f"
-    fi
-  fi
-
-  if [[ -n "$g_7d" && "$g_7d" != "null" ]]; then
-    [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && _CLAUDII_DASH_GLOBAL_LINE+="${SEP}"
-    local rl7_color="cyan" rl7_int=${g_7d%.*}
-    (( rl7_int >= 70 )) && rl7_color="yellow"
-    (( rl7_int >= 90 )) && rl7_color="red"
-    _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl7_color}}7d:${rl7_int}%%%f"
-    if [[ -n "$g_7d_start" && "$g_7d_start" != "" ]]; then
-      local delta_7d=$(( ${g_7d%.*} - ${g_7d_start%.*} ))
-      (( delta_7d > 0 )) && _CLAUDII_DASH_GLOBAL_LINE+=" %F{8}(+${delta_7d}%%)%f"
-    fi
-  fi
-
-  local today_cost="0" _cost_fmt _ci
-  for (( _ci=1; _ci<=_CLAUDII_DASH_COUNT; _ci++ )); do
-    if [[ -n "${_CLAUDII_DASH_COSTS[$_ci]}" && "${_CLAUDII_DASH_COSTS[$_ci]}" != "0" ]]; then
-      _cost_fmt=$(printf '%.2f' "${_CLAUDII_DASH_COSTS[$_ci]}" 2>/dev/null) || _cost_fmt="0.00"
-      today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $_cost_fmt }" 2>/dev/null || echo "$today_cost")
-    fi
-  done
-  [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && _CLAUDII_DASH_GLOBAL_LINE+="${SEP}"
-  _CLAUDII_DASH_GLOBAL_LINE+="%F{cyan}"'\$'"${today_cost}%f %F{8}today (${_CLAUDII_DASH_COUNT} session"
-  (( _CLAUDII_DASH_COUNT != 1 )) && _CLAUDII_DASH_GLOBAL_LINE+="s"
-  _CLAUDII_DASH_GLOBAL_LINE+=")%f"
-}
-
-# Builds per-session lines into _CLAUDII_DASH_SESSION_LINES.
-function _claudii_render_session_lines {
-  local SEP="%F{8} │%f "
-  _CLAUDII_DASH_SESSION_LINES=""
-  local _cost_fmt_s _si
-
-  for (( _si=1; _si<=_CLAUDII_DASH_COUNT; _si++ )); do
-    local s_line=""
-    [[ -z "${_CLAUDII_DASH_CTXS[$_si]}" ]] && continue
-
-    s_line+="%B${_CLAUDII_DASH_MODELS[$_si]}%b"
-
-    local _pct=${_CLAUDII_DASH_CTXS[$_si]%.*}
-    (( _pct < 0 )) && _pct=0; (( _pct > 100 )) && _pct=100
-    local _filled=$(( _pct * 8 / 100 )) _empty=$(( 8 - _filled ))
-    local _ctx_color="green"
-    (( _pct >= 70 )) && _ctx_color="yellow"
-    (( _pct >= 90 )) && _ctx_color="red"
-    local _ctx_bar=""
-    (( _filled > 0 )) && _ctx_bar+="${(l:$_filled::█:)}"
-    (( _empty > 0 )) && _ctx_bar+="%F{8}${(l:$_empty::░:)}%f"
-    s_line+=" %F{${_ctx_color}}${_ctx_bar}%f %F{8}${_pct}%%%f"
-
-    if [[ -n "${_CLAUDII_DASH_COSTS[$_si]}" && "${_CLAUDII_DASH_COSTS[$_si]}" != "0" ]]; then
-      _cost_fmt_s=$(printf '%.2f' "${_CLAUDII_DASH_COSTS[$_si]}" 2>/dev/null) || _cost_fmt_s="${_CLAUDII_DASH_COSTS[$_si]}"
-      s_line+="${SEP}%F{cyan}"'\$'"${_cost_fmt_s}%f"
-    fi
-    if [[ -n "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" && "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" != "0" && "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" != "" ]]; then
-      s_line+="${SEP}%F{8}⚡${_CLAUDII_DASH_CACHE_PCTS[$_si]}%%%f"
-    fi
-    if [[ -n "${_CLAUDII_DASH_WORKTREES[$_si]}" ]]; then
-      s_line+="${SEP}%F{8}[wt:${_CLAUDII_DASH_WORKTREES[$_si]}]%f"
-    elif [[ -n "${_CLAUDII_DASH_AGENTS[$_si]}" ]]; then
-      s_line+="${SEP}%F{8}[agent:${_CLAUDII_DASH_AGENTS[$_si]}]%f"
-    fi
-    _CLAUDII_DASH_SESSION_LINES+="${s_line}"$'\n'
-  done
-}
-
 function _claudii_dashboard {
-  local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
-  [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return; }
+  local _dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
+  if [[ "$_dash_mode" == "off" ]]; then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+  if (( _CLAUDII_CMD_RAN == 0 )); then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+  _CLAUDII_CMD_RAN=0
 
   _claudii_collect_sessions
-  local active_count=$_CLAUDII_DASH_COUNT
-
-  if [[ "$dash_mode" == "auto" && active_count -eq 0 ]] || (( active_count == 0 )); then
-    _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return
+  if (( _CLAUDII_DASH_COUNT == 0 )); then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
 
-  _claudii_render_global_line
-  _claudii_render_session_lines
-
-  local dash_raw=""
-  [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && dash_raw="${_CLAUDII_DASH_GLOBAL_LINE}"$'\n'
-  dash_raw+="$_CLAUDII_DASH_SESSION_LINES"
-
-  local _CS=$'\033[s' _CR=$'\033[u' _RS=$'\033[0m'
-  local _cols=${COLUMNS:-80}
-
-  # Reuse padded version if content and terminal width unchanged
-  if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
-    if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}${_RS}${_CR}%}"
+  # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
+  local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
+  local _di _line _ctx _cost _cf _r5h _rst _rem
+  for (( _di=1; _di<=_CLAUDII_DASH_COUNT; _di++ )); do
+    _line="  %F{8}${_CLAUDII_DASH_MODELS[$_di]}"
+    _ctx="${_CLAUDII_DASH_CTXS[$_di]%.*}"
+    [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
+    _cost="${_CLAUDII_DASH_COSTS[$_di]}"
+    if [[ -n "$_cost" && "$_cost" != "0" && "$_cost" != "null" ]]; then
+      _cf=$(printf '%.2f' "$_cost" 2>/dev/null) && _line+="  \$${_cf}"
     fi
-    return
-  fi
-
-  # Right-align each line: expand prompt codes, then strip ANSI to measure visible width.
-  # (S) flag = shortest match so [0-9;]* does not greedily consume across sequences.
-  local dash_padded="" _dl _vis_str _vis _pad
-  local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
-  for _dl in "${_dash_lines[@]}"; do
-    [[ -z "$_dl" ]] && continue
-    _vis_str="${(%)_dl}"                        # expand %F{} %f %B %b %% etc. → ANSI
-    _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
-    _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
-    _vis=${#_vis_str}
-    _pad=$(( _cols - _vis - 1 ))  # -1: safety margin for ambiguous-width chars (e.g. ⚡)
-    (( _pad < 0 )) && _pad=0
-    dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
+    _r5h="${_CLAUDII_DASH_5HS[$_di]}"
+    if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then
+      _line+="  5h:${_r5h%.*}%%"
+      _rst="${_CLAUDII_DASH_R5HS[$_di]}"
+      if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
+        _rem=$(( _rst - _now ))
+        (( _rem > 0 )) && _line+=" ↺$(( _rem / 60 ))m"
+      fi
+    fi
+    _line+="%f"
+    _dash_lines+="${_line}"$'\n'
   done
 
-  _CLAUDII_LAST_DASHBOARD="$dash_raw"
-  _CLAUDII_LAST_DASH_PADDED="$dash_padded"
-  _CLAUDII_LAST_DASH_COLS=$_cols
-
-  [[ -n "$dash_padded" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_padded%$'\n'}${_RS}${_CR}%}"
+  PROMPT="${_dash_lines}${_CLAUDII_USER_PROMPT}"
 }
 
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _claudii_statusline
+add-zsh-hook preexec _claudii_preexec
