@@ -100,17 +100,17 @@ Enable with
 .BR "claudii off" .
 .TP
 .B Dashboard (above prompt)
-When multiple Claude Code sessions are active, a multi-line dashboard is
-prepended to
-.B PROMPT
-via the precmd hook.
-The first line shows aggregated rate limits (5h/7d with reset countdown),
-a 7-day delta percentage, today's total cost, and the number of active sessions.
-Below that, one line per active session shows: model name (bold),
-an 8-block context bar with percentage, cost, cache hit ratio
-.RB ( \[u26A1]XX% ),
-and worktree/agent context.
-The RPROMPT (ClaudeStatus) appears next to the last dashboard line.
+Rendered above the prompt via the precmd hook.
+Shows a contextual account overview with four sections:
+.B Sessions
+(active sessions with model, 8-block context bar, cost, cache ratio, worktree/agent context;
+plus an inactive sessions summary line),
+.B Account
+(aggregated rate limits 5h/7d with reset countdown, 7-day delta, and today's cost),
+.B Agents
+(configured agent aliases), and
+.B Services
+(per-layer on/off status for ClaudeStatus, Dashboard, CC-Statusline, and Watch).
 Controlled via the
 .B dashboard.enabled
 config key (values:

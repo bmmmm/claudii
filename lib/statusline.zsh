@@ -261,32 +261,33 @@ function _claudii_dashboard {
     return
   fi
 
-  # Right-align each line: expand prompt codes, then strip ANSI to measure visible width.
-  # (S) flag = shortest match so [0-9;]* does not greedily consume across sequences.
+  # Right-align each line: expand prompt codes, strip ANSI, measure visible width.
+  # (S) flag = shortest match — prevents greedy glob consuming across sequences.
   #
   # EAW audit (python3 unicodedata.east_asian_width):
-  #   ⚡ U+26A1  EAW=W  → 2 terminal cols, zsh ${#} counts as 1  ← needs margin
-  #   ● U+25CF  EAW=A  → 1 col in non-CJK terminals (no margin needed)
-  #   ○ U+25CB  EAW=A  → 1 col
-  #   █ U+2588  EAW=A  → 1 col
-  #   ✓ U+2713  EAW=N  → 1 col
-  #   ⚠ U+26A0  EAW=N  → 1 col
-  #   ✗ U+2717  EAW=N  → 1 col
-  # wcswidth via Python is not reliable for terminal width (terminal emulators vary);
-  # the safety margin below is intentionally simple and robust.
-  # -1 accounts for ⚡ appearing at most once per session line (cache_pct segment).
-  local _eaw_margin=1  # ⚡ U+26A1 (EAW=W) renders as 2 cols; ${#} counts it as 1
-  local dash_padded="" _dl _vis_str _vis _pad
+  #   ⚡ U+26A1  EAW=W  → always 2 terminal cols; ${#} counts as 1 → counted per line
+  #   █ U+2588  EAW=A  → 1 col in non-CJK terminals (no compensation needed)
+  #   ░ U+2591  EAW=N  → always 1 col
+  #   │ ● ○ …   EAW=A  → 1 col in non-CJK terminals
+  #   ✓ ⚠ ✗     EAW=N  → always 1 col
+  local dash_padded="" _dl _vis_str _vis _wide _pad
   local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
   for _dl in "${_dash_lines[@]}"; do
     [[ -z "$_dl" ]] && continue
-    _vis_str="${(%)_dl}"                        # expand %F{} %f %B %b %% etc. → ANSI
-    _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
-    _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
+    _vis_str="${(%)_dl}"                          # expand %F{} %f %B %b %% etc. → ANSI
+    _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}"   # strip ANSI CSI sequences (shortest match)
+    _vis_str="${_vis_str//\\\$/\$}"               # \$ → $ (cost display)
     _vis=${#_vis_str}
-    _pad=$(( _cols - _vis - _eaw_margin ))
-    (( _pad < 0 )) && _pad=0
-    dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
+    _wide=${#${_vis_str//[^⚡]/}}                 # count EAW=W chars (each costs +1 col)
+    _pad=$(( _cols - _vis - _wide ))
+    if (( _pad < 0 )); then
+      # Line overflows terminal width — truncate plain text to avoid wrap
+      (( _cols > 4 )) \
+        && dash_padded+="${_vis_str[1,$(( _cols - 2 ))]}…"$'\n' \
+        || dash_padded+="${_vis_str}…"$'\n'
+    else
+      dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
+    fi
   done
 
   _CLAUDII_LAST_DASHBOARD="$dash_raw"
@@ -294,6 +295,13 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_COLS=$_cols
 
   [[ -n "$dash_padded" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_padded%$'\n'}${_RS}${_CR}%}"
+}
+
+# On terminal resize: invalidate the width cache so the next precmd recomputes
+# right-alignment, and redraw the prompt immediately if ZLE is active.
+function TRAPWINCH {
+  _CLAUDII_LAST_DASH_COLS=0
+  zle reset-prompt 2>/dev/null
 }
 
 autoload -Uz add-zsh-hook

@@ -488,6 +488,25 @@ _cmd_default() {
     if (( _ov_inactive_count > 0 )); then
       printf "    ${CLAUDII_CLR_DIM}○ %d inactive  (claudii si)${CLAUDII_CLR_RESET}\n" "$_ov_inactive_count"
     fi
+
+    # Stale session GC hint: count session files where PPID is dead AND age > 24h
+    _ov_stale=0
+    _ov_now_gc=$(date +%s)
+    for _ov_gc_f in "${_ov_files[@]}"; do
+      [[ -f "$_ov_gc_f" ]] || continue
+      _ov_gc_ppid=$(grep '^ppid=' "$_ov_gc_f" 2>/dev/null | cut -d= -f2)
+      if stat -f%m "$_ov_gc_f" >/dev/null 2>&1; then
+        _ov_gc_mtime=$(stat -f%m "$_ov_gc_f")
+      else
+        _ov_gc_mtime=$(stat -c%Y "$_ov_gc_f" 2>/dev/null || echo 0)
+      fi
+      (( _ov_now_gc - _ov_gc_mtime < 86400 )) && continue
+      [[ -n "$_ov_gc_ppid" ]] && kill -0 "$_ov_gc_ppid" 2>/dev/null && continue
+      (( _ov_stale++ ))
+    done
+    if (( _ov_stale > 5 )); then
+      printf "    ${CLAUDII_CLR_DIM}○ %d stale sessions              claudii si for details${CLAUDII_CLR_RESET}\n" "$_ov_stale"
+    fi
   else
     printf "  ${CLAUDII_CLR_DIM}○ Sessions                        start Claude to see data here${CLAUDII_CLR_RESET}\n"
   fi
