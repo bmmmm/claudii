@@ -180,3 +180,4 @@ END {
     printf "  Costliest day: %s (%s$%.2f%s)\n", max_day, cyan, max_day_cost, reset
   }
   printf "\n"
+}
