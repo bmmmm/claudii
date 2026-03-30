@@ -65,6 +65,54 @@ assert_file_exists "gc: gc.last lockfile created" "$_gc_cache/gc.last"
 _claudii_session_gc
 assert_file_exists "gc: lockfile prevents re-run within 1h (fresh file still there)" "$_gc_fresh"
 
+# ── Gap 7 — GC: fresh file protection boundary ──────────────────────────────
+# 59-minute protection: dead PPID but mtime = 59 min ago → must NOT be deleted
+_gc_cache2="$CLAUDII_HOME/tmp/test_gc_boundary"
+rm -rf "$_gc_cache2"
+mkdir -p "$_gc_cache2"
+CLAUDII_CACHE_DIR="$_gc_cache2"
+export CLAUDII_CACHE_DIR
+
+_gc_59min="$_gc_cache2/session-59mintest"
+printf 'model=Sonnet\nppid=99999999\nctx_pct=50\ncost=0.10\n' > "$_gc_59min"
+# Force mtime to 59 minutes ago (3540s)
+_gc_59_ts=$(date -v-3540S +%Y%m%d%H%M.%S 2>/dev/null || date -d "3540 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+if [[ -n "$_gc_59_ts" ]]; then
+  touch -t "$_gc_59_ts" "$_gc_59min"
+fi
+
+# Remove lockfile so GC runs (otherwise hourly lock from first test could interfere)
+rm -f "$_gc_cache2/gc.last"
+_claudii_session_gc
+# 59 min < 3600 → must be kept
+if [[ -f "$_gc_59min" ]]; then
+  assert_eq "gc: 59-min-old dead session kept (< 1h protection)" "kept" "kept"
+else
+  assert_eq "gc: 59-min-old dead session kept (< 1h protection)" "kept" "deleted"
+fi
+
+# 61-minute boundary: dead PPID and mtime = 61 min ago → must be deleted
+_gc_61min="$_gc_cache2/session-61mintest"
+printf 'model=Sonnet\nppid=99999999\nctx_pct=50\ncost=0.10\n' > "$_gc_61min"
+# Force mtime to 61 minutes ago (3660s)
+_gc_61_ts=$(date -v-3660S +%Y%m%d%H%M.%S 2>/dev/null || date -d "3660 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+if [[ -n "$_gc_61_ts" ]]; then
+  touch -t "$_gc_61_ts" "$_gc_61min"
+fi
+
+rm -f "$_gc_cache2/gc.last"
+_claudii_session_gc
+# 61 min > 3600 → must be deleted
+if [[ -f "$_gc_61min" ]]; then
+  assert_eq "gc: 61-min-old dead session deleted (> 1h)" "deleted" "still exists"
+else
+  assert_eq "gc: 61-min-old dead session deleted (> 1h)" "deleted" "deleted"
+fi
+
+# Cleanup boundary tests
+rm -rf "$_gc_cache2"
+unset _gc_cache2 _gc_59min _gc_61min _gc_59_ts _gc_61_ts
+
 # Cleanup
 rm -rf "$_gc_cache"
 unset CLAUDII_CACHE_DIR _gc_cache _gc_old _gc_fresh _gc_old_ts

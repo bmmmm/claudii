@@ -150,3 +150,52 @@ unset doc_out2
 agents_out=$(bash "$CLAUDII_HOME/bin/claudii" agents 2>&1 || true)
 assert_eq "agents: produces output" "0" "$([ -z "$agents_out" ] && echo 1 || echo 0)"
 unset agents_out
+
+# ── Gap 6 — Stale session GC hint in default view ─────────────────────────
+# Create 6 fake session files with dead PPIDs and mtime 25h ago
+STALE_HINT_TMP="$(mktemp -d)"
+STALE_XDG="$STALE_HINT_TMP/xdg"
+mkdir -p "$STALE_XDG/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$STALE_XDG/claudii/config.json"
+export XDG_CONFIG_HOME="$STALE_HINT_TMP/xdg"
+export CLAUDII_CACHE_DIR="$STALE_HINT_TMP"
+# 25h ago in touch -t format: YYYYMMDDhhmm.ss
+_stale_ts=$(date -v-90000S +%Y%m%d%H%M.%S 2>/dev/null || date -d "90000 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+for i in 1 2 3 4 5 6; do
+  printf 'model=Sonnet\nppid=99999999\nctx_pct=50\ncost=0.10\n' > "$STALE_HINT_TMP/session-stale0${i}"
+  [[ -n "$_stale_ts" ]] && touch -t "$_stale_ts" "$STALE_HINT_TMP/session-stale0${i}"
+done
+stale_hint_out=$(CLAUDII_CACHE_DIR="$STALE_HINT_TMP" XDG_CONFIG_HOME="$STALE_XDG" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
+# Hint appears when > 5 stale sessions: should contain "stale" and "si"
+assert_contains "default view: stale GC hint with 6 stale sessions" "stale" "$stale_hint_out"
+assert_contains "default view: stale GC hint mentions si command" "si" "$stale_hint_out"
+
+# Only 3 stale files → hint should NOT appear (threshold is > 5)
+STALE_FEW_TMP="$(mktemp -d)"
+STALE_FEW_XDG="$STALE_FEW_TMP/xdg"
+mkdir -p "$STALE_FEW_XDG/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$STALE_FEW_XDG/claudii/config.json"
+for i in 1 2 3; do
+  printf 'model=Sonnet\nppid=99999999\nctx_pct=50\ncost=0.10\n' > "$STALE_FEW_TMP/session-stale0${i}"
+  [[ -n "$_stale_ts" ]] && touch -t "$_stale_ts" "$STALE_FEW_TMP/session-stale0${i}"
+done
+stale_few_out=$(CLAUDII_CACHE_DIR="$STALE_FEW_TMP" XDG_CONFIG_HOME="$STALE_FEW_XDG" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
+# With 3 stale files, the hint line ("> 5" trigger) must not appear
+stale_hint_line=$(echo "$stale_few_out" | grep -c "stale sessions" || true)
+assert_eq "default view: no stale GC hint with 3 stale sessions" "0" "$stale_hint_line"
+
+rm -rf "$STALE_HINT_TMP" "$STALE_FEW_TMP"
+unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME STALE_HINT_TMP STALE_FEW_TMP STALE_XDG STALE_FEW_XDG _stale_ts stale_hint_out stale_few_out stale_hint_line
+
+# ── Gap 8 — claudii si ANSI guard ─────────────────────────────────────────
+SI_ANSI_TMP="$(mktemp -d)"
+SI_ANSI_XDG="$SI_ANSI_TMP/xdg"
+mkdir -p "$SI_ANSI_XDG/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$SI_ANSI_XDG/claudii/config.json"
+# Create 2 inactive sessions (dead PPID, fresh mtime — _PSC_is_active=0 because ppid dead)
+printf 'model=Sonnet\nppid=99999999\nctx_pct=50\ncost=0.50\nrate_5h=\nrate_7d=\nsession_id=siansi1\nworktree=\nagent=\n' > "$SI_ANSI_TMP/session-siansi1"
+printf 'model=Opus\nppid=99999999\nctx_pct=30\ncost=1.20\nrate_5h=\nrate_7d=\nsession_id=siansi2\nworktree=\nagent=\n' > "$SI_ANSI_TMP/session-siansi2"
+si_ansi_out=$(CLAUDII_CACHE_DIR="$SI_ANSI_TMP" XDG_CONFIG_HOME="$SI_ANSI_XDG" bash "$CLAUDII_HOME/bin/claudii" si 2>&1 || true)
+assert_no_literal_ansi "si: no literal \\033 in output" "$si_ansi_out"
+rm -rf "$SI_ANSI_TMP"
+unset SI_ANSI_TMP SI_ANSI_XDG si_ansi_out

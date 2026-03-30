@@ -349,6 +349,185 @@ assert_eq "dashboard cache_pct line (⚡ EAW=W): true display width ≤ COLUMNS=
 
 rm -rf "$DASH_WIDTH_TMP"
 
+# ── Gap 1 — TRAPWINCH invalidates width cache ──────────────────────────────
+TRAPWINCH_TMP="$CLAUDII_HOME/tmp/test_statusline_trapwinch"
+rm -rf "$TRAPWINCH_TMP"
+mkdir -p "$TRAPWINCH_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$TRAPWINCH_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$TRAPWINCH_TMP/status-models"
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=twtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$TRAPWINCH_TMP/session-twtest"
+trapwinch_out=$(
+  CLAUDII_CACHE_DIR="$TRAPWINCH_TMP" XDG_CONFIG_HOME="$TRAPWINCH_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    # _CLAUDII_LAST_DASH_COLS should now be 80 — call TRAPWINCH to reset it
+    TRAPWINCH
+    printf '%d\n' \"\$_CLAUDII_LAST_DASH_COLS\"
+  " 2>/dev/null
+)
+assert_eq "TRAPWINCH: invalidates width cache (_CLAUDII_LAST_DASH_COLS → 0)" "0" "$trapwinch_out"
+rm -rf "$TRAPWINCH_TMP"
+unset TRAPWINCH_TMP trapwinch_out
+
+# ── Gap 2 — Overflow truncation at narrow terminal ─────────────────────────
+OVERFLOW_TMP="$CLAUDII_HOME/tmp/test_statusline_overflow"
+rm -rf "$OVERFLOW_TMP"
+mkdir -p "$OVERFLOW_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$OVERFLOW_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$OVERFLOW_TMP/status-models"
+_live_pid=$$
+# Session with very long worktree path + agent name to force overflow at COLUMNS=40
+printf 'model=Sonnet\nctx_pct=88\ncost=9.99\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=oftest1\nworktree=very-long-feature-branch-name-exceeding-width\nagent=my-very-long-agent-name-for-testing-overflow\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$OVERFLOW_TMP/session-oftest1"
+overflow_result=$(
+  CLAUDII_CACHE_DIR="$OVERFLOW_TMP" XDG_CONFIG_HOME="$OVERFLOW_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=40 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
+    local overflowed_lines=0 has_ellipsis=0 total_lines=0
+    for line in \"\${lines[@]}\"; do
+      [[ -z \"\$line\" ]] && continue
+      (( total_lines++ ))
+      vis=\"\${(%)line}\"
+      vis=\"\${(S)vis//\$'\\e'\[[0-9;]*m/}\"
+      vis=\"\${vis//\$'\\e'\[s/}\" ; vis=\"\${vis//\$'\\e'\[u/}\"
+      vis=\"\${vis//\\\\\$/\\\$}\"
+      (( \${#vis} > 40 )) && (( overflowed_lines++ ))
+      [[ \"\$vis\" == *'…'* ]] && (( has_ellipsis++ ))
+    done
+    printf '%d %d %d\n' \"\$overflowed_lines\" \"\$has_ellipsis\" \"\$total_lines\"
+  " 2>/dev/null
+)
+overflow_count=$(echo "$overflow_result" | awk '{print $1}')
+ellipsis_count=$(echo "$overflow_result" | awk '{print $2}')
+assert_eq "overflow: no lines wider than COLUMNS=40" "0" "${overflow_count:-0}"
+assert_eq "overflow: truncated lines end with …" "0" "$([ "${ellipsis_count:-0}" -gt 0 ] && echo 0 || echo 1)"
+rm -rf "$OVERFLOW_TMP"
+unset OVERFLOW_TMP overflow_result overflow_count ellipsis_count
+
+# ── Gap 3 — Multi-session dashboard ───────────────────────────────────────
+MULTI_TMP="$CLAUDII_HOME/tmp/test_statusline_multi"
+rm -rf "$MULTI_TMP"
+mkdir -p "$MULTI_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$MULTI_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$MULTI_TMP/status-models"
+_live_pid=$$
+# Three live sessions — Opus, Sonnet, Haiku
+printf 'model=Opus\nctx_pct=30\ncost=2.10\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=ms1\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$MULTI_TMP/session-ms1"
+printf 'model=Sonnet\nctx_pct=55\ncost=0.80\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=ms2\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$MULTI_TMP/session-ms2"
+printf 'model=Haiku\nctx_pct=10\ncost=0.05\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=ms3\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$MULTI_TMP/session-ms3"
+multi_result=$(
+  CLAUDII_CACHE_DIR="$MULTI_TMP" XDG_CONFIG_HOME="$MULTI_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    printf '%s' \"\$_CLAUDII_LAST_DASH_PADDED\"
+  " 2>/dev/null
+)
+assert_contains "multi-session: Opus shown in dashboard" "Opus" "$multi_result"
+assert_contains "multi-session: Sonnet shown in dashboard" "Sonnet" "$multi_result"
+assert_contains "multi-session: Haiku shown in dashboard" "Haiku" "$multi_result"
+# Verify all rendered lines ≤ 80 visible chars
+multi_overflow=$(
+  CLAUDII_CACHE_DIR="$MULTI_TMP" XDG_CONFIG_HOME="$MULTI_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    local -a lines=(\"\${(@f)\${_CLAUDII_LAST_DASH_PADDED%\$'\\n'}}\")
+    local overflowed=0
+    for line in \"\${lines[@]}\"; do
+      [[ -z \"\$line\" ]] && continue
+      vis=\"\${(%)line}\"
+      vis=\"\${(S)vis//\$'\\e'\[[0-9;]*m/}\"
+      vis=\"\${vis//\$'\\e'\[s/}\" ; vis=\"\${vis//\$'\\e'\[u/}\"
+      vis=\"\${vis//\\\\\$/\\\$}\"
+      lightning_count=\$(printf '%s' \"\$vis\" | tr -cd '⚡' | wc -c)
+      lightning_count=\$(( lightning_count / 3 ))
+      (( \${#vis} + lightning_count > 80 )) && (( overflowed++ ))
+    done
+    printf '%d\n' \"\$overflowed\"
+  " 2>/dev/null
+)
+assert_eq "multi-session: all lines ≤ COLUMNS=80" "0" "${multi_overflow:-0}"
+rm -rf "$MULTI_TMP"
+unset MULTI_TMP multi_result multi_overflow
+
+# ── Gap 4 — Dashboard content-cache reuse ─────────────────────────────────
+CACHE_REUSE_TMP="$CLAUDII_HOME/tmp/test_statusline_cache_reuse"
+rm -rf "$CACHE_REUSE_TMP"
+mkdir -p "$CACHE_REUSE_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$CACHE_REUSE_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CACHE_REUSE_TMP/status-models"
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=crtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$CACHE_REUSE_TMP/session-crtest"
+cache_reuse_result=$(
+  CLAUDII_CACHE_DIR="$CACHE_REUSE_TMP" XDG_CONFIG_HOME="$CACHE_REUSE_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  COLUMNS=80 \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    # First run — populates cache
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    first_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
+    # Second run — same data + same COLUMNS → cache hit, padded unchanged
+    _claudii_dashboard
+    second_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
+    # Third run — different COLUMNS → cache miss, new padded
+    COLUMNS=60
+    _claudii_dashboard
+    third_padded=\"\$_CLAUDII_LAST_DASH_PADDED\"
+    # Output: 'same' if first==second, then 'diff' if second!=third
+    [[ \"\$first_padded\" == \"\$second_padded\" ]] && printf 'same\\n' || printf 'not_same\\n'
+    [[ \"\$second_padded\" == \"\$third_padded\" ]] && printf 'same\\n' || printf 'diff\\n'
+  " 2>/dev/null
+)
+cache_hit=$(echo "$cache_reuse_result" | sed -n '1p')
+cache_miss=$(echo "$cache_reuse_result" | sed -n '2p')
+assert_eq "dashboard cache: second run reuses padded output (cache hit)" "same" "${cache_hit:-}"
+assert_eq "dashboard cache: COLUMNS change triggers recompute (cache miss)" "diff" "${cache_miss:-}"
+rm -rf "$CACHE_REUSE_TMP"
+unset CACHE_REUSE_TMP cache_reuse_result cache_hit cache_miss
+
+# ── Gap 5 — Dashboard disabled ────────────────────────────────────────────
+DASH_OFF_TMP="$CLAUDII_HOME/tmp/test_statusline_dash_off"
+rm -rf "$DASH_OFF_TMP"
+mkdir -p "$DASH_OFF_TMP/config/claudii"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$DASH_OFF_TMP/status-models"
+_live_pid=$$
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=offtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\ncache_pct=\nppid=%s\n' "$_live_pid" \
+  > "$DASH_OFF_TMP/session-offtest"
+dash_off_result=$(
+  CLAUDII_CACHE_DIR="$DASH_OFF_TMP" XDG_CONFIG_HOME="$DASH_OFF_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    # Create config with dashboard.enabled = \"off\"
+    jq '.dashboard.enabled = \"off\"' \"\$CLAUDII_HOME/config/defaults.json\" \
+      > \"\$XDG_CONFIG_HOME/claudii/config.json\"
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD='should_be_cleared'
+    _claudii_dashboard
+    printf '%s' \"\$_CLAUDII_LAST_DASHBOARD\"
+  " 2>/dev/null
+)
+assert_eq "dashboard disabled: _CLAUDII_LAST_DASHBOARD is empty" "" "$dash_off_result"
+rm -rf "$DASH_OFF_TMP"
+unset DASH_OFF_TMP dash_off_result
+
 # Cleanup
 rm -rf "$ZSH_TMP"
 
