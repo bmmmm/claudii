@@ -85,15 +85,24 @@ _cfg_init() {
   _claudii_theme_load
 }
 
-# Validate config key — alphanumeric, dots, underscores only (prevents jq injection)
-_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._]+$ ]] || { echo "Invalid key: $1" >&2; return 1; }; }
+# Validate config key — alphanumeric, dots, hyphens, underscores only (prevents jq injection)
+_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1" >&2; return 1; }; }
 
 # Config value lookup — user config first, falls back to defaults.json
+# Builds a properly quoted jq path so hyphenated keys (e.g. session-dashboard.enabled)
+# are accessed as ."session-dashboard"."enabled" rather than the invalid .session-dashboard.enabled
 _cfgget() {
-  local key="$1" val
+  local key="$1" val _jp="" _seg
   _validate_key "$key" || return 1
-  val=$(jq -r ".$key // empty" "$CONFIG" 2>/dev/null)
-  [[ -z "$val" ]] && val=$(jq -r ".$key // empty" "$DEFAULTS" 2>/dev/null)
+  # Split on '.' and quote each segment: "a.b-c.d" → ."a"."b-c"."d"
+  local _IFS_OLD="$IFS"
+  IFS='.' read -ra _cfgget_segs <<< "$key"
+  IFS="$_IFS_OLD"
+  for _seg in "${_cfgget_segs[@]}"; do
+    _jp+='."'"$_seg"'"'
+  done
+  val=$(jq -r "${_jp} // empty" "$CONFIG" 2>/dev/null)
+  [[ -z "$val" ]] && val=$(jq -r "${_jp} // empty" "$DEFAULTS" 2>/dev/null)
   echo "$val"
 }
 
