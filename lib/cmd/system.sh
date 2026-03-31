@@ -166,7 +166,8 @@ _cmd_status() {
             # Most recent status = first <strong> tag in description
             _inc_curstat=$(echo "$_inc_desc" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p' | head -1)
             if [[ -n "$_inc_title" ]]; then
-              case "${_inc_curstat,,}" in
+              _inc_curstat_lc=$(echo "$_inc_curstat" | tr '[:upper:]' '[:lower:]')
+              case "$_inc_curstat_lc" in
                 resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="✓ Resolved"     ;;
                 monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Monitoring"   ;;
                 investigating|identified) _ic="${CLAUDII_CLR_RED}"    ; _is="● Investigating" ;;
