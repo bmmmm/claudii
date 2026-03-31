@@ -158,9 +158,11 @@ function _claudii_render_global_line {
   local g_r5h="${_CLAUDII_DASH_R5HS[1]}" g_7d_start="${_CLAUDII_DASH_7D_STARTS[1]}"
 
   if [[ -n "$g_5h" && "$g_5h" != "null" ]]; then
-    local rl_color="cyan" rl_int=${g_5h%.*}
-    (( rl_int >= 70 )) && rl_color="yellow"
-    (( rl_int >= 90 )) && rl_color="red"
+    local rl_int=${g_5h%.*} rl_color
+    if (( rl_int >= 80 )); then rl_color="red"
+    elif (( rl_int >= 50 )); then rl_color="yellow"
+    else rl_color="green"
+    fi
     _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl_color}}5h:${rl_int}%%%f"
     if [[ -n "$g_r5h" && "$g_r5h" != "0" ]]; then
       local remaining=$(( g_r5h - EPOCHSECONDS ))
@@ -170,9 +172,11 @@ function _claudii_render_global_line {
 
   if [[ -n "$g_7d" && "$g_7d" != "null" ]]; then
     [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && _CLAUDII_DASH_GLOBAL_LINE+="${SEP}"
-    local rl7_color="cyan" rl7_int=${g_7d%.*}
-    (( rl7_int >= 70 )) && rl7_color="yellow"
-    (( rl7_int >= 90 )) && rl7_color="red"
+    local rl7_int=${g_7d%.*} rl7_color
+    if (( rl7_int >= 80 )); then rl7_color="red"
+    elif (( rl7_int >= 50 )); then rl7_color="yellow"
+    else rl7_color="green"
+    fi
     _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl7_color}}7d:${rl7_int}%%%f"
     if [[ -n "$g_7d_start" && "$g_7d_start" != "" ]]; then
       local delta_7d=$(( ${g_7d%.*} - ${g_7d_start%.*} ))
