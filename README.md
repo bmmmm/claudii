@@ -31,13 +31,11 @@ Model health in your right prompt. Cache-only, never blocks.
 `✓` ok · `~` degraded · `↓` down · `?` unreachable · `[…]` loading · `⟳` refreshing
 
 ### 2. Dashboard — above your prompt
-Multi-session dashboard auto-activates when Claude sessions are running. Shows aggregated rate limits, per-session context bars, costs, and cache efficiency.
+Appears automatically after each command when Claude sessions are running. One line per active session, minimal:
 
 ```
-5h:8% reset 257min │ 7d:61% (+3%) │ $93.20 today (7 sessions)
-Opus 4.6 ████████ 73% │ $25.63 │ ⚡42% │ [wt:main]
-Sonnet   ████░░░░ 42% │ $1.20  │ [wt:feat-xyz]
-Opus 4.6 ██░░░░░░ 15% │ $0.30  │ [agent:explorer]     [Opus ✓ Sonnet ✓ Haiku ✓] 21m
+  Opus     73%  $25.63  5h:28% ↺42m
+  Sonnet   42%  $1.20
 ```
 
 Toggle with `claudii dashboard on/off/auto`.

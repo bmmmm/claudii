@@ -1,9 +1,10 @@
-# claudii statusline — RPROMPT with per-model health + dashboard (OSC2 title)
+# claudii statusline — RPROMPT with per-model health + conditional dashboard
 # shellcheck source=lib/visual.sh
 source "${CLAUDII_HOME}/lib/visual.sh"
 
 # Capture the user's original PROMPT once at load time.
-# Every precmd cycle restores PROMPT to this, then prepends dashboard lines.
+# Dashboard only renders after a real command (preexec sets _CLAUDII_CMD_RAN=1).
+# Empty Enter → plain PROMPT, no doubling.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 # 1 = show dashboard on next precmd (initial: show on first prompt)
