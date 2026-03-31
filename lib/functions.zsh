@@ -158,6 +158,7 @@ function _claudii_register_agents {
 
   while IFS=$'\t' read -r name skill model effort; do
     [[ -z "$name" || -z "$skill" ]] && continue
+    [[ "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || { echo "claudii: invalid agent name: $name" >&2; continue; }
     # Create a shell function with this name
     eval "function $name { _claudii_agent_launch $skill $model $effort \"\$@\"; }"
     _claudii_log debug "registered agent alias: $name → $skill ($model/$effort)"

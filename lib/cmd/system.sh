@@ -5,11 +5,11 @@
 _cmd_on() {
   _cfg_init
   # Enable all three layers
-  echo "$(jq '.statusline.enabled = true | ."session-dashboard".enabled = "on"' "$CONFIG")" > "$CONFIG"
+  _jq_tmp=$(mktemp) && jq '.statusline.enabled = true | ."session-dashboard".enabled = "on"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
     if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-      echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
+      _jq_tmp=$(mktemp) && jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
     fi
   fi
   echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
@@ -18,10 +18,10 @@ _cmd_on() {
 _cmd_off() {
   _cfg_init
   # Disable all three layers
-  echo "$(jq '.statusline.enabled = false | ."session-dashboard".enabled = "off"' "$CONFIG")" > "$CONFIG"
+  _jq_tmp=$(mktemp) && jq '.statusline.enabled = false | ."session-dashboard".enabled = "off"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
-    echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
+    _jq_tmp=$(mktemp) && jq 'del(.statusLine)' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
   fi
   echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }
@@ -30,11 +30,11 @@ _cmd_claudestatus() {
   _cfg_init
   case "${2:-}" in
     on)
-      echo "$(jq '.statusline.enabled = true' "$CONFIG")" > "$CONFIG"
+      _jq_tmp=$(mktemp) && jq '.statusline.enabled = true' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo -e "${CLAUDII_CLR_GREEN}ClaudeStatus aktiviert${CLAUDII_CLR_RESET}"
       ;;
     off)
-      echo "$(jq '.statusline.enabled = false' "$CONFIG")" > "$CONFIG"
+      _jq_tmp=$(mktemp) && jq '.statusline.enabled = false' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo -e "${CLAUDII_CLR_YELLOW}ClaudeStatus deaktiviert${CLAUDII_CLR_RESET}"
       ;;
     "")
@@ -55,11 +55,11 @@ _cmd_session_dashboard() {
   _cfg_init
   case "${2:-}" in
     on)
-      echo "$(jq '."session-dashboard".enabled = "on"' "$CONFIG")" > "$CONFIG"
+      _jq_tmp=$(mktemp) && jq '."session-dashboard".enabled = "on"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo -e "${CLAUDII_CLR_GREEN}Dashboard: on${CLAUDII_CLR_RESET}"
       ;;
     off)
-      echo "$(jq '."session-dashboard".enabled = "off"' "$CONFIG")" > "$CONFIG"
+      _jq_tmp=$(mktemp) && jq '."session-dashboard".enabled = "off"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo -e "${CLAUDII_CLR_YELLOW}Dashboard: off${CLAUDII_CLR_RESET}"
       ;;
     "")
@@ -87,7 +87,7 @@ _cmd_status() {
       if ! [[ "$seconds" =~ ^[0-9]+$ ]] || (( seconds < 30 )); then
         echo "Ungültiges Intervall: $interval (mindestens 30s)"; exit 1
       fi
-      echo "$(jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG")" > "$CONFIG"
+      _jq_tmp=$(mktemp) && jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo "Refresh-Intervall: ${interval} (${seconds}s)"
       ;;
     "")
@@ -261,7 +261,7 @@ _cmd_cc_statusline() {
       if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
         echo -e "${CLAUDII_CLR_CYAN}CC-Statusline bereits aktiv${CLAUDII_CLR_RESET}"
       else
-        echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
+        _jq_tmp=$(mktemp) && jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
         echo -e "${CLAUDII_CLR_GREEN}CC-Statusline aktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten zum Aktivieren"
       fi
       ;;
@@ -270,7 +270,7 @@ _cmd_cc_statusline() {
         echo "Fehler: $SETTINGS nicht gefunden"; exit 1
       fi
       if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
-        echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
+        _jq_tmp=$(mktemp) && jq 'del(.statusLine)' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
         echo -e "${CLAUDII_CLR_YELLOW}CC-Statusline deaktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten"
       else
         echo "CC-Statusline war nicht konfiguriert"
@@ -320,7 +320,8 @@ _cmd_watch() {
     if command -v terminal-notifier >/dev/null 2>&1; then
       terminal-notifier -title "$title" -message "$msg" >/dev/null 2>&1
     else
-      osascript -e "display notification \"$msg\" with title \"$title\"" >/dev/null 2>&1
+      local _safe_msg="${msg//\"/\\\"}" _safe_title="${title//\"/\\\"}"
+      osascript -e "display notification \"${_safe_msg}\" with title \"${_safe_title}\"" >/dev/null 2>&1
     fi
     local sound volume
     _cfg_init
@@ -370,7 +371,7 @@ _cmd_watch() {
         fi
       fi
       # Export functions needed in subshell
-      export -f _watch_notify _watch_loop 2>/dev/null || true
+      export -f _watch_notify _watch_loop _cfg_init _cfgget _validate_key 2>/dev/null || true
       ( _watch_loop "$cache_dir" "$pid_file" &>/dev/null & echo $! > "$pid_file" ) &>/dev/null
       disown %% 2>/dev/null || true
       sleep 0.2
@@ -424,7 +425,7 @@ _cmd_watch() {
         if ! [[ "$vol" =~ ^[0-9]+$ ]] || (( vol < 0 || vol > 100 )); then
           echo "Invalid volume: $vol (must be 0-100)"; exit 1
         fi
-        echo "$(jq --argjson v "$vol" '.watch.volume = $v' "$CONFIG")" > "$CONFIG"
+        _jq_tmp=$(mktemp) && jq --argjson v "$vol" '.watch.volume = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
         echo "watch.volume: $vol"
       fi
       ;;
@@ -438,12 +439,12 @@ _cmd_watch() {
           echo "watch.sound: $val"
         fi
       elif [[ "${3}" == "default" ]]; then
-        echo "$(jq '.watch.sound = ""' "$CONFIG")" > "$CONFIG"
+        _jq_tmp=$(mktemp) && jq '.watch.sound = ""' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
         echo "watch.sound: (default)"
       else
         sound_file="${3}"
         [[ -f "$sound_file" ]] || { echo "File not found: $sound_file"; exit 1; }
-        echo "$(jq --arg v "$sound_file" '.watch.sound = $v' "$CONFIG")" > "$CONFIG"
+        _jq_tmp=$(mktemp) && jq --arg v "$sound_file" '.watch.sound = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
         echo "watch.sound: $sound_file"
       fi
       ;;

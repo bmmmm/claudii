@@ -203,7 +203,10 @@ _cmd_sessions_inactive() {
 
       # Rate limits
       if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] || [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]]; then
-        _is_line+="${CLAUDII_CLR_DIM} 5h:${_PSC_rate_5h%.*}% 7d:${_PSC_rate_7d%.*}%${CLAUDII_CLR_RESET}"
+        _is_line+="${CLAUDII_CLR_DIM}"
+        [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] && _is_line+=" 5h:${_PSC_rate_5h%.*}%"
+        [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]] && _is_line+=" 7d:${_PSC_rate_7d%.*}%"
+        _is_line+="${CLAUDII_CLR_RESET}"
       fi
 
       if [[ -n "$_PSC_worktree" ]]; then
@@ -260,6 +263,7 @@ _cmd_sessions() {
              _sf_is_active _sf_age _sf_projpath _sf_sesname
   _sf_count=0
 
+  shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
     [[ -f "$sf" ]] || continue
     _parse_session_cache "$sf"
@@ -302,6 +306,7 @@ _cmd_sessions() {
     fi
     (( _sf_count++ ))
   done
+  shopt -u nullglob
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON array from collected data
@@ -414,7 +419,7 @@ _cmd_default() {
   shopt -u nullglob
 
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
-  _ov_today_cost=0 _ov_today_count=0
+  _ov_today_cost=0 _ov_today_count=0 _ov_stale=0
   # Use calendar midnight as cutoff (not rolling 24h)
   if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
     _ov_cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
@@ -452,11 +457,14 @@ _cmd_default() {
         fi
       fi
 
-      # Count active vs inactive
+      # Count active vs inactive; count stale (dead ppid, age > 24h) for GC hint
       if [[ "$_PSC_is_active" -eq 1 ]]; then
         (( _ov_active_count++ ))
       else
         (( _ov_inactive_count++ ))
+        if (( _PSC_age >= 86400 )); then
+          [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null && (( _ov_stale++ ))
+        fi
       fi
     done
   fi
@@ -638,21 +646,7 @@ _cmd_default() {
     (( _ov_inactive_count > 0 )) && \
       printf "    ${CLAUDII_CLR_DIM}%d inactive  ·  claudii si${CLAUDII_CLR_RESET}\n" "$_ov_inactive_count"
 
-    # Stale session GC hint: > 5 dead sessions older than 24h
-    _ov_stale=0
-    _ov_now_gc=$(date +%s)
-    for _ov_gc_f in "${_ov_files[@]}"; do
-      [[ -f "$_ov_gc_f" ]] || continue
-      _ov_gc_ppid=$(grep '^ppid=' "$_ov_gc_f" 2>/dev/null | cut -d= -f2 || true)
-      if stat -f%m "$_ov_gc_f" >/dev/null 2>&1; then
-        _ov_gc_mtime=$(stat -f%m "$_ov_gc_f")
-      else
-        _ov_gc_mtime=$(stat -c%Y "$_ov_gc_f" 2>/dev/null || echo 0)
-      fi
-      (( _ov_now_gc - _ov_gc_mtime < 86400 )) && continue
-      [[ -n "$_ov_gc_ppid" ]] && kill -0 "$_ov_gc_ppid" 2>/dev/null && continue
-      (( _ov_stale++ ))
-    done
+    # Stale session GC hint: > 5 dead sessions older than 24h (counted in first loop)
     (( _ov_stale > 5 )) && \
       printf "    ${CLAUDII_CLR_DIM}%d stale sessions  ·  claudii si${CLAUDII_CLR_RESET}\n" "$_ov_stale"
   else

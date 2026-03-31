@@ -7,7 +7,7 @@ _cmd_config() {
     get)
       key="${3:?Usage: claudii config get <key>}"
       _validate_key "$key" || exit 1
-      jq_path=".$(echo "$key" | sed 's/\././g')"
+      jq_path=".$key"
       val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
       [[ -z "$val" ]] && val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
       echo "$val"
@@ -16,11 +16,11 @@ _cmd_config() {
       key="${3:?Usage: claudii config set <key> <value>}"
       _validate_key "$key" || exit 1
       value="${4:?Usage: claudii config set <key> <value>}"
-      jq_path=".$(echo "$key" | sed 's/\././g')"
-      if [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
-        echo "$(jq --argjson v "$value" "$jq_path = \$v" "$CONFIG")" > "$CONFIG"
+      jq_path=".$key"
+      if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
+        _jq_tmp=$(mktemp) && jq --argjson v "$value" "$jq_path = \$v" "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       else
-        echo "$(jq --arg v "$value" "$jq_path = \$v" "$CONFIG")" > "$CONFIG"
+        _jq_tmp=$(mktemp) && jq --arg v "$value" "$jq_path = \$v" "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       fi
       echo "Set $key = $value"
       ;;
@@ -68,7 +68,7 @@ _cmd_config() {
           exit 1
         fi
         # Set theme.name in user config
-        echo "$(jq --arg name "$theme_arg" '.theme.name = $name' "$CONFIG")" > "$CONFIG"
+        _jq_tmp=$(mktemp) && jq --arg name "$theme_arg" '.theme.name = $name' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
         echo "Theme set to: $theme_arg"
       fi
       ;;
@@ -86,7 +86,7 @@ _cmd_search() {
   search_dir="${search_dir/#\~/$HOME}"
   model=$(_cfgget aliases.clq.model)
   effort=$(_cfgget aliases.clq.effort)
-  cd "$search_dir"
+  cd "$search_dir" || { echo "claudii: search directory not found: $search_dir" >&2; exit 1; }
   exec claude --model "$model" --effort "$effort" "${@:2}"
 }
 
@@ -147,29 +147,27 @@ _cmd_agents() {
     printf "alias\tskill\tmodel\teffort\n"
     echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv'
   else
-    # Pretty table: compute column widths
-    aliases_list=$(echo "$agents_json" | jq -r 'keys[]')
-    max_alias=5   # min "ALIAS"
-    max_skill=5   # min "SKILL"
-    max_model=5   # min "MODEL"
+    # Pretty table: single jq TSV call, then compute widths + render in shell
+    local _ag_rows=()
+    while IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort; do
+      _ag_rows+=("${_ag_alias}	${_ag_skill}	${_ag_model}	${_ag_effort}")
+    done < <(echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
 
-    while IFS= read -r alias; do
-      [[ ${#alias} -gt $max_alias ]] && max_alias=${#alias}
-      skill=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].skill // ""')
-      model=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].model // ""')
-      [[ ${#skill} -gt $max_skill ]] && max_skill=${#skill}
-      [[ ${#model} -gt $max_model ]] && max_model=${#model}
-    done <<< "$aliases_list"
+    max_alias=5; max_skill=5; max_model=5
+    for _row in "${_ag_rows[@]}"; do
+      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort <<< "$_row"
+      [[ ${#_ag_alias} -gt $max_alias ]] && max_alias=${#_ag_alias}
+      [[ ${#_ag_skill} -gt $max_skill ]] && max_skill=${#_ag_skill}
+      [[ ${#_ag_model} -gt $max_model ]] && max_model=${#_ag_model}
+    done
 
     printf '\n'
     printf "  ${CLAUDII_CLR_ACCENT}%-${max_alias}s  %-${max_skill}s  %-${max_model}s  EFFORT${CLAUDII_CLR_RESET}\n" "ALIAS" "SKILL" "MODEL"
-    while IFS= read -r alias; do
-      skill=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].skill // ""')
-      model=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].model // ""')
-      effort=$(echo "$agents_json" | jq -r --arg a "$alias" '.[$a].effort // ""')
-      printf "  %-${max_alias}s  %-${max_skill}s  %-${max_model}s  %s\n" "$alias" "$skill" "$model" "$effort"
-    done <<< "$aliases_list"
+    for _row in "${_ag_rows[@]}"; do
+      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort <<< "$_row"
+      printf "  %-${max_alias}s  %-${max_skill}s  %-${max_model}s  %s\n" "$_ag_alias" "$_ag_skill" "$_ag_model" "$_ag_effort"
+    done
     printf '\n'
-    printf 'Type the alias to launch. Example: %s\n\n' "$(echo "$aliases_list" | head -1)"
+    printf 'Type the alias to launch. Example: %s\n\n' "${_ag_rows[0]%%	*}"
   fi
 }
