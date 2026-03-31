@@ -45,6 +45,33 @@ _cmd_config() {
       cp "$file" "$CONFIG"
       echo "Config importiert aus $file  (Backup: ${CONFIG}.bak)"
       ;;
+    theme)
+      # claudii config theme         → list available themes
+      # claudii config theme <name>  → set theme.name in user config
+      theme_arg="${3:-}"
+      if [[ -z "$theme_arg" ]]; then
+        # List available themes from defaults.json theme_presets
+        echo "Available themes:"
+        current=$(jq -r '.theme.name // "default"' "$CONFIG" 2>/dev/null)
+        jq -r '.theme_presets | keys[]' "$DEFAULTS" 2>/dev/null | sort | while IFS= read -r t; do
+          if [[ "$t" == "$current" ]]; then
+            echo "  * $t (active)"
+          else
+            echo "    $t"
+          fi
+        done
+      else
+        # Validate that the theme exists in defaults
+        valid=$(jq -r --arg name "$theme_arg" '.theme_presets | has($name)' "$DEFAULTS" 2>/dev/null)
+        if [[ "$valid" != "true" ]]; then
+          echo "Unknown theme: $theme_arg — available: $(jq -r '.theme_presets | keys | join(", ")' "$DEFAULTS" 2>/dev/null)" >&2
+          exit 1
+        fi
+        # Set theme.name in user config
+        echo "$(jq --arg name "$theme_arg" '.theme.name = $name' "$CONFIG")" > "$CONFIG"
+        echo "Theme set to: $theme_arg"
+      fi
+      ;;
     *)
       echo "User config: $CONFIG"
       echo ""

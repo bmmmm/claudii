@@ -39,5 +39,43 @@
     "snmax":   { "model": "sonnet", "effort": "max",                            "description": "Sonnet max — harder implementation tasks" },
     "op":      { "model": "opus",   "effort": "high",                           "description": "Opus worker — complex multi-file tasks" },
     "showall": { "model": "sonnet", "effort": "high",   "skill": "showall",     "description": "Show all — full project state (TODO, git, tests, sessions)" }
+  },
+  "theme": {
+    "name": "default",
+    "colors": {
+      "accent":     "38;5;213",
+      "rate_ok":    "0;32",
+      "rate_warn":  "0;33",
+      "rate_crit":  "0;31",
+      "reset_ok":   "2",
+      "reset_warn": "0;33",
+      "reset_crit": "0;31"
+    }
+  },
+  "theme_presets": {
+    "default": {
+      "name": "default",
+      "colors": {
+        "accent":     "38;5;213",
+        "rate_ok":    "0;32",
+        "rate_warn":  "0;33",
+        "rate_crit":  "0;31",
+        "reset_ok":   "2",
+        "reset_warn": "0;33",
+        "reset_crit": "0;31"
+      }
+    },
+    "pastel": {
+      "name": "pastel",
+      "colors": {
+        "accent":     "38;5;219",
+        "rate_ok":    "38;5;114",
+        "rate_warn":  "38;5;221",
+        "rate_crit":  "38;5;210",
+        "reset_ok":   "2",
+        "reset_warn": "38;5;221",
+        "reset_crit": "38;5;210"
+      }
+    }
   }
 }
