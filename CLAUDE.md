@@ -27,9 +27,22 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 ## Naming
 
 - **ClaudeStatus** — RPROMPT health monitor (our feature)
-- **Sessionline** — in-session status bar (native implementation)
+- **Dashboard** — session lines prepended to PROMPT after each command
+- **Sessionline** — in-session status bar inside Claude Code (native implementation)
+- **Overview** — what `claudii` (bare, no args) shows: account + agents + services + session summary
 - Commands: `claudii on/off`, `claudii status`, `claudii cc-statusline`
 - Config keys: `statusline.*` (internal, don't rename)
+
+## Command Roles — What Shows Where
+
+| Name | Trigger | Location | Content |
+|------|---------|----------|---------|
+| **Dashboard** | automatic, after every command | PROMPT (above prompt line) | Active sessions: model · ctx% · cost · 5h rate · ↺ |
+| **ClaudeStatus** | automatic, after every command | RPROMPT (right side) | API health per model |
+| **Overview** (`claudii`) | on demand | stdout | Account rate limits · Agents config · Services status · Session count summary |
+| **`claudii status`** | on demand | stdout | Per-model API health + current incident from RSS timeline |
+| **`claudii se`** | on demand | stdout | Full session detail: project · name · context bar · cost · rate · age · ID |
+| **`claudii si`** | on demand | stdout | Inactive/ended sessions with GC hint |
 
 ## Status Cache
 
