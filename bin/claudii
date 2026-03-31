@@ -82,6 +82,7 @@ _cfg_init() {
   DEFAULTS="$CLAUDII_HOME/config/defaults.json"
   [[ -d "$CONFIG_DIR" ]] || mkdir -p "$CONFIG_DIR"
   [[ -f "$CONFIG" ]] || cp "$DEFAULTS" "$CONFIG"
+  _claudii_theme_load
 }
 
 # Validate config key — alphanumeric, dots, underscores only (prevents jq injection)

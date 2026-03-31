@@ -115,6 +115,61 @@ assert_contains "config theme unknown gives error" "Unknown theme" "$output"
 bash "$CLAUDII_HOME/bin/claudii" config theme unknown_xyz >/dev/null 2>&1 && _theme_exit=0 || _theme_exit=$?
 assert_eq "config theme unknown exits non-zero" "1" "$_theme_exit"
 
+
+# ── Theme loading tests ──────────────────────────────────────────────────────
+
+# Reset config to clean state
+bash "$CLAUDII_HOME/bin/claudii" config reset >/dev/null 2>&1
+
+# theme load: pastel theme produces different CLAUDII_CLR_ACCENT than default
+bash "$CLAUDII_HOME/bin/claudii" config set theme.name pastel >/dev/null 2>&1
+pastel_accent=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"
+  CONFIG_DIR="${XDG_CONFIG_HOME}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+  printf "%s" "$CLAUDII_CLR_ACCENT" | cat -v
+')
+assert_contains "theme load pastel: accent differs from default" "219" "$pastel_accent"
+
+# theme load: default theme keeps original CLAUDII_CLR_ACCENT
+bash "$CLAUDII_HOME/bin/claudii" config set theme.name default >/dev/null 2>&1
+default_accent=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"
+  CONFIG_DIR="${XDG_CONFIG_HOME}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+  printf "%s" "$CLAUDII_CLR_ACCENT" | cat -v
+')
+assert_contains "theme load default: accent has 213" "213" "$default_accent"
+
+# theme load: unknown theme name keeps defaults (no crash)
+bash "$CLAUDII_HOME/bin/claudii" config set theme.name nonexistent >/dev/null 2>&1
+unknown_accent=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"
+  CONFIG_DIR="${XDG_CONFIG_HOME}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+  printf "%s" "$CLAUDII_CLR_ACCENT" | cat -v
+')
+assert_contains "theme load unknown: accent keeps default 213" "213" "$unknown_accent"
+
+# theme load: pastel also changes CLAUDII_CLR_GREEN (rate_ok)
+bash "$CLAUDII_HOME/bin/claudii" config set theme.name pastel >/dev/null 2>&1
+pastel_green=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"
+  CONFIG_DIR="${XDG_CONFIG_HOME}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+  printf "%s" "$CLAUDII_CLR_GREEN" | cat -v
+')
+assert_contains "theme load pastel: green uses 114" "114" "$pastel_green"
+
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME"
 unset XDG_CONFIG_HOME

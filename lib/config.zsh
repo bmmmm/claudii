@@ -29,6 +29,7 @@ _claudii_defaults_load() {
     _CLAUDII_DEF_CACHE[${line%%=*}]="${line#*=}"
   done < <(_claudii_json_flatten "$CLAUDII_DEFAULTS")
   _CLAUDII_METRICS[config.defaults_us]=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
+  _claudii_theme_load
 }
 
 # Reload user config only when mtime changed — fast no-op on cache hit
@@ -53,6 +54,7 @@ _claudii_cache_load() {
   # Sync debug level to env var so _claudii_log needs no further lookups
   CLAUDII_LOG_LEVEL="${_CLAUDII_CFG_CACHE[debug.level]:-${_CLAUDII_DEF_CACHE[debug.level]:-off}}"
   _claudii_log debug "config: reload ${_CLAUDII_METRICS[config.cache_load_us]}µs"
+  _claudii_theme_load
 }
 
 function claudii_config_get {
