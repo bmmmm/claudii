@@ -105,28 +105,31 @@ function _claudii_collect_sessions {
   _CLAUDII_DASH_5HS=() _CLAUDII_DASH_R5HS=()
   _CLAUDII_DASH_COUNT=0
 
+  local -A _sfst
+  local _sf_mt _sf_age sc s_ppid
+  local s_model s_ctx s_cost s_5h s_r5h
   for _sf in "$_cache_base"/session-*(N); do
-    local _sf_mt=0
+    _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
-      local -A _sfst
+      _sfst=()
       zstat -H _sfst "$_sf" 2>/dev/null && _sf_mt=${_sfst[mtime]:-0}
     else
       _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
-    local _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
+    _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
     (( _sf_age >= 300 )) && continue
 
-    local sc=""
+    sc=""
     { sc=$(<"$_sf"); } 2>/dev/null
     [[ -z "$sc" ]] && continue
 
-    local s_ppid=""
+    s_ppid=""
     [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
-    if [[ -n "$s_ppid" && "$s_ppid" != "0" && "$s_ppid" != "" ]]; then
+    if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
       kill -0 "$s_ppid" 2>/dev/null || continue
     fi
 
-    local s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
+    s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
     [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
     [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
     [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"

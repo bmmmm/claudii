@@ -68,6 +68,7 @@ _session_name() {
   grep -o '"Session renamed to: [^"\\]*"' "$jsonl" 2>/dev/null \
     | tail -1 \
     | sed 's/^"Session renamed to: //; s/"$//' \
+    | sed $'s/\033\\[[0-9;]*m//g' \
     | sed 's/\\033\[[0-9;]*m//g; s/\\e\[[0-9;]*m//g; s/\\033//g; s/\\e//g' \
     | LC_ALL=C tr -cd '[:print:]' \
     | cut -c1-60 \
@@ -174,7 +175,7 @@ _parse_session_cache() {
   fi
   _PSC_age=$(( $(date +%s) - _PSC_mtime ))
   _PSC_is_active=0
-  if [[ $_PSC_age -lt 300 ]] && [[ -n "$_PSC_ppid" ]] && kill -0 "$_PSC_ppid" 2>/dev/null; then
+  if [[ $_PSC_age -lt 300 ]] && [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && kill -0 "$_PSC_ppid" 2>/dev/null; then
     _PSC_is_active=1
   fi
 }
