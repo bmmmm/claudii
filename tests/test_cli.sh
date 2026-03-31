@@ -46,10 +46,9 @@ layers_out=$(bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
 assert_eq "layers: no obsolete 'show model' reference" "0" "$(echo "$layers_out" | grep -c 'show model' || true)"
 assert_contains "layers: shows ClaudeStatus" "ClaudeStatus" "$layers_out"
 
-# dashboard: must support on/off/auto (same as dash)
+# dashboard: on/off only
 DASH_CLI_TMP="$(mktemp -d)"
 export CLAUDII_CACHE_DIR="$DASH_CLI_TMP"
-cp "$CLAUDII_HOME/config/defaults.json" "$DASH_CLI_TMP/config.json"
 export XDG_CONFIG_HOME="$DASH_CLI_TMP"
 mkdir -p "$DASH_CLI_TMP/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$DASH_CLI_TMP/claudii/config.json"
@@ -62,8 +61,7 @@ out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1)
 assert_matches "dashboard on: success message" "enabled|on" "$out"
 
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard auto 2>&1 || true)
-assert_eq "dashboard auto: not 'Usage' error" "0" "$(echo "$out" | grep -c 'Usage:' || true)"
-assert_contains "dashboard auto: shows auto" "auto" "$out"
+assert_eq "dashboard auto: unknown subcommand error" "1" "$(bash "$CLAUDII_HOME/bin/claudii" dashboard auto >/dev/null 2>&1; echo $?)"
 
 # dash command should be removed (use dashboard instead)
 dash_out=$(bash "$CLAUDII_HOME/bin/claudii" dash 2>&1 || true)

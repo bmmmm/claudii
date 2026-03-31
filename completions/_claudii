@@ -68,10 +68,7 @@ _claudii() {
         dashboard)
           local -a dash_cmds
           dash_cmds=(
-            'mini:Compact session line below prompt'
-            'big:Full session overview (like claudii sessions)'
-            'auto:Mini when sessions active, off when none'
-            'on:Enable dashboard (alias for mini)'
+            'on:Enable dashboard'
             'off:Disable dashboard'
           )
           _describe 'dashboard subcommand' dash_cmds
@@ -119,7 +116,7 @@ _claudii() {
                 'status.rss_url:Status RSS feed URL'
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
-                'dashboard.enabled:Dashboard mode (auto/true/off)'
+                'dashboard.enabled:Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
                 'watch.sound:Path to sound file played on notification (empty = no sound)'

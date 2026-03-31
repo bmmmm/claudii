@@ -236,7 +236,7 @@ _dead_pid=$(bash -c 'echo $$' 2>/dev/null)
 SESSION_BAR_TMP="$CLAUDII_HOME/tmp/test_statusline_sessionbar"
 rm -rf "$SESSION_BAR_TMP"
 mkdir -p "$SESSION_BAR_TMP/config/claudii"
-cp "$CLAUDII_HOME/config/defaults.json" "$SESSION_BAR_TMP/config/claudii/config.json"
+jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$SESSION_BAR_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SESSION_BAR_TMP/status-models"
 # Write session cache with dead PID — mtime is fresh (now)
 printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=deadtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_dead_pid" \
@@ -298,7 +298,7 @@ rm -rf "$SESSION_BAR_TMP"
 COND_TMP="$CLAUDII_HOME/tmp/test_statusline_cond"
 rm -rf "$COND_TMP"
 mkdir -p "$COND_TMP/config/claudii"
-cp "$CLAUDII_HOME/config/defaults.json" "$COND_TMP/config/claudii/config.json"
+jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$COND_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$COND_TMP/status-models"
 _live_pid=$$
 printf 'model=Sonnet\nctx_pct=76\ncost=0.66\nrate_5h=28\nreset_5h=\nppid=%s\n' "$_live_pid" \

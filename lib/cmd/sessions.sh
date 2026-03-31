@@ -586,47 +586,22 @@ _cmd_default() {
   # ── Services ──────────────────────────────────────────────────────
   printf '\n'
 
-  # ClaudeStatus
+  # ── Services ──────────────────────────────────────────────────────
   _ov_cs_en=$(_cfgget statusline.enabled)
-  if [[ "$_ov_cs_en" == "true" ]]; then
-    _ov_cs_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
-  else
-    _ov_cs_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
-  fi
-
-  # Dashboard
   _ov_dash_en=$(_cfgget dashboard.enabled)
-  [[ -z "$_ov_dash_en" ]] && _ov_dash_en="auto"
-  if [[ "$_ov_dash_en" == "off" ]]; then
-    _ov_dash_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
-  elif [[ "$_ov_dash_en" == "auto" ]]; then
-    _ov_dash_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} auto"
-  else
-    _ov_dash_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
-  fi
-
-  # CC-Statusline
+  [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
-  if [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1; then
-    _ov_sl_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
-  else
-    _ov_sl_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
-  fi
-
-  # Watch
+  _ov_sl_on=0
+  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
   _ov_watch_pid="$cache_dir/watch.pid"
-  if [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null; then
-    _ov_watch_str="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} on"
-  else
-    _ov_watch_str="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} off"
-  fi
+  _ov_watch_on=0
+  [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null && _ov_watch_on=1
 
-  # Services header: ● if any layer is active, ○ if all off
   _ov_svc_any=0
-  [[ "$_ov_cs_en" == "true" ]] && _ov_svc_any=1
-  [[ "$_ov_dash_en" != "off" ]] && _ov_svc_any=1
-  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_svc_any=1
-  [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null && _ov_svc_any=1
+  [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
+  [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1
+  (( _ov_sl_on ))                && _ov_svc_any=1
+  (( _ov_watch_on ))             && _ov_svc_any=1
 
   if (( _ov_svc_any )); then
     printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
@@ -634,34 +609,52 @@ _cmd_default() {
     printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
   fi
 
-  # Model health cache inline with ClaudeStatus
-  _ov_model_health=""
-  _ov_status_cache="$cache_dir/status-models"
-  if [[ -f "$_ov_status_cache" ]]; then
-    _ov_health_str=""
-    while IFS='=' read -r _om _os; do
-      [[ -z "$_om" || "$_om" == _* ]] && continue
-      # Normalize to display name
-      case "$_om" in
-        opus)   _om_cap="Opus"   ;;
-        sonnet) _om_cap="Sonnet" ;;
-        haiku)  _om_cap="Haiku"  ;;
-        *)      _om_cap="$_om"   ;;
-      esac
-      case "$_os" in
-        ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ✓${CLAUDII_CLR_RESET} " ;;
-        degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ⚠${CLAUDII_CLR_RESET} " ;;
-        down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ✗${CLAUDII_CLR_RESET} " ;;
-      esac
-    done < "$_ov_status_cache"
-    [[ -n "$_ov_health_str" ]] && _ov_model_health=" ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
+  # ClaudeStatus — with inline model health when on
+  if [[ "$_ov_cs_en" == "true" ]]; then
+    _ov_model_health=""
+    _ov_status_cache="$cache_dir/status-models"
+    if [[ -f "$_ov_status_cache" ]]; then
+      _ov_health_str=""
+      while IFS='=' read -r _om _os; do
+        [[ -z "$_om" || "$_om" == _* ]] && continue
+        case "$_om" in
+          opus)   _om_cap="Opus"   ;;
+          sonnet) _om_cap="Sonnet" ;;
+          haiku)  _om_cap="Haiku"  ;;
+          *)      _om_cap="$_om"   ;;
+        esac
+        case "$_os" in
+          ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ✓${CLAUDII_CLR_RESET} " ;;
+          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ⚠${CLAUDII_CLR_RESET} " ;;
+          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ✗${CLAUDII_CLR_RESET} " ;;
+        esac
+      done < "$_ov_status_cache"
+      [[ -n "$_ov_health_str" ]] && _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
+    fi
+    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ClaudeStatus%s\n" "$_ov_model_health"
+  else
+    printf "    ${CLAUDII_CLR_DIM}○ ClaudeStatus%-20s claudii on${CLAUDII_CLR_RESET}\n" ""
   fi
 
-  printf "    ClaudeStatus %b%s  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Dashboard %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  CC-Statusline %b  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET}  Watch %b\n" \
-    "$_ov_cs_str" "$_ov_model_health" "$_ov_dash_str" "$_ov_sl_str" "$_ov_watch_str"
+  # Dashboard
+  if [[ "$_ov_dash_en" != "off" ]]; then
+    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} Dashboard\n"
+  else
+    printf "    ${CLAUDII_CLR_DIM}○ Dashboard%-23s claudii dashboard on${CLAUDII_CLR_RESET}\n" ""
+  fi
 
-  if (( ! _ov_svc_any )); then
-    printf "    ${CLAUDII_CLR_DIM}claudii on to enable${CLAUDII_CLR_RESET}\n"
+  # CC-Statusline
+  if (( _ov_sl_on )); then
+    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} CC-Statusline\n"
+  else
+    printf "    ${CLAUDII_CLR_DIM}○ CC-Statusline%-20s claudii cc-statusline on${CLAUDII_CLR_RESET}\n" ""
+  fi
+
+  # Watch
+  if (( _ov_watch_on )); then
+    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} Watch\n"
+  else
+    printf "    ${CLAUDII_CLR_DIM}○ Watch%-27s claudii watch start${CLAUDII_CLR_RESET}\n" ""
   fi
 
   printf '\n'

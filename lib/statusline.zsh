@@ -150,6 +150,7 @@ function _claudii_collect_sessions {
 
 function _claudii_dashboard {
   local _dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
+  # Any value other than "off" enables the dashboard
   if [[ "$_dash_mode" == "off" ]]; then
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi

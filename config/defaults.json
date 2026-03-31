@@ -23,7 +23,7 @@
     "dir": "~/claude-search"
   },
   "dashboard": {
-    "enabled": "auto"
+    "enabled": "off"
   },
   "debug": {
     "level": "off"

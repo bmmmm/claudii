@@ -5,7 +5,7 @@
 _cmd_on() {
   _cfg_init
   # Enable all three layers
-  echo "$(jq '.statusline.enabled = true | .dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
+  echo "$(jq '.statusline.enabled = true | .dashboard.enabled = "on"' "$CONFIG")" > "$CONFIG"
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
     if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
@@ -54,21 +54,9 @@ _cmd_claudestatus() {
 _cmd_dashboard() {
   _cfg_init
   case "${2:-}" in
-    mini)
-      echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
-      echo -e "${CLAUDII_CLR_GREEN}Dashboard: mini${CLAUDII_CLR_RESET}  (compact line below prompt)"
-      ;;
-    big)
-      echo "$(jq '.dashboard.enabled = "big"' "$CONFIG")" > "$CONFIG"
-      echo -e "${CLAUDII_CLR_GREEN}Dashboard: big${CLAUDII_CLR_RESET}  (full session overview)"
-      ;;
-    auto)
-      echo "$(jq '.dashboard.enabled = "auto"' "$CONFIG")" > "$CONFIG"
-      echo -e "${CLAUDII_CLR_CYAN}Dashboard: auto${CLAUDII_CLR_RESET}  (mini when sessions active, off when none)"
-      ;;
     on)
-      echo "$(jq '.dashboard.enabled = "mini"' "$CONFIG")" > "$CONFIG"
-      echo -e "${CLAUDII_CLR_GREEN}Dashboard: mini${CLAUDII_CLR_RESET}  (on = mini)"
+      echo "$(jq '.dashboard.enabled = "on"' "$CONFIG")" > "$CONFIG"
+      echo -e "${CLAUDII_CLR_GREEN}Dashboard: on${CLAUDII_CLR_RESET}"
       ;;
     off)
       echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
@@ -77,18 +65,14 @@ _cmd_dashboard() {
     "")
       current=$(_cfgget dashboard.enabled)
       current="${current:-off}"
-      case "$current" in
-        mini)  echo -e "Dashboard: ${CLAUDII_CLR_GREEN}mini${CLAUDII_CLR_RESET}  (compact line below prompt)" ;;
-        big)   echo -e "Dashboard: ${CLAUDII_CLR_GREEN}big${CLAUDII_CLR_RESET}  (full session overview)" ;;
-        auto)  echo -e "Dashboard: ${CLAUDII_CLR_CYAN}auto${CLAUDII_CLR_RESET}  (mini when sessions active, off when none)" ;;
-        off)   echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" ;;
-        true)  echo -e "Dashboard: ${CLAUDII_CLR_GREEN}mini${CLAUDII_CLR_RESET}  (legacy: true → mini)" ;;
-        *)     echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}${current}${CLAUDII_CLR_RESET}" ;;
-      esac
+      if [[ "$current" == "off" ]]; then
+        echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}  (claudii dashboard on to enable)"
+      else
+        echo -e "Dashboard: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      fi
       ;;
     *)
-      echo "Unknown dashboard subcommand: ${2}"
-      echo "Usage: claudii dashboard [mini|big|auto|on|off]"; exit 1
+      echo "Unknown subcommand: ${2} — run 'claudii dashboard [on|off]'" >&2; exit 1
       ;;
   esac
 }
