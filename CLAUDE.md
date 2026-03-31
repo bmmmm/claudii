@@ -63,6 +63,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - Background jobs: always `( cmd & )` subshell pattern (prevents [N] PID leak — anonymous functions with no_monitor still leak)
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh`
+- **`(( ++var ))` not `(( var++ ))`** — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI), bash 3.2 (macOS) tolerates it silently. Use pre-increment for all standalone counters.
 
 ## When adding features
 

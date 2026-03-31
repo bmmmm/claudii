@@ -28,6 +28,15 @@ fi
 _rel_version="${_rel_version#v}"
 _rel_tag="v${_rel_version}"
 
+# Parse remote URL early — needed for CI HEAD check and release creation
+_remote_url=$(git -C "${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}" remote get-url origin 2>/dev/null || echo "")
+if [[ "$_remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
+  _gh_owner="${BASH_REMATCH[1]}"
+  _gh_repo="${BASH_REMATCH[2]}"
+else
+  _gh_owner="" _gh_repo=""
+fi
+
 # ── Helpers ──
 _rel_box_start() { printf '┌ %s\n' "$1"; }
 _rel_box_item()  { printf "│ %b %s\n" "$1" "$2"; }
@@ -90,16 +99,28 @@ if [[ -n "$_existing_tag" ]]; then
 fi
 _rel_ok "Kein offener Tag $_rel_tag"
 
-# 4. CI status check (last run on current branch, requires gh)
-if command -v gh >/dev/null 2>&1; then
-  _ci_branch=$(git -C "$CLAUDII_HOME" branch --show-current 2>/dev/null || true)
-  if [[ -n "$_ci_branch" ]]; then
-    _ci_conclusion=$(gh run list --branch "$_ci_branch" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null || true)
-    if [[ "$_ci_conclusion" == "failure" ]]; then
-      _rel_fail "Last CI run on branch '$_ci_branch' failed — check GitHub Actions"
+# 4. CI check: HEAD commit must have a completed, successful CI run
+if command -v gh >/dev/null 2>&1 && [[ -n "$_gh_owner" ]]; then
+  _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
+  _ci_checks=$(gh api "repos/${_gh_owner}/${_gh_repo}/commits/${_head}/check-runs" \
+    --jq '[.check_runs[] | select(.name | startswith("test"))] | {
+      total: length,
+      failed: [.[] | select(.conclusion == "failure")] | length,
+      pending: [.[] | select(.status != "completed")] | length
+    }' 2>/dev/null || echo "")
+  if [[ -n "$_ci_checks" ]]; then
+    _ci_failed=$(echo "$_ci_checks" | jq -r '.failed')
+    _ci_pending=$(echo "$_ci_checks" | jq -r '.pending')
+    _ci_total=$(echo "$_ci_checks" | jq -r '.total')
+    if [[ "$_ci_failed" -gt 0 ]]; then
+      _rel_fail "CI: ${_ci_failed}/${_ci_total} test jobs failed for HEAD ${_head:0:7}"
+      echo "  Fix CI failures before releasing — check https://github.com/${_gh_owner}/${_gh_repo}/commit/${_head}/checks" >&2
       exit 1
-    elif [[ -n "$_ci_conclusion" ]]; then
-      _rel_ok "CI: $_ci_conclusion (branch: $_ci_branch)"
+    elif [[ "$_ci_pending" -gt 0 ]]; then
+      _rel_fail "CI: ${_ci_pending} test jobs still pending for HEAD ${_head:0:7} — wait for CI to complete"
+      exit 1
+    elif [[ "$_ci_total" -gt 0 ]]; then
+      _rel_ok "CI: all ${_ci_total} test jobs green for HEAD ${_head:0:7}"
     fi
   fi
 fi
@@ -140,12 +161,7 @@ fi
 if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "GitHub Actions — skipped (dry-run)"
 else
-  # Get repo owner/name from remote URL
-  _remote_url=$(git -C "$CLAUDII_HOME" remote get-url origin 2>/dev/null || echo "")
-  if [[ "$_remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-    _gh_owner="${BASH_REMATCH[1]}"
-    _gh_repo="${BASH_REMATCH[2]}"
-  else
+  if [[ -z "$_gh_owner" ]]; then
     _rel_fail "Kein GitHub-Remote gefunden: $_remote_url"
     exit 1
   fi
@@ -207,21 +223,23 @@ else
     exit 1
   fi
 
-  # 7. Create GitHub Release
-  _release_out=$(gh release create "$_rel_tag" \
-    --title "$_rel_tag" \
-    --generate-notes \
-    --repo "${_gh_owner}/${_gh_repo}" 2>&1)
-  _release_exit=$?
-
-  if [[ $_release_exit -eq 0 ]]; then
-    _release_url=$(echo "$_release_out" | grep -oE 'https://[^ ]+' | head -1)
-    [[ -z "$_release_url" ]] && _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
-    _rel_ok "GitHub Release erstellt"
+  # 7. Create GitHub Release (idempotent — skip if already exists)
+  _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
+  if gh release view "$_rel_tag" --repo "${_gh_owner}/${_gh_repo}" &>/dev/null; then
+    _rel_ok "GitHub Release bereits vorhanden"
   else
-    _rel_fail "gh release create fehlgeschlagen"
-    echo "$_release_out" >&2
-    exit 1
+    _release_out=$(gh release create "$_rel_tag" \
+      --title "$_rel_tag" \
+      --generate-notes \
+      --repo "${_gh_owner}/${_gh_repo}" 2>&1)
+    _release_exit=$?
+    if [[ $_release_exit -eq 0 ]]; then
+      _rel_ok "GitHub Release erstellt"
+    else
+      _rel_fail "gh release create fehlgeschlagen"
+      echo "$_release_out" >&2
+      exit 1
+    fi
   fi
 fi
 
