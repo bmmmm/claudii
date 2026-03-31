@@ -120,7 +120,6 @@ function _claudii_collect_sessions {
       _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
     _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
-    (( _sf_age >= 300 )) && continue
 
     sc=""
     { sc=$(<"$_sf"); } 2>/dev/null
@@ -129,7 +128,11 @@ function _claudii_collect_sessions {
     s_ppid=""
     [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
     if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
+      # Authoritative liveness check — show even if file is old (long-running task)
       kill -0 "$s_ppid" 2>/dev/null || continue
+    else
+      # No ppid → fall back to age-based filter (< 300s)
+      (( _sf_age >= 300 )) && continue
     fi
 
     s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""

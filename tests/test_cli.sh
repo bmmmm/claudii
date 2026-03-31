@@ -120,6 +120,24 @@ assert_eq "bare claudii: no shell source leak" "0" \
 rm -rf "$_inj_tmp"
 unset bare_out _inj_tmp inj_out
 
+# ── Session active detection: live PID + old file (>300s) → shown as active ──
+# Regression for long-running tasks that don't update the session file for >5min.
+_act_tmp="$(mktemp -d)"
+_act_xdg="$_act_tmp/xdg"
+mkdir -p "$_act_xdg/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_act_xdg/claudii/config.json"
+printf 'model=Sonnet 4.6\nctx_pct=60\ncost=1.00\nrate_5h=\nreset_5h=\nsession_id=acttest\nworktree=\nagent=\nppid=%s\n' "$$" > "$_act_tmp/session-acttest"
+# Make the session file 310 seconds old (simulates idle Claude session)
+_act_stale_ts=$(date -v-310S +%Y%m%d%H%M.%S 2>/dev/null || date -d "310 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+[[ -n "$_act_stale_ts" ]] && touch -t "$_act_stale_ts" "$_act_tmp/session-acttest"
+act_out=$(CLAUDII_CACHE_DIR="$_act_tmp" XDG_CONFIG_HOME="$_act_xdg" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
+# With live PID, session should show as active (● model) not inactive (○ N inactive)
+assert_contains "active session: live PID + old file → shown as active (●)" "Sonnet 4.6" "$act_out"
+assert_eq "active session: not counted as inactive" "0" \
+  "$(echo "$act_out" | grep -c 'inactive' || true)"
+rm -rf "$_act_tmp"
+unset _act_tmp _act_xdg _act_stale_ts act_out
+
 # sessions — ANSI guard
 sess_out=$(bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
 assert_no_literal_ansi "sessions: no literal \\033 in output" "$sess_out"

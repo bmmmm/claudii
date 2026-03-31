@@ -277,6 +277,27 @@ zsh_session_bar_live=$(
 )
 assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
 
+# Session bar: live PID with OLD file (>300s) → bar still shown
+# Regression for long-running tasks that don't update the session file frequently
+_stale_ts=$(date -v-310S +%Y%m%d%H%M.%S 2>/dev/null || date -d "310 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+if [[ -n "$_stale_ts" ]]; then
+  printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=staletest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_live_pid" \
+    > "$SESSION_BAR_TMP/session-staletest"
+  touch -t "$_stale_ts" "$SESSION_BAR_TMP/session-staletest"
+  rm -f "$SESSION_BAR_TMP/session-livetest"
+  zsh_session_stale=$(
+    CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+    zsh -c "
+      source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+      _CLAUDII_CMD_RAN=1
+      _claudii_dashboard
+      print -P \"\${(e)PROMPT}\"
+    " 2>/dev/null
+  )
+  assert_contains "session bar: live PID + old file (>300s) → bar still shown" "Sonnet" "$zsh_session_stale"
+  rm -f "$SESSION_BAR_TMP/session-staletest"
+fi
+
 # dashboard: PROMPT must not contain save/restore cursor escape sequences
 prompt_val=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
