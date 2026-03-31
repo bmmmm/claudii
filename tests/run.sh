@@ -47,6 +47,20 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  if grep -qF "$needle" <<< "$haystack"; then
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Expected NOT to contain: ${RED}$needle${NC}"
+    echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
+    (( FAIL++ ))
+    ERRORS+=("$desc")
+  else
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( PASS++ ))
+  fi
+}
+
 assert_exit_code() {
   local desc="$1" expected="$2" cmd="$3"
   local actual _errexit=0
@@ -98,7 +112,7 @@ assert_matches() {
 
 # Export for test files
 export CLAUDII_HOME TESTS_DIR
-export -f assert_eq assert_contains assert_exit_code assert_file_exists
+export -f assert_eq assert_contains assert_not_contains assert_exit_code assert_file_exists
 export -f assert_no_literal_ansi assert_matches
 
 # Run tests

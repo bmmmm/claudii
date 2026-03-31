@@ -464,7 +464,7 @@ _cmd_default() {
   # ── Account ───────────────────────────────────────────────────────
   printf '\n'
   if [[ -n "$_ov_acct_5h" ]]; then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Account${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Account${CLAUDII_CLR_RESET}\n"
 
     _ov_5h_int=${_ov_acct_5h%.*}
     # 5h urgency color: < 50% green, 50-79% yellow, >= 80% red
@@ -541,7 +541,7 @@ _cmd_default() {
   [[ -z "$_ov_agents_json" ]] && _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
 
   if [[ -n "$_ov_agents_json" ]]; then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Agents${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Agents${CLAUDII_CLR_RESET}\n"
     while IFS=$'\t' read -r _a_alias _a_skill _a_model _a_effort; do
       printf "    %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
     done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
@@ -568,9 +568,9 @@ _cmd_default() {
   (( _ov_watch_on ))             && _ov_svc_any=1
 
   if (( _ov_svc_any )); then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
   else
-    printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Services${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
   fi
 
   # ClaudeStatus — with inline model health when on
@@ -625,12 +625,12 @@ _cmd_default() {
   printf '\n'
   if (( _ov_any_session )); then
     if (( _ov_active_count > 0 )); then
-      printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Sessions${CLAUDII_CLR_RESET}\n"
+      printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
       _ov_s=""; (( _ov_active_count != 1 )) && _ov_s="s"
       printf "    %d active session%s  ${CLAUDII_CLR_DIM}·  claudii se for details${CLAUDII_CLR_RESET}\n" \
         "$_ov_active_count" "$_ov_s"
     else
-      printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Sessions${CLAUDII_CLR_RESET}\n"
+      printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
     fi
 
     (( _ov_inactive_count > 0 )) && \

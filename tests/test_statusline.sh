@@ -518,8 +518,21 @@ else
   assert_eq "dashboard: hidden after non-claudii cmd (ls)" "no Sonnet" "no Sonnet"
 fi
 
-# After claudii command → dashboard shown
+# After plain claudii command → dashboard shown
 claudii_out=$(
+  CLAUDII_CACHE_DIR="$CMDFILTER_TMP" XDG_CONFIG_HOME="$CMDFILTER_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard: shown after claudii cmd" "Sonnet" "$claudii_out"
+
+# After claudii se/si/sessions → dashboard suppressed (already showed session info)
+se_out=$(
   CLAUDII_CACHE_DIR="$CMDFILTER_TMP" XDG_CONFIG_HOME="$CMDFILTER_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -529,7 +542,7 @@ claudii_out=$(
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
-assert_contains "dashboard: shown after claudii cmd" "Sonnet" "$claudii_out"
+assert_not_contains "dashboard: suppressed after claudii se" "Sonnet" "$se_out"
 
 rm -rf "$CMDFILTER_TMP"
 unset CMDFILTER_TMP ls_out claudii_out

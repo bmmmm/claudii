@@ -184,6 +184,12 @@ function _claudii_dashboard {
   [[ "${_CLAUDII_LAST_CMD}" != claudii* ]] && {
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   }
+  # Skip after session-display commands — they already showed the session info
+  [[ "${_CLAUDII_LAST_CMD}" == claudii\ se* || \
+     "${_CLAUDII_LAST_CMD}" == claudii\ si* || \
+     "${_CLAUDII_LAST_CMD}" == claudii\ sessions* ]] && {
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  }
 
   _claudii_collect_sessions
   if (( _CLAUDII_DASH_COUNT == 0 )); then
