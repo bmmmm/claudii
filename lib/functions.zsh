@@ -7,49 +7,52 @@ function _claudii_rl_warn {
   local _model_var="$1" _effort_var="$2"
   local _model="${(P)_model_var}"
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local -A _rfst
+  local _sf_mt _sf_content _rl_5h _rl_reset _rl_int _reset_str _remaining
+  local _color _fb_model _choice _fb_effort
 
   for _sf in "$_cache_base"/session-*(N); do
-    local _sf_mt=0
+    _sf_mt=0
     if (( ${+modules[zsh/stat]} )); then
-      local -A _rfst
+      _rfst=()
       zstat -H _rfst "$_sf" 2>/dev/null && _sf_mt=${_rfst[mtime]:-0}
     else
       _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
     (( (EPOCHSECONDS - _sf_mt) > 300 )) && continue
 
-    local _sf_content=""
+    _sf_content=""
     { _sf_content=$(<"$_sf"); } 2>/dev/null
     [[ -z "$_sf_content" ]] && continue
 
-    local _rl_5h="" _rl_reset=""
+    _rl_5h="" _rl_reset=""
     [[ $'\n'"$_sf_content" == *$'\n'rate_5h=* ]] && _rl_5h="${${_sf_content#*rate_5h=}%%$'\n'*}"
     [[ $'\n'"$_sf_content" == *$'\n'reset_5h=* ]] && _rl_reset="${${_sf_content#*reset_5h=}%%$'\n'*}"
 
     [[ -z "$_rl_5h" ]] && continue
-    local _rl_int=${_rl_5h%.*}
+    _rl_int=${_rl_5h%.*}
     (( _rl_int < 80 )) && continue
 
-    local _reset_str=""
+    _reset_str=""
     if [[ -n "$_rl_reset" && "$_rl_reset" != "0" ]]; then
-      local _remaining=$(( _rl_reset - EPOCHSECONDS ))
+      _remaining=$(( _rl_reset - EPOCHSECONDS ))
       (( _remaining > 0 )) && _reset_str=" Reset in $(( _remaining / 60 ))min"
     fi
 
-    local _color="$CLAUDII_CLR_YELLOW"
+    _color="$CLAUDII_CLR_YELLOW"
     (( _rl_int >= 90 )) && _color="$CLAUDII_CLR_RED"
 
     printf "${_color}⚠ ${(C)_model} 5h bei ${_rl_int}%%${_reset_str}${CLAUDII_CLR_RESET}\n"
     if [[ "$_model" == "opus" ]]; then
-      local _fb_model=$(claudii_config_get "fallback.opus.model")
+      _fb_model=$(claudii_config_get "fallback.opus.model")
       [[ -z "$_fb_model" ]] && _fb_model="sonnet"
       printf "  ${_fb_model} stattdessen? ${CLAUDII_CLR_DIM}[Enter] starten · [s] ${_fb_model} · [w] warten${CLAUDII_CLR_RESET} "
-      local _choice=""
+      _choice=""
       read -k1 _choice
       echo ""
       case "$_choice" in
         s|S)
-          local _fb_effort=$(claudii_config_get "fallback.opus.effort")
+          _fb_effort=$(claudii_config_get "fallback.opus.effort")
           eval "$_model_var=\"\$_fb_model\""
           [[ -n "$_fb_effort" ]] && eval "$_effort_var=\"\$_fb_effort\""
           printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${_fb_effort:-$(claudii_config_get aliases.$_model_var.effort)}${CLAUDII_CLR_RESET}\n"

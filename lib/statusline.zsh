@@ -102,29 +102,33 @@ function _claudii_collect_sessions {
   _CLAUDII_DASH_CACHE_PCTS=() _CLAUDII_DASH_7D_STARTS=()
   _CLAUDII_DASH_COUNT=0
 
+  local -A _sfst
+  local _sf_mt _sf_age sc s_ppid
+  local s_model s_ctx s_cost s_5h s_7d s_r5h s_r7d
+  local s_worktree s_agent s_burn_eta s_cache_pct s_7d_start
   for _sf in "$_cache_base"/session-*(N); do
-    local _sf_mt=0
+    _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
-      local -A _sfst
+      _sfst=()
       zstat -H _sfst "$_sf" 2>/dev/null && _sf_mt=${_sfst[mtime]:-0}
     else
       _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
     fi
-    local _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
+    _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
     (( _sf_age >= 300 )) && continue
 
-    local sc=""
+    sc=""
     { sc=$(<"$_sf"); } 2>/dev/null
     [[ -z "$sc" ]] && continue
 
-    local s_ppid=""
+    s_ppid=""
     [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
-    if [[ -n "$s_ppid" && "$s_ppid" != "0" && "$s_ppid" != "" ]]; then
+    if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
       kill -0 "$s_ppid" 2>/dev/null || continue
     fi
 
-    local s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
-    local s_worktree="" s_agent="" s_burn_eta="" s_cache_pct="" s_7d_start=""
+    s_model="" s_ctx="" s_cost="" s_5h="" s_7d="" s_r5h="" s_r7d=""
+    s_worktree="" s_agent="" s_burn_eta="" s_cache_pct="" s_7d_start=""
     [[ $'\n'"$sc" == *$'\n'model=* ]]         && s_model="${${sc#*model=}%%$'\n'*}"
     [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]       && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
     [[ $'\n'"$sc" == *$'\n'cost=* ]]          && s_cost="${${sc#*cost=}%%$'\n'*}"
@@ -162,7 +166,7 @@ function _claudii_render_global_line {
     (( rl_int >= 70 )) && rl_color="yellow"
     (( rl_int >= 90 )) && rl_color="red"
     _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl_color}}5h:${rl_int}%%%f"
-    if [[ -n "$g_r5h" && "$g_r5h" != "0" ]]; then
+    if [[ -n "$g_r5h" && "$g_r5h" != "0" && "$g_r5h" != "null" ]]; then
       local remaining=$(( g_r5h - EPOCHSECONDS ))
       (( remaining > 0 )) && _CLAUDII_DASH_GLOBAL_LINE+=" %F{8}reset $(( remaining / 60 ))min%f"
     fi
@@ -174,19 +178,20 @@ function _claudii_render_global_line {
     (( rl7_int >= 70 )) && rl7_color="yellow"
     (( rl7_int >= 90 )) && rl7_color="red"
     _CLAUDII_DASH_GLOBAL_LINE+="%F{${rl7_color}}7d:${rl7_int}%%%f"
-    if [[ -n "$g_7d_start" && "$g_7d_start" != "" ]]; then
+    if [[ -n "$g_7d_start" && "$g_7d_start" != "" && "$g_7d_start" != "null" ]]; then
       local delta_7d=$(( ${g_7d%.*} - ${g_7d_start%.*} ))
       (( delta_7d > 0 )) && _CLAUDII_DASH_GLOBAL_LINE+=" %F{8}(+${delta_7d}%%)%f"
     fi
   fi
 
-  local today_cost="0" _cost_fmt _ci
+  local today_cost_raw=0 _ci
   for (( _ci=1; _ci<=_CLAUDII_DASH_COUNT; _ci++ )); do
     if [[ -n "${_CLAUDII_DASH_COSTS[$_ci]}" && "${_CLAUDII_DASH_COSTS[$_ci]}" != "0" ]]; then
-      _cost_fmt=$(printf '%.2f' "${_CLAUDII_DASH_COSTS[$_ci]}" 2>/dev/null) || _cost_fmt="0.00"
-      today_cost=$(awk "BEGIN { printf \"%.2f\", $today_cost + $_cost_fmt }" 2>/dev/null || echo "$today_cost")
+      today_cost_raw=$(( today_cost_raw + ${_CLAUDII_DASH_COSTS[$_ci]:-0} ))
     fi
   done
+  local today_cost
+  printf -v today_cost '%.2f' "$today_cost_raw"
   [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && _CLAUDII_DASH_GLOBAL_LINE+="${SEP}"
   _CLAUDII_DASH_GLOBAL_LINE+="%F{cyan}"'\$'"${today_cost}%f %F{8}today (${_CLAUDII_DASH_COUNT} session"
   (( _CLAUDII_DASH_COUNT != 1 )) && _CLAUDII_DASH_GLOBAL_LINE+="s"
@@ -197,27 +202,27 @@ function _claudii_render_global_line {
 function _claudii_render_session_lines {
   local SEP="%F{8} │%f "
   _CLAUDII_DASH_SESSION_LINES=""
-  local _cost_fmt_s _si
+  local _cost_fmt_s _si s_line _pct _filled _empty _ctx_color _ctx_bar
 
   for (( _si=1; _si<=_CLAUDII_DASH_COUNT; _si++ )); do
-    local s_line=""
+    s_line=""
     [[ -z "${_CLAUDII_DASH_CTXS[$_si]}" ]] && continue
 
     s_line+="%B${_CLAUDII_DASH_MODELS[$_si]}%b"
 
-    local _pct=${_CLAUDII_DASH_CTXS[$_si]%.*}
+    _pct=${_CLAUDII_DASH_CTXS[$_si]%.*}
     (( _pct < 0 )) && _pct=0; (( _pct > 100 )) && _pct=100
-    local _filled=$(( _pct * 8 / 100 )) _empty=$(( 8 - _filled ))
-    local _ctx_color="green"
+    _filled=$(( _pct * 8 / 100 )) _empty=$(( 8 - _filled ))
+    _ctx_color="green"
     (( _pct >= 70 )) && _ctx_color="yellow"
     (( _pct >= 90 )) && _ctx_color="red"
-    local _ctx_bar=""
+    _ctx_bar=""
     (( _filled > 0 )) && _ctx_bar+="${(l:$_filled::█:)}"
     (( _empty > 0 )) && _ctx_bar+="%F{8}${(l:$_empty::░:)}%f"
     s_line+=" %F{${_ctx_color}}${_ctx_bar}%f %F{8}${_pct}%%%f"
 
     if [[ -n "${_CLAUDII_DASH_COSTS[$_si]}" && "${_CLAUDII_DASH_COSTS[$_si]}" != "0" ]]; then
-      _cost_fmt_s=$(printf '%.2f' "${_CLAUDII_DASH_COSTS[$_si]}" 2>/dev/null) || _cost_fmt_s="${_CLAUDII_DASH_COSTS[$_si]}"
+      printf -v _cost_fmt_s '%.2f' "${_CLAUDII_DASH_COSTS[$_si]}" 2>/dev/null || _cost_fmt_s="${_CLAUDII_DASH_COSTS[$_si]}"
       s_line+="${SEP}%F{cyan}"'\$'"${_cost_fmt_s}%f"
     fi
     if [[ -n "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" && "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" != "0" && "${_CLAUDII_DASH_CACHE_PCTS[$_si]}" != "" ]]; then
