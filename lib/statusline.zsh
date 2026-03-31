@@ -100,6 +100,19 @@ typeset -ga _CLAUDII_DASH_MODELS _CLAUDII_DASH_CTXS _CLAUDII_DASH_COSTS
 typeset -ga _CLAUDII_DASH_5HS _CLAUDII_DASH_R5HS
 typeset -gi _CLAUDII_DASH_COUNT=0
 
+# Strips zsh prompt codes from a string and echoes its visual length (integer).
+# Used by _claudii_dashboard to compute space padding for right-alignment.
+function _claudii_strip_prompt_codes {
+  local s="$1"
+  # Expand prompt codes (%F{} %f %B %b %% etc.) to ANSI sequences
+  s="${(%)s}"
+  # Strip ANSI CSI sequences (ESC[...m) — (S) = shortest match
+  s="${(S)s//$'\e'\[[0-9;]*m/}"
+  # \$ → $ (cost display in prompt context)
+  s="${s//\\\$/\$}"
+  echo "${#s}"
+}
+
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
@@ -181,9 +194,10 @@ function _claudii_dashboard {
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
-  local _di _line _ctx _cost _cf _r5h _r5h_int _r5h_clr _rst _rem
+  local _cols=${COLUMNS:-80}; (( _cols <= 0 )) && _cols=80
+  local _di _line _ctx _cost _cf _r5h _r5h_int _r5h_clr _rst _rem _vis _pad
   for (( _di=1; _di<=_CLAUDII_DASH_COUNT; _di++ )); do
-    _line="  %F{8}${_CLAUDII_DASH_MODELS[$_di]}"
+    _line="%F{8}${_CLAUDII_DASH_MODELS[$_di]}"
     _ctx="${_CLAUDII_DASH_CTXS[$_di]%.*}"
     [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
     _cost="${_CLAUDII_DASH_COSTS[$_di]}"
@@ -205,7 +219,11 @@ function _claudii_dashboard {
       fi
     fi
     _line+="%f"
-    _dash_lines+="${_line}"$'\n'
+    # Right-align via space padding — no cursor sequences, no tput
+    _vis=$(_claudii_strip_prompt_codes "$_line")
+    _pad=$(( _cols - _vis - 1 ))  # -1: safety margin for ambiguous-width chars
+    (( _pad < 0 )) && _pad=0
+    _dash_lines+="${(l:$_pad:: :)}${_line}"$'\n'
   done
 
   PROMPT="${_dash_lines}${_CLAUDII_USER_PROMPT}"
