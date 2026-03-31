@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-04-01
 
 ### Added
 - `claudii config theme` lists available color themes; `claudii config theme <name>` sets the active theme
@@ -17,14 +17,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - `claudii dashboard` renamed to `claudii session-dashboard`; `dashboard` kept as deprecated alias
 - Config key `dashboard.enabled` renamed to `session-dashboard.enabled`; old key still read as migration fallback
 - Internal: `_claudii_dashboard` → `_claudii_session_dashboard`, `_CLAUDII_DASH_*` → `_CLAUDII_SDASH_*`
+- Session dashboard now renders only after `claudii` commands — suppressed after `ls`, `git`, etc. for less visual noise
 - Session dashboard suppression after `se`/`si`/`sessions` now uses `_CLAUDII_SHOWED_SESSIONS` flag instead of command-name matching
 - Overview (`claudii`) and dashboard: rate-limit values (5h, 7d) are now color-coded by urgency — green (< 50%), yellow (50–79%), red (≥ 80%)
 - Overview: reset countdown colored by urgency — dim (> 60 min), yellow (10–60 min), red (< 10 min)
 - Overview: version number, today's cost, and active session bullet use `CLAUDII_CLR_ACCENT` for visual hierarchy
+- `claudii config set` now recognizes float values (e.g. `watch.volume 0.5`) and stores them as JSON numbers
+
 ### Fixed
+- **Security:** `osascript` notification message/title are now escaped before interpolation into AppleScript string
+- **Security:** Agent names from config are validated before `eval` in `_claudii_register_agents` — prevents code injection via crafted config
+- **Robustness:** All `jq` config writes now use atomic `mktemp` + `mv` pattern — config file can no longer be silently wiped on jq error
+- **Robustness:** `_watch_loop` fork now exports all helper function dependencies (`_cfg_init`, `_cfgget`, `_validate_key`) — watch sound config was previously inaccessible in the subprocess
 - `claudii trends` awk syntax error (missing `}` in END block)
 - Session name in `claudii sessions` / bare `claudii` showing raw sed code from JSONL tool-result transcripts
 - `claudii status` now shows per-update timestamps and status (Investigating/Monitoring/Resolved) from incident description when an outage is detected — the `<small>` time was previously not parsed at all; `<var>` tags inside `<small>` are now stripped before extraction
+- Rate-limit display (`claudii sessions`) no longer shows `7d:%` when 7d data is absent — each value rendered independently
+- `_cmd_search`: actionable error message when configured search directory doesn't exist
 
 ---
 
