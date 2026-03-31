@@ -181,7 +181,7 @@ function _claudii_dashboard {
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
-  local _di _line _ctx _cost _cf _r5h _rst _rem
+  local _di _line _ctx _cost _cf _r5h _r5h_int _r5h_clr _rst _rem
   for (( _di=1; _di<=_CLAUDII_DASH_COUNT; _di++ )); do
     _line="  %F{8}${_CLAUDII_DASH_MODELS[$_di]}"
     _ctx="${_CLAUDII_DASH_CTXS[$_di]%.*}"
@@ -192,7 +192,12 @@ function _claudii_dashboard {
     fi
     _r5h="${_CLAUDII_DASH_5HS[$_di]}"
     if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then
-      _line+="  5h:${_r5h%.*}%%"
+      _r5h_int=${_r5h%.*}
+      if (( _r5h_int >= 80 )); then _r5h_clr="%F{red}"
+      elif (( _r5h_int >= 50 )); then _r5h_clr="%F{yellow}"
+      else _r5h_clr="%F{green}"
+      fi
+      _line+="%f  ${_r5h_clr}5h:${_r5h_int}%%"
       _rst="${_CLAUDII_DASH_R5HS[$_di]}"
       if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
         _rem=$(( _rst - _now ))

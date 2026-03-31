@@ -417,6 +417,47 @@ assert_eq "TRAPWINCH sets _CLAUDII_CMD_RAN=1" "1" "$trapwinch_out"
 
 rm -rf "$COND_TMP"
 
+# ── Dashboard rate urgency colors ──
+
+RATE_TMP="$CLAUDII_HOME/tmp/test_statusline_rate"
+rm -rf "$RATE_TMP"
+mkdir -p "$RATE_TMP/config/claudii"
+jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$RATE_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$RATE_TMP/status-models"
+_live_pid2=$$
+
+# 5h rate >= 80% → %F{red} in dashboard raw PROMPT (before expansion)
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=85\nreset_5h=\nppid=%s\n' "$_live_pid2" \
+  > "$RATE_TMP/session-ratetest1"
+zsh_rate_red=$(
+  CLAUDII_CACHE_DIR="$RATE_TMP" XDG_CONFIG_HOME="$RATE_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard: 5h rate >= 80% → %F{red} in PROMPT" "%F{red}" "$zsh_rate_red"
+
+# 5h rate < 50% → %F{green} in dashboard raw PROMPT (before expansion)
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=30\nreset_5h=\nppid=%s\n' "$_live_pid2" \
+  > "$RATE_TMP/session-ratetest2"
+rm -f "$RATE_TMP/session-ratetest1"
+zsh_rate_green=$(
+  CLAUDII_CACHE_DIR="$RATE_TMP" XDG_CONFIG_HOME="$RATE_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard: 5h rate < 50% → %F{green} in PROMPT" "%F{green}" "$zsh_rate_green"
+
+rm -rf "$RATE_TMP"
+unset RATE_TMP _live_pid2 zsh_rate_red zsh_rate_green
+
 # ── PROMPT must not contain literal ESC[s (cursor save) ──
 ESC_TMP="$CLAUDII_HOME/tmp/test_statusline_esc"
 rm -rf "$ESC_TMP"

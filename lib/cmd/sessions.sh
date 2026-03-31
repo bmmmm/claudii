@@ -405,7 +405,7 @@ _cmd_default() {
   now=$(date +%s)
 
   printf '\n'
-  printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
+  printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
   printf '\n'
 
   # ── Gather session data ────────────────────────────────────────────
@@ -467,15 +467,41 @@ _cmd_default() {
     printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Account${CLAUDII_CLR_RESET}\n"
 
     _ov_5h_int=${_ov_acct_5h%.*}
-    _ov_acct_line="    5h: ${_ov_5h_int}%"
-    # Reset countdown
+    # 5h urgency color: < 50% green, 50-79% yellow, >= 80% red
+    if (( _ov_5h_int >= 80 )); then
+      _ov_5h_clr="${CLAUDII_CLR_RED}"
+    elif (( _ov_5h_int >= 50 )); then
+      _ov_5h_clr="${CLAUDII_CLR_YELLOW}"
+    else
+      _ov_5h_clr="${CLAUDII_CLR_GREEN}"
+    fi
+    _ov_acct_line="    5h: ${_ov_5h_clr}${_ov_5h_int}%${CLAUDII_CLR_RESET}"
+    # Reset countdown with urgency color
     if [[ -n "$_ov_acct_reset" && "$_ov_acct_reset" != "0" ]]; then
       _ov_remaining=$(( _ov_acct_reset - now ))
-      (( _ov_remaining > 0 )) && _ov_acct_line+=" reset $(( _ov_remaining / 60 ))min"
+      if (( _ov_remaining > 0 )); then
+        _ov_rem_min=$(( _ov_remaining / 60 ))
+        if (( _ov_rem_min < 10 )); then
+          _ov_reset_clr="${CLAUDII_CLR_RED}"
+        elif (( _ov_rem_min <= 60 )); then
+          _ov_reset_clr="${CLAUDII_CLR_YELLOW}"
+        else
+          _ov_reset_clr="${CLAUDII_CLR_DIM}"
+        fi
+        _ov_acct_line+=" ${_ov_reset_clr}reset ${_ov_rem_min}min${CLAUDII_CLR_RESET}"
+      fi
     fi
     if [[ -n "$_ov_acct_7d" ]]; then
       _ov_7d_int=${_ov_acct_7d%.*}
-      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 7d: ${_ov_7d_int}%"
+      # 7d urgency color: < 50% green, 50-79% yellow, >= 80% red
+      if (( _ov_7d_int >= 80 )); then
+        _ov_7d_clr="${CLAUDII_CLR_RED}"
+      elif (( _ov_7d_int >= 50 )); then
+        _ov_7d_clr="${CLAUDII_CLR_YELLOW}"
+      else
+        _ov_7d_clr="${CLAUDII_CLR_GREEN}"
+      fi
+      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 7d: ${_ov_7d_clr}${_ov_7d_int}%${CLAUDII_CLR_RESET}"
       # 7d delta
       if [[ -n "$_ov_acct_7d_start" ]]; then
         _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
@@ -498,11 +524,11 @@ _cmd_default() {
         fi
       fi
     fi
-    # Today's cost and session count
+    # Today's cost with accent color, and session count
     if (( _ov_today_count > 0 )); then
       _ov_today_fmt=$(printf '%.2f' "$_ov_today_cost")
       _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
-      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
+      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
     fi
     printf '%s\n' "$_ov_acct_line"
   else
