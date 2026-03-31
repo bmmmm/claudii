@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Dashboard lines right-aligned via space padding (RPROMPT-style) — no cursor save/restore sequences
+
+---
+
 ## [0.7.0] — 2026-03-30
 
 ### Added

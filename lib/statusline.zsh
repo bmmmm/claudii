@@ -92,6 +92,19 @@ typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
 typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
 typeset -gi _CLAUDII_LAST_DASH_COLS=0
 
+# Strips zsh prompt codes from a string and echoes its visual length (integer).
+# Used by _claudii_dashboard to compute space padding for right-alignment.
+function _claudii_strip_prompt_codes {
+  local s="$1"
+  # Expand prompt codes (%F{} %f %B %b %% etc.) to ANSI sequences
+  s="${(%)s}"
+  # Strip ANSI CSI sequences (ESC[...m) — (S) = shortest match
+  s="${(S)s//$'\e'\[[0-9;]*m/}"
+  # \$ → $ (cost display in prompt context)
+  s="${s//\\\$/\$}"
+  echo "${#s}"
+}
+
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
@@ -250,27 +263,25 @@ function _claudii_dashboard {
   [[ -n "$_CLAUDII_DASH_GLOBAL_LINE" ]] && dash_raw="${_CLAUDII_DASH_GLOBAL_LINE}"$'\n'
   dash_raw+="$_CLAUDII_DASH_SESSION_LINES"
 
-  local _CS=$'\033[s' _CR=$'\033[u' _RS=$'\033[0m'
   local _cols=${COLUMNS:-80}
+  (( _cols <= 0 )) && _cols=80
 
   # Reuse padded version if content and terminal width unchanged
   if [[ "$dash_raw" == "$_CLAUDII_LAST_DASHBOARD" && $_cols -eq $_CLAUDII_LAST_DASH_COLS ]]; then
     if [[ -n "$_CLAUDII_LAST_DASH_PADDED" ]]; then
-      PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${_CLAUDII_LAST_DASH_PADDED%$'\n'}${_RS}${_CR}%}"
+      PROMPT="${_CLAUDII_LAST_DASH_PADDED}${_CLAUDII_USER_PROMPT}"
     fi
     return
   fi
 
-  # Right-align each line: expand prompt codes, then strip ANSI to measure visible width.
+  # Right-align each line with space padding (no terminal control sequences).
+  # Expand prompt codes to ANSI, strip ANSI to measure visible width, pad with spaces.
   # (S) flag = shortest match so [0-9;]* does not greedily consume across sequences.
   local dash_padded="" _dl _vis_str _vis _pad
   local -a _dash_lines=("${(@f)${dash_raw%$'\n'}}")
   for _dl in "${_dash_lines[@]}"; do
     [[ -z "$_dl" ]] && continue
-    _vis_str="${(%)_dl}"                        # expand %F{} %f %B %b %% etc. → ANSI
-    _vis_str="${(S)_vis_str//$'\e'\[[0-9;]*m/}" # strip ANSI CSI sequences (shortest match)
-    _vis_str="${_vis_str//\\\$/\$}"             # \$ → $ (cost display)
-    _vis=${#_vis_str}
+    _vis=$(_claudii_strip_prompt_codes "$_dl")
     _pad=$(( _cols - _vis - 1 ))  # -1: safety margin for ambiguous-width chars (e.g. ⚡)
     (( _pad < 0 )) && _pad=0
     dash_padded+="${(l:$_pad:: :)}${_dl}"$'\n'
@@ -280,7 +291,7 @@ function _claudii_dashboard {
   _CLAUDII_LAST_DASH_PADDED="$dash_padded"
   _CLAUDII_LAST_DASH_COLS=$_cols
 
-  [[ -n "$dash_padded" ]] && PROMPT="${_CLAUDII_USER_PROMPT}%{${_CS}"$'\n'"${dash_padded%$'\n'}${_RS}${_CR}%}"
+  [[ -n "$dash_padded" ]] && PROMPT="${dash_padded}${_CLAUDII_USER_PROMPT}"
 }
 
 autoload -Uz add-zsh-hook

@@ -273,6 +273,69 @@ zsh_session_bar_live=$(
 assert_contains "session bar: live PID → bar shown with model name" "Sonnet" "$zsh_session_bar_live"
 rm -rf "$SESSION_BAR_TMP"
 
+# ── Dashboard right-alignment: space padding ──
+
+ALIGN_TMP="$CLAUDII_HOME/tmp/test_statusline_align"
+rm -rf "$ALIGN_TMP"
+mkdir -p "$ALIGN_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$ALIGN_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ALIGN_TMP/status-models"
+_align_pid=$$
+printf 'model=Sonnet 4.6\nctx_pct=74\ncost=33.85\nrate_5h=60\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=aligntest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_align_pid" \
+  > "$ALIGN_TMP/session-aligntest"
+
+# Test: with COLUMNS=80, dashboard line is right-aligned (leading spaces before model)
+zsh_align_out=$(
+  COLUMNS=80 CLAUDII_CACHE_DIR="$ALIGN_TMP" XDG_CONFIG_HOME="$ALIGN_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard right-align: model name present" "Sonnet 4.6" "$zsh_align_out"
+# The PROMPT should start with spaces (padding), not with the model name
+assert_matches "dashboard right-align: leading spaces before content" "^  " "$zsh_align_out"
+
+# Test: no ESC[s or ESC[u cursor save/restore in PROMPT
+zsh_align_raw=$(
+  COLUMNS=80 CLAUDII_CACHE_DIR="$ALIGN_TMP" XDG_CONFIG_HOME="$ALIGN_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+# Must NOT contain ESC[s (cursor save) or ESC[u (cursor restore)
+_has_cursor_save=0
+echo "$zsh_align_raw" | grep -qP '\x1b\[s' 2>/dev/null && _has_cursor_save=1
+echo "$zsh_align_raw" | grep -qP '\x1b\[u' 2>/dev/null && _has_cursor_save=1
+assert_eq "dashboard right-align: no cursor save/restore sequences" "0" "$_has_cursor_save"
+
+# Test: padding > 0 when COLUMNS is wider than content
+zsh_pad_check=$(
+  COLUMNS=120 CLAUDII_CACHE_DIR="$ALIGN_TMP" XDG_CONFIG_HOME="$ALIGN_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_LAST_DASHBOARD=''
+    _claudii_dashboard
+    # Count leading spaces on the first line of PROMPT
+    local first_line=\"\${PROMPT%%\$'\n'*}\"
+    local stripped=\"\${first_line##[[:space:]]*}\"
+    # Use the visual length helper
+    printf '%s' \"\${#first_line}\"
+  " 2>/dev/null
+)
+# With COLUMNS=120 and typical ~40-char content, total line length should be close to 120
+# (first line includes padding). Just verify it's > 60.
+_pad_ok=0
+[[ -n "$zsh_pad_check" && "$zsh_pad_check" =~ ^[0-9]+$ && "$zsh_pad_check" -gt 60 ]] && _pad_ok=1
+assert_eq "dashboard right-align: wider terminal → more padding (line len > 60 at COLUMNS=120)" "1" "$_pad_ok"
+
+rm -rf "$ALIGN_TMP"
+
 # Cleanup
 rm -rf "$ZSH_TMP"
 
