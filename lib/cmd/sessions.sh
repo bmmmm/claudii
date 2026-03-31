@@ -240,7 +240,7 @@ _cmd_sessions_inactive() {
     _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
     (( _is_now - _is_gc_mtime < 3600 )) && continue
     [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
-    (( _is_stale++ ))
+    (( ++_is_stale ))
   done
   if (( _is_stale > 0 )); then
     printf "  ${CLAUDII_CLR_DIM}%d stale session%s pending GC${CLAUDII_CLR_RESET}\n" \
@@ -300,11 +300,11 @@ _cmd_sessions() {
       _sf_sesname[$_sf_count]=""
     fi
     if [[ "$_PSC_is_active" -eq 1 ]]; then
-      (( active++ ))
+      (( ++active ))
     else
-      (( stale++ ))
+      (( ++stale ))
     fi
-    (( _sf_count++ ))
+    (( ++_sf_count ))
   done
   shopt -u nullglob
 
@@ -459,9 +459,9 @@ _cmd_default() {
 
       # Count active vs inactive; count stale (dead ppid, age > 24h) for GC hint
       if [[ "$_PSC_is_active" -eq 1 ]]; then
-        (( _ov_active_count++ ))
+        (( ++_ov_active_count ))
       else
-        (( _ov_inactive_count++ ))
+        (( ++_ov_inactive_count ))
         if (( _PSC_age >= 86400 )); then
           [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null && (( _ov_stale++ ))
         fi
