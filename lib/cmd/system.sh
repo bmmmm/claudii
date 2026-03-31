@@ -112,7 +112,7 @@ _cmd_status() {
           _status_any_issue=false
           for _sm in "${_status_models[@]}"; do
             _sm="${_sm// /}"
-            _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2)
+            _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
             _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
             case "${_sm_state:-unknown}" in
               ok)       _sm_icon="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
@@ -504,7 +504,7 @@ _cmd_doctor() {
   _dc_stale=0
   for _dc_sf in "$cache_dir"/session-*; do
     [[ -f "$_dc_sf" ]] || continue
-    _dc_sf_ppid=$(grep '^ppid=' "$_dc_sf" 2>/dev/null | cut -d= -f2)
+    _dc_sf_ppid=$(grep '^ppid=' "$_dc_sf" 2>/dev/null | cut -d= -f2 || true)
     _dc_sf_mt=$(stat -f%m "$_dc_sf" 2>/dev/null || stat -c%Y "$_dc_sf" 2>/dev/null || echo 0)
     (( _dc_now - _dc_sf_mt < 86400 )) && continue
     [[ -n "$_dc_sf_ppid" ]] && kill -0 "$_dc_sf_ppid" 2>/dev/null && continue

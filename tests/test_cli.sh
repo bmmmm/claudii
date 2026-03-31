@@ -255,3 +255,32 @@ assert_eq "_session_name: empty JSONL → empty output" "" "$_sn_empty"
 
 rm -rf "$_SN_TMP"
 unset _SN_TMP _SN_PROJ _sn_result _sn_empty
+
+# ── claudii sessions regression: grep-no-match must not crash ────────────────
+# Scenario: session has a JSONL with "cwd" but no "Session renamed to:" line.
+# Before the fix, _session_name's grep pipeline returned exit 1 → pipefail →
+# arr[$i]=$(...) aborted the script silently with no output.
+_SE_TMP="$(mktemp -d)"
+_SE_XDG="$_SE_TMP/xdg"
+_SE_CACHE="$_SE_TMP/cache"
+_SE_PROJ="$_SE_TMP/.claude/projects/test-project"
+mkdir -p "$_SE_XDG/claudii" "$_SE_CACHE" "$_SE_PROJ"
+cp "$CLAUDII_HOME/config/defaults.json" "$_SE_XDG/claudii/config.json"
+# Active session (ppid=$$), session_id matches a JSONL below
+printf 'model=Sonnet\nppid=%s\nctx_pct=42\ncost=1.23\nrate_5h=30\nreset_5h=0\nrate_7d=10\nsession_id=se-regression-test\nworktree=\nagent=\n' \
+  "$$" > "$_SE_CACHE/session-se-regression-test"
+# JSONL with "cwd" field but NO "Session renamed to:" — triggers the grep-no-match path
+printf '%s\n' '{"type":"system","cwd":"/tmp/se-test-project"}' \
+  > "$_SE_PROJ/se-regression-test.jsonl"
+
+_se_out=$(HOME="$_SE_TMP" CLAUDII_CACHE_DIR="$_SE_CACHE" XDG_CONFIG_HOME="$_SE_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1)
+_se_exit=$?
+
+assert_eq "claudii se: exits 0 — grep-no-match regression" "0" "$_se_exit"
+assert_contains "claudii se: shows model name" "Sonnet" "$_se_out"
+assert_contains "claudii se: shows cost" "1.23" "$_se_out"
+assert_contains "claudii se: shows project path" "se-test-project" "$_se_out"
+
+rm -rf "$_SE_TMP"
+unset _SE_TMP _SE_XDG _SE_CACHE _SE_PROJ _se_out _se_exit

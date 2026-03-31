@@ -47,7 +47,7 @@ _session_project_path() {
   done
   [[ -z "$jsonl" ]] && return
   local cwd
-  cwd=$(grep -m5 '"cwd"' "$jsonl" 2>/dev/null | head -1 | grep -o '"cwd":"[^"]*"' | sed 's/"cwd":"//; s/"$//')
+  cwd=$(grep -m5 '"cwd"' "$jsonl" 2>/dev/null | head -1 | grep -o '"cwd":"[^"]*"' | sed 's/"cwd":"//; s/"$//' || true)
   [[ -z "$cwd" ]] && return
   local short="${cwd/#$HOME/\~}"
   if (( ${#short} > 40 )); then
@@ -72,7 +72,7 @@ _session_name() {
     | sed 's/\\033\[[0-9;]*m//g; s/\\e\[[0-9;]*m//g; s/\\033//g; s/\\e//g' \
     | LC_ALL=C tr -cd '[:print:]' \
     | cut -c1-60 \
-    | tr -d '\n'
+    | tr -d '\n' || true
 }
 
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope

@@ -233,7 +233,7 @@ _cmd_sessions_inactive() {
   _is_stale=0
   for _is_gc_f in "${_is_files[@]}"; do
     [[ -f "$_is_gc_f" ]] || continue
-    _is_gc_ppid=$(grep '^ppid=' "$_is_gc_f" 2>/dev/null | cut -d= -f2)
+    _is_gc_ppid=$(grep '^ppid=' "$_is_gc_f" 2>/dev/null | cut -d= -f2 || true)
     _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
     (( _is_now - _is_gc_mtime < 3600 )) && continue
     [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
@@ -641,7 +641,7 @@ _cmd_default() {
     _ov_now_gc=$(date +%s)
     for _ov_gc_f in "${_ov_files[@]}"; do
       [[ -f "$_ov_gc_f" ]] || continue
-      _ov_gc_ppid=$(grep '^ppid=' "$_ov_gc_f" 2>/dev/null | cut -d= -f2)
+      _ov_gc_ppid=$(grep '^ppid=' "$_ov_gc_f" 2>/dev/null | cut -d= -f2 || true)
       if stat -f%m "$_ov_gc_f" >/dev/null 2>&1; then
         _ov_gc_mtime=$(stat -f%m "$_ov_gc_f")
       else

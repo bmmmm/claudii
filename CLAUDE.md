@@ -98,6 +98,14 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 | `/claude-md-improver` | Audit and improve CLAUDE.md quality |
 | `/skill-creator` | Create or improve skills in `.claude/skills/` |
 
+## When orchestrating (wave tags + revert patterns)
+
+- **Before each wave:** `git tag before-wave-N` — enables `git revert before-wave-N..HEAD` to undo the whole wave
+- **After each wave (tests green):** `git tag wave-N-done`
+- **Revert a single merge commit:** `git revert <hash> -m 1 --no-edit` — the `-m 1` is mandatory for merge commits
+- **Agents touching `lib/statusline.zsh`:** always warn them about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`) so they don't re-add them from stale worktree state
+- **Dashboard test preconditions:** `jq '.dashboard.enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously
+
 ## When committing
 
 Only check what the commit actually touches — skip checks that don't apply:
