@@ -107,11 +107,22 @@ fi
 # ── Release ──
 _rel_box_sep "Release"
 
-# 5. Create and push tag
+# 5. Push main branch, then create and push tag
 if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "Push origin main — skipped (dry-run)"
   _rel_ok "Tag $_rel_tag — skipped (dry-run)"
   _rel_ok "Push origin $_rel_tag — skipped (dry-run)"
 else
+  # Push commits first — tag must not land on GitHub before the code does
+  _cur_branch=$(git -C "$CLAUDII_HOME" branch --show-current 2>/dev/null || echo "main")
+  git -C "$CLAUDII_HOME" push origin "$_cur_branch" 2>&1
+  _push_branch_exit=$?
+  if [[ $_push_branch_exit -ne 0 ]]; then
+    _rel_fail "Push von branch '$_cur_branch' fehlgeschlagen — commits müssen vor dem Tag auf GitHub sein"
+    exit 1
+  fi
+  _rel_ok "Branch '$_cur_branch' gepusht"
+
   git -C "$CLAUDII_HOME" tag -a "$_rel_tag" -m "$_rel_tag" 2>&1
   _rel_ok "Tag $_rel_tag gesetzt"
 
