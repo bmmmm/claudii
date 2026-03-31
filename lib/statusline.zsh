@@ -2,10 +2,8 @@
 # shellcheck source=lib/visual.sh
 source "${CLAUDII_HOME}/lib/visual.sh"
 
-# Capture the user's original PROMPT once at load time.
-# Session dashboard only renders after a real command (preexec sets _CLAUDII_CMD_RAN=1).
-# Empty Enter → plain PROMPT, no doubling.
-typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
+# _CLAUDII_USER_PROMPT is set by claudii.plugin.zsh before sourcing libs —
+# do not set it here, that would overwrite the value captured before config.zsh/functions.zsh ran.
 
 # 0 = no session dashboard until a real command runs (preexec sets it to 1)
 typeset -gi _CLAUDII_CMD_RAN=0
@@ -144,11 +142,11 @@ function _claudii_collect_sessions {
     fi
 
     s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
-    [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*model=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*ctx_pct=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*cost=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*rate_5h=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*$'\n'model=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*$'\n'ctx_pct=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*$'\n'cost=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*$'\n'rate_5h=}%%$'\n'*}"
+    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*$'\n'reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
     _CLAUDII_SDASH_MODELS+=("$s_model")
