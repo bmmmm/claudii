@@ -9,47 +9,36 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run tests
-        run: bash tests/run.sh
+      # Tests already verified by CI on main + locally by scripts/release.sh
+      # before the tag was created — no redundant re-run here.
 
-      - name: Build release notes
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Extract release notes from CHANGELOG.md
         run: |
           TAG="${{ github.ref_name }}"
-          PREV=$(git tag --sort=-v:refname | grep -v "$TAG" | head -1 || echo "")
+          VERSION="${TAG#v}"
+          # Extract the curated section for this version from CHANGELOG.md
+          awk "/^## \[${VERSION}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md \
+            | sed '/^[[:space:]]*$/d' > /tmp/changelog-section.md
           {
-            echo "## claudii $TAG"
-            echo ""
-            echo "Fast Claude Code aliases with live model status and session insights ♥"
-            echo ""
-            echo "### Install"
+            echo "## Install"
             echo '```bash'
             echo "brew tap bmmmm/tap && brew install claudii"
             echo '```'
             echo ""
-            echo "### What's new"
-            echo ""
-            REPO="${{ github.repository }}"
-            if [[ -n "$PREV" ]]; then
-              git log --pretty="%H %s" "$PREV..$TAG" | grep -v "Co-Authored-By" | while read hash msg; do
-                short="${hash:0:7}"
-                echo "- $msg [\`$short\`](https://github.com/$REPO/commit/$hash)"
-              done
+            if [[ -s /tmp/changelog-section.md ]]; then
+              cat /tmp/changelog-section.md
             else
-              git log --pretty="%H %s" "$TAG" | head -20 | grep -v "Co-Authored-By" | while read hash msg; do
-                short="${hash:0:7}"
-                echo "- $msg [\`$short\`](https://github.com/$REPO/commit/$hash)"
-              done
+              echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
             fi
-            echo ""
-            echo "### Tests"
-            echo ""
-            bash tests/run.sh 2>&1 | tail -1
           } > /tmp/release-notes.md
 
       - name: Create GitHub Release
@@ -60,15 +49,16 @@ jobs:
             --title "claudii ${{ github.ref_name }}" \
             --notes-file /tmp/release-notes.md
 
-      - name: Compute tarball SHA256
+      - name: Compute tarball SHA256 and append to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
           URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
-          SHA=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)
-          echo "sha256: $SHA"
-          echo "SHA256=$SHA" >> "$GITHUB_ENV"
-          echo ""
-          echo "Update Formula/claudii.rb and homebrew-tap with:"
-          echo "  sha256 \"$SHA\""
+          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          echo "sha256=${SHA}" >> "$GITHUB_ENV"
+          CURRENT=$(gh release view "$TAG" --json body -q .body)
+          gh release edit "$TAG" --notes "${CURRENT}
+
+---
+**Homebrew Formula SHA256:** \`${SHA}\`"

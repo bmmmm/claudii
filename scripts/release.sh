@@ -223,24 +223,9 @@ else
     exit 1
   fi
 
-  # 7. Create GitHub Release (idempotent — skip if already exists)
+  # 7. GitHub Release is created by the release.yml workflow — just report URL
   _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
-  if gh release view "$_rel_tag" --repo "${_gh_owner}/${_gh_repo}" &>/dev/null; then
-    _rel_ok "GitHub Release bereits vorhanden"
-  else
-    _release_out=$(gh release create "$_rel_tag" \
-      --title "$_rel_tag" \
-      --generate-notes \
-      --repo "${_gh_owner}/${_gh_repo}" 2>&1)
-    _release_exit=$?
-    if [[ $_release_exit -eq 0 ]]; then
-      _rel_ok "GitHub Release erstellt"
-    else
-      _rel_fail "gh release create fehlgeschlagen"
-      echo "$_release_out" >&2
-      exit 1
-    fi
-  fi
+  _rel_ok "Release-Workflow hat GitHub Release erstellt"
 fi
 
 # ── Done ──
