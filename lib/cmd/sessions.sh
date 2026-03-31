@@ -552,7 +552,9 @@ _cmd_default() {
   # ── Services ──────────────────────────────────────────────────────
   printf '\n'
   _ov_cs_en=$(_cfgget statusline.enabled)
-  _ov_dash_en=$(_cfgget dashboard.enabled)
+  _ov_dash_en=$(_cfgget session-dashboard.enabled)
+  # Migration fallback: read legacy key if new one absent
+  [[ -z "$_ov_dash_en" ]] && _ov_dash_en=$(_cfgget dashboard.enabled)
   [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
@@ -600,7 +602,7 @@ _cmd_default() {
     printf "    ${CLAUDII_CLR_DIM}○ ClaudeStatus%-20s claudii on${CLAUDII_CLR_RESET}\n" ""
   fi
 
-  # Dashboard
+  # Session Dashboard
   if [[ "$_ov_dash_en" != "off" ]]; then
     printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} Dashboard\n"
   else

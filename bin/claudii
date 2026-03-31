@@ -112,7 +112,7 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
-  printf "    %-33s $d %s\n" "dashboard [on|off]"              "Dashboard above-prompt toggle"
+  printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
   printf "    %-33s $d %s\n" "layers"                          "component overview with status"
   printf '\n'
@@ -234,8 +234,9 @@ case "${1:-}" in
   # System commands
   on)                  _cmd_on                ;;
   off)                 _cmd_off               ;;
-  claudestatus)        _cmd_claudestatus "$@" ;;
-  dashboard)           _cmd_dashboard "$@"    ;;
+  claudestatus)        _cmd_claudestatus "$@"        ;;
+  session-dashboard)   _cmd_session_dashboard "$@"   ;;
+  dashboard)           _cmd_session_dashboard "$@"   ;; # deprecated alias
   status)              _cmd_status "$@"       ;;
   cc-statusline)       _cmd_cc_statusline "$@" ;;
   sessionline)         exec "$0" cc-statusline "${@:2}" ;;

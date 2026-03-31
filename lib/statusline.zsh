@@ -1,18 +1,24 @@
-# claudii statusline — RPROMPT with per-model health + conditional dashboard
+# claudii statusline — RPROMPT with per-model health + session dashboard
 # shellcheck source=lib/visual.sh
 source "${CLAUDII_HOME}/lib/visual.sh"
 
 # Capture the user's original PROMPT once at load time.
-# Dashboard only renders after a real command (preexec sets _CLAUDII_CMD_RAN=1).
+# Session dashboard only renders after a real command (preexec sets _CLAUDII_CMD_RAN=1).
 # Empty Enter → plain PROMPT, no doubling.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
-# 0 = no dashboard until a real command runs (preexec sets it to 1)
+# 0 = no session dashboard until a real command runs (preexec sets it to 1)
 typeset -gi _CLAUDII_CMD_RAN=0
 # Literal dollar sign for safe PROMPT_SUBST embedding — $0 would be eaten by PROMPT_SUBST
 typeset -g _CLAUDII_DOLLAR='$'
+# Set to 1 by se/si/sessions commands — suppresses session dashboard for that cycle
+typeset -gi _CLAUDII_SHOWED_SESSIONS=0
+typeset -g _CLAUDII_LAST_CMD=""
 
-function _claudii_preexec { _CLAUDII_CMD_RAN=1; }
+function _claudii_preexec {
+  _CLAUDII_CMD_RAN=1
+  _CLAUDII_LAST_CMD="${1:-}"
+}
 
 function TRAPWINCH {
   _CLAUDII_CMD_RAN=1
@@ -92,27 +98,21 @@ function _claudii_statusline_render {
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
 
-  # Dashboard — session lines prepended to PROMPT (conditional: only after real commands)
-  _claudii_dashboard
+  # Session dashboard — session lines prepended to PROMPT (conditional: only after real commands)
+  _claudii_session_dashboard
 }
 
-typeset -ga _CLAUDII_DASH_MODELS _CLAUDII_DASH_CTXS _CLAUDII_DASH_COSTS
-typeset -ga _CLAUDII_DASH_5HS _CLAUDII_DASH_R5HS
-typeset -gi _CLAUDII_DASH_COUNT=0
-typeset -g _CLAUDII_LAST_CMD=""
-
-function _claudii_preexec {
-  _CLAUDII_CMD_RAN=1
-  _CLAUDII_LAST_CMD="${1:-}"
-}
+typeset -ga _CLAUDII_SDASH_MODELS _CLAUDII_SDASH_CTXS _CLAUDII_SDASH_COSTS
+typeset -ga _CLAUDII_SDASH_5HS _CLAUDII_SDASH_R5HS
+typeset -gi _CLAUDII_SDASH_COUNT=0
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  _CLAUDII_DASH_MODELS=() _CLAUDII_DASH_CTXS=() _CLAUDII_DASH_COSTS=()
-  _CLAUDII_DASH_5HS=() _CLAUDII_DASH_R5HS=()
-  _CLAUDII_DASH_COUNT=0
+  _CLAUDII_SDASH_MODELS=() _CLAUDII_SDASH_CTXS=() _CLAUDII_SDASH_COSTS=()
+  _CLAUDII_SDASH_5HS=() _CLAUDII_SDASH_R5HS=()
+  _CLAUDII_SDASH_COUNT=0
 
   local -A _sfst
   local _sf_mt _sf_age sc s_ppid
@@ -151,26 +151,26 @@ function _claudii_collect_sessions {
     [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
-    _CLAUDII_DASH_MODELS+=("$s_model")
-    _CLAUDII_DASH_CTXS+=("$s_ctx")
-    _CLAUDII_DASH_COSTS+=("$s_cost")
-    _CLAUDII_DASH_5HS+=("$s_5h")
-    _CLAUDII_DASH_R5HS+=("$s_r5h")
+    _CLAUDII_SDASH_MODELS+=("$s_model")
+    _CLAUDII_SDASH_CTXS+=("$s_ctx")
+    _CLAUDII_SDASH_COSTS+=("$s_cost")
+    _CLAUDII_SDASH_5HS+=("$s_5h")
+    _CLAUDII_SDASH_R5HS+=("$s_r5h")
     [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && _best_r5h="$s_r5h"
-    (( _CLAUDII_DASH_COUNT++ ))
+    (( _CLAUDII_SDASH_COUNT++ ))
   done
   # Backfill missing reset_5h — all sessions share the same account reset time
   if [[ -n "$_best_r5h" ]]; then
     local _bi
-    for (( _bi=1; _bi<=${#_CLAUDII_DASH_R5HS}; _bi++ )); do
-      [[ -z "${_CLAUDII_DASH_R5HS[$_bi]}" ]] && _CLAUDII_DASH_R5HS[$_bi]="$_best_r5h"
+    for (( _bi=1; _bi<=${#_CLAUDII_SDASH_R5HS}; _bi++ )); do
+      [[ -z "${_CLAUDII_SDASH_R5HS[$_bi]}" ]] && _CLAUDII_SDASH_R5HS[$_bi]="$_best_r5h"
     done
   fi
-  (( _CLAUDII_DASH_COUNT > 0 ))
+  (( _CLAUDII_SDASH_COUNT > 0 ))
 }
 
-function _claudii_dashboard {
-  local _dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
+function _claudii_session_dashboard {
+  local _dash_mode="${_CLAUDII_CFG_CACHE[session-dashboard.enabled]:-${_CLAUDII_DEF_CACHE[session-dashboard.enabled]:-${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}}}"
   # Any value other than "off" enables the dashboard
   if [[ "$_dash_mode" == "off" ]]; then
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
@@ -180,34 +180,33 @@ function _claudii_dashboard {
   fi
   _CLAUDII_CMD_RAN=0
 
-  # Show dashboard only after claudii commands — skip after ls, git, etc.
+  # Show session dashboard only after claudii commands — skip after ls, git, etc.
   [[ "${_CLAUDII_LAST_CMD}" != claudii* ]] && {
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   }
-  # Skip after session-display commands — they already showed the session info
-  [[ "${_CLAUDII_LAST_CMD}" == claudii\ se* || \
-     "${_CLAUDII_LAST_CMD}" == claudii\ si* || \
-     "${_CLAUDII_LAST_CMD}" == claudii\ sessions* ]] && {
+  # Skip if se/si/sessions already showed session info this cycle
+  if (( _CLAUDII_SHOWED_SESSIONS )); then
+    _CLAUDII_SHOWED_SESSIONS=0
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
-  }
+  fi
 
   _claudii_collect_sessions
-  if (( _CLAUDII_DASH_COUNT == 0 )); then
+  if (( _CLAUDII_SDASH_COUNT == 0 )); then
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
   local _di _line _ctx _cost _cf _r5h _r5h_int _r5h_clr _rst _rem
-  for (( _di=1; _di<=_CLAUDII_DASH_COUNT; _di++ )); do
-    _line="  %F{8}${_CLAUDII_DASH_MODELS[$_di]}"
-    _ctx="${_CLAUDII_DASH_CTXS[$_di]%.*}"
+  for (( _di=1; _di<=_CLAUDII_SDASH_COUNT; _di++ )); do
+    _line="  %F{8}${_CLAUDII_SDASH_MODELS[$_di]}"
+    _ctx="${_CLAUDII_SDASH_CTXS[$_di]%.*}"
     [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
-    _cost="${_CLAUDII_DASH_COSTS[$_di]}"
+    _cost="${_CLAUDII_SDASH_COSTS[$_di]}"
     if [[ -n "$_cost" && "$_cost" != "0" && "$_cost" != "null" ]]; then
       _cf=$(printf '%.2f' "$_cost" 2>/dev/null) && _line+="  \${_CLAUDII_DOLLAR}${_cf}"
     fi
-    _r5h="${_CLAUDII_DASH_5HS[$_di]}"
+    _r5h="${_CLAUDII_SDASH_5HS[$_di]}"
     if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then
       _r5h_int=${_r5h%.*}
       if (( _r5h_int >= 80 )); then _r5h_clr="%F{red}"
@@ -215,7 +214,7 @@ function _claudii_dashboard {
       else _r5h_clr="%F{green}"
       fi
       _line+="%f  ${_r5h_clr}5h:${_r5h_int}%%"
-      _rst="${_CLAUDII_DASH_R5HS[$_di]}"
+      _rst="${_CLAUDII_SDASH_R5HS[$_di]}"
       if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
         _rem=$(( _rst - _now ))
         (( _rem > 0 )) && _line+=" ↺$(( _rem / 60 ))m"

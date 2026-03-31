@@ -1,29 +1,29 @@
 # lib/cmd/system.sh — system/control commands
-# (on, off, claudestatus, dashboard, status, cc-statusline, update, watch, doctor)
+# (on, off, claudestatus, session-dashboard, status, cc-statusline, update, watch, doctor)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
 _cmd_on() {
   _cfg_init
   # Enable all three layers
-  echo "$(jq '.statusline.enabled = true | .dashboard.enabled = "on"' "$CONFIG")" > "$CONFIG"
+  echo "$(jq '.statusline.enabled = true | ."session-dashboard".enabled = "on"' "$CONFIG")" > "$CONFIG"
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
     if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
       echo "$(jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS")" > "$SETTINGS"
     fi
   fi
-  echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Dashboard · CC-Statusline)"
+  echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }
 
 _cmd_off() {
   _cfg_init
   # Disable all three layers
-  echo "$(jq '.statusline.enabled = false | .dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+  echo "$(jq '.statusline.enabled = false | ."session-dashboard".enabled = "off"' "$CONFIG")" > "$CONFIG"
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
     echo "$(jq 'del(.statusLine)' "$SETTINGS")" > "$SETTINGS"
   fi
-  echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Dashboard · CC-Statusline)"
+  echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }
 
 _cmd_claudestatus() {
@@ -51,28 +51,29 @@ _cmd_claudestatus() {
   esac
 }
 
-_cmd_dashboard() {
+_cmd_session_dashboard() {
   _cfg_init
   case "${2:-}" in
     on)
-      echo "$(jq '.dashboard.enabled = "on"' "$CONFIG")" > "$CONFIG"
+      echo "$(jq '."session-dashboard".enabled = "on"' "$CONFIG")" > "$CONFIG"
       echo -e "${CLAUDII_CLR_GREEN}Dashboard: on${CLAUDII_CLR_RESET}"
       ;;
     off)
-      echo "$(jq '.dashboard.enabled = "off"' "$CONFIG")" > "$CONFIG"
+      echo "$(jq '."session-dashboard".enabled = "off"' "$CONFIG")" > "$CONFIG"
       echo -e "${CLAUDII_CLR_YELLOW}Dashboard: off${CLAUDII_CLR_RESET}"
       ;;
     "")
-      current=$(_cfgget dashboard.enabled)
+      current=$(_cfgget session-dashboard.enabled)
+      [[ -z "$current" ]] && current=$(_cfgget dashboard.enabled)
       current="${current:-off}"
       if [[ "$current" == "off" ]]; then
-        echo -e "Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}  (claudii dashboard on to enable)"
+        echo -e "Session Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}  (claudii session-dashboard on to enable)"
       else
-        echo -e "Dashboard: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+        echo -e "Session Dashboard: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
       fi
       ;;
     *)
-      echo "Unknown subcommand: ${2} — run 'claudii dashboard [on|off]'" >&2; exit 1
+      echo "Unknown subcommand: ${2} — run 'claudii session-dashboard [on|off]'" >&2; exit 1
       ;;
   esac
 }

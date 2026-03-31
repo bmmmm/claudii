@@ -16,10 +16,11 @@ _claudii() {
     command)
       local -a commands
       commands=(
-        'on:Enable all display layers (ClaudeStatus, Dashboard, Sessionline)'
+        'on:Enable all display layers (ClaudeStatus, Session Dashboard, Sessionline)'
         'off:Disable all display layers'
         'claudestatus:Toggle ClaudeStatus RPROMPT (on/off)'
-        'dashboard:Toggle Dashboard above prompt (on/off)'
+        'session-dashboard:Toggle Session Dashboard above prompt (on/off)'
+        'dashboard:Toggle Session Dashboard above prompt (on/off) [deprecated, use session-dashboard]'
         'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
         'status:Live model health check / set refresh interval'
         'sessions:Active sessions, costs, rate limits'
@@ -65,13 +66,13 @@ _claudii() {
           _describe 'toggle option' toggle_opts
           ;;
 
-        dashboard)
+        session-dashboard|dashboard)
           local -a dash_cmds
           dash_cmds=(
-            'on:Enable dashboard'
-            'off:Disable dashboard'
+            'on:Enable session dashboard'
+            'off:Disable session dashboard'
           )
-          _describe 'dashboard subcommand' dash_cmds
+          _describe 'session-dashboard subcommand' dash_cmds
           ;;
 
         cc-statusline|sessionline)
@@ -116,7 +117,7 @@ _claudii() {
                 'status.rss_url:Status RSS feed URL'
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
-                'dashboard.enabled:Dashboard mode (on/off)'
+                'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
                 'watch.sound:Path to sound file played on notification (empty = no sound)'

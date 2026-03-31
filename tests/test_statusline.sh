@@ -236,7 +236,7 @@ _dead_pid=$(bash -c 'echo $$' 2>/dev/null)
 SESSION_BAR_TMP="$CLAUDII_HOME/tmp/test_statusline_sessionbar"
 rm -rf "$SESSION_BAR_TMP"
 mkdir -p "$SESSION_BAR_TMP/config/claudii"
-jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$SESSION_BAR_TMP/config/claudii/config.json"
+jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$SESSION_BAR_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SESSION_BAR_TMP/status-models"
 # Write session cache with dead PID — mtime is fresh (now)
 printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nrate_7d=\nreset_5h=\nreset_7d=\nsession_id=deadtest\nworktree=\nagent=\nmodel_id=\nburn_eta=\nppid=%s\n' "$_dead_pid" \
@@ -251,7 +251,7 @@ else
     zsh -c "
       source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
       _CLAUDII_CMD_RAN=1
-      _claudii_dashboard
+      _claudii_session_dashboard
       printf '%s' \"\$PROMPT\"
     " 2>/dev/null
   )
@@ -272,7 +272,7 @@ zsh_session_bar_live=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -292,7 +292,7 @@ if [[ -n "$_stale_ts" ]]; then
       source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
       _CLAUDII_CMD_RAN=1
       _CLAUDII_LAST_CMD='claudii'
-      _claudii_dashboard
+      _claudii_session_dashboard
       print -P \"\${(e)PROMPT}\"
     " 2>/dev/null
   )
@@ -313,7 +313,7 @@ zsh_reset_backfill=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
@@ -328,7 +328,7 @@ prompt_val=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -344,7 +344,7 @@ rm -rf "$SESSION_BAR_TMP"
 COND_TMP="$CLAUDII_HOME/tmp/test_statusline_cond"
 rm -rf "$COND_TMP"
 mkdir -p "$COND_TMP/config/claudii"
-jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$COND_TMP/config/claudii/config.json"
+jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$COND_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$COND_TMP/status-models"
 _live_pid=$$
 printf 'model=Sonnet\nctx_pct=76\ncost=0.66\nrate_5h=28\nreset_5h=\nppid=%s\n' "$_live_pid" \
@@ -357,7 +357,7 @@ cond_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=0
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -371,7 +371,7 @@ cond_out=$(
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     print -P \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -385,7 +385,7 @@ format_out=$(
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
@@ -400,9 +400,9 @@ off_out=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
-    _CLAUDII_CFG_CACHE[dashboard.enabled]=off
+    _CLAUDII_CFG_CACHE[session-dashboard.enabled]=off
     _CLAUDII_CMD_RAN=1
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -427,7 +427,7 @@ rm -rf "$COND_TMP"
 RATE_TMP="$CLAUDII_HOME/tmp/test_statusline_rate"
 rm -rf "$RATE_TMP"
 mkdir -p "$RATE_TMP/config/claudii"
-jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$RATE_TMP/config/claudii/config.json"
+jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$RATE_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$RATE_TMP/status-models"
 _live_pid2=$$
 
@@ -440,7 +440,7 @@ zsh_rate_red=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -456,7 +456,7 @@ zsh_rate_green=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -480,7 +480,7 @@ esc_prompt=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -496,7 +496,7 @@ rm -rf "$ESC_TMP"
 CMDFILTER_TMP="$CLAUDII_HOME/tmp/test_statusline_cmdfilter"
 rm -rf "$CMDFILTER_TMP"
 mkdir -p "$CMDFILTER_TMP/config/claudii"
-jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$CMDFILTER_TMP/config/claudii/config.json"
+jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$CMDFILTER_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CMDFILTER_TMP/status-models"
 printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nreset_5h=\nppid=%s\n' "$$" \
   > "$CMDFILTER_TMP/session-cmdfilter"
@@ -508,7 +508,7 @@ ls_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='ls'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -525,7 +525,7 @@ claudii_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii'
-    _claudii_dashboard
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
@@ -538,11 +538,12 @@ se_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
     _CLAUDII_LAST_CMD='claudii se'
-    _claudii_dashboard
+    _CLAUDII_SHOWED_SESSIONS=1
+    _claudii_session_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
-assert_not_contains "dashboard: suppressed after claudii se" "Sonnet" "$se_out"
+assert_not_contains "session dashboard: suppressed after claudii se (SHOWED_SESSIONS flag)" "Sonnet" "$se_out"
 
 rm -rf "$CMDFILTER_TMP"
 unset CMDFILTER_TMP ls_out claudii_out

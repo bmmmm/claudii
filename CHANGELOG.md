@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - `theme.name: "auto"` detects light/dark terminal via `$COLORFGBG` / `$TERM_PROGRAM` heuristics
 
 ### Changed
+- `claudii dashboard` renamed to `claudii session-dashboard`; `dashboard` kept as deprecated alias
+- Config key `dashboard.enabled` renamed to `session-dashboard.enabled`; old key still read as migration fallback
+- Internal: `_claudii_dashboard` → `_claudii_session_dashboard`, `_CLAUDII_DASH_*` → `_CLAUDII_SDASH_*`
+- Session dashboard suppression after `se`/`si`/`sessions` now uses `_CLAUDII_SHOWED_SESSIONS` flag instead of command-name matching
 - Overview (`claudii`) and dashboard: rate-limit values (5h, 7d) are now color-coded by urgency — green (< 50%), yellow (50–79%), red (≥ 80%)
 - Overview: reset countdown colored by urgency — dim (> 60 min), yellow (10–60 min), red (< 10 min)
 - Overview: version number, today's cost, and active session bullet use `CLAUDII_CLR_ACCENT` for visual hierarchy

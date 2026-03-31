@@ -72,7 +72,7 @@ prints only the bare version number when piped.
 .
 .SH DISPLAY LAYERS
 .B claudii
-provides three display layers plus a multi-session dashboard, each serving a different scope:
+provides three display layers plus a session dashboard, each serving a different scope:
 .TP
 .B ClaudeStatus (RPROMPT)
 Model health indicators rendered in the right-hand prompt of your shell.
@@ -99,28 +99,24 @@ Enable with
 / disable with
 .BR "claudii off" .
 .TP
-.B Dashboard (above prompt)
+.B Session Dashboard (above prompt)
 Rendered above the prompt via the precmd hook.
-Shows a contextual account overview with four sections:
-.B Sessions
-(active sessions with model, 8-block context bar, cost, cache ratio, worktree/agent context;
-plus an inactive sessions summary line),
-.B Account
-(aggregated rate limits 5h/7d with reset countdown, 7-day delta, and today's cost),
-.B Agents
-(configured agent aliases), and
-.B Services
-(per-layer on/off status for ClaudeStatus, Dashboard, CC-Statusline, and Watch).
+Shows per-session status lines: model, context %, cost, 5h rate limit with reset countdown.
+Only shown after
+.B claudii
+commands (not after
+.B ls
+or
+.BR git ).
+Suppressed automatically after
+.BR "claudii se" / si / sessions
+since those commands already display session info.
 Controlled via the
-.B dashboard.enabled
+.B session-dashboard.enabled
 config key (values:
-.BR auto ", " true ", " off ;
+.BR on ", " off ;
 default:
-.BR auto ).
-In
-.B auto
-mode the dashboard is shown when at least one active session exists and
-hidden otherwise.
+.BR off ).
 .TP
 .B CC-Statusline (inside Claude Code)
 An info-dense metrics line rendered inside Claude Code sessions via the
@@ -140,7 +136,7 @@ Enable with
 Data flow:
 .RS
 .nf
-Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Dashboard (precmd)
+Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboard (precmd)
                                            \(-> history.tsv (Flight Recorder)
 .fi
 .RE
@@ -228,7 +224,7 @@ or
 .TP
 .B Worktree / agent context
 Shown in the
-.B Dashboard
+.B Session Dashboard
 only (not in the CC-Statusline output itself).
 Worktree name rendered as
 .B [wt:name]
@@ -291,9 +287,9 @@ Enable all display layers at once:
 ClaudeStatus RPROMPT (sets
 .B statusline.enabled
 to true),
-Dashboard above prompt (sets
-.B dashboard.enabled
-to auto),
+Session Dashboard above prompt (sets
+.B session-dashboard.enabled
+to on),
 and CC-Statusline inside Claude Code (writes
 .B statusLine
 to
@@ -312,28 +308,22 @@ in config.
 Without subcommand: show current state.
 .
 .TP
-.BR "dashboard " [mini|big|auto|on|off]
-Control the Dashboard display mode.
-Without subcommand: show current mode.
+.BR "session-dashboard " [on|off]
+Control the Session Dashboard (session lines above the prompt).
+Without subcommand: show current state.
 .RS
 .TP
-.B mini
-Compact session line below the prompt (default when enabled).
-.TP
-.B big
-Full session overview, equivalent to
-.BR "claudii sessions" .
-.TP
-.B auto
-Mini when sessions are active, off when none are running.
-.TP
 .B on
-Enable dashboard (alias for
-.BR mini ).
+Enable the session dashboard.
 .TP
 .B off
-Disable the dashboard.
+Disable the session dashboard.
 .RE
+.IP
+.BR "dashboard " [on|off]
+Deprecated alias for
+.BR "session-dashboard" .
+Still works for backwards compatibility.
 .
 .TP
 .BR "cc-statusline " [on|off]
@@ -344,11 +334,11 @@ Without subcommand: show current state.
 .
 .TP
 .B layers
-Show component overview: ClaudeStatus (RPROMPT), Dashboard (above prompt),
+Show component overview: ClaudeStatus (RPROMPT), Session Dashboard (above prompt),
 CC-Statusline (inside Claude Code). Includes current status, config, data flow,
 and a reference legend for all symbols and fields used in the output.
 .PP
-.B Dashboard symbols:
+.B Session Dashboard symbols:
 .PP
 .RS
 .nf
@@ -423,16 +413,20 @@ RPROMPT indicators:
 .B \(rn
 = refreshing (stale cache).
 .
-.SS Dashboard
+.SS Session Dashboard
 Rendered in the shell above the prompt line via
 .IR precmd .
 Reads per-session cache files written by the CC-Statusline handler.
-Shows aggregated rate limits, cost summary, per-session context bars, and model health.
-Only prints when data changes (deduplication).
+Shows per-session lines: model name, context %, cost, 5h rate limit with reset countdown.
+Only shown after
+.B claudii
+commands; suppressed after
+.BR "se" / si / sessions
+since those already display session info.
 .PP
 Data flow:
 .RS
-Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Dashboard (precmd)
+Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboard (precmd)
 .RE
 .
 .SS CC-Statusline
@@ -774,7 +768,7 @@ fallback.opus.model     fallback model when opus is down
 status.cache_ttl        cache TTL in seconds (default: 900)
 statusline.enabled      ClaudeStatus in RPROMPT (default: true)
 statusline.models       models to monitor (default: opus,sonnet,haiku)
-dashboard.enabled       dashboard mode (default: auto; values: auto/true/off)
+session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)
 watch.sound             path to a sound file played on notification (default: empty = no sound)
@@ -859,8 +853,8 @@ Live health check:
 Toggle only ClaudeStatus:
 .B claudii claudestatus off
 .TP
-Toggle only Dashboard:
-.B claudii dashboard on
+Toggle only Session Dashboard:
+.B claudii session-dashboard on
 .TP
 Toggle only CC-Statusline:
 .B claudii cc-statusline on

@@ -225,6 +225,11 @@ function claudii {
       command claudii
       print -z "claudii "
       ;;
+    se|si|sessions|sessions-inactive)
+      # Signal the session dashboard to suppress — user just saw session info
+      _CLAUDII_SHOWED_SESSIONS=1
+      command claudii "$@"
+      ;;
     *)
       command claudii "$@"
       ;;

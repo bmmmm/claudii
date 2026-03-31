@@ -181,7 +181,7 @@ _cmd_layers() {
   printf "  Example (session line):\n"
   printf "    ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}76%%${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│ ⚡38%%${CLAUDII_CLR_RESET}\n"
   printf '\n'
-  printf '  Source:   CC-Statusline writes cache, Dashboard reads it\n'
+  printf '  Source:   CC-Statusline writes cache, Session Dashboard reads it\n'
   printf '  Sessions: %d cache file(s)\n' "$sb_count"
   printf '  Dedup:    only prints when data changes\n'
   printf '\n'
@@ -220,7 +220,7 @@ _cmd_layers() {
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
   printf '\n'
-  printf '  Dashboard\n'
+  printf '  Session Dashboard\n'
   printf '  %-4s %-20s %s\n' "●"   "active"           "session or service is active"
   printf '  %-4s %-20s %s\n' "○"   "inactive"         "session ended or service is off"
   printf '  %-4s %-20s %s\n' "█░"  "context bar"      "context window fill (8 blocks = 100%)"

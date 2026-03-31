@@ -46,26 +46,30 @@ layers_out=$(bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
 assert_eq "layers: no obsolete 'show model' reference" "0" "$(echo "$layers_out" | grep -c 'show model' || true)"
 assert_contains "layers: shows ClaudeStatus" "ClaudeStatus" "$layers_out"
 
-# dashboard: on/off only
+# session-dashboard: on/off only (+ backward-compat alias 'dashboard')
 DASH_CLI_TMP="$(mktemp -d)"
 export CLAUDII_CACHE_DIR="$DASH_CLI_TMP"
 export XDG_CONFIG_HOME="$DASH_CLI_TMP"
 mkdir -p "$DASH_CLI_TMP/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$DASH_CLI_TMP/claudii/config.json"
 
-out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard off 2>&1)
-assert_matches "dashboard off: success message" "disabled|off" "$out"
-assert_eq "dashboard off: no error exit" "0" "$(bash "$CLAUDII_HOME/bin/claudii" dashboard off >/dev/null 2>&1; echo $?)"
+out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard off 2>&1)
+assert_matches "session-dashboard off: success message" "disabled|off|Session Dashboard" "$out"
+assert_eq "session-dashboard off: no error exit" "0" "$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard off >/dev/null 2>&1; echo $?)"
 
+out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard on 2>&1)
+assert_matches "session-dashboard on: success message" "enabled|on|Session Dashboard" "$out"
+
+out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto 2>&1 || true)
+assert_eq "session-dashboard auto: unknown subcommand error" "1" "$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto >/dev/null 2>&1; echo $?)"
+
+# deprecated 'dashboard' alias must still work
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1)
-assert_matches "dashboard on: success message" "enabled|on" "$out"
+assert_matches "dashboard alias: still works (deprecated)" "enabled|on|Session Dashboard" "$out"
 
-out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard auto 2>&1 || true)
-assert_eq "dashboard auto: unknown subcommand error" "1" "$(bash "$CLAUDII_HOME/bin/claudii" dashboard auto >/dev/null 2>&1; echo $?)"
-
-# dash command should be removed (use dashboard instead)
+# dash command should be removed (use session-dashboard instead)
 dash_out=$(bash "$CLAUDII_HOME/bin/claudii" dash 2>&1 || true)
-assert_matches "dash: removed or redirected to dashboard" "Unknown command|dashboard|Dashboard" "$dash_out"
+assert_matches "dash: removed or redirected" "Unknown command|dashboard|Dashboard|session-dashboard" "$dash_out"
 
 rm -rf "$DASH_CLI_TMP"
 unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME DASH_CLI_TMP out

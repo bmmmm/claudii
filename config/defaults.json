@@ -22,7 +22,7 @@
   "search": {
     "dir": "~/claude-search"
   },
-  "dashboard": {
+  "session-dashboard": {
     "enabled": "off"
   },
   "debug": {

@@ -9,7 +9,7 @@ claudii.plugin.zsh      # Entry point (sources lib/)
 bin/claudii             # CLI dispatcher + shared helpers (<300 lines)
 bin/claudii-status      # ClaudeStatus health checker (components API + RSS)
 bin/claudii-sessionline # Sessionline handler (bash+jq, reads stdin JSON)
-lib/cmd/system.sh       # Commands: on/off, claudestatus, dashboard, status, cc-statusline, update, watch, doctor
+lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, watch, doctor
 lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default
 lib/cmd/display.sh      # Commands: trends, version, changelog, layers, 42
 lib/cmd/config.sh       # Commands: config, agents, search
@@ -27,7 +27,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 ## Naming
 
 - **ClaudeStatus** — RPROMPT health monitor (our feature)
-- **Dashboard** — session lines prepended to PROMPT after each command
+- **Session Dashboard** — session lines prepended to PROMPT after claudii commands
 - **Sessionline** — in-session status bar inside Claude Code (native implementation)
 - **Overview** — what `claudii` (bare, no args) shows: account + agents + services + session summary
 - Commands: `claudii on/off`, `claudii status`, `claudii cc-statusline`
@@ -37,7 +37,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 
 | Name | Trigger | Location | Content |
 |------|---------|----------|---------|
-| **Dashboard** | automatic, after every command | PROMPT (above prompt line) | Active sessions: model · ctx% · cost · 5h rate · ↺ |
+| **Session Dashboard** | automatic, after `claudii` commands | PROMPT (above prompt line) | Active sessions: model · ctx% · cost · 5h rate · ↺ |
 | **ClaudeStatus** | automatic, after every command | RPROMPT (right side) | API health per model |
 | **Overview** (`claudii`) | on demand | stdout | Account rate limits · Agents config · Services status · Session count summary |
 | **`claudii status`** | on demand | stdout | Per-model API health + current incident from RSS timeline |
@@ -104,7 +104,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - **After each wave (tests green):** `git tag wave-N-done`
 - **Revert a single merge commit:** `git revert <hash> -m 1 --no-edit` — the `-m 1` is mandatory for merge commits
 - **Agents touching `lib/statusline.zsh`:** always warn them about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`) so they don't re-add them from stale worktree state
-- **Dashboard test preconditions:** `jq '.dashboard.enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously
+- **Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously
 
 ## When committing
 
