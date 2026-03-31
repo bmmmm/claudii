@@ -99,6 +99,12 @@ function _claudii_statusline_render {
 typeset -ga _CLAUDII_DASH_MODELS _CLAUDII_DASH_CTXS _CLAUDII_DASH_COSTS
 typeset -ga _CLAUDII_DASH_5HS _CLAUDII_DASH_R5HS
 typeset -gi _CLAUDII_DASH_COUNT=0
+typeset -g _CLAUDII_LAST_CMD=""
+
+function _claudii_preexec {
+  _CLAUDII_CMD_RAN=1
+  _CLAUDII_LAST_CMD="${1:-}"
+}
 
 # Strips zsh prompt codes from a string and echoes its visual length (integer).
 # Used by _claudii_dashboard to compute space padding for right-alignment.
@@ -186,6 +192,11 @@ function _claudii_dashboard {
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
   _CLAUDII_CMD_RAN=0
+
+  # Suppress dashboard after claudii CLI commands — user just saw the output
+  [[ "${_CLAUDII_LAST_CMD}" == claudii* ]] && {
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  }
 
   _claudii_collect_sessions
   if (( _CLAUDII_DASH_COUNT == 0 )); then

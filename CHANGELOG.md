@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Overview: reset countdown colored by urgency — dim (> 60 min), yellow (10–60 min), red (< 10 min)
 - Overview: version number, today's cost, and active session bullet use `CLAUDII_CLR_ACCENT` for visual hierarchy
 - Dashboard lines right-aligned via space padding (RPROMPT-style) — no cursor save/restore sequences
+- Dashboard is suppressed after any `claudii` CLI command — avoids redundant session lines right after `claudii status`, `claudii se`, etc.
 
 ### Fixed
 - `claudii trends` awk syntax error (missing `}` in END block)

@@ -531,6 +531,49 @@ assert_eq "dashboard right-align: wider terminal → more padding (line len > 60
 
 rm -rf "$ALIGN_TMP"
 unset ALIGN_TMP _align_pid zsh_align_out _has_cursor_save zsh_pad_check _pad_ok
+
+# ── Dashboard suppression after claudii commands ──
+SUPPRESS_TMP="$CLAUDII_HOME/tmp/test_statusline_suppress"
+rm -rf "$SUPPRESS_TMP"
+mkdir -p "$SUPPRESS_TMP/config/claudii"
+jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$SUPPRESS_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SUPPRESS_TMP/status-models"
+_suppress_pid=$$
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nreset_5h=\nppid=%s\n' "$_suppress_pid" \
+  > "$SUPPRESS_TMP/session-supptest"
+
+# After claudii command → PROMPT is plain (no session lines)
+suppress_out=$(
+  CLAUDII_CACHE_DIR="$SUPPRESS_TMP" XDG_CONFIG_HOME="$SUPPRESS_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii status'
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+if printf '%s' "$suppress_out" | grep -qF "Sonnet"; then
+  assert_eq "suppress after claudii cmd: PROMPT is plain" "" "Sonnet found in PROMPT"
+else
+  assert_eq "suppress after claudii cmd: PROMPT is plain" "" ""
+fi
+
+# After non-claudii command → dashboard renders normally (with session)
+nosuppress_out=$(
+  CLAUDII_CACHE_DIR="$SUPPRESS_TMP" XDG_CONFIG_HOME="$SUPPRESS_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='git status'
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "no-suppress after git cmd: PROMPT contains Sonnet" "Sonnet" "$nosuppress_out"
+
+rm -rf "$SUPPRESS_TMP"
+unset SUPPRESS_TMP _suppress_pid suppress_out nosuppress_out
 rm -rf "$ZSH_TMP"
 
 # Cleanup test config (keep status cache for live statusline)
