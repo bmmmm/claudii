@@ -174,10 +174,11 @@ _parse_session_cache() {
     _PSC_mtime=$(stat -c %Y "$1")
   fi
   _PSC_age=$(( $(date +%s) - _PSC_mtime ))
-  # Active = Claude Code process (ppid) is still running.
-  # Do NOT gate on file age — a long-running task won't update the file for minutes.
+  # Active = Claude Code process (ppid) is still running AND file is < 24h old.
+  # The 24h cap guards against PID recycling (OS reuses PIDs of long-dead processes).
   _PSC_is_active=0
-  if [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && [[ "$_PSC_ppid" != "0" ]] && kill -0 "$_PSC_ppid" 2>/dev/null; then
+  if [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && [[ "$_PSC_ppid" != "0" ]] \
+      && (( _PSC_age < 86400 )) && kill -0 "$_PSC_ppid" 2>/dev/null; then
     _PSC_is_active=1
   fi
 }

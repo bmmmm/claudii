@@ -7,8 +7,8 @@ source "${CLAUDII_HOME}/lib/visual.sh"
 # Empty Enter → plain PROMPT, no doubling.
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
-# 1 = show dashboard on next precmd (initial: show on first prompt)
-typeset -gi _CLAUDII_CMD_RAN=1
+# 0 = no dashboard until a real command runs (preexec sets it to 1)
+typeset -gi _CLAUDII_CMD_RAN=0
 # Literal dollar sign for safe PROMPT_SUBST embedding — $0 would be eaten by PROMPT_SUBST
 typeset -g _CLAUDII_DOLLAR='$'
 
@@ -128,7 +128,9 @@ function _claudii_collect_sessions {
     s_ppid=""
     [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
     if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
-      # Authoritative liveness check — show even if file is old (long-running task)
+      # Authoritative liveness check — show even if file is old (long-running task).
+      # 24h cap guards against PID recycling (OS reuses PIDs of long-dead processes).
+      (( _sf_age >= 86400 )) && continue
       kill -0 "$s_ppid" 2>/dev/null || continue
     else
       # No ppid → fall back to age-based filter (< 300s)

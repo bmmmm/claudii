@@ -163,14 +163,14 @@ _cmd_status() {
               tr '\001' '\n' | \
               sed 's/<!\[CDATA\[//g; s/\]\]>//g' | \
               sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
-            # Most recent status = first <strong> tag in description
-            _inc_curstat=$(echo "$_inc_desc" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p' | head -1)
+            # Most recent status = LAST <strong> tag in description (RSS is oldest-first)
+            _inc_curstat=$(echo "$_inc_desc" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p' | tail -1)
             if [[ -n "$_inc_title" ]]; then
               _inc_curstat_lc=$(echo "$_inc_curstat" | tr '[:upper:]' '[:lower:]')
               case "$_inc_curstat_lc" in
                 resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="✓ Resolved"     ;;
                 monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Monitoring"   ;;
-                investigating|identified) _ic="${CLAUDII_CLR_RED}"    ; _is="● Investigating" ;;
+                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Investigating" ;;
                 *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="○"              ;;
               esac
               printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_inc_title"

@@ -131,8 +131,8 @@ printf 'model=Sonnet 4.6\nctx_pct=60\ncost=1.00\nrate_5h=\nreset_5h=\nsession_id
 _act_stale_ts=$(date -v-310S +%Y%m%d%H%M.%S 2>/dev/null || date -d "310 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
 [[ -n "$_act_stale_ts" ]] && touch -t "$_act_stale_ts" "$_act_tmp/session-acttest"
 act_out=$(CLAUDII_CACHE_DIR="$_act_tmp" XDG_CONFIG_HOME="$_act_xdg" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
-# With live PID, session should show as active (● model) not inactive (○ N inactive)
-assert_contains "active session: live PID + old file → shown as active (●)" "Sonnet 4.6" "$act_out"
+# With live PID: sessions section shows "N active session" summary (not individual lines)
+assert_contains "active session: live PID + old file → sessions summary shown" "active session" "$act_out"
 assert_eq "active session: not counted as inactive" "0" \
   "$(echo "$act_out" | grep -c 'inactive' || true)"
 rm -rf "$_act_tmp"
