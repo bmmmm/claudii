@@ -87,6 +87,34 @@ assert_contains "config import rejects invalid JSON" "gültiges JSON" "$output"
 output=$(bash "$CLAUDII_HOME/bin/claudii" config import /nonexistent/file.json 2>&1 || true)
 assert_contains "config import rejects missing file" "nicht gefunden" "$output"
 
+# Reset config to clean state for theme tests
+bash "$CLAUDII_HOME/bin/claudii" config reset >/dev/null 2>&1
+
+# config theme — list themes
+output=$(bash "$CLAUDII_HOME/bin/claudii" config theme 2>&1)
+assert_contains "config theme lists available themes" "default" "$output"
+assert_contains "config theme lists pastel theme" "pastel" "$output"
+
+# config theme pastel — set theme
+bash "$CLAUDII_HOME/bin/claudii" config theme pastel >/dev/null 2>&1
+output=$(jq -r '.theme.name' "$XDG_CONFIG_HOME/claudii/config.json" 2>/dev/null)
+assert_eq "config theme pastel sets theme.name" "pastel" "$output"
+
+# config theme list shows active marker after switch
+output=$(bash "$CLAUDII_HOME/bin/claudii" config theme 2>&1)
+assert_contains "config theme shows active marker for pastel" "* pastel" "$output"
+
+# config theme default — set back to default
+bash "$CLAUDII_HOME/bin/claudii" config theme default >/dev/null 2>&1
+output=$(jq -r '.theme.name' "$XDG_CONFIG_HOME/claudii/config.json" 2>/dev/null)
+assert_eq "config theme default restores default theme" "default" "$output"
+
+# config theme unknown — error + non-zero exit
+output=$(bash "$CLAUDII_HOME/bin/claudii" config theme unknown_xyz 2>&1 || true)
+assert_contains "config theme unknown gives error" "Unknown theme" "$output"
+bash "$CLAUDII_HOME/bin/claudii" config theme unknown_xyz >/dev/null 2>&1 && _theme_exit=0 || _theme_exit=$?
+assert_eq "config theme unknown exits non-zero" "1" "$_theme_exit"
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME"
 unset XDG_CONFIG_HOME

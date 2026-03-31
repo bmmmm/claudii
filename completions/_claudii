@@ -127,6 +127,14 @@ _claudii() {
             export)
               _files
               ;;
+            theme)
+              local -a theme_names
+              theme_names=(
+                'default:Default theme (magenta accent, standard ANSI colors)'
+                'pastel:Pastel theme (softer 256-color palette)'
+              )
+              _describe 'theme name' theme_names
+              ;;
             *)
               local -a subcommands
               subcommands=(
@@ -135,6 +143,7 @@ _claudii() {
                 'reset:Reset to defaults'
                 'export:Print config as JSON (or write to file)'
                 'import:Replace config from a JSON file'
+                'theme:List or set the color theme'
               )
               _describe 'config subcommand' subcommands
               ;;

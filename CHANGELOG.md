@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- `claudii config theme` lists available color themes; `claudii config theme <name>` sets the active theme
+- Theme schema in `config/defaults.json`: `theme` (active theme) and `theme_presets` (built-in themes: `default`, `pastel`)
+
 ### Changed
 - Overview (`claudii`) and dashboard: rate-limit values (5h, 7d) are now color-coded by urgency — green (< 50%), yellow (50–79%), red (≥ 80%)
 - Overview: reset countdown colored by urgency — dim (> 60 min), yellow (10–60 min), red (< 10 min)

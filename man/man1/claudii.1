@@ -537,6 +537,25 @@ if specified.
 .BI "config import " file
 Replace current config with a JSON file (backs up the existing config first).
 .
+.TP
+.B "config theme"
+List available color themes.
+The active theme is marked with an asterisk.
+.
+.TP
+.BI "config theme " name
+Set the active theme by name.
+Available themes:
+.B default
+(magenta accent, standard ANSI colors) and
+.B pastel
+(softer 256-color palette).
+The theme name is stored as
+.B theme.name
+in
+.IR config.json .
+Unknown theme names print an error and exit non-zero.
+.
 .SS Watch
 Background watcher that monitors session cache files and sends a macOS notification
 when a 5-hour rate limit resets.

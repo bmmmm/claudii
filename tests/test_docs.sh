@@ -24,7 +24,7 @@ for cmd in "${ALL_COMMANDS[@]}"; do
 done
 
 # config subcommands
-CONFIG_SUBS=(get set reset export import)
+CONFIG_SUBS=(get set reset export import theme)
 for sub in "${CONFIG_SUBS[@]}"; do
   assert_contains "man page documents: config $sub"    "$sub"  "$(cat "$MAN")"
   assert_contains "autocomplete lists: config $sub"    "$sub"  "$(cat "$COMP")"
