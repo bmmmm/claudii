@@ -91,6 +91,13 @@ typeset -gi _CLAUDII_DASH_COUNT=0
 typeset -g _CLAUDII_DASH_GLOBAL_LINE="" _CLAUDII_DASH_SESSION_LINES=""
 typeset -g _CLAUDII_LAST_DASHBOARD="" _CLAUDII_LAST_DASH_PADDED=""
 typeset -gi _CLAUDII_LAST_DASH_COLS=0
+typeset -gi _CLAUDII_CMD_RAN=0
+typeset -g  _CLAUDII_LAST_CMD=""
+
+function _claudii_preexec {
+  _CLAUDII_CMD_RAN=1
+  _CLAUDII_LAST_CMD="${1:-}"
+}
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
@@ -236,6 +243,13 @@ function _claudii_dashboard {
   local dash_mode="${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}"
   [[ "$dash_mode" == "off" ]] && { _CLAUDII_LAST_DASHBOARD=""; _CLAUDII_LAST_DASH_PADDED=""; return; }
 
+  _CLAUDII_CMD_RAN=0
+
+  # Suppress dashboard after claudii CLI commands — user just saw the output
+  [[ "${_CLAUDII_LAST_CMD}" == claudii* ]] && {
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  }
+
   _claudii_collect_sessions
   local active_count=$_CLAUDII_DASH_COUNT
 
@@ -284,4 +298,5 @@ function _claudii_dashboard {
 }
 
 autoload -Uz add-zsh-hook
-add-zsh-hook precmd _claudii_statusline
+add-zsh-hook precmd   _claudii_statusline
+add-zsh-hook preexec  _claudii_preexec

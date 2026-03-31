@@ -26,8 +26,9 @@ export CLAUDII_HOME="${0:A:h}"
 
 # Clean up stale hooks on re-source
 autoload -Uz add-zsh-hook
-add-zsh-hook -d precmd _claudii_rprompt 2>/dev/null
-add-zsh-hook -d precmd _claudii_statusline 2>/dev/null
+add-zsh-hook -d precmd   _claudii_rprompt    2>/dev/null
+add-zsh-hook -d precmd   _claudii_statusline 2>/dev/null
+add-zsh-hook -d preexec  _claudii_preexec    2>/dev/null
 RPROMPT=""
 
 # Capture user's PROMPT before we modify it — used by session bar to prepend

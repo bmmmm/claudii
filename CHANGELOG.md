@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Dashboard is suppressed after any `claudii` CLI command — avoids redundant session lines right after `claudii status`, `claudii se`, etc.
+
+---
+
 ## [0.7.0] — 2026-03-30
 
 ### Added
