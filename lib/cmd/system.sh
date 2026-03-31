@@ -141,6 +141,54 @@ _cmd_status() {
           _ttl_min=$(( _ttl_val / 60 ))
           printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
         fi
+
+        # ── Current incident from status.claude.com RSS ────────────────
+        printf '\n'
+        _inc_rss_url=$(_cfgget status.rss_url)
+        _inc_rss_url="${_inc_rss_url:-https://status.claude.com/history.rss}"
+        _inc_rss=$(curl -sf --max-time 8 "$_inc_rss_url" 2>/dev/null || true)
+        if [[ -n "$_inc_rss" ]]; then
+          # Extract first <item> (most recent incident)
+          _inc_item=$(echo "$_inc_rss" | awk '
+            /<item/    { p=1; buf="" }
+            p          { buf = buf $0 "\n" }
+            /<\/item>/ { if (p) { printf "%s", buf; p=0; exit } }
+          ')
+          if [[ -n "$_inc_item" ]]; then
+            _inc_title=$(echo "$_inc_item" | sed -n 's/.*<title[^>]*>\(.*\)<\/title>.*/\1/p' | head -1 | \
+              sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
+            # Extract description (collapse newlines for multi-line CDATA)
+            _inc_desc=$(printf '%s' "$_inc_item" | tr '\n' '\001' | \
+              sed 's/.*<description[^>]*>\(.*\)<\/description>.*/\1/' | \
+              tr '\001' '\n' | \
+              sed 's/<!\[CDATA\[//g; s/\]\]>//g' | \
+              sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
+            # Most recent status = first <strong> tag in description
+            _inc_curstat=$(echo "$_inc_desc" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p' | head -1)
+            if [[ -n "$_inc_title" ]]; then
+              case "${_inc_curstat,,}" in
+                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="✓ Resolved"     ;;
+                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Monitoring"   ;;
+                investigating|identified) _ic="${CLAUDII_CLR_RED}"    ; _is="● Investigating" ;;
+                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="○"              ;;
+              esac
+              printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_inc_title"
+              printf '\n'
+              # Parse individual updates: each <p> has date + status + message
+              printf '%s\n' "$_inc_desc" | tr '\n' ' ' | sed 's/<\/p>/\n/g' | \
+              while IFS= read -r _para; do
+                _ptime=$(echo "$_para" | sed -n 's/.*<small>\([^<]*\)<\/small>.*/\1/p')
+                _pstat=$(echo "$_para" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p')
+                _pmsg=$(echo "$_para" | sed 's/.*<\/strong>[[:space:]]*-[[:space:]]*//' | \
+                  sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/  */ /g')
+                [[ -z "$_pstat" ]] && continue
+                printf "    ${CLAUDII_CLR_DIM}%-18s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
+                  "${_ptime}" "$_pstat" "$_pmsg"
+              done
+              printf '\n'
+            fi
+          fi
+        fi
         printf '\n'
       fi
       ;;

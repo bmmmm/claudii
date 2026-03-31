@@ -9,6 +9,8 @@ typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 # 1 = show dashboard on next precmd (initial: show on first prompt)
 typeset -gi _CLAUDII_CMD_RAN=1
+# Literal dollar sign for safe PROMPT_SUBST embedding — $0 would be eaten by PROMPT_SUBST
+typeset -g _CLAUDII_DOLLAR='$'
 
 function _claudii_preexec { _CLAUDII_CMD_RAN=1; }
 
@@ -173,7 +175,7 @@ function _claudii_dashboard {
     [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
     _cost="${_CLAUDII_DASH_COSTS[$_di]}"
     if [[ -n "$_cost" && "$_cost" != "0" && "$_cost" != "null" ]]; then
-      _cf=$(printf '%.2f' "$_cost" 2>/dev/null) && _line+="  \$${_cf}"
+      _cf=$(printf '%.2f' "$_cost" 2>/dev/null) && _line+="  \${_CLAUDII_DOLLAR}${_cf}"
     fi
     _r5h="${_CLAUDII_DASH_5HS[$_di]}"
     if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then

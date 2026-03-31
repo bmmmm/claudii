@@ -338,7 +338,7 @@ format_out=$(
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=1
     _claudii_dashboard
-    print -P \"\$PROMPT\"
+    print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
 assert_contains "dashboard format: contains model name" "Sonnet" "$format_out"
