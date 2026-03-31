@@ -110,7 +110,7 @@ function _claudii_collect_sessions {
 
   local -A _sfst
   local _sf_mt _sf_age sc s_ppid
-  local s_model s_ctx s_cost s_5h s_r5h
+  local s_model s_ctx s_cost s_5h s_r5h _best_r5h=""
   for _sf in "$_cache_base"/session-*(N); do
     _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
@@ -150,8 +150,16 @@ function _claudii_collect_sessions {
     _CLAUDII_DASH_COSTS+=("$s_cost")
     _CLAUDII_DASH_5HS+=("$s_5h")
     _CLAUDII_DASH_R5HS+=("$s_r5h")
+    [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && _best_r5h="$s_r5h"
     (( _CLAUDII_DASH_COUNT++ ))
   done
+  # Backfill missing reset_5h — all sessions share the same account reset time
+  if [[ -n "$_best_r5h" ]]; then
+    local _bi
+    for (( _bi=1; _bi<=${#_CLAUDII_DASH_R5HS}; _bi++ )); do
+      [[ -z "${_CLAUDII_DASH_R5HS[$_bi]}" ]] && _CLAUDII_DASH_R5HS[$_bi]="$_best_r5h"
+    done
+  fi
   (( _CLAUDII_DASH_COUNT > 0 ))
 }
 

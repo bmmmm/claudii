@@ -298,6 +298,28 @@ if [[ -n "$_stale_ts" ]]; then
   rm -f "$SESSION_BAR_TMP/session-staletest"
 fi
 
+# reset_5h backfill: session with missing reset_5h gets countdown from sibling session
+_live_pid=$$
+_reset_future=$(( ${EPOCHSECONDS:-$(date +%s)} + 3360 ))  # 56min from now
+printf 'model=Sonnet\nctx_pct=73\ncost=0.50\nrate_5h=83\nreset_5h=\nppid=%s\n' "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-noreset"
+printf 'model=Sonnet\nctx_pct=17\ncost=0.30\nrate_5h=63\nreset_5h=%s\nppid=%s\n' "$_reset_future" "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-withreset"
+zsh_reset_backfill=$(
+  CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+# Both sessions should show ↺Xm (backfill gives the missing session its sibling's reset time)
+_reset_count=$(printf '%s' "$zsh_reset_backfill" | grep -o '↺[0-9]*m' | wc -l | tr -d ' ')
+assert_eq "reset_5h backfill: session without reset gets sibling countdown" "2" "$_reset_count"
+rm -f "$SESSION_BAR_TMP/session-noreset" "$SESSION_BAR_TMP/session-withreset"
+unset _reset_future _reset_count zsh_reset_backfill
+
 # dashboard: PROMPT must not contain save/restore cursor escape sequences
 prompt_val=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \

@@ -18,18 +18,6 @@ Root cause ermitteln: RSS direkt fetchen, Paragraph-Struktur des Resolved-Eintra
 
 ---
 
-### Fix: Dashboard `↺`-Countdown fehlt für letzte Session
-
-**Type: Bug**
-**Complexity: Small**
-**Touches: `lib/statusline.zsh` `_claudii_dashboard()`**
-
-Wenn eine Session kein `reset_5h` im Cache-File hat (leeres Feld `reset_5h=`), fehlt das `↺Xm`. Die anderen Sessions auf demselben Account haben denselben Reset-Timestamp.
-
-Fix: In `_claudii_collect_sessions` den neuesten validen `reset_5h`-Wert über alle Sessions merken. In `_claudii_dashboard` als Fallback nutzen wenn `_rst` für eine Session leer ist — alle aktiven Sessions teilen sich denselben Rate-Limit-Reset.
-
----
-
 ### Feature: Dashboard-Zeilen rechts ausrichten (RPROMPT-Stil)
 
 **Type: Feature**
