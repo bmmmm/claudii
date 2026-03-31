@@ -125,18 +125,68 @@ _cmd_status() {
         if [[ ! -f "$cache_file" ]]; then
           printf '  no cache — run: claudii status 5m\n'
         else
+          _status_any_issue=false
           for _sm in "${_status_models[@]}"; do
             _sm="${_sm// /}"
             _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2)
             _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
             case "${_sm_state:-unknown}" in
               ok)       _sm_icon="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
-              degraded) _sm_icon="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ;;
-              down)     _sm_icon="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ;;
+              degraded) _sm_icon="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
+              down)     _sm_icon="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
               *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
             esac
             printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
           done
+
+          # Show incident details when outage detected and RSS cache is available
+          _rss_cache="${cache_file%/*}/status-cache.xml"
+          if $_status_any_issue && [[ -f "$_rss_cache" ]]; then
+            _inc_title=$(sed -n '/<item>/,/<\/item>/p' "$_rss_cache" | \
+              awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf; exit}' | \
+              sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p' | head -1)
+            if [[ -n "$_inc_title" ]]; then
+              printf '\n'
+              printf "  ${CLAUDII_CLR_YELLOW}↳ %s${CLAUDII_CLR_RESET}\n" "$_inc_title"
+              # Parse description paragraphs for per-update timestamps and status
+              # Description is HTML-entity-encoded; <small> contains <var> tags around time values
+              _inc_desc=$(sed -n '/<item>/,/<\/item>/p' "$_rss_cache" | \
+                awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf; exit}' | \
+                sed -n 's/.*<description>\(.*\)<\/description>.*/\1/p')
+              if [[ -n "$_inc_desc" ]]; then
+                # Decode HTML entities, strip <var> tags, then parse paragraphs
+                echo "$_inc_desc" | sed \
+                  -e 's/&lt;/</g' -e 's/&gt;/>/g' \
+                  -e "s/&apos;/'/g" -e 's/&amp;/\&/g' -e 's/&quot;/"/g' | \
+                sed -e 's/<var[^>]*>//g' -e 's/<\/var>//g' | \
+                awk '
+                  BEGIN { RS="</p>"; FS="" }
+                  {
+                    gsub(/^[^<]*<p>/, "")
+                    if (length($0) < 5) next
+                    # Extract time from <small>...</small>
+                    time_str = $0
+                    sub(/.*<small>/, "", time_str)
+                    sub(/<\/small>.*/, "", time_str)
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", time_str)
+                    # Extract status from <strong>...</strong>
+                    status = $0
+                    sub(/.*<strong>/, "", status)
+                    sub(/<\/strong>.*/, "", status)
+                    # Extract message (after </strong> - )
+                    msg = $0
+                    sub(/.*<\/strong> - /, "", msg)
+                    gsub(/<[^>]*>/, "", msg)
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", msg)
+                    if (length(status) > 0 && length(time_str) > 0)
+                      print "    " time_str "  " status " — " msg
+                  }
+                ' | while IFS= read -r _line; do
+                  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_line"
+                done
+              fi
+            fi
+          fi
 
           printf '\n'
           _cache_mtime=0
