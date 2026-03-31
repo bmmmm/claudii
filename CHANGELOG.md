@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 - `claudii trends` awk syntax error (missing `}` in END block)
 - Session name in `claudii sessions` / bare `claudii` showing raw sed code from JSONL tool-result transcripts
+- `claudii status` now shows per-update timestamps and status (Investigating/Monitoring/Resolved) from incident description when an outage is detected — the `<small>` time was previously not parsed at all; `<var>` tags inside `<small>` are now stripped before extraction
 
 ---
 
