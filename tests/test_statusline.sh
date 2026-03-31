@@ -271,6 +271,7 @@ zsh_session_bar_live=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
@@ -290,6 +291,7 @@ if [[ -n "$_stale_ts" ]]; then
     zsh -c "
       source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
       _CLAUDII_CMD_RAN=1
+      _CLAUDII_LAST_CMD='claudii'
       _claudii_dashboard
       print -P \"\${(e)PROMPT}\"
     " 2>/dev/null
@@ -310,6 +312,7 @@ zsh_reset_backfill=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
@@ -367,6 +370,7 @@ cond_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     print -P \"\$PROMPT\"
   " 2>/dev/null
@@ -380,6 +384,7 @@ format_out=$(
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_USER_PROMPT='TESTPROMPT> '
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
@@ -434,6 +439,7 @@ zsh_rate_red=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
@@ -449,6 +455,7 @@ zsh_rate_green=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
@@ -472,6 +479,7 @@ esc_prompt=$(
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
     _claudii_dashboard
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
@@ -483,6 +491,48 @@ else
   assert_eq "PROMPT must not contain ESC[s (cursor save)" "no ESC[s" "no ESC[s"
 fi
 rm -rf "$ESC_TMP"
+
+# ── Dashboard only after claudii commands ────────────────────────────────────
+CMDFILTER_TMP="$CLAUDII_HOME/tmp/test_statusline_cmdfilter"
+rm -rf "$CMDFILTER_TMP"
+mkdir -p "$CMDFILTER_TMP/config/claudii"
+jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$CMDFILTER_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CMDFILTER_TMP/status-models"
+printf 'model=Sonnet\nctx_pct=42\ncost=0.55\nrate_5h=\nreset_5h=\nppid=%s\n' "$$" \
+  > "$CMDFILTER_TMP/session-cmdfilter"
+
+# After non-claudii command (ls) → no dashboard
+ls_out=$(
+  CLAUDII_CACHE_DIR="$CMDFILTER_TMP" XDG_CONFIG_HOME="$CMDFILTER_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='ls'
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+if printf '%s' "$ls_out" | grep -qF "Sonnet"; then
+  assert_eq "dashboard: hidden after non-claudii cmd (ls)" "no Sonnet" "Sonnet found"
+else
+  assert_eq "dashboard: hidden after non-claudii cmd (ls)" "no Sonnet" "no Sonnet"
+fi
+
+# After claudii command → dashboard shown
+claudii_out=$(
+  CLAUDII_CACHE_DIR="$CMDFILTER_TMP" XDG_CONFIG_HOME="$CMDFILTER_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii se'
+    _claudii_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_contains "dashboard: shown after claudii cmd" "Sonnet" "$claudii_out"
+
+rm -rf "$CMDFILTER_TMP"
+unset CMDFILTER_TMP ls_out claudii_out
 
 rm -rf "$ZSH_TMP"
 
