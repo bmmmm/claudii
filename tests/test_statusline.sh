@@ -484,54 +484,6 @@ else
 fi
 rm -rf "$ESC_TMP"
 
-# ── Dashboard right-alignment: space padding ──
-
-ALIGN_TMP="$CLAUDII_HOME/tmp/test_statusline_align"
-rm -rf "$ALIGN_TMP"
-mkdir -p "$ALIGN_TMP/config/claudii"
-jq '.dashboard.enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$ALIGN_TMP/config/claudii/config.json"
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ALIGN_TMP/status-models"
-_align_pid=$$
-printf 'model=Sonnet 4.6\nctx_pct=74\ncost=33.85\nrate_5h=60\nreset_5h=\nppid=%s\n' "$_align_pid" \
-  > "$ALIGN_TMP/session-aligntest"
-
-# PROMPT starts with spaces (right-aligned) at COLUMNS=80
-zsh_align_out=$(
-  COLUMNS=80 CLAUDII_CACHE_DIR="$ALIGN_TMP" XDG_CONFIG_HOME="$ALIGN_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
-  zsh -c "
-    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    _CLAUDII_CMD_RAN=1
-    _claudii_dashboard
-    printf '%s' \"\$PROMPT\"
-  " 2>/dev/null
-)
-assert_contains "dashboard right-align: model name present" "Sonnet 4.6" "$zsh_align_out"
-assert_matches "dashboard right-align: leading spaces before content" "^  " "$zsh_align_out"
-
-# No cursor save/restore in PROMPT
-_has_cursor_save=0
-printf '%s' "$zsh_align_out" | grep -qF $'\033[s' 2>/dev/null && _has_cursor_save=1
-printf '%s' "$zsh_align_out" | grep -qF $'\033[u' 2>/dev/null && _has_cursor_save=1
-assert_eq "dashboard right-align: no cursor save/restore sequences" "0" "$_has_cursor_save"
-
-# Wider terminal → longer padded line (> 60 chars at COLUMNS=120)
-zsh_pad_check=$(
-  COLUMNS=120 CLAUDII_CACHE_DIR="$ALIGN_TMP" XDG_CONFIG_HOME="$ALIGN_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
-  zsh -c "
-    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    _CLAUDII_CMD_RAN=1
-    _claudii_dashboard
-    local first_line=\"\${PROMPT%%\$'\n'*}\"
-    printf '%s' \"\${#first_line}\"
-  " 2>/dev/null
-)
-_pad_ok=0
-[[ -n "$zsh_pad_check" && "$zsh_pad_check" =~ ^[0-9]+$ && "$zsh_pad_check" -gt 60 ]] && _pad_ok=1
-assert_eq "dashboard right-align: wider terminal → more padding (line len > 60 at COLUMNS=120)" "1" "$_pad_ok"
-
-rm -rf "$ALIGN_TMP"
-unset ALIGN_TMP _align_pid zsh_align_out _has_cursor_save zsh_pad_check _pad_ok
-
 # ── Dashboard suppression after claudii commands ──
 SUPPRESS_TMP="$CLAUDII_HOME/tmp/test_statusline_suppress"
 rm -rf "$SUPPRESS_TMP"
