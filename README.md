@@ -131,4 +131,4 @@ All commands support `--json` and `--tsv` for scripting. Full reference: `man cl
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0](LICENSE) · [ko-fi](https://ko-fi.com/bmabma)
