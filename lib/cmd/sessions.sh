@@ -30,32 +30,34 @@ _cmd_cost_from_history() {
   local _date_cmd="gnu"
   date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1 && _date_cmd="macos"
 
-  # Named function to avoid bash 3.2 case-in-$() parsing bug
-  _augment_history_line() {
-    local ts="$1" _h_model="$2" cost="$3" sid="$4" _date_cmd="$5"
-    local _h_day _h_short
-    [[ -z "$ts" || "$ts" == "timestamp" ]] && return
-    [[ -z "$sid" ]] && return
-    if [[ "$_date_cmd" == "macos" ]]; then
-      _h_day=$(date -j -f '%s' "$ts" '+%Y-%m-%d' 2>/dev/null) || return
-    else
-      _h_day=$(date -d "@$ts" '+%Y-%m-%d' 2>/dev/null) || return
-    fi
-    case "$_h_model" in
-      *[Oo]pus*)   _h_short="Opus"   ;;
-      *[Ss]onnet*) _h_short="Sonnet" ;;
-      *[Hh]aiku*)  _h_short="Haiku"  ;;
-      *)           _h_short="$_h_model" ;;
-    esac
-    printf '%s\t%s\t%s\t%s\n' "$_h_day" "$_h_short" "$cost" "$sid"
-  }
-
+  # Pure-awk date conversion — avoids 1 date(1) subprocess per row (was O(n) forks).
+  # epoch_to_date() works on BSD awk (macOS) + GNU awk — no strftime needed.
   local _augmented
-  _augmented=$(
-    while IFS=$'\t' read -r ts _h_model cost _ctx _rate sid; do
-      _augment_history_line "$ts" "$_h_model" "$cost" "$sid" "$_date_cmd"
-    done < "$history_file"
-  )
+  _augmented=$(awk -F'\t' '
+    function epoch_to_date(ts,    days, y, leap, m, mdays) {
+      days = int(ts / 86400)
+      y = 1970
+      for (;;) {
+        leap = ((y % 400 == 0) || (y % 4 == 0 && y % 100 != 0)) ? 1 : 0
+        if (days < 365 + leap) break
+        days -= 365 + leap; y++
+      }
+      leap = ((y % 400 == 0) || (y % 4 == 0 && y % 100 != 0)) ? 1 : 0
+      split("31 " (28+leap) " 31 30 31 30 31 31 30 31 30 31", mdays, " ")
+      for (m = 1; m <= 12; m++) { if (days < mdays[m]) break; days -= mdays[m] }
+      return sprintf("%04d-%02d-%02d", y, m, days + 1)
+    }
+    $1 == "timestamp" || $1 == "" || $6 == "" { next }
+    {
+      ts = $1 + 0; if (ts == 0) next
+      day = epoch_to_date(ts)
+      model = $2; cost = $3 + 0; sid = $6
+      if      (model ~ /[Oo]pus/)   model = "Opus"
+      else if (model ~ /[Ss]onnet/) model = "Sonnet"
+      else if (model ~ /[Hh]aiku/)  model = "Haiku"
+      print day "\t" model "\t" cost "\t" sid
+    }
+  ' "$history_file")
 
   if [[ -z "$_augmented" ]]; then
     echo "  No history data found — start a Claude session to record costs."
