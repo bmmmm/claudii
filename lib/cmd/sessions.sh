@@ -8,12 +8,11 @@ _cmd_cost_from_history() {
   local history_file="$1"  # path to history.tsv
   local today_str="$2"     # YYYY-MM-DD for "today" cutoff
 
-  # Step 1: Convert timestamps → YYYY-MM-DD, normalize model names.
-  # Output: day TAB short_model TAB cost TAB sid
-  # Note: _augment_history_line is a named function to avoid bash 3.2 case-in-$() parsing bug.
+  # Detect macOS vs GNU date
   local _date_cmd="gnu"
   date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1 && _date_cmd="macos"
 
+  # Named function to avoid bash 3.2 case-in-$() parsing bug
   _augment_history_line() {
     local ts="$1" _h_model="$2" cost="$3" sid="$4" _date_cmd="$5"
     local _h_day _h_short
@@ -40,13 +39,29 @@ _cmd_cost_from_history() {
     done < "$history_file"
   )
 
-  # Step 2: awk computes per-day deltas per session, then aggregates by period.
-  # Periods: "today" (day == today_str) and "alltime".
-  # sid_day_list[sid] = space-separated list of unique days (for iteration)
-  # last_cost[sid SUBSEP day] = max cost seen for that session on that day
-  # sid_model[sid SUBSEP day] = model for that (session, day)
+  if [[ -z "$_augmented" ]]; then
+    echo "  No history data found — start a Claude session to record costs."
+    return
+  fi
+
+  # Compute week start (Monday of current week)
+  local today_dow week_start_str today_mon today_year _week_start_ts
+  if [[ "$_date_cmd" == "macos" ]]; then
+    today_dow=$(date -j -f '%Y-%m-%d' "$today_str" '+%u' 2>/dev/null)
+    _week_start_ts=$(( $(date -j -f '%Y-%m-%d' "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
+    week_start_str=$(date -j -f '%s' "$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+  else
+    today_dow=$(date -d "$today_str" '+%u' 2>/dev/null)
+    _week_start_ts=$(( $(date -d "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
+    week_start_str=$(date -d "@$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+  fi
+  today_mon="${today_str:0:7}"   # YYYY-MM
+  today_year="${today_str:0:4}"  # YYYY
+
+  # awk: compute daily deltas, aggregate into today/week/month/year/alltime
   echo "$_augmented" | awk -F'\t' \
     -v today="$today_str" \
+    -v week_start="${week_start_str:-$today_str}" \
     -v fmt="${_FORMAT:-}" \
     -v cyan="$CLAUDII_CLR_CYAN" \
     -v dim="$CLAUDII_CLR_DIM" \
@@ -56,13 +71,10 @@ _cmd_cost_from_history() {
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4
       if (sid == "" || day == "") next
-
-      # Per (sid, day): keep the highest cost seen
       key = sid SUBSEP day
       if (!(key in last_cost)) {
         last_cost[key] = cost
         sid_model[key] = model
-        # Track day in per-sid list (sid_has_day guards duplicates)
         if (!(sid SUBSEP day in sid_has_day)) {
           sid_day_list[sid] = (sid in sid_day_list) ? (sid_day_list[sid] " " day) : day
           sid_has_day[sid SUBSEP day] = 1
@@ -74,74 +86,135 @@ _cmd_cost_from_history() {
       }
     }
     END {
-      # For each session: sort its days, compute deltas, accumulate per period
       for (sid in all_sids) {
-        # Split per-sid day list and sort
         n = split(sid_day_list[sid], days_arr, " ")
-        # Bubble sort (sessions typically span a handful of days; YYYY-MM-DD sorts lexically)
-        for (i = 1; i <= n; i++) {
-          for (j = i + 1; j <= n; j++) {
-            if (days_arr[i] > days_arr[j]) {
-              tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp
-            }
-          }
-        }
+        # Bubble sort ascending (YYYY-MM-DD is lexicographically ordered)
+        for (i = 1; i <= n; i++)
+          for (j = i + 1; j <= n; j++)
+            if (days_arr[i] > days_arr[j]) { tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp }
         prev_cost = 0
         for (i = 1; i <= n; i++) {
           d = days_arr[i]
           k = sid SUBSEP d
           c = (k in last_cost) ? last_cost[k] : 0
           delta = c - prev_cost
-          if (delta < 0) delta = 0  # guard against out-of-order writes
+          if (delta < 0) delta = 0
           m = (k in sid_model) ? sid_model[k] : "?"
           prev_cost = c
-
-          # Accumulate: alltime
-          alltime_cost[m] += delta
-          alltime_sessions[m]++
-
-          # Accumulate: today
-          if (d == today) {
-            today_cost[m] += delta
-            today_sessions[m]++
-          }
+          all_models[m] = 1
+          alltime_cost[m] += delta; alltime_sessions[m]++
+          if (d == today)      { today_cost[m] += delta; today_sessions[m]++ }
+          if (d >= week_start) { week_cost[m]  += delta; week_sessions[m]++  }
+          mon_key = substr(d, 1, 7)
+          month_cost[m SUBSEP mon_key] += delta; month_sessions[m SUBSEP mon_key]++
+          all_months[mon_key] = 1
+          yr_key = substr(d, 1, 4)
+          year_cost[m SUBSEP yr_key] += delta
+          all_years[yr_key] = 1
         }
       }
 
-      # Collect model list (union of today + alltime keys)
-      for (m in alltime_cost) models[m] = 1
-      for (m in today_cost)   models[m] = 1
+      # Sort months descending (bubble sort on keys — YYYY-MM sorts lexically)
+      n_mon = 0; for (mk in all_months) mon_keys[++n_mon] = mk
+      for (i = 1; i <= n_mon; i++) for (j = i+1; j <= n_mon; j++)
+        if (mon_keys[i] < mon_keys[j]) { tmp = mon_keys[i]; mon_keys[i] = mon_keys[j]; mon_keys[j] = tmp }
+      # Sort years descending
+      n_yr = 0; for (yk in all_years) yr_keys[++n_yr] = yk
+      for (i = 1; i <= n_yr; i++) for (j = i+1; j <= n_yr; j++)
+        if (yr_keys[i] < yr_keys[j]) { tmp = yr_keys[i]; yr_keys[i] = yr_keys[j]; yr_keys[j] = tmp }
 
       # --- JSON output ---
       if (fmt == "json") {
         printf "{"
+        # today
         printf "\"today\":{"
         first = 1
-        for (m in models) {
+        for (m in all_models) {
           if (!(m in today_cost) || today_sessions[m] == 0) continue
           if (!first) printf ","
           printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, today_cost[m], today_sessions[m]
           first = 0
         }
-        printf "},\"alltime\":{"
+        printf "},"
+        # week
+        printf "\"week\":{"
         first = 1
-        for (m in models) {
-          if (!(m in alltime_cost)) continue
+        for (m in all_models) {
+          if (!(m in week_cost) || week_sessions[m] == 0) continue
           if (!first) printf ","
-          printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, alltime_cost[m], alltime_sessions[m]
+          printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, week_cost[m], week_sessions[m]
           first = 0
         }
-        printf "}}\n"
+        printf "},"
+        # months
+        printf "\"months\":{"
+        first = 1
+        for (i = 1; i <= n_mon; i++) {
+          mk = mon_keys[i]
+          if (!first) printf ","
+          printf "\"%s\":{", mk
+          inner = 1
+          for (m in all_models) {
+            k = m SUBSEP mk
+            if (!(k in month_cost)) continue
+            if (!inner) printf ","
+            printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, month_cost[k], month_sessions[k]
+            inner = 0
+          }
+          printf "}"
+          first = 0
+        }
+        printf "},"
+        # years
+        printf "\"years\":{"
+        first = 1
+        for (i = 1; i <= n_yr; i++) {
+          yk = yr_keys[i]
+          if (!first) printf ","
+          printf "\"%s\":{", yk
+          inner = 1
+          for (m in all_models) {
+            k = m SUBSEP yk
+            if (!(k in year_cost)) continue
+            if (!inner) printf ","
+            printf "\"%s\":%.4f", m, year_cost[k]
+            inner = 0
+          }
+          printf "}"
+          first = 0
+        }
+        printf "}}"
+        printf "\n"
         exit
       }
 
       # --- TSV output ---
       if (fmt == "tsv") {
         printf "period\tmodel\tcost\tsessions\n"
-        for (m in models) {
+        for (m in all_models) {
           if (m in today_cost && today_sessions[m] > 0)
             printf "today\t%s\t%.4f\t%d\n", m, today_cost[m], today_sessions[m]
-          if (m in alltime_cost)
+          if (m in week_cost && week_sessions[m] > 0)
+            printf "week\t%s\t%.4f\t%d\n", m, week_cost[m], week_sessions[m]
+        }
+        for (i = 1; i <= n_mon; i++) {
+          mk = mon_keys[i]
+          for (m in all_models) {
+            k = m SUBSEP mk
+            if (k in month_cost)
+              printf "month\t%s\t%.4f\t%d\n", m, month_cost[k], month_sessions[k]
+          }
+        }
+        for (i = 1; i <= n_yr; i++) {
+          yk = yr_keys[i]
+          for (m in all_models) {
+            k = m SUBSEP yk
+            if (k in year_cost)
+              printf "year\t%s\t%.4f\n", m, year_cost[k]
+          }
+        }
+        for (m in all_models) {
+          if (m in alltime_cost && alltime_sessions[m] > 0)
             printf "alltime\t%s\t%.4f\t%d\n", m, alltime_cost[m], alltime_sessions[m]
         }
         exit
@@ -153,34 +226,47 @@ _cmd_cost_from_history() {
       printf "\n"
       printf "  %sToday%s\n", pink, reset
       total = 0; has = 0
-      for (m in models) {
+      for (m in all_models) {
         if (!(m in today_cost) || today_sessions[m] == 0) continue
         n = today_sessions[m]; s = (n != 1) ? "s" : ""
         printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, today_cost[m], reset, n, s
         total += today_cost[m]; has = 1
       }
-      if (has) {
-        printf "%s\n", line
-        printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset
-      } else {
-        printf "    (none)\n"
-      }
+      if (has) { printf "%s\n", line; printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset }
+      else      { printf "    (none)\n" }
 
       printf "\n"
-      printf "  %sAll time%s\n", pink, reset
+      printf "  %sWeek%s\n", pink, reset
       total = 0; has = 0
-      for (m in models) {
-        if (!(m in alltime_cost)) continue
-        n = alltime_sessions[m]; s = (n != 1) ? "s" : ""
-        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, alltime_cost[m], reset, n, s
-        total += alltime_cost[m]; has = 1
+      for (m in all_models) {
+        if (!(m in week_cost) || week_sessions[m] == 0) continue
+        n = week_sessions[m]; s = (n != 1) ? "s" : ""
+        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, week_cost[m], reset, n, s
+        total += week_cost[m]; has = 1
       }
-      if (has) {
-        printf "%s\n", line
-        printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset
-      } else {
-        printf "    (none)\n"
+      if (has) { printf "%s\n", line; printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset }
+      else      { printf "    (none)\n" }
+
+      printf "\n"
+      printf "  %sMonths%s\n", pink, reset
+      for (i = 1; i <= n_mon; i++) {
+        mk = mon_keys[i]
+        total = 0; has = 0
+        for (m in all_models) { k = m SUBSEP mk; if (k in month_cost) { total += month_cost[k]; has = 1 } }
+        if (has) printf "    %s  %s$%.2f%s\n", mk, cyan, total, reset
       }
+      if (n_mon == 0) printf "    (none)\n"
+
+      printf "\n"
+      printf "  %sYears%s\n", pink, reset
+      for (i = 1; i <= n_yr; i++) {
+        yk = yr_keys[i]
+        total = 0; has = 0
+        for (m in all_models) { k = m SUBSEP yk; if (k in year_cost) { total += year_cost[k]; has = 1 } }
+        if (has) printf "    %s  %s$%.2f%s\n", yk, cyan, total, reset
+      }
+      if (n_yr == 0) printf "    (none)\n"
+
       printf "\n"
     }
     '
@@ -345,370 +431,6 @@ _cmd_cost() {
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}All time${CLAUDII_CLR_RESET}\n"
   _print_section alltime
-  printf '\n'
-}
-
-# ── New cost engine: reads history.tsv, outputs Today/Week/Months/Years ──────
-_cmd_cost_from_history() {
-  local history_file="$1"
-  local now
-  now=$(date +%s)
-
-  # Detect macOS vs GNU date (same pattern as _cmd_trends)
-  local _dc
-  if date -j -f '%s' "$now" '+%u' >/dev/null 2>&1; then
-    _dc="macos"
-  else
-    _dc="gnu"
-  fi
-
-  # Date helpers
-  _cost_date_fmt() {
-    local ts="$1" fmt="$2"
-    if [[ "$_dc" == "macos" ]]; then
-      date -j -f '%s' "$ts" "$fmt" 2>/dev/null
-    else
-      date -d "@$ts" "$fmt" 2>/dev/null
-    fi
-  }
-
-  local today_str today_dow this_monday_ts week_start_str
-  today_str=$(_cost_date_fmt "$now" '+%Y-%m-%d')
-  today_dow=$(_cost_date_fmt "$now" '+%u')   # 1=Mon..7=Sun
-  this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
-  week_start_str=$(_cost_date_fmt "$this_monday_ts" '+%Y-%m-%d')
-
-  # Month and year of today
-  local today_mon today_year
-  today_mon=$(_cost_date_fmt "$now" '+%Y-%m')
-  today_year=$(_cost_date_fmt "$now" '+%Y')
-
-  # ── Step 1: read history.tsv, convert timestamps → YYYY-MM-DD, dedup by sid ──
-  # Fields: timestamp<tab>model<tab>cost<tab>ctx<tab>rate<tab>session_id
-  # Strategy: for each sid keep the last entry (highest timestamp = latest cost).
-  # We need: day, short_model, cost, sid
-  local _augmented
-  _augmented=$(
-    while IFS=$'\t' read -r ts _h_model cost _ctx _rate sid; do
-      [[ -z "$ts" || "$ts" == "timestamp" ]] && continue
-      local _day
-      _day=$(_cost_date_fmt "$ts" '+%Y-%m-%d') || continue
-      local _short
-      case "$_h_model" in
-        (*[Oo]pus*)   _short="Opus"   ;;
-        (*[Ss]onnet*) _short="Sonnet" ;;
-        (*[Hh]aiku*)  _short="Haiku"  ;;
-        (*)           _short="$_h_model" ;;
-      esac
-      printf '%s\t%s\t%s\t%s\n' "$_day" "$_short" "$cost" "$sid"
-    done < "$history_file"
-  )
-
-  if [[ -z "$_augmented" ]]; then
-    echo "No history data yet. Start a Claude session with CC-Statusline enabled."
-    exit 0
-  fi
-
-  # ── Step 2: awk dedup + aggregate ─────────────────────────────────────────
-  # Output sections via awk: today per-model, week per-model, month totals, year totals
-  local _awk_out
-  _awk_out=$(echo "$_augmented" | awk -F'\t' \
-    -v today="$today_str" \
-    -v week_start="$week_start_str" \
-    -v today_mon="$today_mon" \
-    -v today_year="$today_year" \
-    '
-    {
-      day=$1; model=$2; cost=$3+0; sid=$4
-      if (sid == "") next
-      # Dedup: keep entry with highest cost per sid
-      key = sid
-      if (!(key in max_cost) || cost > max_cost[key]) {
-        max_cost[key] = cost
-        sid_day[key]   = day
-        sid_model[key] = model
-      }
-    }
-    END {
-      # Aggregate deduplicated sessions
-      for (key in max_cost) {
-        day   = sid_day[key]
-        model = sid_model[key]
-        cost  = max_cost[key]
-        mon   = substr(day, 1, 7)   # YYYY-MM
-        yr    = substr(day, 1, 4)   # YYYY
-
-        # Today per-model
-        if (day == today) {
-          today_model_cost[model] += cost
-          today_model_cnt[model]++
-        }
-
-        # This week per-model (week_start..today inclusive)
-        if (day >= week_start && day <= today) {
-          week_model_cost[model] += cost
-          week_model_cnt[model]++
-        }
-
-        # Monthly totals
-        month_cost[mon] += cost
-        month_cnt[mon]++
-
-        # Yearly totals
-        year_cost[yr] += cost
-        year_cnt[yr]++
-      }
-
-      # ── Emit: today_model lines ──
-      for (m in today_model_cost) {
-        printf "TODAY\t%s\t%.4f\t%d\n", m, today_model_cost[m], today_model_cnt[m]
-      }
-      # ── Emit: week_model lines ──
-      for (m in week_model_cost) {
-        printf "WEEK\t%s\t%.4f\t%d\n", m, week_model_cost[m], week_model_cnt[m]
-      }
-      # ── Emit: month lines ──
-      for (mon in month_cost) {
-        printf "MON\t%s\t%.4f\t%d\n", mon, month_cost[mon], month_cnt[mon]
-      }
-      # ── Emit: year lines ──
-      for (yr in year_cost) {
-        printf "YEAR\t%s\t%.4f\t%d\n", yr, year_cost[yr], year_cnt[yr]
-      }
-    }
-  ')
-
-  # ── Step 3: parse awk output into bash arrays ──────────────────────────────
-  # today: parallel model/cost/count arrays
-  local _tm=() _tc=() _tn=()
-  # week: parallel model/cost/count arrays
-  local _wm=() _wc=() _wn=()
-  # months: parallel mon/cost/count arrays (unsorted)
-  local _mm=() _mc=() _mn_arr=()
-  # years: parallel yr/cost/count arrays
-  local _ym=() _yc=()
-
-  while IFS=$'\t' read -r section field1 field2 field3; do
-    case "$section" in
-      TODAY) _tm+=("$field1"); _tc+=("$field2"); _tn+=("$field3") ;;
-      WEEK)  _wm+=("$field1"); _wc+=("$field2"); _wn+=("$field3") ;;
-      MON)   _mm+=("$field1"); _mc+=("$field2"); _mn_arr+=("$field3") ;;
-      YEAR)  _ym+=("$field1"); _yc+=("$field2") ;;
-    esac
-  done <<< "$_awk_out"
-
-  # ── Step 4: --json / --tsv output ──────────────────────────────────────────
-  if [[ "$_FORMAT" == "json" ]]; then
-    local _j_today _j_week _j_months _j_years _i _m _c _n
-    _j_today="{}"
-    _j_week="{}"
-    _j_months="{}"
-    _j_years="{}"
-    for (( _i=0; _i<${#_tm[@]}; _i++ )); do
-      _m="${_tm[$_i]}"; _c="${_tc[$_i]}"; _n="${_tn[$_i]}"
-      _j_today=$(echo "$_j_today" | jq --arg m "$_m" --argjson c "$_c" --argjson n "$_n" \
-        '.[$m] = {cost: $c, sessions: $n}')
-    done
-    for (( _i=0; _i<${#_wm[@]}; _i++ )); do
-      _m="${_wm[$_i]}"; _c="${_wc[$_i]}"; _n="${_wn[$_i]}"
-      _j_week=$(echo "$_j_week" | jq --arg m "$_m" --argjson c "$_c" --argjson n "$_n" \
-        '.[$m] = {cost: $c, sessions: $n}')
-    done
-    for (( _i=0; _i<${#_mm[@]}; _i++ )); do
-      _m="${_mm[$_i]}"; _c="${_mc[$_i]}"; _n="${_mn_arr[$_i]}"
-      _j_months=$(echo "$_j_months" | jq --arg m "$_m" --argjson c "$_c" --argjson n "$_n" \
-        '.[$m] = {cost: $c, sessions: $n}')
-    done
-    for (( _i=0; _i<${#_ym[@]}; _i++ )); do
-      _m="${_ym[$_i]}"; _c="${_yc[$_i]}"
-      _j_years=$(echo "$_j_years" | jq --arg m "$_m" --argjson c "$_c" \
-        '.[$m] = {cost: $c}')
-    done
-    jq -n --argjson today "$_j_today" --argjson week "$_j_week" \
-           --argjson months "$_j_months" --argjson years "$_j_years" \
-      '{"today": $today, "week": $week, "months": $months, "years": $years}'
-    return
-  fi
-
-  if [[ "$_FORMAT" == "tsv" ]]; then
-    printf "period\tmodel\tcost\tsessions\n"
-    local _i
-    for (( _i=0; _i<${#_tm[@]}; _i++ )); do
-      printf "today\t%s\t%s\t%s\n" "${_tm[$_i]}" "${_tc[$_i]}" "${_tn[$_i]}"
-    done
-    for (( _i=0; _i<${#_wm[@]}; _i++ )); do
-      printf "week\t%s\t%s\t%s\n" "${_wm[$_i]}" "${_wc[$_i]}" "${_wn[$_i]}"
-    done
-    for (( _i=0; _i<${#_mm[@]}; _i++ )); do
-      printf "month\t%s\t%s\t%s\n" "${_mm[$_i]}" "${_mc[$_i]}" "${_mn_arr[$_i]}"
-    done
-    for (( _i=0; _i<${#_ym[@]}; _i++ )); do
-      printf "year\t%s\t%s\t\n" "${_ym[$_i]}" "${_yc[$_i]}"
-    done
-    return
-  fi
-
-  # ── Step 5: pretty output ──────────────────────────────────────────────────
-  local _sep="${CLAUDII_CLR_DIM}  ─────────────────────${CLAUDII_CLR_RESET}"
-
-  # Helper: sort model names in canonical order (Opus, Sonnet, Haiku, others)
-  # Returns indices in order via stdout (space-separated)
-  _cost_model_order() {
-    local -a _names=("$@")
-    local -a _out=()
-    local _i _m
-    # Pass 1: Opus
-    for (( _i=0; _i<${#_names[@]}; _i++ )); do
-      [[ "${_names[$_i]}" == "Opus" ]] && _out+=("$_i")
-    done
-    # Pass 2: Sonnet
-    for (( _i=0; _i<${#_names[@]}; _i++ )); do
-      [[ "${_names[$_i]}" == "Sonnet" ]] && _out+=("$_i")
-    done
-    # Pass 3: Haiku
-    for (( _i=0; _i<${#_names[@]}; _i++ )); do
-      [[ "${_names[$_i]}" == "Haiku" ]] && _out+=("$_i")
-    done
-    # Pass 4: others
-    for (( _i=0; _i<${#_names[@]}; _i++ )); do
-      local _found=0
-      for _m in Opus Sonnet Haiku; do
-        [[ "${_names[$_i]}" == "$_m" ]] && _found=1 && break
-      done
-      (( _found )) || _out+=("$_i")
-    done
-    echo "${_out[*]:-}"
-  }
-
-  printf '\n'
-
-  # ── Today ──────────────────────────────────────────────────────────────────
-  local _today_label
-  _today_label=$(_cost_date_fmt "$now" '+%b %-d' 2>/dev/null || _cost_date_fmt "$now" '+%b %e' 2>/dev/null || echo "$today_str")
-  printf "  ${CLAUDII_CLR_ACCENT}Today${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}— %s${CLAUDII_CLR_RESET}\n" "$_today_label"
-  if [[ ${#_tm[@]} -eq 0 ]]; then
-    printf "    ${CLAUDII_CLR_DIM}(no sessions today)${CLAUDII_CLR_RESET}\n"
-  else
-    local _today_total=0 _order _i _idx _mn _mc_v _mnn
-    read -ra _order <<< "$(_cost_model_order "${_tm[@]}")"
-    for _idx in "${_order[@]}"; do
-      _mn="${_tm[$_idx]}"; _mc_v="${_tc[$_idx]}"; _mnn="${_tn[$_idx]}"
-      printf "    %-12s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}   %s session%s\n" \
-        "$_mn" "$(printf '%.2f' "$_mc_v")" "$_mnn" "$( (( _mnn != 1 )) && printf 's' || true)"
-      _today_total=$(echo "$_today_total + $_mc_v" | bc -l)
-    done
-    printf '%s\n' "$_sep"
-    printf "    ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}\n" "$(printf '%.2f' "$_today_total")"
-  fi
-
-  # ── Week ───────────────────────────────────────────────────────────────────
-  printf '\n'
-  local _week_start_label _week_end_label
-  _week_start_label=$(_cost_date_fmt "$this_monday_ts" '+%b %-d' 2>/dev/null \
-    || _cost_date_fmt "$this_monday_ts" '+%b %e' 2>/dev/null \
-    || echo "$week_start_str")
-  _week_end_label=$(_cost_date_fmt "$now" '+%b %-d' 2>/dev/null \
-    || _cost_date_fmt "$now" '+%b %e' 2>/dev/null \
-    || echo "$today_str")
-  printf "  ${CLAUDII_CLR_ACCENT}Week${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}— %s – %s${CLAUDII_CLR_RESET}\n" \
-    "$_week_start_label" "$_week_end_label"
-  if [[ ${#_wm[@]} -eq 0 ]]; then
-    printf "    ${CLAUDII_CLR_DIM}(no sessions this week)${CLAUDII_CLR_RESET}\n"
-  else
-    local _week_total=0
-    read -ra _order <<< "$(_cost_model_order "${_wm[@]}")"
-    for _idx in "${_order[@]}"; do
-      _mn="${_wm[$_idx]}"; _mc_v="${_wc[$_idx]}"; _mnn="${_wn[$_idx]}"
-      printf "    %-12s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}   %s session%s\n" \
-        "$_mn" "$(printf '%.2f' "$_mc_v")" "$_mnn" "$( (( _mnn != 1 )) && printf 's' || true)"
-      _week_total=$(echo "$_week_total + $_mc_v" | bc -l)
-    done
-    printf '%s\n' "$_sep"
-    printf "    ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}\n" "$(printf '%.2f' "$_week_total")"
-  fi
-
-  # ── Months ─────────────────────────────────────────────────────────────────
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}Months${CLAUDII_CLR_RESET}\n"
-  if [[ ${#_mm[@]} -eq 0 ]]; then
-    printf "    ${CLAUDII_CLR_DIM}(no data)${CLAUDII_CLR_RESET}\n"
-  else
-    # Sort months descending (most recent first)
-    local _sorted_months
-    _sorted_months=$(
-      for (( _i=0; _i<${#_mm[@]}; _i++ )); do
-        printf '%s\t%s\n' "${_mm[$_i]}" "${_mc[$_i]}"
-      done | sort -t$'\t' -k1,1r
-    )
-
-    # Build grid: max 4 per row
-    local _col=0 _line=""
-    while IFS=$'\t' read -r _mon_key _mon_cost; do
-      # Format month label: YYYY-MM → "Mon YYYY" or short form
-      local _mon_ts _mon_label
-      # Convert YYYY-MM to timestamp for formatting
-      if [[ "$_dc" == "macos" ]]; then
-        _mon_ts=$(date -j -f '%Y-%m-%d' "${_mon_key}-01" '+%s' 2>/dev/null) || _mon_ts=""
-      else
-        _mon_ts=$(date -d "${_mon_key}-01" '+%s' 2>/dev/null) || _mon_ts=""
-      fi
-      if [[ -n "$_mon_ts" ]]; then
-        # Use short month name; if same year as today omit year
-        local _mon_yr
-        _mon_yr=$(echo "$_mon_key" | cut -d- -f1)
-        if [[ "$_mon_yr" == "$today_year" ]]; then
-          _mon_label=$(_cost_date_fmt "$_mon_ts" '+%b')
-        else
-          _mon_label=$(_cost_date_fmt "$_mon_ts" '+%b %Y')
-        fi
-      else
-        _mon_label="$_mon_key"
-      fi
-
-      local _entry
-      _entry=$(printf "${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}" \
-        "$_mon_label" "$(printf '%.2f' "$_mon_cost")")
-      if [[ -z "$_line" ]]; then
-        _line="    $_entry"
-      else
-        _line="$_line    $_entry"
-      fi
-      (( ++_col ))
-      if (( _col % 4 == 0 )); then
-        printf '%s\n' "$_line"
-        _line=""
-      fi
-    done <<< "$_sorted_months"
-    # Print any remaining entries
-    [[ -n "$_line" ]] && printf '%s\n' "$_line"
-  fi
-
-  # ── Years ──────────────────────────────────────────────────────────────────
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}Years${CLAUDII_CLR_RESET}\n"
-  if [[ ${#_ym[@]} -eq 0 ]]; then
-    printf "    ${CLAUDII_CLR_DIM}(no data)${CLAUDII_CLR_RESET}\n"
-  else
-    # Sort years descending
-    local _sorted_years _yr_line=""
-    _sorted_years=$(
-      for (( _i=0; _i<${#_ym[@]}; _i++ )); do
-        printf '%s\t%s\n' "${_ym[$_i]}" "${_yc[$_i]}"
-      done | sort -t$'\t' -k1,1r
-    )
-    while IFS=$'\t' read -r _yr _yr_cost; do
-      local _yr_entry
-      _yr_entry=$(printf "${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}" \
-        "$_yr" "$(printf '%.2f' "$_yr_cost")")
-      if [[ -z "$_yr_line" ]]; then
-        _yr_line="    $_yr_entry"
-      else
-        _yr_line="$_yr_line    $_yr_entry"
-      fi
-    done <<< "$_sorted_years"
-    printf '%s\n' "$_yr_line"
-  fi
-
   printf '\n'
 }
 
