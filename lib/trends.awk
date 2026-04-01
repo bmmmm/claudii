@@ -8,32 +8,39 @@
   day = $1; model = $2; cost = $3 + 0; sid = $4
   if (sid == "") next
 
-  # Dedup: take max cost per session_id
-  key = sid
-  if (!(key in max_cost) || cost > max_cost[key]) {
-    max_cost[key] = cost
-    sid_day[key] = day
-    sid_model[key] = model
+  # running_spend: attribute incremental cost delta to this row's day.
+  # Handles intra-day resets (context compaction) correctly.
+  if (sid in sid_baseline) {
+    prev = sid_baseline[sid]
+    if (cost > prev) {
+      delta = cost - prev
+    } else if (cost < prev) {
+      delta = cost   # reset: add post-reset starting value
+    } else {
+      delta = 0
+    }
+  } else {
+    delta = cost     # first row for this session
   }
-}
-END {
-  # Aggregate deduplicated sessions by day
-  for (key in max_cost) {
-    day = sid_day[key]
-    model = sid_model[key]
-    cost = max_cost[key]
+  sid_baseline[sid] = cost
 
-    day_cost[day] += cost
+  if (delta > 0) day_cost[day] += delta
+
+  # Count each session once per (day, sid) for session counts and model split
+  if (!((sid, day) in session_day_seen)) {
+    session_day_seen[sid, day] = 1
     day_sessions[day]++
     day_model_sessions[day, model]++
 
-    # 30d model split
-    if (day >= thirty) {
+    # 30d model split: count each session once total
+    if (day >= thirty && !((sid, "30d") in session_30d_seen)) {
+      session_30d_seen[sid, "30d"] = 1
       model_sessions_30d[model]++
       total_sessions_30d++
     }
   }
-
+}
+END {
   # Costliest day (30d)
   max_day_cost = 0; max_day = ""
   for (d in day_cost) {

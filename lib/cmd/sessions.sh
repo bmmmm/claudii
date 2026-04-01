@@ -11,28 +11,35 @@ _claudii_spinner() {
   local cols="${COLUMNS:-80}"
 
   if [[ "${TERM:-}" == "dumb" ]] || ! printf '%s' "${LANG:-}" | grep -qi "utf"; then
-    local frames=('|' '/' '-' '\') i=0
+    local spin=('|' '/' '-' '\') i=0
     while true; do
-      printf '\r%s ' "${frames[$((i % 4))]}" >&2
+      printf '\r%s Loading...' "${spin[$((i % 4))]}" >&2
       sleep 0.1
       (( ++i ))
     done
     return
   fi
 
-  # Full-width wave: Unicode block-element hill scrolling left-to-right
+  # Prefix: rotating braille char + " Loading  " (11 terminal columns total)
+  # Wave fills the remaining width
   local dim="${CLAUDII_CLR_DIM:-}" reset="${CLAUDII_CLR_RESET:-}"
+  local braille=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local label=" Loading  "   # 10 chars
+  local prefix_len=11        # 1 (braille) + 10 (label)
+  local wave_cols=$(( cols - prefix_len ))
+  (( wave_cols < 4 )) && wave_cols=4
+
   local wave='▁▂▃▄▅▆▇█▇▆▅▄▃▂▁ '  # 16 chars: hill shape + space gap
   local wlen=16
-  # Pre-build a repeating pattern long enough to slice cols chars at any offset
   local pattern=''
-  while (( ${#pattern} < cols + wlen )); do
+  while (( ${#pattern} < wave_cols + wlen )); do
     pattern+="$wave"
   done
 
   local i=0
   while true; do
-    printf '\r%s%s%s' "$dim" "${pattern:$i:$cols}" "$reset" >&2
+    printf '\r%s%s%s%s%s' \
+      "$dim" "${braille[$((i % 10))]}" "$label" "${pattern:$i:$wave_cols}" "$reset" >&2
     sleep 0.08
     i=$(( (i + 1) % wlen ))
   done
@@ -93,13 +100,13 @@ _cmd_cost_from_history() {
   # Compute week start (Monday of current week)
   local today_dow week_start_str today_mon today_year _week_start_ts
   if [[ "$_date_cmd" == "macos" ]]; then
-    today_dow=$(date -j -f '%Y-%m-%d' "$today_str" '+%u' 2>/dev/null)
-    _week_start_ts=$(( $(date -j -f '%Y-%m-%d' "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
-    week_start_str=$(date -j -f '%s' "$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+    today_dow=$(TZ=UTC date -j -f '%Y-%m-%d' "$today_str" '+%u' 2>/dev/null)
+    _week_start_ts=$(( $(TZ=UTC date -j -f '%Y-%m-%d' "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
+    week_start_str=$(TZ=UTC date -j -f '%s' "$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
   else
-    today_dow=$(date -d "$today_str" '+%u' 2>/dev/null)
-    _week_start_ts=$(( $(date -d "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
-    week_start_str=$(date -d "@$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+    today_dow=$(TZ=UTC date -d "$today_str" '+%u' 2>/dev/null)
+    _week_start_ts=$(( $(TZ=UTC date -d "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
+    week_start_str=$(TZ=UTC date -d "@$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
   fi
   today_mon="${today_str:0:7}"   # YYYY-MM
   today_year="${today_str:0:4}"  # YYYY
@@ -337,7 +344,7 @@ _cmd_cost() {
   # Falls back to session-cache files when no history exists yet.
   history_file="$cache_dir/history.tsv"
   if [[ -f "$history_file" && -s "$history_file" ]]; then
-    today_str=$(date '+%Y-%m-%d')
+    today_str=$(TZ=UTC date '+%Y-%m-%d')  # UTC — must match epoch_to_date() in awk
     _cmd_cost_from_history "$history_file" "$today_str"
     return
   fi

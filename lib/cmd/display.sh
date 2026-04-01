@@ -22,28 +22,29 @@ _cmd_trends() {
   fi
 
   # Precompute date boundaries
+  # All date strings use UTC to match epoch_to_date() in awk (TZ=UTC prefix per call)
   if [[ "$_date_cmd" == "macos" ]]; then
-    today_str=$(date -j -f '%s' "$now" '+%Y-%m-%d')
-    today_dow=$(date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
+    today_str=$(TZ=UTC date -j -f '%s' "$now" '+%Y-%m-%d')
+    today_dow=$(TZ=UTC date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
     this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
-    this_monday_str=$(date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
+    this_monday_str=$(TZ=UTC date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
     last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
+    last_monday_str=$(TZ=UTC date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
     last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
+    last_sunday_str=$(TZ=UTC date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
     thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
+    thirty_days_ago_str=$(TZ=UTC date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
   else
-    today_str=$(date -d "@$now" '+%Y-%m-%d')
-    today_dow=$(date -d "@$now" '+%u')
+    today_str=$(TZ=UTC date -d "@$now" '+%Y-%m-%d')
+    today_dow=$(TZ=UTC date -d "@$now" '+%u')
     this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
-    this_monday_str=$(date -d "@$this_monday_ts" '+%Y-%m-%d')
+    this_monday_str=$(TZ=UTC date -d "@$this_monday_ts" '+%Y-%m-%d')
     last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(date -d "@$last_monday_ts" '+%Y-%m-%d')
+    last_monday_str=$(TZ=UTC date -d "@$last_monday_ts" '+%Y-%m-%d')
     last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(date -d "@$last_sunday_ts" '+%Y-%m-%d')
+    last_sunday_str=$(TZ=UTC date -d "@$last_sunday_ts" '+%Y-%m-%d')
     thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
+    thirty_days_ago_str=$(TZ=UTC date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
   fi
 
   # Build week_days string: "date:name,date:name,..." for Mon..Sun (up to today)
@@ -51,11 +52,11 @@ _cmd_trends() {
   for (( d=0; d<7; d++ )); do
     day_ts=$(( this_monday_ts + d * 86400 ))
     if [[ "$_date_cmd" == "macos" ]]; then
-      _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
-      _wn=$(date -j -f '%s' "$day_ts" '+%a')
+      _wd=$(TZ=UTC date -j -f '%s' "$day_ts" '+%Y-%m-%d')
+      _wn=$(TZ=UTC date -j -f '%s' "$day_ts" '+%a')
     else
-      _wd=$(date -d "@$day_ts" '+%Y-%m-%d')
-      _wn=$(date -d "@$day_ts" '+%a')
+      _wd=$(TZ=UTC date -d "@$day_ts" '+%Y-%m-%d')
+      _wn=$(TZ=UTC date -d "@$day_ts" '+%a')
     fi
     [[ -n "$_week_days" ]] && _week_days+=","
     _week_days+="${_wd}:${_wn}"
@@ -69,26 +70,39 @@ _cmd_trends() {
     _trends_spinner_pid=$!
   fi
 
-  # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names
-  # Use a while loop (portable across macOS/GNU date)
-  _trends_augmented=$(
-    while IFS=$'\t' read -r ts _t_model cost ctx rate sid; do
-      [[ -z "$ts" || "$ts" == "timestamp" ]] && continue
-      if [[ "$_date_cmd" == "macos" ]]; then
-        _t_day=$(date -j -f '%s' "$ts" '+%Y-%m-%d' 2>/dev/null) || continue
-      else
-        _t_day=$(date -d "@$ts" '+%Y-%m-%d' 2>/dev/null) || continue
-      fi
-      # Normalize model name (opening parens prevent ) from closing $())
-      case "$_t_model" in
-        (*[Oo]pus*)   _t_short="Opus"   ;;
-        (*[Ss]onnet*) _t_short="Sonnet" ;;
-        (*[Hh]aiku*)  _t_short="Haiku"  ;;
-        (*)           _t_short="$_t_model" ;;
-      esac
-      printf '%s\t%s\t%s\t%s\n' "$_t_day" "$_t_short" "$cost" "$sid"
-    done < "$history_file"
-  )
+  # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
+  # Pure-awk epoch_to_date — avoids O(n) date(1) subprocesses.
+  _trends_augmented=$(awk -F'\t' '
+    function is_leap(y,    l) {
+      l = 0
+      if (y % 4 == 0) l = 1
+      if (y % 100 == 0) l = 0
+      if (y % 400 == 0) l = 1
+      return l
+    }
+    function epoch_to_date(ts,    days, y, leap, m, mdays) {
+      days = int(ts / 86400); y = 1970
+      for (;;) {
+        leap = is_leap(y)
+        if (days < 365 + leap) break
+        days -= 365 + leap; y++
+      }
+      leap = is_leap(y)
+      split("31 " (28+leap) " 31 30 31 30 31 31 30 31 30 31", mdays, " ")
+      for (m = 1; m <= 12; m++) { if (days < mdays[m]) break; days -= mdays[m] }
+      return sprintf("%04d-%02d-%02d", y, m, days + 1)
+    }
+    $1 == "timestamp" || $1 == "" || $6 == "" { next }
+    {
+      ts = $1 + 0; if (ts == 0) next
+      day = epoch_to_date(ts)
+      model = $2; cost = $3 + 0; sid = $6
+      if      (model ~ /[Oo]pus/)   model = "Opus"
+      else if (model ~ /[Ss]onnet/) model = "Sonnet"
+      else if (model ~ /[Hh]aiku/)  model = "Haiku"
+      print day "\t" model "\t" cost "\t" sid
+    }
+  ' "$history_file")
 
   # Kill spinner before output
   if [[ -n "$_trends_spinner_pid" ]]; then
