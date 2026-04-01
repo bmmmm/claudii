@@ -455,3 +455,38 @@ resume_out=$(bash "$CLAUDII_HOME/bin/claudii" se --resume fakeid123 2>&1 || true
 assert_eq "se --resume: no 'Unknown command'" "0" \
   "$(echo "$resume_out" | grep -c 'Unknown command' || true)"
 unset resume_out
+
+# ── Spinner: output must be on stderr only, stdout must be clean ─────────────
+# `claudii se` and `claudii cost` run a spinner on stderr.
+# Stdout must contain normal output; stderr must not bleed into stdout.
+_SP_TMP="$(mktemp -d)"
+_SP_XDG="$_SP_TMP/xdg"
+_SP_CACHE="$_SP_TMP/cache"
+mkdir -p "$_SP_XDG/claudii" "$_SP_CACHE"
+cp "$CLAUDII_HOME/config/defaults.json" "$_SP_XDG/claudii/config.json"
+printf 'model=Sonnet\nppid=%s\nctx_pct=50\ncost=0.42\nrate_5h=\nreset_5h=\nsession_id=sp-test\nworktree=\nagent=\n' \
+  "$$" > "$_SP_CACHE/session-sp-test"
+
+# Capture stdout only (2>/dev/null) — spinner chars must not appear
+_sp_stdout=$(HOME="$_SP_TMP" CLAUDII_CACHE_DIR="$_SP_CACHE" XDG_CONFIG_HOME="$_SP_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" sessions 2>/dev/null)
+assert_contains "spinner: sessions stdout contains model" "Sonnet" "$_sp_stdout"
+assert_eq "spinner: sessions stdout has no spinner chars" "0" \
+  "$(printf '%s' "$_sp_stdout" | grep -c '⠋\|⠙\|⠹\|⠸\|⠼\|⠴\|⠦\|⠧\|⠇\|⠏' || true)"
+
+# cost with session data — stdout only
+printf 'model=Sonnet\nctx_pct=50\ncost=1.23\n' > "$_SP_CACHE/session-sp-cost"
+_sp_cost_stdout=$(HOME="$_SP_TMP" CLAUDII_CACHE_DIR="$_SP_CACHE" XDG_CONFIG_HOME="$_SP_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
+assert_contains "spinner: cost stdout shows model" "Sonnet" "$_sp_cost_stdout"
+assert_eq "spinner: cost stdout has no spinner chars" "0" \
+  "$(printf '%s' "$_sp_cost_stdout" | grep -c '⠋\|⠙\|⠹\|⠸\|⠼\|⠴\|⠦\|⠧\|⠇\|⠏' || true)"
+
+# JSON format must not show spinner (non-interactive)
+_sp_json=$(HOME="$_SP_TMP" CLAUDII_CACHE_DIR="$_SP_CACHE" XDG_CONFIG_HOME="$_SP_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" sessions --json 2>&1)
+assert_eq "spinner: --json output is valid JSON (no spinner chars mixed in)" "0" \
+  "$(printf '%s' "$_sp_json" | jq . >/dev/null 2>&1; echo $?)"
+
+rm -rf "$_SP_TMP"
+unset _SP_TMP _SP_XDG _SP_CACHE _sp_stdout _sp_cost_stdout _sp_json

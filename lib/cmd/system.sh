@@ -83,8 +83,21 @@ _cmd_status() {
   case "${2:-}" in
     *m|*[0-9])
       interval="${2:-}"
-      [[ "$interval" == *m ]] && seconds=$(( ${interval%m} * 60 )) || seconds="$interval"
-      if ! [[ "$seconds" =~ ^[0-9]+$ ]] || (( seconds < 30 )); then
+      # Strip trailing 'm' first, then validate numeric before any arithmetic (prevents injection)
+      if [[ "$interval" == *m ]]; then
+        _int_num="${interval%m}"
+      else
+        _int_num="$interval"
+      fi
+      if ! [[ "$_int_num" =~ ^[0-9]+$ ]]; then
+        echo "Ungültiges Intervall: $interval (mindestens 30s) — gültige Werte: 5m, 15m, 30m" >&2; exit 1
+      fi
+      if [[ "$interval" == *m ]]; then
+        seconds=$(( _int_num * 60 ))
+      else
+        seconds="$_int_num"
+      fi
+      if (( seconds < 30 )); then
         echo "Ungültiges Intervall: $interval (mindestens 30s) — gültige Werte: 5m, 15m, 30m" >&2; exit 1
       fi
       _jq_tmp=$(mktemp) && jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
@@ -325,7 +338,9 @@ _cmd_watch() {
     sound=$(_cfgget watch.sound 2>/dev/null || true)
     volume=$(_cfgget watch.volume 2>/dev/null || true)
     if [[ -n "$sound" && -f "$sound" ]]; then
-      ( afplay -v "$(awk "BEGIN { printf \"%.2f\", ${volume:-50}/100 }")" "$sound" & ) 2>/dev/null
+      # Validate volume is numeric; pass as awk variable (not interpolated) to prevent injection
+      local _vol_safe="${volume:-50}"; [[ "$_vol_safe" =~ ^[0-9]+$ ]] || _vol_safe="50"
+      ( afplay -v "$(awk -v vol="$_vol_safe" 'BEGIN { printf "%.2f", vol/100 }')" "$sound" & ) 2>/dev/null
     fi
   }
 

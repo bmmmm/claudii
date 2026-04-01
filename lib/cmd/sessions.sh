@@ -1,6 +1,24 @@
 # lib/cmd/sessions.sh — session data commands (cost, sessions, sessions-inactive, smart default)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
+# Braille spinner shown on stderr while slow operations run.
+# ASCII fallback when TERM=dumb or LANG has no UTF.
+# Usage: _claudii_spinner & _sp=$! ; ... ; kill "$_sp" 2>/dev/null; wait "$_sp" 2>/dev/null; printf '\r   \r' >&2
+_claudii_spinner() {
+  local frames i=0
+  if [[ "${TERM:-}" == "dumb" ]] || ! echo "${LANG:-}" | grep -qi "utf"; then
+    frames=('|' '/' '-' '\')
+  else
+    frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  fi
+  local n=${#frames[@]}
+  while true; do
+    printf '\r%s ' "${frames[$((i % n))]}" >&2
+    sleep 0.1
+    (( ++i ))
+  done
+}
+
 # _cmd_cost_from_history — cost breakdown with correct daily deltas from history.tsv
 # Each session's cost on a given day = last_cost_that_day - last_cost_previous_day.
 # This avoids attributing multi-day sessions' full cost to their last active day.
@@ -318,6 +336,13 @@ _cmd_cost() {
     echo "-1"
   }
 
+  # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
+  _cost_spinner_pid=""
+  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+    _claudii_spinner &
+    _cost_spinner_pid=$!
+  fi
+
   for f in "${session_files[@]}"; do
     [[ -f "$f" ]] || continue
 
@@ -371,6 +396,12 @@ _cmd_cost() {
       _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))
     fi
   done
+
+  # Kill spinner and clear spinner line
+  if [[ -n "$_cost_spinner_pid" ]]; then
+    kill "$_cost_spinner_pid" 2>/dev/null; wait "$_cost_spinner_pid" 2>/dev/null || true
+    printf '\r   \r' >&2
+  fi
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON with today + alltime breakdown
@@ -546,6 +577,13 @@ _cmd_sessions() {
              _sf_fingerprint _sf_last_msg
   _sf_count=0
 
+  # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
+  _se_spinner_pid=""
+  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+    _claudii_spinner &
+    _se_spinner_pid=$!
+  fi
+
   shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
     [[ -f "$sf" ]] || continue
@@ -601,6 +639,12 @@ _cmd_sessions() {
     (( ++_sf_count ))
   done
   shopt -u nullglob
+
+  # Kill spinner and clear spinner line
+  if [[ -n "$_se_spinner_pid" ]]; then
+    kill "$_se_spinner_pid" 2>/dev/null; wait "$_se_spinner_pid" 2>/dev/null || true
+    printf '\r   \r' >&2
+  fi
 
   # Fallback 2 — batch lsof for active sessions still missing a project path.
   # Collects all ppids that need resolution, issues a single lsof call, then
