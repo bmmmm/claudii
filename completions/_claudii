@@ -75,6 +75,14 @@ _claudii() {
           _describe 'session-dashboard subcommand' dash_cmds
           ;;
 
+        sessions|se|ss)
+          local -a se_opts
+          se_opts=(
+            '--resume:Resume a session by ID (exec claude --resume <id>)'
+          )
+          _describe 'sessions option' se_opts
+          ;;
+
         cc-statusline|sessionline)
           local -a sl_opts
           sl_opts=(

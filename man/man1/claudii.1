@@ -457,12 +457,29 @@ Remove the CC-Statusline from
 List active and recent Claude Code sessions with model, context usage,
 cost, rate limits, worktree name, and agent context.
 Shows per-session details and an aggregate summary.
+A third line per session shows the fingerprint: top-5 files accessed via tool calls,
+formatted as
+.BR "name(N) name(N) ..."
+(omitted when no JSONL transcript is available).
 Sessions are detected from cache files written by the CC-Statusline handler.
 Supports
 .B \-\-json
-(array of session objects) and
+(array of session objects with
+.BR fingerprint " and " last_user_message
+fields) and
 .B \-\-tsv
 (tab-separated rows).
+.
+.TP
+.BI "sessions \-\-resume " id
+Resume a Claude Code session by ID.
+Equivalent to
+.BR "claude --resume " id .
+The session ID can be obtained from
+.B claudii se
+(shown as the first 8 characters of the session ID in the detail line).
+Alias:
+.BR "se --resume " id .
 .
 .TP
 .B sessions-inactive

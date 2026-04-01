@@ -349,3 +349,60 @@ assert_matches "cost (history): empty history → actionable message" "No histor
 
 rm -rf "$_COST_H_TMP"
 unset _COST_H_TMP _now_ts _today_ts _week_ts _old_ts cost_h_out cost_h_err cost_h_json cost_h_tsv cost_h_empty
+
+# ── _session_fingerprint — with and without JSONL ──────────────────────────
+_FP_TMP="$(mktemp -d)"
+_FP_PROJ="$_FP_TMP/.claude/projects/fp-project"
+mkdir -p "$_FP_PROJ"
+
+# JSONL with tool_input.file_path entries
+printf '%s\n' \
+  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
+  '{"type":"tool_use","name":"Edit","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
+  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/sessions.sh"}}' \
+  '{"type":"tool_use","name":"Write","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
+  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/bin/claudii"}}' \
+  > "$_FP_PROJ/fptest01.jsonl"
+
+_fp_result=$(bash -c '
+  CLAUDII_HOME="$1" HOME="$2"
+  source "$CLAUDII_HOME/lib/visual.sh"
+  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  _session_fingerprint fptest01
+' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
+
+assert_contains "_session_fingerprint: top file present" "statusline.zsh" "$_fp_result"
+assert_contains "_session_fingerprint: count in parens" "(3)" "$_fp_result"
+assert_contains "_session_fingerprint: second file present" "sessions.sh" "$_fp_result"
+
+# Empty JSONL — must return empty, no crash
+printf '' > "$_FP_PROJ/fptest02.jsonl"
+_fp_empty=$(bash -c '
+  CLAUDII_HOME="$1" HOME="$2"
+  source "$CLAUDII_HOME/lib/visual.sh"
+  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  _session_fingerprint fptest02
+' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
+assert_eq "_session_fingerprint: empty JSONL → empty output" "" "$_fp_empty"
+
+# No JSONL at all — must return empty, no crash
+_fp_none=$(bash -c '
+  CLAUDII_HOME="$1" HOME="$2"
+  source "$CLAUDII_HOME/lib/visual.sh"
+  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  _session_fingerprint nonexistent-session-id
+' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
+assert_eq "_session_fingerprint: no JSONL → empty output" "" "$_fp_none"
+
+rm -rf "$_FP_TMP"
+unset _FP_TMP _FP_PROJ _fp_result _fp_empty _fp_none
+
+# ── claudii se --resume flag: recognized, no 'Unknown command' ────────────
+# We cannot actually exec claude in tests, so verify the dispatch path
+# by testing that the flag is not treated as unknown.
+# We pass a fake session ID that doesn't exist so exec claude would fail —
+# but we only check that the dispatch reaches exec (not 'Unknown command').
+resume_out=$(bash "$CLAUDII_HOME/bin/claudii" se --resume fakeid123 2>&1 || true)
+assert_eq "se --resume: no 'Unknown command'" "0" \
+  "$(echo "$resume_out" | grep -c 'Unknown command' || true)"
+unset resume_out

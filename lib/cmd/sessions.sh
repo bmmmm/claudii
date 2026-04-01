@@ -633,7 +633,8 @@ _cmd_sessions() {
   # Collect all session data into parallel arrays
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
-             _sf_is_active _sf_age _sf_projpath _sf_sesname
+             _sf_is_active _sf_age _sf_projpath _sf_sesname \
+             _sf_fingerprint _sf_last_msg
   _sf_count=0
 
   shopt -s nullglob
@@ -665,7 +666,7 @@ _cmd_sessions() {
     _sf_age[$_sf_count]="$_PSC_age"
     _sf_is_active[$_sf_count]="$_PSC_is_active"
     # Resolve project path + session name from JSONL (only for pretty output)
-    if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+    if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
       _sf_sesname[$_sf_count]=$(_session_name "$_PSC_session_id")
       # Fallback: for active sessions with unknown session_id, try ppid cwd via lsof
@@ -677,9 +678,13 @@ _cmd_sessions() {
           _sf_projpath[$_sf_count]="$_ppid_cwd"
         fi
       fi
+      _sf_fingerprint[$_sf_count]=$(_session_fingerprint "$_PSC_session_id")
+      _sf_last_msg[$_sf_count]=$(_session_last_user_message "$_PSC_session_id")
     else
       _sf_projpath[$_sf_count]=""
       _sf_sesname[$_sf_count]=""
+      _sf_fingerprint[$_sf_count]=""
+      _sf_last_msg[$_sf_count]=""
     fi
     if [[ "$_PSC_is_active" -eq 1 ]]; then
       (( ++active ))
@@ -708,12 +713,15 @@ _cmd_sessions() {
         --arg agent "${_sf_agent[$_i]}" \
         --arg age "${_sf_age[$_i]}" \
         --arg status "${_sf_is_active[$_i]}" \
+        --arg fingerprint "${_sf_fingerprint[$_i]}" \
+        --arg last_user_message "${_sf_last_msg[$_i]}" \
         '{model:$model, ctx_pct:($ctx_pct|if .=="" then null else tonumber? end),
           cost:($cost|tonumber? // 0), rate_5h:($rate_5h|if .=="" then null else tonumber? end),
           rate_7d:($rate_7d|if .=="" then null else tonumber? end),
           reset_5h:($reset_5h|if .=="" then null else tonumber? end),
           session_id:$session_id, worktree:$worktree, agent:$agent,
-          age_seconds:($age|tonumber), status:$status}')
+          age_seconds:($age|tonumber), status:$status,
+          fingerprint:$fingerprint, last_user_message:$last_user_message}')
       _first=0
     done
     _json_arr+="]"
@@ -770,12 +778,15 @@ _cmd_sessions() {
       fi
     fi
     detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
-    if [[ -n "${_sf_sid[$_i]}" ]]; then
-      detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
-    else
-      detail+="  ${CLAUDII_CLR_DIM}(id unknown)${CLAUDII_CLR_RESET}"
+    [[ -n "${_sf_sid[$_i]}" ]] && detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
+    printf '%s\n' "$detail"
+
+    # Line 3: fingerprint (top-5 files accessed) — only when non-empty
+    if [[ -n "${_sf_fingerprint[$_i]}" ]]; then
+      printf "    ${CLAUDII_CLR_DIM}✦ %s${CLAUDII_CLR_RESET}\n" "${_sf_fingerprint[$_i]}"
     fi
-    printf '%s\n\n' "$detail"
+
+    printf '\n'
   done
 
   # Summary
