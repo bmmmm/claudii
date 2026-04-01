@@ -1,8 +1,7 @@
 # test_config.sh — config system E2E tests
 
 # Setup: use project-local temp config dir
-export XDG_CONFIG_HOME="$CLAUDII_HOME/tmp/test_config"
-rm -rf "$XDG_CONFIG_HOME/claudii"
+export XDG_CONFIG_HOME=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_config.XXXXXX")
 mkdir -p "$XDG_CONFIG_HOME/claudii"
 
 # config creates from defaults
@@ -86,6 +85,11 @@ assert_contains "config import rejects invalid JSON" "gültiges JSON" "$output"
 # config import — missing file rejected
 output=$(bash "$CLAUDII_HOME/bin/claudii" config import /nonexistent/file.json 2>&1 || true)
 assert_contains "config import rejects missing file" "nicht gefunden" "$output"
+
+# ── Hyphenated key regression (jq interprets '-' as subtraction without quoting) ──
+bash "$CLAUDII_HOME/bin/claudii" config set session-dashboard.enabled on >/dev/null 2>&1
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)
+assert_eq "config get/set hyphenated key (session-dashboard.enabled)" "on" "$output"
 
 # Reset config to clean state for theme tests
 bash "$CLAUDII_HOME/bin/claudii" config reset >/dev/null 2>&1

@@ -336,6 +336,9 @@ _cmd_watch() {
     local cache_dir="$1" pid_file="$2"
     local last_notified=0
 
+    # Clean up PID file on exit (signal or natural termination)
+    trap 'rm -f "$pid_file"' EXIT TERM INT HUP
+
     while true; do
       sleep 60
       local now
@@ -510,7 +513,7 @@ _cmd_doctor() {
     _dc_sf_mt=$(stat -f%m "$_dc_sf" 2>/dev/null || stat -c%Y "$_dc_sf" 2>/dev/null || echo 0)
     (( _dc_now - _dc_sf_mt < 86400 )) && continue
     [[ -n "$_dc_sf_ppid" ]] && kill -0 "$_dc_sf_ppid" 2>/dev/null && continue
-    (( _dc_stale++ ))
+    (( ++_dc_stale ))
   done
   if (( _dc_stale > 0 )); then
     _dc_s=""; (( _dc_stale != 1 )) && _dc_s="s"

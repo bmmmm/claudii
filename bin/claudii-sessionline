@@ -95,7 +95,9 @@ fi
 
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
 # Include ppid so dashboard can check if Claude process is still alive
+# Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
 _ppid="${PPID:-}"
+_tmp_session="${_session_file}.tmp.$$"
 { printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
   "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
@@ -110,7 +112,7 @@ _ppid="${PPID:-}"
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
   "project_path=$cwd" \
-  > "$_session_file"; } 2>/dev/null || true
+  > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
 # Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id

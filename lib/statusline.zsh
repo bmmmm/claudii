@@ -155,7 +155,7 @@ function _claudii_collect_sessions {
     _CLAUDII_SDASH_5HS+=("$s_5h")
     _CLAUDII_SDASH_R5HS+=("$s_r5h")
     [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && _best_r5h="$s_r5h"
-    (( _CLAUDII_SDASH_COUNT++ ))
+    (( ++_CLAUDII_SDASH_COUNT ))
   done
   # Backfill missing reset_5h — all sessions share the same account reset time
   if [[ -n "$_best_r5h" ]]; then

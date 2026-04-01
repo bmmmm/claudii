@@ -80,7 +80,9 @@ _claudii_log info "Fetching $COMPONENTS_URL"
 components_json=$(curl -sf --max-time 5 "$COMPONENTS_URL" 2>/dev/null) || {
   $quiet || echo -e "${YELLOW}claudii: Status-API nicht erreichbar${NC}" >&2
   _claudii_log warn "API unreachable — writing all-ok fallback"
-  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$CACHE_STATUS"
+  # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
+  _tmp_status="${CACHE_STATUS}.tmp.$$"
+  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
   exit 0
 }
 
@@ -115,7 +117,9 @@ esac
 
 if [[ "$service_level" == "ok" ]]; then
   _claudii_log info "All operational — skipping RSS fetch"
-  printf '%s=ok\n' "${MODELS[@]}" > "$CACHE_STATUS"
+  # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
+  _tmp_status="${CACHE_STATUS}.tmp.$$"
+  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
   _claudii_log info "Status: all ok"
   exit 0
 fi
@@ -154,6 +158,8 @@ done
 
 # ── Write cache ───────────────────────────────────────────────────────────────
 
+# Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
+_tmp_status="${CACHE_STATUS}.tmp.$$"
 {
   for model in "${MODELS[@]}"; do
     if $no_model_named || echo "$down_models" | grep -q " $model "; then
@@ -162,7 +168,7 @@ done
       printf '%s=ok\n' "$model"
     fi
   done
-} > "$CACHE_STATUS"
+} > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
 
 summary=""
 for m in "${MODELS[@]}"; do

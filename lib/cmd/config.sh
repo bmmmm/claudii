@@ -3,11 +3,26 @@
 
 _cmd_config() {
   _cfg_init
+
+  # Build a properly quoted jq path from a dotted key.
+  # Needed for keys with hyphens (e.g. "session-dashboard.enabled" → ."session-dashboard"."enabled")
+  # since jq parses ."session-dashboard" as ."session" - "dashboard" (subtraction).
+  _build_jq_path() {
+    local key="$1" _jp="" _seg
+    local _IFS_OLD="$IFS"
+    IFS='.' read -ra _segs <<< "$key"
+    IFS="$_IFS_OLD"
+    for _seg in "${_segs[@]}"; do
+      _jp+='."'"$_seg"'"'
+    done
+    echo "$_jp"
+  }
+
   case "${2:-}" in
     get)
       key="${3:?Usage: claudii config get <key>}"
       _validate_key "$key" || exit 1
-      jq_path=".$key"
+      jq_path=$(_build_jq_path "$key")
       val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
       [[ -z "$val" ]] && val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
       echo "$val"
@@ -16,7 +31,7 @@ _cmd_config() {
       key="${3:?Usage: claudii config set <key> <value>}"
       _validate_key "$key" || exit 1
       value="${4:?Usage: claudii config set <key> <value>}"
-      jq_path=".$key"
+      jq_path=$(_build_jq_path "$key")
       if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
         _jq_tmp=$(mktemp) && jq --argjson v "$value" "$jq_path = \$v" "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       else

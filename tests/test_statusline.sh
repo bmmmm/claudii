@@ -1,12 +1,10 @@
 # test_statusline.sh — statusline rendering for all scenarios
 # Simulates per-model status cache and verifies output
 
-TEST_TMP="$CLAUDII_HOME/tmp/test_statusline"
-rm -rf "$TEST_TMP"
+TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_statusline.XXXXXX")
 mkdir -p "$TEST_TMP/cache" "$TEST_TMP/config/claudii"
 # Empty ZDOTDIR prevents loading user's .zshenv/.zshrc in all zsh subprocesses
-ZDOTDIR_EMPTY="$CLAUDII_HOME/tmp/test_zdotdir_empty"
-mkdir -p "$ZDOTDIR_EMPTY"
+ZDOTDIR_EMPTY=$(mktemp -d "${TMPDIR:-/tmp}/claudii_zdotdir.XXXXXX")
 export XDG_CONFIG_HOME="$TEST_TMP/config"
 export CLAUDII_CACHE_DIR="$TEST_TMP/cache"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
@@ -140,8 +138,7 @@ assert_eq "statusline can be disabled" "false" "$output"
 
 # ── zsh integration: call real _claudii_statusline function ──
 
-ZSH_TMP="$CLAUDII_HOME/tmp/test_statusline_zsh"
-rm -rf "$ZSH_TMP"
+ZSH_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_statusline_zsh.XXXXXX")
 mkdir -p "$ZSH_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$ZSH_TMP/config/claudii/config.json"
 
@@ -225,7 +222,7 @@ job_leak=$(
     _claudii_statusline
     # Wait for background job to finish — 'done' notification appears on next
     # prompt after job exit, so we must still be in the shell when it completes
-    sleep 3
+    sleep 1
   " 2>&1 | grep -E '^\[[0-9]+\]' || true
 )
 assert_eq "zsh -i: no [N] job notification (start or done)" "" "$job_leak"
@@ -236,8 +233,7 @@ assert_eq "zsh -i: no [N] job notification (start or done)" "" "$job_leak"
 # We use a sentinel PID that is guaranteed to be gone: spawn a subshell, grab
 # its PID, let it exit, then use that dead PID.
 _dead_pid=$(bash -c 'echo $$' 2>/dev/null)
-SESSION_BAR_TMP="$CLAUDII_HOME/tmp/test_statusline_sessionbar"
-rm -rf "$SESSION_BAR_TMP"
+SESSION_BAR_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_statusline_sessionbar.XXXXXX")
 mkdir -p "$SESSION_BAR_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$SESSION_BAR_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SESSION_BAR_TMP/status-models"
@@ -344,8 +340,7 @@ rm -rf "$SESSION_BAR_TMP"
 
 # ── Conditional rendering tests ──
 
-COND_TMP="$CLAUDII_HOME/tmp/test_statusline_cond"
-rm -rf "$COND_TMP"
+COND_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_statusline_cond.XXXXXX")
 mkdir -p "$COND_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$COND_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$COND_TMP/status-models"

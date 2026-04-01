@@ -245,7 +245,7 @@ function clh {
   local alias_list=($(jq -r '.aliases | keys[]' "$CLAUDII_CONFIG" 2>/dev/null))
   local total=${#alias_list[@]} i=0
   for a in "${alias_list[@]}"; do
-    (( i++ ))
+    (( ++i ))
     printf '  │ %-5s │ %-6s │ %-6s │ %-26s │\n' \
       "$a" "$(claudii_config_get aliases.$a.model)" \
       "$(claudii_config_get aliases.$a.effort)" \

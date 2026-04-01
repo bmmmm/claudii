@@ -779,7 +779,7 @@ _cmd_default() {
       else
         (( ++_ov_inactive_count ))
         if (( _PSC_age >= 86400 )); then
-          [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null && (( _ov_stale++ ))
+          [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null && (( ++_ov_stale ))
         fi
       fi
     done
