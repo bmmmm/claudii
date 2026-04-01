@@ -141,6 +141,13 @@ _run_single_test() {
   ) > "$out_file" 2>&1
 }
 
+# Parse --for flag: only run test files that touch the given source file
+_for_file=""
+if [[ "${1:-}" == "--for" && -n "${2:-}" ]]; then
+  _for_file="$2"
+  shift 2
+fi
+
 # Run tests
 if [[ -n "${1:-}" ]]; then
   # Run specific test file — inline (no parallelization)
@@ -156,6 +163,10 @@ else
 
   for test_file in "$TESTS_DIR"/test_*.sh; do
     [[ -f "$test_file" ]] || continue
+    # Skip files that don't touch the requested source file
+    if [[ -n "$_for_file" ]]; then
+      grep -qE "^# touches:.*(^|[[:space:]])${_for_file}([[:space:]]|$)" "$test_file" 2>/dev/null || continue
+    fi
     _base=$(basename "$test_file" .sh)
     _out_file="$_out_dir/${_base}.out"
     _out_files+=("$_out_file")

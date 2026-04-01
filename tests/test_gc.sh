@@ -1,3 +1,4 @@
+# touches: lib/cmd/sessions.sh claudii.plugin.zsh
 # test_gc.sh — session cache GC function tests
 
 # Setup: isolated cache dir in project tmp/

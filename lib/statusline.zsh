@@ -12,6 +12,10 @@ typeset -g _CLAUDII_DOLLAR='$'
 # Set to 1 by se/si/sessions commands — suppresses session dashboard for that cycle
 typeset -gi _CLAUDII_SHOWED_SESSIONS=0
 typeset -g _CLAUDII_LAST_CMD=""
+# PID of the last background status-fetch job — used to skip redundant spawns
+typeset -g _CLAUDII_STATUS_PID=""
+# Set while _claudii_statusline is executing — reentrancy guard
+typeset -g _CLAUDII_PRECMD_RUNNING=""
 
 function _claudii_preexec {
   _CLAUDII_CMD_RAN=1
@@ -24,6 +28,9 @@ function TRAPWINCH {
 }
 
 function _claudii_statusline {
+  # Reentrancy guard — skip if already running
+  [[ -n "${_CLAUDII_PRECMD_RUNNING:-}" ]] && return
+  typeset -g _CLAUDII_PRECMD_RUNNING=1
   local _t=$EPOCHREALTIME
   _claudii_statusline_render
   local _el=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
@@ -31,6 +38,7 @@ function _claudii_statusline {
   _CLAUDII_METRICS[precmd.calls]=$(( ${_CLAUDII_METRICS[precmd.calls]:-0} + 1 ))
   _CLAUDII_METRICS[precmd.total_us]=$(( ${_CLAUDII_METRICS[precmd.total_us]:-0} + _el ))
   _claudii_log debug "precmd: $(_claudii_fmt_us $_el)"
+  typeset -g _CLAUDII_PRECMD_RUNNING=
 }
 
 function _claudii_statusline_render {
@@ -45,7 +53,12 @@ function _claudii_statusline_render {
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
 
   if [[ ! -f "$status_cache" ]]; then
-    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+    # Skip spawn if a previous fetch is still running
+    kill -0 "${_CLAUDII_STATUS_PID:-}" 2>/dev/null || {
+      "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
+      typeset -g _CLAUDII_STATUS_PID=$!
+      disown "$_CLAUDII_STATUS_PID" 2>/dev/null
+    }
     RPROMPT="%F{8}[…]%f"; return
   fi
 
@@ -61,7 +74,12 @@ function _claudii_statusline_render {
 
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
-    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+    # Skip spawn if a previous fetch is still running
+    kill -0 "${_CLAUDII_STATUS_PID:-}" 2>/dev/null || {
+      "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
+      typeset -g _CLAUDII_STATUS_PID=$!
+      disown "$_CLAUDII_STATUS_PID" 2>/dev/null
+    }
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"

@@ -323,7 +323,7 @@ case "${1:-}" in
 
   # Unknown
   *)
-    echo "Unknown command: $1"
+    echo "Unknown command: $1 — run 'claudii help' for available commands" >&2
     usage; exit 1
     ;;
 esac

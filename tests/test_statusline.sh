@@ -1,3 +1,4 @@
+# touches: lib/statusline.zsh lib/visual.sh
 # test_statusline.sh — statusline rendering for all scenarios
 # Simulates per-model status cache and verifies output
 
@@ -551,3 +552,66 @@ rm -rf "$ZSH_TMP"
 # Cleanup test config (keep status cache for live statusline)
 rm -rf "$TEST_TMP"
 unset XDG_CONFIG_HOME
+
+# ── Reentrancy guard: second call while first is running → skipped ────────────
+REENT_TMP="$CLAUDII_HOME/tmp/test_statusline_reent"
+rm -rf "$REENT_TMP"
+mkdir -p "$REENT_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$REENT_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$REENT_TMP/status-models"
+
+reent_out=$(
+  CLAUDII_CACHE_DIR="$REENT_TMP" XDG_CONFIG_HOME="$REENT_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    # Simulate reentrancy: set the guard as if a call is already in progress
+    _CLAUDII_PRECMD_RUNNING=1
+    # Call must return immediately without updating RPROMPT
+    RPROMPT='ORIGINAL'
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_eq "reentrancy guard: second call skipped, RPROMPT unchanged" "ORIGINAL" "$reent_out"
+
+# Guard clears after normal call completes
+reent_clear=$(
+  CLAUDII_CACHE_DIR="$REENT_TMP" XDG_CONFIG_HOME="$REENT_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    # After normal call, guard must be cleared so next call can proceed
+    printf '%s' \"\${_CLAUDII_PRECMD_RUNNING:-CLEARED}\"
+  " 2>/dev/null
+)
+assert_eq "reentrancy guard: cleared after normal call completes" "CLEARED" "$reent_clear"
+
+rm -rf "$REENT_TMP"
+unset REENT_TMP reent_out reent_clear
+
+# ── Background PID guard: no second spawn while first is running ──────────────
+PID_TMP="$CLAUDII_HOME/tmp/test_statusline_pid"
+rm -rf "$PID_TMP"
+mkdir -p "$PID_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$PID_TMP/config/claudii/config.json"
+
+# Simulate a still-running background job: use $$ (test runner's PID) as live PID.
+# Pass it via env var so both the assertion and the zsh subprocess use the same value.
+_TEST_LIVE_PID=$$
+pid_guard_out=$(
+  CLAUDII_CACHE_DIR="$PID_TMP" XDG_CONFIG_HOME="$PID_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  _TEST_LIVE_PID="$_TEST_LIVE_PID" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    # No cache file → would normally trigger a background spawn
+    # Set _CLAUDII_STATUS_PID to a live PID to suppress the spawn
+    _CLAUDII_STATUS_PID=\"\$_TEST_LIVE_PID\"
+    _claudii_statusline
+    printf '%s' \"\$_CLAUDII_STATUS_PID\"
+  " 2>/dev/null
+)
+# PID must be unchanged — no new spawn happened
+assert_eq "PID guard: no new spawn when previous fetch still running" "$_TEST_LIVE_PID" "$pid_guard_out"
+
+rm -rf "$PID_TMP"
+unset PID_TMP pid_guard_out _TEST_LIVE_PID

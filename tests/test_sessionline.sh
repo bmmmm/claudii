@@ -1,3 +1,4 @@
+# touches: bin/claudii-sessionline
 # test_sessionline.sh — in-session statusline rendering
 
 SL="$CLAUDII_HOME/bin/claudii-sessionline"

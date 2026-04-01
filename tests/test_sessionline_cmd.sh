@@ -1,3 +1,4 @@
+# touches: bin/claudii lib/cmd/system.sh
 # test_sessionline_cmd.sh — claudii sessionline on/off/status E2E tests
 
 TEST_TMP="$CLAUDII_HOME/tmp/test_sessionline_cmd"

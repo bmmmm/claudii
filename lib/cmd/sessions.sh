@@ -584,15 +584,7 @@ _cmd_sessions() {
         (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
         _sf_projpath[$_sf_count]="$_ppath"
       fi
-      # Fallback 2: for active sessions still missing path, try ppid cwd via lsof
-      if [[ -z "${_sf_projpath[$_sf_count]}" && "$_PSC_is_active" -eq 1 && -n "$_PSC_ppid" ]]; then
-        _ppid_cwd=$(lsof -p "$_PSC_ppid" -d cwd -Fn 2>/dev/null | awk '/^n/{sub(/^n/,"");print;exit}' || true)
-        if [[ -n "$_ppid_cwd" ]]; then
-          _ppid_cwd="${_ppid_cwd/#$HOME/\~}"
-          (( ${#_ppid_cwd} > 40 )) && _ppid_cwd="...${_ppid_cwd: -37}"
-          _sf_projpath[$_sf_count]="$_ppid_cwd"
-        fi
-      fi
+      # Fallback 2: collected post-loop for batch lsof (see below)
       _sf_fingerprint[$_sf_count]=$(_session_fingerprint "$_PSC_session_id")
       _sf_last_msg[$_sf_count]=$(_session_last_user_message "$_PSC_session_id")
     else
@@ -609,6 +601,52 @@ _cmd_sessions() {
     (( ++_sf_count ))
   done
   shopt -u nullglob
+
+  # Fallback 2 — batch lsof for active sessions still missing a project path.
+  # Collects all ppids that need resolution, issues a single lsof call, then
+  # assigns results back. Skipped for json/tsv output (no path needed there).
+  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+    _lsof_ppids=()
+    _lsof_idx=()
+    for (( _i=0; _i<_sf_count; _i++ )); do
+      if [[ -z "${_sf_projpath[$_i]}" && "${_sf_is_active[$_i]}" -eq 1 \
+            && -n "${_sf_ppid[$_i]}" ]]; then
+        _lsof_ppids+=("${_sf_ppid[$_i]}")
+        _lsof_idx+=("$_i")
+      fi
+    done
+    if [[ ${#_lsof_ppids[@]} -gt 0 ]]; then
+      # Build pid→cwd map from a single lsof invocation.
+      # Output format: pPID\nnPATH\npPID\nnPATH...
+      _lsof_pids_map=()
+      _lsof_cwd_map=()
+      _lsof_pid_list="$(IFS=,; echo "${_lsof_ppids[*]}")"
+      while IFS= read -r _lsof_line; do
+        case "$_lsof_line" in
+          p*) _lsof_cur_pid="${_lsof_line#p}" ;;
+          n*) _lsof_pids_map+=("$_lsof_cur_pid")
+              _lsof_cwd_map+=("${_lsof_line#n}")
+              ;;
+        esac
+      done < <(lsof -p "$_lsof_pid_list" -d cwd -Fn 2>/dev/null || true)
+      # Assign resolved paths back to the session array
+      for (( _j=0; _j<${#_lsof_idx[@]}; _j++ )); do
+        _target_pid="${_sf_ppid[${_lsof_idx[$_j]}]}"
+        for (( _k=0; _k<${#_lsof_pids_map[@]}; _k++ )); do
+          if [[ "${_lsof_pids_map[$_k]}" == "$_target_pid" ]]; then
+            _raw_cwd="${_lsof_cwd_map[$_k]}"
+            _short_cwd="${_raw_cwd/#$HOME/\~}"
+            (( ${#_short_cwd} > 40 )) && _short_cwd="...${_short_cwd: -37}"
+            _sf_projpath[${_lsof_idx[$_j]}]="$_short_cwd"
+            break
+          fi
+        done
+      done
+      unset _lsof_pids_map _lsof_cwd_map _lsof_pid_list _lsof_cur_pid \
+            _lsof_line _target_pid _raw_cwd _short_cwd _j _k
+    fi
+    unset _lsof_ppids _lsof_idx
+  fi
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON array from collected data

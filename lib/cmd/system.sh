@@ -46,7 +46,7 @@ _cmd_claudestatus() {
       fi
       ;;
     *)
-      echo "Usage: claudii claudestatus [on|off]"; exit 1
+      echo "Usage: claudii claudestatus [on|off] — run 'claudii claudestatus on' or 'claudii claudestatus off'" >&2; exit 1
       ;;
   esac
 }
@@ -85,7 +85,7 @@ _cmd_status() {
       interval="${2:-}"
       [[ "$interval" == *m ]] && seconds=$(( ${interval%m} * 60 )) || seconds="$interval"
       if ! [[ "$seconds" =~ ^[0-9]+$ ]] || (( seconds < 30 )); then
-        echo "Ungültiges Intervall: $interval (mindestens 30s)"; exit 1
+        echo "Ungültiges Intervall: $interval (mindestens 30s) — gültige Werte: 5m, 15m, 30m" >&2; exit 1
       fi
       _jq_tmp=$(mktemp) && jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
       echo "Refresh-Intervall: ${interval} (${seconds}s)"
@@ -245,8 +245,7 @@ _cmd_status() {
       fi
       ;;
     *)
-      echo "Unbekannte status-Option: ${2}"
-      echo "Usage: claudii status [5m|15m|30m]"; exit 1
+      echo "Unbekannte status-Option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval" >&2; exit 1
       ;;
   esac
 }
@@ -256,7 +255,7 @@ _cmd_cc_statusline() {
   case "${2:-}" in
     on)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Fehler: $SETTINGS nicht gefunden — ist Claude Code installiert?"; exit 1
+        echo "Fehler: $SETTINGS nicht gefunden — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
       if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
         echo -e "${CLAUDII_CLR_CYAN}CC-Statusline bereits aktiv${CLAUDII_CLR_RESET}"
@@ -267,7 +266,7 @@ _cmd_cc_statusline() {
       ;;
     off)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Fehler: $SETTINGS nicht gefunden"; exit 1
+        echo "Fehler: $SETTINGS nicht gefunden — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
       if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
         _jq_tmp=$(mktemp) && jq 'del(.statusLine)' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
@@ -303,9 +302,7 @@ _cmd_update() {
     echo "claudii: Git install detected"
     git -C "$CLAUDII_HOME" pull --ff-only
   else
-    echo "claudii: cannot determine install method"
-    echo "  Homebrew: brew upgrade claudii"
-    echo "  Git:      cd $CLAUDII_HOME && git pull"
+    echo "claudii: cannot determine install method — try: brew upgrade claudii  or  cd $CLAUDII_HOME && git pull" >&2
     exit 1
   fi
   printf "${CLAUDII_CLR_GREEN}✓ Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
@@ -426,7 +423,7 @@ _cmd_watch() {
       else
         vol="${3}"
         if ! [[ "$vol" =~ ^[0-9]+$ ]] || (( vol < 0 || vol > 100 )); then
-          echo "Invalid volume: $vol (must be 0-100)"; exit 1
+          echo "Invalid volume: $vol — valid values: 0-100 (e.g. claudii watch volume 75)" >&2; exit 1
         fi
         _jq_tmp=$(mktemp) && jq --argjson v "$vol" '.watch.volume = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
         echo "watch.volume: $vol"
@@ -452,7 +449,7 @@ _cmd_watch() {
       fi
       ;;
     *)
-      echo "Usage: claudii watch [start|stop|status|test|volume|sound]"; exit 1
+      echo "Usage: claudii watch [start|stop|status|test|volume|sound] — run 'claudii watch start' to begin watching" >&2; exit 1
       ;;
   esac
 }

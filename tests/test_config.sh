@@ -1,3 +1,4 @@
+# touches: lib/cmd/config.sh bin/claudii
 # test_config.sh — config system E2E tests
 
 # Setup: use project-local temp config dir

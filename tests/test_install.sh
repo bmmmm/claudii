@@ -1,3 +1,4 @@
+# touches: install.sh uninstall.sh bin/claudii lib/cmd/system.sh
 # test_install.sh — install/uninstall E2E tests (uses isolated temp dirs)
 
 TEST_TMP="$CLAUDII_HOME/tmp/test_install"

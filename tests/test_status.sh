@@ -1,3 +1,4 @@
+# touches: bin/claudii-status
 # test_status.sh — status checker E2E tests
 
 # Setup: test config so models are well-known and controllable

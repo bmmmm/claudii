@@ -1,3 +1,4 @@
+# touches: man/man1/claudii.1 completions/_claudii bin/claudii
 # test_docs.sh — man page + autocomplete stay in sync with bin/claudii
 
 MAN="$CLAUDII_HOME/man/man1/claudii.1"

@@ -54,8 +54,8 @@ _cmd_config() {
       ;;
     import)
       file="${3:?Usage: claudii config import <file>}"
-      [[ -f "$file" ]] || { echo "Datei nicht gefunden: $file"; exit 1; }
-      jq '.' "$file" >/dev/null 2>&1 || { echo "Kein gültiges JSON: $file"; exit 1; }
+      [[ -f "$file" ]] || { echo "Datei nicht gefunden: $file — Hinweis: Pfad prüfen" >&2; exit 1; }
+      jq '.' "$file" >/dev/null 2>&1 || { echo "Kein gültiges JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
       cp "$CONFIG" "${CONFIG}.bak"
       cp "$file" "$CONFIG"
       echo "Config importiert aus $file  (Backup: ${CONFIG}.bak)"
