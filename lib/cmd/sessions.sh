@@ -34,15 +34,22 @@ _cmd_cost_from_history() {
   # epoch_to_date() works on BSD awk (macOS) + GNU awk — no strftime needed.
   local _augmented
   _augmented=$(awk -F'\t' '
+    function is_leap(y,    l) {
+      l = 0
+      if (y % 4 == 0) l = 1
+      if (y % 100 == 0) l = 0
+      if (y % 400 == 0) l = 1
+      return l
+    }
     function epoch_to_date(ts,    days, y, leap, m, mdays) {
       days = int(ts / 86400)
       y = 1970
       for (;;) {
-        leap = ((y % 400 == 0) || (y % 4 == 0 && y % 100 != 0)) ? 1 : 0
+        leap = is_leap(y)
         if (days < 365 + leap) break
         days -= 365 + leap; y++
       }
-      leap = ((y % 400 == 0) || (y % 4 == 0 && y % 100 != 0)) ? 1 : 0
+      leap = is_leap(y)
       split("31 " (28+leap) " 31 30 31 30 31 31 30 31 30 31", mdays, " ")
       for (m = 1; m <= 12; m++) { if (days < mdays[m]) break; days -= mdays[m] }
       return sprintf("%04d-%02d-%02d", y, m, days + 1)
@@ -92,18 +99,30 @@ _cmd_cost_from_history() {
       day = $1; model = $2; cost = $3 + 0; sid = $4
       if (sid == "" || day == "") next
       key = sid SUBSEP day
-      if (!(key in last_cost)) {
-        last_cost[key] = cost
-        sid_model[key] = model
-        if (!(sid SUBSEP day in sid_has_day)) {
-          sid_day_list[sid] = (sid in sid_day_list) ? (sid_day_list[sid] " " day) : day
-          sid_has_day[sid SUBSEP day] = 1
+
+      # running_spend[sid]: cumulative spend from first observation.
+      # Increments on cost increases; on reset (cost drops) adds the new post-reset cost
+      # as fresh spend. This correctly accounts for intra-day resets (e.g. context compaction).
+      if (sid in sid_baseline) {
+        prev = sid_baseline[sid]
+        if (cost > prev) {
+          running_spend[sid] += cost - prev
+        } else if (cost < prev) {
+          running_spend[sid] += cost  # reset: full post-reset value counts as new spend
         }
-        all_sids[sid] = 1
-      } else if (cost > last_cost[key]) {
-        last_cost[key] = cost
-        sid_model[key] = model
+      } else {
+        running_spend[sid] = cost  # first row: treat starting cost as spend (like prev=0)
       }
+      sid_baseline[sid] = cost
+
+      # Record running_spend snapshot at end of each (session, day)
+      day_spend[key] = running_spend[sid]
+      sid_model[key] = model
+      if (!(sid SUBSEP day in sid_has_day)) {
+        sid_day_list[sid] = (sid in sid_day_list) ? (sid_day_list[sid] " " day) : day
+        sid_has_day[sid SUBSEP day] = 1
+      }
+      all_sids[sid] = 1
     }
     END {
       for (sid in all_sids) {
@@ -112,15 +131,15 @@ _cmd_cost_from_history() {
         for (i = 1; i <= n; i++)
           for (j = i + 1; j <= n; j++)
             if (days_arr[i] > days_arr[j]) { tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp }
-        prev_cost = 0
+        prev_spend = 0
         for (i = 1; i <= n; i++) {
           d = days_arr[i]
           k = sid SUBSEP d
-          c = (k in last_cost) ? last_cost[k] : 0
-          delta = c - prev_cost
-          if (delta < 0) delta = 0
+          cur_spend = (k in day_spend) ? day_spend[k] : 0
+          delta = cur_spend - prev_spend
+          if (delta < 0) delta = 0  # safety net: running_spend is monotone, should not happen
           m = (k in sid_model) ? sid_model[k] : "?"
-          prev_cost = c
+          prev_spend = cur_spend
           all_models[m] = 1
           alltime_cost[m] += delta; alltime_sessions[m]++
           if (d == today)      { today_cost[m] += delta; today_sessions[m]++ }

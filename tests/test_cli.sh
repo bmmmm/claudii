@@ -308,9 +308,10 @@ else
 fi
 
 # Write history.tsv: timestamp<tab>model<tab>cost<tab>ctx<tab>rate<tab>session_id
+# Entries must be in chronological order (ascending ts) — running_spend depends on order.
 printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "$(( _today_ts - 60 ))	claude-sonnet-4-5	10.00	45	25	sid-today-sonnet" \
   "${_today_ts}	claude-sonnet-4-5	12.40	50	30	sid-today-sonnet" \
-  "${_today_ts}	claude-sonnet-4-5	10.00	45	25	sid-today-sonnet" \
   "${_week_ts}	claude-opus-4-5	8.50	60	40	sid-week-opus" \
   "${_old_ts}	claude-sonnet-4-5	25.00	70	50	sid-old-sonnet" \
   > "$_COST_H_TMP/history.tsv"
@@ -324,7 +325,7 @@ assert_contains "cost (history): shows Week header" "Week" "$cost_h_out"
 assert_contains "cost (history): shows Months header" "Months" "$cost_h_out"
 assert_contains "cost (history): shows Years header" "Years" "$cost_h_out"
 assert_contains "cost (history): shows Sonnet" "Sonnet" "$cost_h_out"
-assert_contains "cost (history): shows today cost 12.40 (deduped max)" "12.40" "$cost_h_out"
+assert_contains "cost (history): shows today cost 12.40" "12.40" "$cost_h_out"
 assert_no_literal_ansi "cost (history): no literal \\033 in output" "$cost_h_out"
 
 # --json output
@@ -383,14 +384,14 @@ assert_eq "cost (history): Opus today = 3.00" "3.0000" "$_opus_today"
 _sonnet_alltime=$(echo "$_cost_hist_tsv" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
 assert_eq "cost (history): Sonnet alltime = 8.50" "8.5000" "$_sonnet_alltime"
 
-# Same-day dedup: two entries for sid-today-sonnet → max=12.40, delta=12.40 (no prev day)
+# Same-day running_spend: two entries for sid-today-sonnet (10.00 → 12.40) → delta=12.40 (no prev day)
 printf '%s\tclaude-sonnet-4-5\t10.00\t45\t25\tsid-today-sonnet\n' "$(( _cost_now - 100 ))" \
   > "$_COST_HIST_TMP/history.tsv"
 printf '%s\tclaude-sonnet-4-5\t12.40\t50\t30\tsid-today-sonnet\n' "$_cost_now" \
   >> "$_COST_HIST_TMP/history.tsv"
 _cost_dedup_tsv=$(CLAUDII_CACHE_DIR="$_COST_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 _sonnet_dedup=$(echo "$_cost_dedup_tsv" | awk -F'\t' '$1=="today" && $2=="Sonnet" {print $3}')
-assert_eq "cost (history): same-day dedup max 12.40 (not 10.00)" "12.4000" "$_sonnet_dedup"
+assert_eq "cost (history): same-day running_spend 12.40 (10.00→12.40)" "12.4000" "$_sonnet_dedup"
 
 rm -rf "$_COST_HIST_TMP"
 unset _COST_HIST_TMP _cost_now _cost_today _cost_yest_ts
