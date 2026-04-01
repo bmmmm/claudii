@@ -295,6 +295,15 @@ _cmd_sessions() {
     if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
       _sf_sesname[$_sf_count]=$(_session_name "$_PSC_session_id")
+      # Fallback: for active sessions with unknown session_id, try ppid cwd via lsof
+      if [[ -z "${_sf_projpath[$_sf_count]}" && "$_PSC_is_active" -eq 1 && -n "$_PSC_ppid" ]]; then
+        _ppid_cwd=$(lsof -p "$_PSC_ppid" -d cwd -Fn 2>/dev/null | awk '/^n/{sub(/^n/,"");print;exit}' || true)
+        if [[ -n "$_ppid_cwd" ]]; then
+          _ppid_cwd="${_ppid_cwd/#$HOME/\~}"
+          (( ${#_ppid_cwd} > 40 )) && _ppid_cwd="...${_ppid_cwd: -37}"
+          _sf_projpath[$_sf_count]="$_ppid_cwd"
+        fi
+      fi
     else
       _sf_projpath[$_sf_count]=""
       _sf_sesname[$_sf_count]=""
@@ -360,8 +369,12 @@ _cmd_sessions() {
     _render_age "${_sf_age[$_i]}"
 
     # Line 1: status indicator + model + project path + session name + metadata
-    line="  ${status_icon} ${CLAUDII_CLR_BOLD}${_sf_model[$_i]:-?}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_projpath[$_i]}" ]] && line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
+    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_sf_model[$_i]:-?}${CLAUDII_CLR_RESET}"
+    if [[ -n "${_sf_projpath[$_i]}" ]]; then
+      line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
+    else
+      line+="  ${CLAUDII_CLR_DIM}(path unknown)${CLAUDII_CLR_RESET}"
+    fi
     [[ -n "${_sf_sesname[$_i]}" ]]  && line+="  ${CLAUDII_CLR_DIM}\"${_sf_sesname[$_i]}\"${CLAUDII_CLR_RESET}"
     [[ -n "${_sf_worktree[$_i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[wt:${_sf_worktree[$_i]}]${CLAUDII_CLR_RESET}"
     [[ -n "${_sf_agent[$_i]}" ]]    && line+=" ${CLAUDII_CLR_DIM}[agent:${_sf_agent[$_i]}]${CLAUDII_CLR_RESET}"
@@ -384,7 +397,11 @@ _cmd_sessions() {
       fi
     fi
     detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_sid[$_i]}" ]] && detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
+    if [[ -n "${_sf_sid[$_i]}" ]]; then
+      detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
+    else
+      detail+="  ${CLAUDII_CLR_DIM}(id unknown)${CLAUDII_CLR_RESET}"
+    fi
     printf '%s\n\n' "$detail"
   done
 
