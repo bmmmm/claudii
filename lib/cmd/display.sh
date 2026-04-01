@@ -62,6 +62,13 @@ _cmd_trends() {
     [[ "$_wd" == "$today_str" ]] && break
   done
 
+  # Show spinner for pretty output (not JSON/TSV — those are piped)
+  _trends_spinner_pid=""
+  if ! _plain; then
+    _claudii_spinner &
+    _trends_spinner_pid=$!
+  fi
+
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names
   # Use a while loop (portable across macOS/GNU date)
   _trends_augmented=$(
@@ -82,6 +89,12 @@ _cmd_trends() {
       printf '%s\t%s\t%s\t%s\n' "$_t_day" "$_t_short" "$cost" "$sid"
     done < "$history_file"
   )
+
+  # Kill spinner before output
+  if [[ -n "$_trends_spinner_pid" ]]; then
+    kill "$_trends_spinner_pid" 2>/dev/null; wait "$_trends_spinner_pid" 2>/dev/null || true
+    printf '\r\033[K' >&2
+  fi
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   echo "$_trends_augmented" | awk -F'\t' \

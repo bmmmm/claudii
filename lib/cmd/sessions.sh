@@ -1,21 +1,40 @@
 # lib/cmd/sessions.sh — session data commands (cost, sessions, sessions-inactive, smart default)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
-# Braille spinner shown on stderr while slow operations run.
+# Full-width scrolling wave shown on stderr while slow operations run.
 # ASCII fallback when TERM=dumb or LANG has no UTF.
-# Usage: _claudii_spinner & _sp=$! ; ... ; kill "$_sp" 2>/dev/null; wait "$_sp" 2>/dev/null; printf '\r   \r' >&2
+# Usage: _claudii_spinner & _sp=$! ; ... ; kill "$_sp" 2>/dev/null; wait "$_sp" 2>/dev/null; printf '\r\033[K' >&2
 _claudii_spinner() {
-  local frames i=0
-  if [[ "${TERM:-}" == "dumb" ]] || ! echo "${LANG:-}" | grep -qi "utf"; then
-    frames=('|' '/' '-' '\')
-  else
-    frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  trap 'printf "\r\033[K" >&2' EXIT
+  trap 'exit 0' TERM
+
+  local cols="${COLUMNS:-80}"
+
+  if [[ "${TERM:-}" == "dumb" ]] || ! printf '%s' "${LANG:-}" | grep -qi "utf"; then
+    local frames=('|' '/' '-' '\') i=0
+    while true; do
+      printf '\r%s ' "${frames[$((i % 4))]}" >&2
+      sleep 0.1
+      (( ++i ))
+    done
+    return
   fi
-  local n=${#frames[@]}
+
+  # Full-width wave: Unicode block-element hill scrolling left-to-right
+  local dim="${CLAUDII_CLR_DIM:-}" reset="${CLAUDII_CLR_RESET:-}"
+  local wave='▁▂▃▄▅▆▇█▇▆▅▄▃▂▁ '  # 16 chars: hill shape + space gap
+  local wlen=16
+  # Pre-build a repeating pattern long enough to slice cols chars at any offset
+  local pattern=''
+  while (( ${#pattern} < cols + wlen )); do
+    pattern+="$wave"
+  done
+
+  local i=0
   while true; do
-    printf '\r%s ' "${frames[$((i % n))]}" >&2
-    sleep 0.1
-    (( ++i ))
+    printf '\r%s%s%s' "$dim" "${pattern:$i:$cols}" "$reset" >&2
+    sleep 0.08
+    i=$(( (i + 1) % wlen ))
   done
 }
 
@@ -421,7 +440,7 @@ _cmd_cost() {
   # Kill spinner and clear spinner line
   if [[ -n "$_cost_spinner_pid" ]]; then
     kill "$_cost_spinner_pid" 2>/dev/null; wait "$_cost_spinner_pid" 2>/dev/null || true
-    printf '\r   \r' >&2
+    printf '\r\033[K' >&2
   fi
 
   if [[ "$_FORMAT" == "json" ]]; then
@@ -664,7 +683,7 @@ _cmd_sessions() {
   # Kill spinner and clear spinner line
   if [[ -n "$_se_spinner_pid" ]]; then
     kill "$_se_spinner_pid" 2>/dev/null; wait "$_se_spinner_pid" 2>/dev/null || true
-    printf '\r   \r' >&2
+    printf '\r\033[K' >&2
   fi
 
   # Fallback 2 — batch lsof for active sessions still missing a project path.
