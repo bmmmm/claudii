@@ -288,3 +288,61 @@ assert_contains "claudii se: shows project path" "se-test-project" "$_se_out"
 
 rm -rf "$_SE_TMP"
 unset _SE_TMP _SE_XDG _SE_CACHE _SE_PROJ _se_out _se_exit
+
+# ── cost (history): daily delta — multi-day session attribution ───────────────
+# Scenario A — multi-day Sonnet session:
+#   yesterday: cost=5.00 → delta yesterday=5.00
+#   today:     cost=8.50 → delta today=8.50-5.00=3.50
+# Scenario B — single-day Opus session today: cost=3.00 → delta=3.00
+# Using --tsv output to check per-model values without ANSI interference.
+#
+# Expected TSV today: Sonnet 3.50 (1 session), Opus 3.00 (1 session)
+# Expected TSV alltime: Sonnet 8.50 (2 sessions), Opus 3.00 (1 session)
+# Bug before fix: Sonnet today would show 8.50 instead of 3.50.
+_COST_HIST_TMP="$(mktemp -d)"
+_cost_now=$(date +%s)
+_cost_today=$(date '+%Y-%m-%d')
+_cost_yest_ts=$(( _cost_now - 86400 ))
+
+# Scenario A: multi-day Sonnet session
+printf '%s\tclaude-sonnet-4-5\t5.00\t50\t30\tsid-multiday\n' "$_cost_yest_ts" \
+  > "$_COST_HIST_TMP/history.tsv"
+printf '%s\tclaude-sonnet-4-5\t8.50\t60\t35\tsid-multiday\n' "$_cost_now" \
+  >> "$_COST_HIST_TMP/history.tsv"
+# Scenario B: single-day Opus session today
+printf '%s\tclaude-opus-4-5\t3.00\t40\t20\tsid-opus-today\n' "$_cost_now" \
+  >> "$_COST_HIST_TMP/history.tsv"
+
+_cost_hist_tsv=$(CLAUDII_CACHE_DIR="$_COST_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+
+# Today: Sonnet delta = 3.50 (not 8.50 — delta fix)
+_sonnet_today=$(echo "$_cost_hist_tsv" | awk -F'\t' '$1=="today" && $2=="Sonnet" {print $3}')
+assert_eq "cost (history): Sonnet today = 3.50 delta (not 8.50)" "3.5000" "$_sonnet_today"
+# Today: Opus = 3.00
+_opus_today=$(echo "$_cost_hist_tsv" | awk -F'\t' '$1=="today" && $2=="Opus" {print $3}')
+assert_eq "cost (history): Opus today = 3.00" "3.0000" "$_opus_today"
+# Alltime: Sonnet = 8.50 (full session value)
+_sonnet_alltime=$(echo "$_cost_hist_tsv" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
+assert_eq "cost (history): Sonnet alltime = 8.50" "8.5000" "$_sonnet_alltime"
+
+# Same-day dedup: two entries for sid-today-sonnet → max=12.40, delta=12.40 (no prev day)
+printf '%s\tclaude-sonnet-4-5\t10.00\t45\t25\tsid-today-sonnet\n' "$(( _cost_now - 100 ))" \
+  > "$_COST_HIST_TMP/history.tsv"
+printf '%s\tclaude-sonnet-4-5\t12.40\t50\t30\tsid-today-sonnet\n' "$_cost_now" \
+  >> "$_COST_HIST_TMP/history.tsv"
+_cost_dedup_tsv=$(CLAUDII_CACHE_DIR="$_COST_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+_sonnet_dedup=$(echo "$_cost_dedup_tsv" | awk -F'\t' '$1=="today" && $2=="Sonnet" {print $3}')
+assert_eq "cost (history): same-day dedup max 12.40 (not 10.00)" "12.4000" "$_sonnet_dedup"
+
+rm -rf "$_COST_HIST_TMP"
+unset _COST_HIST_TMP _cost_now _cost_today _cost_yest_ts
+unset _cost_hist_tsv _cost_dedup_tsv _sonnet_today _opus_today _sonnet_alltime _sonnet_dedup
+
+# ── cost (history): falls back gracefully when no history.tsv ────────────────
+# When history.tsv is absent, cost must fall through to session-cache files or
+# show "No session data found." — must not crash or produce a bash error.
+_COST_NOHIST_TMP="$(mktemp -d)"
+_cost_nohist_out=$(CLAUDII_CACHE_DIR="$_COST_NOHIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
+assert_matches "cost (no history): shows no-data message" "No session|keine" "$_cost_nohist_out"
+rm -rf "$_COST_NOHIST_TMP"
+unset _COST_NOHIST_TMP _cost_nohist_out
