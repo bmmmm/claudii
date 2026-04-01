@@ -288,3 +288,64 @@ assert_contains "claudii se: shows project path" "se-test-project" "$_se_out"
 
 rm -rf "$_SE_TMP"
 unset _SE_TMP _SE_XDG _SE_CACHE _SE_PROJ _se_out _se_exit
+
+# ── claudii cost — history.tsv path ──────────────────────────────────────────
+# Build a minimal history.tsv: today session + one from this week + one older month
+
+_COST_H_TMP="$(mktemp -d)"
+
+# Compute timestamps using portable macOS/GNU date
+_now_ts=$(date +%s)
+if date -j -f '%s' "$_now_ts" '+%Y-%m-%d' >/dev/null 2>&1; then
+  _today_ts=$_now_ts
+  _week_ts=$(( _now_ts - 86400 ))          # yesterday (same week unless Mon)
+  _old_ts=$(( _now_ts - 40 * 86400 ))      # ~40 days ago — different month
+else
+  _today_ts=$_now_ts
+  _week_ts=$(( _now_ts - 86400 ))
+  _old_ts=$(( _now_ts - 40 * 86400 ))
+fi
+
+# Write history.tsv: timestamp<tab>model<tab>cost<tab>ctx<tab>rate<tab>session_id
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_today_ts}	claude-sonnet-4-5	12.40	50	30	sid-today-sonnet" \
+  "${_today_ts}	claude-sonnet-4-5	10.00	45	25	sid-today-sonnet" \
+  "${_week_ts}	claude-opus-4-5	8.50	60	40	sid-week-opus" \
+  "${_old_ts}	claude-sonnet-4-5	25.00	70	50	sid-old-sonnet" \
+  > "$_COST_H_TMP/history.tsv"
+
+cost_h_out=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+cost_h_err=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 >/dev/null)
+
+assert_eq "cost (history): no errors on stderr" "" "$cost_h_err"
+assert_contains "cost (history): shows Today header" "Today" "$cost_h_out"
+assert_contains "cost (history): shows Week header" "Week" "$cost_h_out"
+assert_contains "cost (history): shows Months header" "Months" "$cost_h_out"
+assert_contains "cost (history): shows Years header" "Years" "$cost_h_out"
+assert_contains "cost (history): shows Sonnet" "Sonnet" "$cost_h_out"
+assert_contains "cost (history): shows today cost 12.40 (deduped max)" "12.40" "$cost_h_out"
+assert_no_literal_ansi "cost (history): no literal \\033 in output" "$cost_h_out"
+
+# --json output
+cost_h_json=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
+assert_contains "cost (history) --json: has today key" '"today"' "$cost_h_json"
+assert_contains "cost (history) --json: has week key"  '"week"'  "$cost_h_json"
+assert_contains "cost (history) --json: has months key" '"months"' "$cost_h_json"
+assert_contains "cost (history) --json: has years key"  '"years"'  "$cost_h_json"
+assert_eq "cost (history) --json: valid JSON" "0" \
+  "$(echo "$cost_h_json" | jq . >/dev/null 2>&1; echo $?)"
+
+# --tsv output
+cost_h_tsv=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+assert_contains "cost (history) --tsv: has header" "period	model	cost" "$cost_h_tsv"
+assert_contains "cost (history) --tsv: has today row" "today" "$cost_h_tsv"
+assert_contains "cost (history) --tsv: has month row" "month" "$cost_h_tsv"
+
+# Empty history.tsv (header only) → shows no-data message, no crash
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  > "$_COST_H_TMP/history.tsv"
+cost_h_empty=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
+assert_matches "cost (history): empty history → actionable message" "No history|No session|keine" "$cost_h_empty"
+
+rm -rf "$_COST_H_TMP"
+unset _COST_H_TMP _now_ts _today_ts _week_ts _old_ts cost_h_out cost_h_err cost_h_json cost_h_tsv cost_h_empty
