@@ -908,7 +908,9 @@ _cmd_sessions() {
     fi
     printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
   fi
-  printf '\n\n'
+  printf '\n'
+  printf "  ${CLAUDII_CLR_DIM}● active  ○ ended  ✦ file(N) = most-read files · N = access count  ·  cost = session total  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
+  printf '\n'
 }
 
 _cmd_default() {
