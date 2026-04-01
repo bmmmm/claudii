@@ -23,9 +23,15 @@ _claudii_spinner() {
 _claudii_spinner_ascii() {
   trap 'printf "\r\033[K" >&2' EXIT
   trap 'exit 0' TERM
-  local frames=('|' '/' '-' '\') i=0
+  local frames=('|' '/' '-' '\') i=0 _label
   while true; do
-    printf '\r%s Loading %s' "${frames[$((i % 4))]}" "${frames[$((i % 4))]}" >&2
+    _label="Loading"
+    if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
+      { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
+      if [[ -z "$_label" ]]; then _label="Loading"
+      elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
+    fi
+    printf '\r%s %s %s' "${frames[$((i % 4))]}" "$_label" "${frames[$((i % 4))]}" >&2
     sleep 0.1
     (( ++i ))
   done
@@ -55,10 +61,17 @@ _claudii_spinner_beam() {
   local nc=6 pd=2   # nc = number of color phases, pd = beam delay in frames
 
   local braille=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local nb=10        # braille cycle length
-  local i=0
+  local nb=10 i=0 _label  # braille cycle length
 
   while true; do
+    # Dynamic label: file path being processed, or "Loading" as fallback
+    _label="Loading"
+    if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
+      { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
+      if [[ -z "$_label" ]]; then _label="Loading"
+      elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
+    fi
+
     # Color indices: left at i%nc, right at (i + nc - pd) % nc
     local li=$(( i % nc ))
     local ri=$(( (i + nc - pd) % nc ))
@@ -73,7 +86,7 @@ _claudii_spinner_beam() {
     local bl="${braille[$((i % nb))]}"
     local br="${braille[$(( (i + nb / 2) % nb ))]}"
 
-    printf '\r%s%s%s Loading %s%s%s' "$cl" "$bl" "$reset" "$cr" "$br" "$reset" >&2
+    printf '\r%s%s%s %s %s%s%s' "$cl" "$bl" "$reset" "$_label" "$cr" "$br" "$reset" >&2
     sleep 0.1
     (( ++i ))
   done

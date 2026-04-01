@@ -64,8 +64,11 @@ _cmd_trends() {
   done
 
   # Show spinner for pretty output (not JSON/TSV — those are piped)
-  _trends_spinner_pid=""
+  _trends_spinner_pid="" _claudii_spinner_label_file=""
   if ! _plain; then
+    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
+    printf '%s' "${history_file/#$HOME/\~}" > "$_claudii_spinner_label_file"
     _claudii_spinner &
     _trends_spinner_pid=$!
   fi
@@ -108,6 +111,9 @@ _cmd_trends() {
   if [[ -n "$_trends_spinner_pid" ]]; then
     kill "$_trends_spinner_pid" 2>/dev/null; wait "$_trends_spinner_pid" 2>/dev/null || true
     printf '\r\033[K' >&2
+  fi
+  if [[ -n "$_claudii_spinner_label_file" ]]; then
+    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
   fi
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting

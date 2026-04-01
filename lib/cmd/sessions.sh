@@ -383,7 +383,20 @@ _cmd_cost() {
   history_file="$cache_dir/history.tsv"
   if [[ -f "$history_file" && -s "$history_file" ]]; then
     today_str=$(TZ=UTC date '+%Y-%m-%d')  # UTC — must match epoch_to_date() in awk
+    _hist_spinner_pid="" _hist_label_file=""
+    if ! _plain; then
+      _hist_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+      export CLAUDII_SPINNER_LABEL_FILE="$_hist_label_file"
+      printf '%s' "${history_file/#$HOME/\~}" > "$_hist_label_file"
+      _claudii_spinner &
+      _hist_spinner_pid=$!
+    fi
     _cmd_cost_from_history "$history_file" "$today_str"
+    if [[ -n "$_hist_spinner_pid" ]]; then
+      kill "$_hist_spinner_pid" 2>/dev/null; wait "$_hist_spinner_pid" 2>/dev/null || true
+      printf '\r\033[K' >&2
+      rm -f "$_hist_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
+    fi
     return
   fi
 
@@ -422,14 +435,17 @@ _cmd_cost() {
   }
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
-  _cost_spinner_pid=""
-  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+  _cost_spinner_pid="" _claudii_spinner_label_file=""
+  if ! _plain; then
+    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
     _claudii_spinner &
     _cost_spinner_pid=$!
   fi
 
   for f in "${session_files[@]}"; do
     [[ -f "$f" ]] || continue
+    [[ -n "$_claudii_spinner_label_file" ]] && printf '%s' "${f/#$HOME/\~}" > "$_claudii_spinner_label_file"
 
     # Read key=value pairs
     cost="" model=""
@@ -486,6 +502,9 @@ _cmd_cost() {
   if [[ -n "$_cost_spinner_pid" ]]; then
     kill "$_cost_spinner_pid" 2>/dev/null; wait "$_cost_spinner_pid" 2>/dev/null || true
     printf '\r\033[K' >&2
+  fi
+  if [[ -n "$_claudii_spinner_label_file" ]]; then
+    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
   fi
 
   if [[ "$_FORMAT" == "json" ]]; then
@@ -663,8 +682,10 @@ _cmd_sessions() {
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
-  _se_spinner_pid=""
-  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
+  _se_spinner_pid="" _claudii_spinner_label_file=""
+  if ! _plain; then
+    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
     _claudii_spinner &
     _se_spinner_pid=$!
   fi
@@ -672,6 +693,7 @@ _cmd_sessions() {
   shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
     [[ -f "$sf" ]] || continue
+    [[ -n "$_claudii_spinner_label_file" ]] && printf '%s' "${sf/#$HOME/\~}" > "$_claudii_spinner_label_file"
     _parse_session_cache "$sf"
 
     # Accumulate cost
@@ -729,6 +751,9 @@ _cmd_sessions() {
   if [[ -n "$_se_spinner_pid" ]]; then
     kill "$_se_spinner_pid" 2>/dev/null; wait "$_se_spinner_pid" 2>/dev/null || true
     printf '\r\033[K' >&2
+  fi
+  if [[ -n "$_claudii_spinner_label_file" ]]; then
+    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
   fi
 
   # Fallback 2 — batch lsof for active sessions still missing a project path.
