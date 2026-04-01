@@ -34,3 +34,13 @@ done
 # Removed commands must NOT appear as implemented commands
 assert_eq "toggle removed from bin/claudii" "" \
   "$(grep -E '^\s+toggle\)' "$CLI" || true)"
+
+# ── Static lint: (( var++ )) regression ─────────────────────────────────────
+# Regression: standalone post-increment (( var++ )) exits 1 under set -e when
+# var==0 on bash 5.x (Ubuntu CI). All occurrences must use pre-increment (( ++var )).
+# Excludes for-loop increments: for (( i=0; i<n; i++ )) — those are safe.
+_lint_postinc=$(grep -rn '^\s*(( [a-zA-Z_][a-zA-Z_0-9]* *++ ))' \
+  "$CLAUDII_HOME/lib/" "$CLAUDII_HOME/bin/claudii" 2>/dev/null || true)
+assert_eq "lint: no standalone (( var++ )) post-increments in lib/ or bin/claudii" \
+  "" "$_lint_postinc"
+unset _lint_postinc

@@ -491,3 +491,16 @@ assert_eq "spinner: --json output is valid JSON (no spinner chars mixed in)" "0"
 
 rm -rf "$_SP_TMP"
 unset _SP_TMP _SP_XDG _SP_CACHE _sp_stdout _sp_cost_stdout _sp_json
+
+# ── _cfgget regression: hyphenated config keys ───────────────────────────────
+# Regression: _cfgget must handle keys with hyphens (e.g. session-dashboard.enabled).
+# Bug was: jq path "."session-dashboard"."enabled"" parsed as subtraction → empty result.
+_CFGGET_TMP="$(mktemp -d)"
+mkdir -p "$_CFGGET_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_CFGGET_TMP/claudii/config.json"
+_cgval_hyph=$(XDG_CONFIG_HOME="$_CFGGET_TMP" bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)
+assert_eq "cfgget: hyphenated key session-dashboard.enabled returns default" "off" "$_cgval_hyph"
+_cgval_dot=$(XDG_CONFIG_HOME="$_CFGGET_TMP" bash "$CLAUDII_HOME/bin/claudii" config get statusline.enabled 2>&1)
+assert_eq "cfgget: dot key statusline.enabled returns default" "true" "$_cgval_dot"
+rm -rf "$_CFGGET_TMP"
+unset _CFGGET_TMP _cgval_hyph _cgval_dot
