@@ -490,13 +490,17 @@ Alias:
 .
 .TP
 .B cost
-Aggregate session costs from the session cache.
-Shows a per-model breakdown and total for today (sessions written in the last 24 hours)
-and all time.
-Session cache files are read from
-.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/session-*"
-(overrideable via
-.BR CLAUDII_CACHE_DIR ).
+Aggregate session costs with correct daily attribution.
+When the Flight Recorder history file
+.RI ( history.tsv )
+exists, costs are computed as daily deltas per session:
+the cost attributed to each day equals the last recorded cost on that day
+minus the last recorded cost on the previous day for the same session.
+This ensures multi-day sessions are split correctly across days rather
+than attributing the full cumulative cost to a single day.
+Falls back to session cache files
+.RI ( session-* )
+when no history exists yet.
 Supports
 .B \-\-json
 (object with today/alltime breakdown) and

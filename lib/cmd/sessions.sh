@@ -1,17 +1,204 @@
 # lib/cmd/sessions.sh — session data commands (cost, sessions, sessions-inactive, smart default)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
+# _cmd_cost_from_history — cost breakdown with correct daily deltas from history.tsv
+# Each session's cost on a given day = last_cost_that_day - last_cost_previous_day.
+# This avoids attributing multi-day sessions' full cost to their last active day.
+_cmd_cost_from_history() {
+  local history_file="$1"  # path to history.tsv
+  local today_str="$2"     # YYYY-MM-DD for "today" cutoff
+
+  # Step 1: Convert timestamps → YYYY-MM-DD, normalize model names.
+  # Output: day TAB short_model TAB cost TAB sid
+  # Note: _augment_history_line is a named function to avoid bash 3.2 case-in-$() parsing bug.
+  local _date_cmd="gnu"
+  date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1 && _date_cmd="macos"
+
+  _augment_history_line() {
+    local ts="$1" _h_model="$2" cost="$3" sid="$4" _date_cmd="$5"
+    local _h_day _h_short
+    [[ -z "$ts" || "$ts" == "timestamp" ]] && return
+    [[ -z "$sid" ]] && return
+    if [[ "$_date_cmd" == "macos" ]]; then
+      _h_day=$(date -j -f '%s' "$ts" '+%Y-%m-%d' 2>/dev/null) || return
+    else
+      _h_day=$(date -d "@$ts" '+%Y-%m-%d' 2>/dev/null) || return
+    fi
+    case "$_h_model" in
+      *[Oo]pus*)   _h_short="Opus"   ;;
+      *[Ss]onnet*) _h_short="Sonnet" ;;
+      *[Hh]aiku*)  _h_short="Haiku"  ;;
+      *)           _h_short="$_h_model" ;;
+    esac
+    printf '%s\t%s\t%s\t%s\n' "$_h_day" "$_h_short" "$cost" "$sid"
+  }
+
+  local _augmented
+  _augmented=$(
+    while IFS=$'\t' read -r ts _h_model cost _ctx _rate sid; do
+      _augment_history_line "$ts" "$_h_model" "$cost" "$sid" "$_date_cmd"
+    done < "$history_file"
+  )
+
+  # Step 2: awk computes per-day deltas per session, then aggregates by period.
+  # Periods: "today" (day == today_str) and "alltime".
+  # sid_day_list[sid] = space-separated list of unique days (for iteration)
+  # last_cost[sid SUBSEP day] = max cost seen for that session on that day
+  # sid_model[sid SUBSEP day] = model for that (session, day)
+  echo "$_augmented" | awk -F'\t' \
+    -v today="$today_str" \
+    -v fmt="${_FORMAT:-}" \
+    -v cyan="$CLAUDII_CLR_CYAN" \
+    -v dim="$CLAUDII_CLR_DIM" \
+    -v pink="$CLAUDII_CLR_ACCENT" \
+    -v reset="$CLAUDII_CLR_RESET" \
+    '
+    {
+      day = $1; model = $2; cost = $3 + 0; sid = $4
+      if (sid == "" || day == "") next
+
+      # Per (sid, day): keep the highest cost seen
+      key = sid SUBSEP day
+      if (!(key in last_cost)) {
+        last_cost[key] = cost
+        sid_model[key] = model
+        # Track day in per-sid list (sid_has_day guards duplicates)
+        if (!(sid SUBSEP day in sid_has_day)) {
+          sid_day_list[sid] = (sid in sid_day_list) ? (sid_day_list[sid] " " day) : day
+          sid_has_day[sid SUBSEP day] = 1
+        }
+        all_sids[sid] = 1
+      } else if (cost > last_cost[key]) {
+        last_cost[key] = cost
+        sid_model[key] = model
+      }
+    }
+    END {
+      # For each session: sort its days, compute deltas, accumulate per period
+      for (sid in all_sids) {
+        # Split per-sid day list and sort
+        n = split(sid_day_list[sid], days_arr, " ")
+        # Bubble sort (sessions typically span a handful of days; YYYY-MM-DD sorts lexically)
+        for (i = 1; i <= n; i++) {
+          for (j = i + 1; j <= n; j++) {
+            if (days_arr[i] > days_arr[j]) {
+              tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp
+            }
+          }
+        }
+        prev_cost = 0
+        for (i = 1; i <= n; i++) {
+          d = days_arr[i]
+          k = sid SUBSEP d
+          c = (k in last_cost) ? last_cost[k] : 0
+          delta = c - prev_cost
+          if (delta < 0) delta = 0  # guard against out-of-order writes
+          m = (k in sid_model) ? sid_model[k] : "?"
+          prev_cost = c
+
+          # Accumulate: alltime
+          alltime_cost[m] += delta
+          alltime_sessions[m]++
+
+          # Accumulate: today
+          if (d == today) {
+            today_cost[m] += delta
+            today_sessions[m]++
+          }
+        }
+      }
+
+      # Collect model list (union of today + alltime keys)
+      for (m in alltime_cost) models[m] = 1
+      for (m in today_cost)   models[m] = 1
+
+      # --- JSON output ---
+      if (fmt == "json") {
+        printf "{"
+        printf "\"today\":{"
+        first = 1
+        for (m in models) {
+          if (!(m in today_cost) || today_sessions[m] == 0) continue
+          if (!first) printf ","
+          printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, today_cost[m], today_sessions[m]
+          first = 0
+        }
+        printf "},\"alltime\":{"
+        first = 1
+        for (m in models) {
+          if (!(m in alltime_cost)) continue
+          if (!first) printf ","
+          printf "\"%s\":{\"cost\":%.4f,\"sessions\":%d}", m, alltime_cost[m], alltime_sessions[m]
+          first = 0
+        }
+        printf "}}\n"
+        exit
+      }
+
+      # --- TSV output ---
+      if (fmt == "tsv") {
+        printf "period\tmodel\tcost\tsessions\n"
+        for (m in models) {
+          if (m in today_cost && today_sessions[m] > 0)
+            printf "today\t%s\t%.4f\t%d\n", m, today_cost[m], today_sessions[m]
+          if (m in alltime_cost)
+            printf "alltime\t%s\t%.4f\t%d\n", m, alltime_cost[m], alltime_sessions[m]
+        }
+        exit
+      }
+
+      # --- Pretty output ---
+      line = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
+
+      printf "\n"
+      printf "  %sToday%s\n", pink, reset
+      total = 0; has = 0
+      for (m in models) {
+        if (!(m in today_cost) || today_sessions[m] == 0) continue
+        n = today_sessions[m]; s = (n != 1) ? "s" : ""
+        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, today_cost[m], reset, n, s
+        total += today_cost[m]; has = 1
+      }
+      if (has) {
+        printf "%s\n", line
+        printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset
+      } else {
+        printf "    (none)\n"
+      }
+
+      printf "\n"
+      printf "  %sAll time%s\n", pink, reset
+      total = 0; has = 0
+      for (m in models) {
+        if (!(m in alltime_cost)) continue
+        n = alltime_sessions[m]; s = (n != 1) ? "s" : ""
+        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, alltime_cost[m], reset, n, s
+        total += alltime_cost[m]; has = 1
+      }
+      if (has) {
+        printf "%s\n", line
+        printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset
+      } else {
+        printf "    (none)\n"
+      }
+      printf "\n"
+    }
+    '
+}
+
 _cmd_cost() {
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  history_file="$cache_dir/history.tsv"
 
-  # ── history.tsv path: Today / Week / Months / Years ───────────────────────
+  # Prefer history.tsv (Flight Recorder) for correct daily-delta cost attribution.
+  # Falls back to session-cache files when no history exists yet.
+  history_file="$cache_dir/history.tsv"
   if [[ -f "$history_file" && -s "$history_file" ]]; then
-    _cmd_cost_from_history "$history_file"
+    today_str=$(date '+%Y-%m-%d')
+    _cmd_cost_from_history "$history_file" "$today_str"
     return
   fi
 
-  # ── Fallback: legacy cache-file based code ─────────────────────────────────
+
   shopt -s nullglob
   session_files=("$cache_dir"/session-*)
   shopt -u nullglob
