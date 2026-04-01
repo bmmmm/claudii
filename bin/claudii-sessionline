@@ -19,7 +19,7 @@ _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
-  cache_read cache_create worktree_name agent_name model_id <<< "$(
+  cache_read cache_create worktree_name agent_name model_id cwd <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -39,8 +39,9 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.context_window.current_usage.cache_creation_input_tokens // "" | tostring),
     (.workspace.name // .worktree.name // .workspace.worktree_name // ""),
     (.agent.name // .agent_name // ""),
-    (.model.id // "")
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.model.id // ""),
+    (.cwd // .workspace.cwd // .workspace.path // "")
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Cache hit percentage — computed from cache_read vs input tokens
@@ -108,6 +109,7 @@ _ppid="${PPID:-}"
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
+  "project_path=$cwd" \
   > "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update

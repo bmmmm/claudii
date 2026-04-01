@@ -669,7 +669,13 @@ _cmd_sessions() {
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
       _sf_sesname[$_sf_count]=$(_session_name "$_PSC_session_id")
-      # Fallback: for active sessions with unknown session_id, try ppid cwd via lsof
+      # Fallback 1: project_path written directly by sessionline (agents without session_id)
+      if [[ -z "${_sf_projpath[$_sf_count]}" && -n "$_PSC_project_path" ]]; then
+        _ppath="${_PSC_project_path/#$HOME/\~}"
+        (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
+        _sf_projpath[$_sf_count]="$_ppath"
+      fi
+      # Fallback 2: for active sessions still missing path, try ppid cwd via lsof
       if [[ -z "${_sf_projpath[$_sf_count]}" && "$_PSC_is_active" -eq 1 && -n "$_PSC_ppid" ]]; then
         _ppid_cwd=$(lsof -p "$_PSC_ppid" -d cwd -Fn 2>/dev/null | awk '/^n/{sub(/^n/,"");print;exit}' || true)
         if [[ -n "$_ppid_cwd" ]]; then

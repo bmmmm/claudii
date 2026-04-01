@@ -196,7 +196,7 @@ _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
-  _PSC_model_id= _PSC_burn_eta= _PSC_rate_5h_start=
+  _PSC_model_id= _PSC_burn_eta= _PSC_rate_5h_start= _PSC_project_path=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
@@ -215,6 +215,7 @@ _parse_session_cache() {
       model_id)       _PSC_model_id="$_v" ;;
       burn_eta)       _PSC_burn_eta="$_v" ;;
       rate_5h_start)  _PSC_rate_5h_start="$_v" ;;
+      project_path)   _PSC_project_path="$_v" ;;
     esac
   done < "$1"
   if stat -f %m "$1" >/dev/null 2>&1; then
