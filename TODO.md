@@ -6,6 +6,29 @@
 
 ## Pending
 
+### Audit: Code Quality, Bugs & Performance — Opus Review
+
+**Type: Audit + Fix**
+**Complexity: Medium**
+**Model: Opus**
+**Touches: `bin/claudii`, `bin/claudii-sessionline`, `lib/cmd/sessions.sh`, `lib/cmd/system.sh`, `lib/statusline.zsh`, `lib/visual.sh`**
+
+Tiefer Audit durch Opus — kein Feature, nur Qualität.
+
+**Scope:**
+- **Code Quality:** Doppelter Code, unklare Variablennamen, inkonsistente Patterns, fehlende Guards
+- **Bugs:** Edge Cases die Tests nicht abdecken — leere Felder, unerwartete jq-Outputs, Race Conditions in Cache-Writes, set -e Fallstricke in Arithmetic
+- **Performance:** Unnötige Subshells, mehrfache jq-Aufrufe wo einer reicht, teure lsof-Aufrufe in Hot Paths (`_cmd_sessions` ruft lsof pro Session)
+- **Security:** Command Injection Risiken, unquoted Variablen in eval-ähnlichen Kontexten
+
+- **Test Coverage:** Code-Paths identifizieren die von keinem Test abgedeckt sind — nicht 100% Coverage anstreben, sondern gezielt: welche Edge Cases können in Produktion knallen? Fehlende Tests für die kritischsten Paths hinzufügen.
+- **Error Messages:** Alle `echo "Error/No/..."` und `exit 1`-Stellen prüfen — sind sie actionable? Per CLAUDE.md-Regel: nie "Error: unknown" ohne Hinweis was zu tun ist. Blinde Fehlermeldungen durch konkrete Handlungsanweisungen ersetzen.
+- **Race Conditions:** Cache-Files ohne Locking gleichzeitig von mehreren Sessions schreiben (`claudii-sessionline` + `claudii watch` + manueller Aufruf) — atomare Writes fehlen. Background-Job-Akkumulation in `precmd`: wenn Hook langsam ist und Shell schnell tippt, stapeln sich Jobs. `precmd`-Reentranz: kein Guard gegen parallele Invocations. `watch`-Mode: kein Exit-Guard bei Signal — kann als Zombie weiterlaufen.
+
+**Output:** Konkrete Fixes mit Begründung — kein Refactoring um des Refactorings willen. Jede Änderung braucht einen nachvollziehbaren Grund. Tests müssen danach grün bleiben.
+
+---
+
 ### Bug: `claudii cost` — Kosten falsch periodenzugeordnet (kein Tages-Delta)
 
 **Type: Bug**
@@ -42,6 +65,7 @@ Aktuell parallelisiert der Orchestrator nach Gefühl → Merge-Konflikte wenn zw
 1. `**Touches:**`-Felder aus TODO-Items lesen vor Parallelisierung
 2. Überlappende Touches → seriell; disjunkte Touches → parallel auf **eigenen Branches**
 3. Merge nach jeder Welle seriell durch Orchestrator
+4. **Dead-Loop-Schutz:** Agent darf keinen weiteren Orchestrator spawnen (Agent → Orchestrator → Agent → … ist ein unbegrenzter Baum). Fix: Jeder Agent-Prompt muss explizit enthalten: "Do not invoke /orchestrate or spawn sub-agents." Env-Variablen funktionieren nicht — Agent-Tool-Spawns erben keine Shell-Environment vom Parent.
 
 ---
 
