@@ -84,11 +84,11 @@ _cmd_cost_from_history() {
     {
       ts = $1 + 0; if (ts == 0) next
       day = epoch_to_date(ts)
-      model = $2; cost = $3 + 0; sid = $6
+      model = $2; cost = $3 + 0; sid = $6; raw = $2
       if      (model ~ /[Oo]pus/)   model = "Opus"
       else if (model ~ /[Ss]onnet/) model = "Sonnet"
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
-      print day "\t" model "\t" cost "\t" sid
+      print day "\t" model "\t" cost "\t" sid "\t" raw
     }
   ' "$history_file")
 
@@ -122,9 +122,14 @@ _cmd_cost_from_history() {
     -v reset="$CLAUDII_CLR_RESET" \
     '
     {
-      day = $1; model = $2; cost = $3 + 0; sid = $4
+      day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
       if (sid == "" || day == "") next
       key = sid SUBSEP day
+
+      # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
+      if (raw != "" && (!(model in model_display) || \
+          (index(raw, ".") > 0 && index(model_display[model], ".") == 0)))
+        model_display[model] = raw
 
       # running_spend[sid]: cumulative spend from first observation.
       # Increments on cost increases; on reset (cost drops) adds the new post-reset cost
@@ -174,7 +179,7 @@ _cmd_cost_from_history() {
           month_cost[m SUBSEP mon_key] += delta; month_sessions[m SUBSEP mon_key]++
           all_months[mon_key] = 1
           yr_key = substr(d, 1, 4)
-          year_cost[m SUBSEP yr_key] += delta
+          year_cost[m SUBSEP yr_key] += delta; year_sessions[m SUBSEP yr_key]++
           all_years[yr_key] = 1
         }
       }
@@ -288,7 +293,29 @@ _cmd_cost_from_history() {
       # --- Pretty output ---
       line = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
 
+      # Fixed display order for all per-model loops below
+      split("Opus Sonnet Haiku", _mo, " ")
+
+      # Legend: show which model families appear in the data, with abbreviation and version
+      legend = ""
+      for (mi = 1; mi <= 3; mi++) {
+        m = _mo[mi]
+        if (m in all_models) {
+          disp = (m in model_display) ? model_display[m] : m
+          if (legend != "") legend = legend "  \302\267  "
+          legend = legend "(" substr(m, 1, 1) ") " disp
+        }
+      }
+      for (m in all_models) {
+        if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+          disp = (m in model_display) ? model_display[m] : m
+          if (legend != "") legend = legend "  \302\267  "
+          legend = legend "(" substr(m, 1, 1) ") " disp
+        }
+      }
+
       printf "\n"
+      if (legend != "") { printf "  %s%s%s\n\n", dim, legend, reset }
       printf "  %sToday%s\n", pink, reset
       total = 0; has = 0
       for (m in all_models) {
@@ -316,9 +343,36 @@ _cmd_cost_from_history() {
       printf "  %sMonths%s\n", pink, reset
       for (i = 1; i <= n_mon; i++) {
         mk = mon_keys[i]
-        total = 0; has = 0
-        for (m in all_models) { k = m SUBSEP mk; if (k in month_cost) { total += month_cost[k]; has = 1 } }
-        if (has) printf "    %s  %s$%.2f%s\n", mk, cyan, total, reset
+        total = 0; n_mod = 0
+        for (mi2 = 1; mi2 <= 3; mi2++) {
+          m = _mo[mi2]; k = m SUBSEP mk
+          if (k in month_cost) { total += month_cost[k]; n_mod++ }
+        }
+        for (m in all_models) {
+          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+            k = m SUBSEP mk
+            if (k in month_cost) { total += month_cost[k]; n_mod++ }
+          }
+        }
+        if (total == 0) continue
+        printf "    %s\n", mk
+        for (mi2 = 1; mi2 <= 3; mi2++) {
+          m = _mo[mi2]; k = m SUBSEP mk
+          if (k in month_cost) {
+            n = month_sessions[k]; s = (n != 1) ? "s" : ""
+            printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, month_cost[k], reset, n, s
+          }
+        }
+        for (m in all_models) {
+          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+            k = m SUBSEP mk
+            if (k in month_cost) {
+              n = month_sessions[k]; s = (n != 1) ? "s" : ""
+              printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, month_cost[k], reset, n, s
+            }
+          }
+        }
+        if (n_mod > 1) { printf "%s\n", line; printf "      %-8s %s$%.2f%s\n", "Total", cyan, total, reset }
       }
       if (n_mon == 0) printf "    (none)\n"
 
@@ -326,9 +380,36 @@ _cmd_cost_from_history() {
       printf "  %sYears%s\n", pink, reset
       for (i = 1; i <= n_yr; i++) {
         yk = yr_keys[i]
-        total = 0; has = 0
-        for (m in all_models) { k = m SUBSEP yk; if (k in year_cost) { total += year_cost[k]; has = 1 } }
-        if (has) printf "    %s  %s$%.2f%s\n", yk, cyan, total, reset
+        total = 0; n_mod = 0
+        for (mi2 = 1; mi2 <= 3; mi2++) {
+          m = _mo[mi2]; k = m SUBSEP yk
+          if (k in year_cost) { total += year_cost[k]; n_mod++ }
+        }
+        for (m in all_models) {
+          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+            k = m SUBSEP yk
+            if (k in year_cost) { total += year_cost[k]; n_mod++ }
+          }
+        }
+        if (total == 0) continue
+        printf "    %s\n", yk
+        for (mi2 = 1; mi2 <= 3; mi2++) {
+          m = _mo[mi2]; k = m SUBSEP yk
+          if (k in year_cost) {
+            n = year_sessions[k]; s = (n != 1) ? "s" : ""
+            printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, year_cost[k], reset, n, s
+          }
+        }
+        for (m in all_models) {
+          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+            k = m SUBSEP yk
+            if (k in year_cost) {
+              n = year_sessions[k]; s = (n != 1) ? "s" : ""
+              printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, year_cost[k], reset, n, s
+            }
+          }
+        }
+        if (n_mod > 1) { printf "%s\n", line; printf "      %-8s %s$%.2f%s\n", "Total", cyan, total, reset }
       }
       if (n_yr == 0) printf "    (none)\n"
 
