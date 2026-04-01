@@ -1,49 +1,6 @@
 # lib/cmd/sessions.sh — session data commands (cost, sessions, sessions-inactive, smart default)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
-
-# Full-width scrolling wave shown on stderr while slow operations run.
-# ASCII fallback when TERM=dumb or LANG has no UTF.
-# Usage: _claudii_spinner & _sp=$! ; ... ; kill "$_sp" 2>/dev/null; wait "$_sp" 2>/dev/null; printf '\r\033[K' >&2
-_claudii_spinner() {
-  trap 'printf "\r\033[K" >&2' EXIT
-  trap 'exit 0' TERM
-
-  local cols="${COLUMNS:-80}"
-
-  if [[ "${TERM:-}" == "dumb" ]] || ! printf '%s' "${LANG:-}" | grep -qi "utf"; then
-    local spin=('|' '/' '-' '\') i=0
-    while true; do
-      printf '\r%s Loading...' "${spin[$((i % 4))]}" >&2
-      sleep 0.1
-      (( ++i ))
-    done
-    return
-  fi
-
-  # Prefix: rotating braille char + " Loading  " (11 terminal columns total)
-  # Wave fills the remaining width
-  local dim="${CLAUDII_CLR_DIM:-}" reset="${CLAUDII_CLR_RESET:-}"
-  local braille=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local label=" Loading  "   # 10 chars
-  local prefix_len=11        # 1 (braille) + 10 (label)
-  local wave_cols=$(( cols - prefix_len ))
-  (( wave_cols < 4 )) && wave_cols=4
-
-  local wave='▁▂▃▄▅▆▇█▇▆▅▄▃▂▁ '  # 16 chars: hill shape + space gap
-  local wlen=16
-  local pattern=''
-  while (( ${#pattern} < wave_cols + wlen )); do
-    pattern+="$wave"
-  done
-
-  local i=0
-  while true; do
-    printf '\r%s%s%s%s%s' \
-      "$dim" "${braille[$((i % 10))]}" "$label" "${pattern:$i:$wave_cols}" "$reset" >&2
-    sleep 0.08
-    i=$(( (i + 1) % wlen ))
-  done
-}
+# _claudii_spinner is defined in lib/spinner.sh (sourced by bin/claudii)
 
 # _cmd_cost_from_history — cost breakdown with correct daily deltas from history.tsv
 # Each session's cost on a given day = last_cost_that_day - last_cost_previous_day.
