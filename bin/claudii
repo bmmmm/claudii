@@ -75,6 +75,45 @@ _session_name() {
     | tr -d '\n' || true
 }
 
+# Extract session fingerprint: top-5 files accessed via tool_input.file_path in JSONL.
+# Returns "name(N) name(N) ..." or empty if no JSONL / no tool calls found.
+_session_fingerprint() {
+  local sid="$1"
+  [[ -z "$sid" ]] && return
+  local jsonl=""
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
+  done
+  [[ -z "$jsonl" ]] && return
+  local result
+  result=$(grep -o '"file_path":"[^"]*"' "$jsonl" 2>/dev/null \
+    | sed 's/"file_path":"//; s/"$//' \
+    | while IFS= read -r fp; do basename "$fp"; done \
+    | sort | uniq -c | sort -rn | head -5 \
+    | awk '{printf "%s(%s) ", $2, $1}' \
+    | sed 's/ $//' || true)
+  echo "$result"
+}
+
+# Extract last user message from JSONL (max 80 chars), or empty if not found.
+_session_last_user_message() {
+  local sid="$1"
+  [[ -z "$sid" ]] && return
+  local jsonl=""
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
+  done
+  [[ -z "$jsonl" ]] && return
+  local msg
+  msg=$(grep '"role":"user"' "$jsonl" 2>/dev/null \
+    | tail -1 \
+    | grep -o '"text":"[^"]*"' \
+    | head -1 \
+    | sed 's/"text":"//; s/"$//' \
+    | cut -c1-80 || true)
+  echo "$msg"
+}
+
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
 _cfg_init() {
   CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
@@ -256,7 +295,12 @@ case "${1:-}" in
 
   # Session commands
   cost)                _cmd_cost              ;;
-  sessions)            _cmd_sessions          ;;
+  sessions)
+    if [[ "${2:-}" == "--resume" && -n "${3:-}" ]]; then
+      exec claude --resume "$3"
+    fi
+    _cmd_sessions "$@"
+    ;;
   sessions-inactive)   _cmd_sessions_inactive ;;
   "")                  _cmd_default           ;;
 
