@@ -17,7 +17,11 @@
   },
   "statusline": {
     "enabled": true,
-    "models": "opus,sonnet,haiku"
+    "models": "opus,sonnet,haiku",
+    "lines": [
+      ["model", "context-bar", "cost", "rate-5h", "rate-7d"],
+      ["tokens", "lines-changed", "duration", "burn-eta", "worktree", "agent"]
+    ]
   },
   "search": {
     "dir": "~/claude-search"

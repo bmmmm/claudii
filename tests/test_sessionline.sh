@@ -6,7 +6,7 @@ SL="$CLAUDII_HOME/bin/claudii-sessionline"
 # Full data (all fields)
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | bash "$SL" 2>&1)
 assert_contains "shows model name" "Opus" "$output"
-assert_contains "shows context %" "42%" "$output"
+assert_contains "shows context %" "52%" "$output"
 assert_contains "shows cost" "0.55" "$output"
 assert_contains "shows input tokens" "15.2K" "$output"
 assert_contains "shows output tokens" "4.5K" "$output"
@@ -18,7 +18,7 @@ assert_contains "shows duration" "12m" "$output"
 
 # High context (90%+)
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":95,"total_input_tokens":190000,"total_output_tokens":50000,"context_window_size":200000},"cost":{"total_cost_usd":2.10,"total_duration_ms":3600000}}' | bash "$SL" 2>&1)
-assert_contains "high context shows 95%" "95%" "$output"
+assert_contains "high context shows 100%" "100%" "$output"
 assert_contains "large tokens formatted" "190.0K" "$output"
 assert_contains "duration 1h" "1h 0m" "$output"
 
@@ -160,3 +160,58 @@ _reset_7d_days=$(( $(date +%s) + 190800 ))
 output=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":30,\"total_input_tokens\":5000,\"total_output_tokens\":1000,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.50},\"rate_limits\":{\"five_hour\":{\"used_percentage\":20},\"seven_day\":{\"used_percentage\":60,\"resets_at\":${_reset_7d_days}}}}" | COLUMNS=150 bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "7d countdown >= 24h shows ↺XdYh" "1" "$(echo "$strip" | grep -cE '↺[0-9]+d[0-9]*h?' || true)"
+
+# --- new tests (multi-line layout + segment pre-computation) ---
+
+# Default output has exactly 2 non-empty lines
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | bash "$SL" 2>/dev/null)
+_nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
+assert_eq "default output has exactly 2 non-empty lines" "2" "$_nonempty_lines"
+
+# Single-line config (statusline.lines with 1 array) → 1 output line
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+mkdir -p "$_test_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["model","context-bar","cost","rate-5h","rate-7d","tokens","lines-changed","duration"]]}}\n' \
+  > "$_test_cfg_dir/claudii/config.json"
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.20,"total_duration_ms":60000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+_single_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
+assert_eq "single-line config produces 1 output line" "1" "$_single_lines"
+rm -rf "$_test_cfg_dir"
+
+# Empty segments skipped: worktree and agent absent when not in JSON input
+output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "worktree absent when not in JSON" "0" "$(echo "$strip" | grep -c '@' || true)"
+
+# burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "burn-eta ETA visible on line 2" "1" "$(echo "$strip" | grep -c 'ETA:' || true)"
+
+# _tok() correctness: 999→"999", 1000→"1.0K", 1500→"1.5K", 1000000→"1.0M"
+# Test via minimal JSON that exercises token formatting
+output_999=$(echo '{"model":{"display_name":"T"},"context_window":{"used_percentage":1,"total_input_tokens":999,"total_output_tokens":0,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | bash "$SL" 2>/dev/null)
+strip_999=$(echo "$output_999" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "_tok(999) = 999" "999↑" "$strip_999"
+
+output_1k=$(echo '{"model":{"display_name":"T"},"context_window":{"used_percentage":1,"total_input_tokens":1000,"total_output_tokens":0,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | bash "$SL" 2>/dev/null)
+strip_1k=$(echo "$output_1k" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "_tok(1000) = 1.0K" "1.0K↑" "$strip_1k"
+
+output_1500=$(echo '{"model":{"display_name":"T"},"context_window":{"used_percentage":1,"total_input_tokens":1500,"total_output_tokens":0,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | bash "$SL" 2>/dev/null)
+strip_1500=$(echo "$output_1500" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "_tok(1500) = 1.5K" "1.5K↑" "$strip_1500"
+
+output_1M=$(echo '{"model":{"display_name":"T"},"context_window":{"used_percentage":1,"total_input_tokens":1000000,"total_output_tokens":0,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | bash "$SL" 2>/dev/null)
+strip_1M=$(echo "$output_1M" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
+
+# No bc in the script
+assert_eq "no bc subprocess in claudii-sessionline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-sessionline" || true)"

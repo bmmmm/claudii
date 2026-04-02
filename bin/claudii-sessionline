@@ -1,6 +1,6 @@
 #!/bin/bash
 # claudii-sessionline — Claude Code statusLine handler
-# Reads JSON session metrics from stdin, outputs a single info-dense line.
+# Reads JSON session metrics from stdin, outputs a configurable multi-line status.
 # Configure in settings.json:
 #   "statusLine": { "type": "command", "command": "claudii-sessionline" }
 
@@ -115,10 +115,10 @@ _tmp_session="${_session_file}.tmp.$$"
   > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
-# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$(date +%s)" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
-  "${input_tok:-0}" "${output_tok:-0}" \
+# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id
+_now=$(date +%s)
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
   >> "$_cache_dir/history.tsv" 2>/dev/null || true
 
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
@@ -126,16 +126,13 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 
 # --- helpers ---
 
-# Format token count: 1234->1.2K  1234567->1.2M
+# Format token count: 999->999  1000->1.0K  1500->1.5K  1000000->1.0M
 _tok() {
   local n=$1
   [[ -z "$n" || "$n" == "null" ]] && return
-  if (( n >= 1000000 )); then
-    printf "%.1fM" "$(echo "scale=1; $n/1000000" | bc)"
-  elif (( n >= 1000 )); then
-    printf "%.1fK" "$(echo "scale=1; $n/1000" | bc)"
-  else
-    echo "$n"
+  if   (( n >= 1000000 )); then awk "BEGIN{printf \"%.1fM\",$n/1000000}"
+  elif (( n >= 1000    )); then awk "BEGIN{printf \"%.1fK\",$n/1000}"
+  else printf "%d" "$n"
   fi
 }
 
@@ -174,24 +171,20 @@ RST="\033[0m"
 DIM="\033[2m"
 SEP="${DIM} │${RST} "
 
-# --- build output ---
-out=""
-
-# Terminal width for adaptive truncation
-# Default to 120 (full output) when COLUMNS is not set — the sessionline
-# runs inside Claude Code which controls its own rendering width.
-_cols="${COLUMNS:-120}"
+# --- segment pre-computation ---
 
 # Model (bold) + effort mode (dim, from env — workaround until API exposes it)
+_seg_model=""
 if [[ -n "$model" ]]; then
-  out+="\033[1m${model}${RST}"
+  _seg_model="\033[1m${model}${RST}"
   _effort="${CLAUDII_EFFORT:-}"
   if [[ -n "$_effort" && "$_effort" != "high" ]]; then
-    out+=" ${DIM}${_effort}${RST}"
+    _seg_model+=" ${DIM}${_effort}${RST}"
   fi
 fi
 
-# Context bar (10 chars) + percentage — always shown (>= any width)
+# Context bar (10 chars) + usable percentage + ⚡cache%
+_seg_context=""
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
@@ -201,155 +194,177 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
+  # Usable context %: raw_pct / 0.8 — scales to the 80% practical usable window
+  # Example: 76% raw → 76/0.8 = 95% usable
+  _usable_pct=$(awk "BEGIN { v = int($local_pct / 0.8); if (v > 100) v = 100; printf \"%d\", v }")
   # Context window size indicator (1M = extended)
   win=""
   if [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
     win=" ${DIM}1M${RST}"
   fi
-  out+=" $(_thr "$local_pct")${bar}${RST} ${DIM}${local_pct}%${RST}${win}"
-fi
-
-# Truncation logic: segments shown based on COLUMNS
-# < 60: only model + context bar (already added)
-# 60-80: + cost
-# 80-100: + rate limits
-# > 100: everything (tokens, lines, duration)
-
-# Cost — shown when cols >= 60
-if (( _cols >= 60 )); then
-  if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
-    out+="${SEP}\033[36m\$$(printf '%.2f' "$cost")${RST}"
+  _seg_context="$(_thr "$_usable_pct")${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
+  # Cache hit ratio — suffix to context segment
+  if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
+    if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
+      if (( _cache_pct >= 60 )); then _cc="\033[32m"
+      elif (( _cache_pct < 30 )); then _cc="\033[33m"
+      else _cc="${DIM}"; fi
+      _seg_context+=" ${_cc}⚡${_cache_pct}%${RST}"
+    fi
   fi
 fi
 
-# Rate limits — shown when cols >= 80
-if (( _cols >= 80 )); then
-  if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-    _rate_5h_pct=${rate_5h%.*}
+# Cost — cyan $X.XX
+_seg_cost=""
+if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
+  _seg_cost="\033[36m\$$(printf '%.2f' "$cost")${RST}"
+fi
 
-    # 5h delta vs session start
-    _delta_str=""
-    if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" ]]; then
-      _start_pct=${_rate_5h_start%.*}
-      _delta=$(( _rate_5h_pct - _start_pct ))
-      if (( _delta > 0 )); then
-        _delta_str=" ${DIM}(+${_delta}%)${RST}"
-      elif (( _delta < 0 )); then
-        _delta_str=" ${DIM}(${_delta}%)${RST}"
+# Rate limits — 5h and 7d
+_seg_rate5h=""
+if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+  _rate_5h_pct=${rate_5h%.*}
+  _seg_rate5h="$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
+  # Reset countdown ↺Xm — color depends on rate level and time remaining
+  if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
+    _reset_min=$(awk "BEGIN { d=$reset_5h - $_now; printf \"%d\", (d > 0 ? int(d/60 + 0.5) : 0) }")
+    if (( _reset_min > 0 )); then
+      if (( _rate_5h_pct < 50 )); then
+        _reset_color="${DIM}"         # dim — not relevant
+      elif (( _reset_min < 5 )); then
+        _reset_color="\033[0;32m"    # green — refresh imminent!
+      elif (( _reset_min < 60 )); then
+        _reset_color="\033[0;97m"    # bright white — getting close
+      elif (( _reset_min < 120 )); then
+        _reset_color=""              # default — light at end of tunnel
+      else
+        _reset_color="${DIM}"        # dim — plenty of time
       fi
+      _seg_rate5h+=" ${_reset_color}↺${_reset_min}m${RST}"
     fi
+  fi
+fi
 
-    out+="${SEP}$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
-
-    # Reset countdown ↺Xm — color depends on rate level and time remaining
-    if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
-      _now=$(date +%s)
-      _reset_min=$(awk "BEGIN { d=$reset_5h - $_now; printf \"%d\", (d > 0 ? int(d/60 + 0.5) : 0) }")
-      if (( _reset_min > 0 )); then
-        if (( _rate_5h_pct < 50 )); then
-          _reset_color="${DIM}"         # dim — not relevant
-        elif (( _reset_min < 5 )); then
-          _reset_color="\033[0;32m"    # green — refresh imminent!
-        elif (( _reset_min < 60 )); then
-          _reset_color="\033[0;97m"    # bright white — getting close
-        elif (( _reset_min < 120 )); then
-          _reset_color=""              # default — light at end of tunnel
+_seg_rate7d=""
+if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
+  _rate_7d_pct=${rate_7d%.*}
+  _seg_rate7d="$(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
+  # 7d reset countdown — format depends on remaining time
+  if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
+    _reset_7d_sec=$(awk "BEGIN { d=$reset_7d - $_now; printf \"%d\", (d > 0 ? int(d + 0.5) : 0) }")
+    if (( _reset_7d_sec > 0 )); then
+      _reset_7d_min=$(( _reset_7d_sec / 60 ))
+      _reset_7d_hr=$(( _reset_7d_sec / 3600 ))
+      if (( _reset_7d_sec < 3600 )); then
+        _reset_7d_fmt="${_reset_7d_min}m"
+      elif (( _reset_7d_sec < 86400 )); then
+        _reset_7d_fmt="${_reset_7d_hr}h"
+      else
+        _r7d_days=$(( _reset_7d_sec / 86400 ))
+        _r7d_hours=$(( (_reset_7d_sec % 86400) / 3600 ))
+        if (( _r7d_hours > 0 )); then
+          _reset_7d_fmt="${_r7d_days}d${_r7d_hours}h"
         else
-          _reset_color="${DIM}"        # dim — plenty of time
+          _reset_7d_fmt="${_r7d_days}d"
         fi
-        out+=" ${_reset_color}↺${_reset_min}m${RST}"
       fi
-    fi
-  fi
-
-  if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
-    [[ -z "$rate_5h" || "$rate_5h" == "null" ]] && out+="${SEP}"
-    _rate_7d_pct=${rate_7d%.*}
-
-    # 7d delta vs session start
-    _delta_7d_str=""
-    if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" ]]; then
-      _start_7d_pct=${_rate_7d_start%.*}
-      _delta_7d=$(( _rate_7d_pct - _start_7d_pct ))
-      if (( _delta_7d > 0 )); then
-        _delta_7d_str=" ${DIM}(+${_delta_7d}%)${RST}"
-      elif (( _delta_7d < 0 )); then
-        _delta_7d_str=" ${DIM}(${_delta_7d}%)${RST}"
+      if (( _rate_7d_pct < 50 )); then
+        _reset_7d_color="${DIM}"         # dim — not relevant
+      elif (( _reset_7d_min < 5 )); then
+        _reset_7d_color="\033[0;32m"    # green — refresh imminent!
+      elif (( _reset_7d_min < 60 )); then
+        _reset_7d_color="\033[0;97m"    # bright white — getting close
+      elif (( _reset_7d_min < 120 )); then
+        _reset_7d_color=""              # default — light at end of tunnel
+      else
+        _reset_7d_color="${DIM}"        # dim — plenty of time
       fi
-    fi
-
-    out+=" $(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
-
-    # 7d reset countdown — format depends on remaining time
-    if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
-      _now=$(date +%s)
-      _reset_7d_sec=$(awk "BEGIN { d=$reset_7d - $_now; printf \"%d\", (d > 0 ? int(d + 0.5) : 0) }")
-      if (( _reset_7d_sec > 0 )); then
-        _reset_7d_min=$(( _reset_7d_sec / 60 ))
-        _reset_7d_hr=$(( _reset_7d_sec / 3600 ))
-        if (( _reset_7d_sec < 3600 )); then
-          _reset_7d_fmt="${_reset_7d_min}m"
-        elif (( _reset_7d_sec < 86400 )); then
-          _reset_7d_fmt="${_reset_7d_hr}h"
-        else
-          _r7d_days=$(( _reset_7d_sec / 86400 ))
-          _r7d_hours=$(( (_reset_7d_sec % 86400) / 3600 ))
-          if (( _r7d_hours > 0 )); then
-            _reset_7d_fmt="${_r7d_days}d${_r7d_hours}h"
-          else
-            _reset_7d_fmt="${_r7d_days}d"
-          fi
-        fi
-        if (( _rate_7d_pct < 50 )); then
-          _reset_7d_color="${DIM}"         # dim — not relevant
-        elif (( _reset_7d_min < 5 )); then
-          _reset_7d_color="\033[0;32m"    # green — refresh imminent!
-        elif (( _reset_7d_min < 60 )); then
-          _reset_7d_color="\033[0;97m"    # bright white — getting close
-        elif (( _reset_7d_min < 120 )); then
-          _reset_7d_color=""              # default — light at end of tunnel
-        else
-          _reset_7d_color="${DIM}"        # dim — plenty of time
-        fi
-        out+=" ${_reset_7d_color}↺${_reset_7d_fmt}${RST}"
-      fi
+      _seg_rate7d+=" ${_reset_7d_color}↺${_reset_7d_fmt}${RST}"
     fi
   fi
 fi
 
-# Full details — shown when cols > 100
-if (( _cols > 100 )); then
-  # Tokens (compact: 15K↑ 4K↓ ⚡73%)
-  if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
-    in_fmt=$(_tok "$input_tok")
-    out_fmt=$(_tok "$output_tok")
-    out+="${SEP}${DIM}${in_fmt}↑${RST}"
-    [[ -n "$out_fmt" ]] && out+=" ${DIM}${out_fmt}↓${RST}"
-    # Cache hit ratio — only show when cache_read > 0
-    if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
-      if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
-        if (( _cache_pct >= 60 )); then _cc="\033[32m"
-        elif (( _cache_pct < 30 )); then _cc="\033[33m"
-        else _cc="${DIM}"; fi
-        out+=" ${_cc}⚡${_cache_pct}%${RST}"
-      fi
-    fi
-  fi
-
-  # Lines changed (only when > 0)
-  if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
-     [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
-    lns=""
-    [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && lns+="\033[32m+${lines_add}${RST}"
-    [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && lns+=" \033[31m-${lines_rm}${RST}"
-    out+="${SEP}${lns}"
-  fi
-
-  # Duration
-  if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
-    dur=$(_dur "$duration_ms")
-    [[ -n "$dur" ]] && out+="${SEP}${DIM}${dur}${RST}"
-  fi
+# Tokens: DIM Xk↑ Xk↓
+_seg_tokens=""
+if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
+  in_fmt=$(_tok "$input_tok")
+  out_fmt=$(_tok "$output_tok")
+  _seg_tokens="${DIM}${in_fmt}↑${RST}"
+  [[ -n "$out_fmt" ]] && _seg_tokens+=" ${DIM}${out_fmt}↓${RST}"
 fi
 
-echo -e "$out"
+# Lines changed: green +X red -X (only when > 0)
+_seg_lines=""
+if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
+   [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
+  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && _seg_lines+="\033[32m+${lines_add}${RST}"
+  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && _seg_lines+=" \033[31m-${lines_rm}${RST}"
+fi
+
+# Duration: DIM Xm / Xh Xm
+_seg_dur=""
+if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
+  _dur_fmt=$(_dur "$duration_ms")
+  [[ -n "$_dur_fmt" ]] && _seg_dur="${DIM}${_dur_fmt}${RST}"
+fi
+
+# Burn-ETA: DIM ETA:Xm (only when _burn_eta set and > 0)
+_seg_eta=""
+if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] 2>/dev/null; then
+  _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
+fi
+
+# Worktree: DIM worktree_name (only when set)
+_seg_worktree=""
+if [[ -n "$worktree_name" ]]; then
+  _seg_worktree="${DIM}${worktree_name}${RST}"
+fi
+
+# Agent: DIM @agent_name (only when set)
+_seg_agent=""
+if [[ -n "$agent_name" ]]; then
+  _seg_agent="${DIM}@${agent_name}${RST}"
+fi
+
+# --- layout config ---
+
+_DEFAULT_LINES="model,context-bar,cost,rate-5h,rate-7d
+tokens,lines-changed,duration,burn-eta,worktree,agent"
+
+_lines_raw="$_DEFAULT_LINES"
+_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+if [[ -f "$_config_file" ]]; then
+  _from_cfg=$(jq -r 'if .statusline.lines then (.statusline.lines | .[] | join(",")) else empty end' \
+    "$_config_file" 2>/dev/null)
+  [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+fi
+
+# --- layout loop ---
+
+while IFS= read -r _line_segs; do
+  [[ -z "$_line_segs" ]] && continue
+  _line_out=""; _first=1
+  IFS=',' read -ra _segs <<< "$_line_segs"
+  for _seg in "${_segs[@]}"; do
+    case "$_seg" in
+      model)         _val="$_seg_model"    ;;
+      context-bar)   _val="$_seg_context"  ;;
+      cost)          _val="$_seg_cost"     ;;
+      rate-5h)       _val="$_seg_rate5h"   ;;
+      rate-7d)       _val="$_seg_rate7d"   ;;
+      tokens)        _val="$_seg_tokens"   ;;
+      lines-changed) _val="$_seg_lines"    ;;
+      duration)      _val="$_seg_dur"      ;;
+      burn-eta)      _val="$_seg_eta"      ;;
+      worktree)      _val="$_seg_worktree" ;;
+      agent)         _val="$_seg_agent"    ;;
+      *)             _val=""               ;;
+    esac
+    if [[ -n "$_val" ]]; then
+      if (( _first )); then _line_out="$_val"; _first=0
+      else _line_out+="${SEP}${_val}"; fi
+    fi
+  done
+  [[ -n "$_line_out" ]] && echo -e "\033[0m${_line_out}" || true
+done <<< "$_lines_raw"
+true

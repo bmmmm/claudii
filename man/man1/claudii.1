@@ -147,14 +147,13 @@ Each segment is separated by a dim
 character.
 Segments are omitted when their data is absent.
 .PP
-Segments are also adapted to the terminal width
-.RB ( $COLUMNS ):
-below 60 columns only the model and context bar are shown;
-60\(en80 adds cost;
-80\(en100 adds rate limits;
-above 100 shows everything (tokens, cache ratio, lines changed, duration).
+The output is configurable: by default two lines are emitted.
+The layout is controlled by the
+.B statusline.lines
+config key (see
+.BR "CONFIG FILE" ).
 .TP
-.B Model name + effort mode
+.B model
 The model display name in
 .B bold
 (e.g.\&
@@ -168,53 +167,66 @@ the effort mode is appended in
 text (e.g.\&
 .IR max ).
 .TP
-.B Context bar
+.B context-bar
 A 10-character block bar showing context window usage:
 .B \[u2588]
 (filled) and
 .B \[u2591]
 (empty) characters.
-Color: green < 70%, yellow 70\(en89%, red \(>= 90%.
-Followed by the percentage value in dim text.
+Color thresholds are based on the usable context percentage
+(used tokens divided by 80% of the context window size):
+green < 70%, yellow 70\(en89%, red \(>= 90%.
+Followed by the usable percentage in dim text.
 A dim
 .B 1M
 indicator is appended when the context window size is >= 1,000,000 tokens
 (extended context mode).
+When cache read tokens are present, a cache hit ratio is appended as
+.B \[u26A1]XX%
+(green >= 60%, yellow < 30%, dim otherwise).
 .TP
-.B Cost
+.B cost
 Session cost formatted as
 .B $X.XX
 in cyan.
 Omitted when cost is zero.
 .TP
-.B Tokens + cache hit ratio
+.B tokens
 Input tokens (with
 .B \(ua
 arrow) and output tokens (with
 .B \(da
 arrow) formatted with K/M suffixes (e.g.\&
 .BR "15.2K\(ua 4.1K\(da" ).
-When cache read tokens are present, a cache hit ratio is appended as
-.B \[u26A1]XX%
-(green >= 60%, yellow < 30%, dim otherwise).
 .TP
-.B Rate limits
-5-hour and 7-day usage shown as
+.B rate-5h
+5-hour usage shown as
 .B 5h:XX%
-and
-.B 7d:XX%
-respectively.
-Color: cyan < 70%, yellow 70\(en89%, red >= 90%.
+with optional reset countdown
+.BR \[u21BA]Xm .
+Color: cyan < 50%, yellow 50\(en79%, red >= 80%.
 Only shown when the API returns rate limit data (Pro/Max plans).
 .TP
-.B Lines changed
+.B rate-7d
+7-day usage shown as
+.B 7d:XX%
+with optional reset countdown in
+.BR Xm ,
+.BR Xh ,
+or
+.B XdYh
+format.
+Color: same thresholds as
+.BR rate-5h .
+.TP
+.B lines-changed
 Lines added in green
 .RB ( +N )
 and lines removed in red
 .RB ( \-N ).
 Omitted when both are zero.
 .TP
-.B Duration
+.B duration
 Wall-clock session duration formatted as
 .BR <1m ,
 .BR 5m ,
@@ -222,15 +234,21 @@ or
 .B 1h 23m
 (dim text).
 .TP
-.B Worktree / agent context
-Shown in the
-.B Session Dashboard
-only (not in the CC-Statusline output itself).
-Worktree name rendered as
-.B [wt:name]
-and agent context as
-.B [agent:name]
+.B burn-eta
+Estimated time until the 5-hour rate limit is exhausted, shown as
+.B ETA:Xm
 in dim text.
+Only shown when a burn rate can be computed (session >= 3 minutes and rate > 0).
+.TP
+.B worktree
+Worktree name in dim text.
+Shown only when present in the session JSON.
+.TP
+.B agent
+Agent name prefixed with
+.B @
+in dim text.
+Shown only when present in the session JSON.
 .
 .SH COMMANDS
 .
@@ -433,7 +451,10 @@ Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboa
 Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
 Shows model name, context usage bar, cost, token counts, rate limits,
-lines changed, session duration, worktree name, and agent context in a single info-dense line.
+lines changed, session duration, burn-eta, worktree name, and agent context.
+The output is split across configurable lines (default: 2 lines) via
+.B statusline.lines
+in config.
 .
 .TP
 .B cc-statusline
@@ -789,6 +810,7 @@ fallback.opus.model     fallback model when opus is down
 status.cache_ttl        cache TTL in seconds (default: 900)
 statusline.enabled      ClaudeStatus in RPROMPT (default: true)
 statusline.models       models to monitor (default: opus,sonnet,haiku)
+statusline.lines        CC-Statusline layout: array of arrays, each inner array is one output line listing segment IDs in order (default: 2 lines — see SESSIONLINE SEGMENTS). Valid segment IDs: model, context-bar, cost, rate-5h, rate-7d, tokens, lines-changed, duration, burn-eta, worktree, agent. A single inner array restores 1-line behavior.
 session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)

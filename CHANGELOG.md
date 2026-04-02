@@ -9,13 +9,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 - **`claudii cost`/`claudii trends`:** Token usage tracking — `input_tok` and `output_tok` stored in `history.tsv`; displayed as `X.XK tok` / `X.XM tok` after each Total line
+- **Sessionline:** Configurable multi-line output via `statusline.lines` in config.json — burn-eta, worktree, agent now visible on line 2 by default
 
 ### Changed
 - **Release notes:** SHA256 checksum and Full Changelog compare URL appended automatically after GitHub Release is created; format simplified (no bullet lists)
 - **Homebrew tap:** Auto-updated on release via polling workflow
+- **Sessionline:** Segment pre-computation replaces monolithic output string; COLUMNS-based adaptive truncation removed
 
 ### Fixed
 - **Release workflow:** `head_sha` filter corrected in polling step; unindented `---` no longer breaks YAML block scalar
+- **Sessionline:** Duplicate `date +%s` call eliminated; `bc` subprocess in `_tok()` replaced with pure awk
 
 ---
 
