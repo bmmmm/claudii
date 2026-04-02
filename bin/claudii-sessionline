@@ -182,6 +182,13 @@ _rlc() {
 
 RST="\033[0m"
 DIM="\033[2m"
+BOLD="\033[1m"
+CYAN="\033[0;36m"
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+RED="\033[0;31m"
+WHITE="\033[0;97m"
+ACCENT="\033[38;5;213m"
 SEP="${DIM}  │  ${RST}"
 
 # --- segment pre-computation ---
@@ -189,7 +196,7 @@ SEP="${DIM}  │  ${RST}"
 # Model (bold) + effort mode (dim, from env — workaround until API exposes it)
 _seg_model=""
 if [[ -n "$model" ]]; then
-  _seg_model="\033[1m${model}${RST}"
+  _seg_model="${BOLD}${model}${RST}"
   _effort="${CLAUDII_EFFORT:-}"
   if [[ -n "$_effort" && "$_effort" != "high" ]]; then
     _seg_model+=" ${DIM}${_effort}${RST}"
@@ -215,7 +222,7 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   # or 1M label when extended context window active
   win=""
   if [[ "$exceeds_200k" == "true" ]]; then
-    win=" \033[31m>200k${RST}"
+    win=" ${RED}>200k${RST}"
   elif [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
     win=" ${DIM}1M${RST}"
   fi
@@ -223,8 +230,8 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   # Cache hit ratio — suffix to context segment
   if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
     if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
-      if (( _cache_pct >= 60 )); then _cc="\033[32m"
-      elif (( _cache_pct < 30 )); then _cc="\033[33m"
+      if (( _cache_pct >= 60 )); then _cc="${GREEN}"
+      elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
       else _cc="${DIM}"; fi
       _seg_context+=" ${_cc}⚡${_cache_pct}%${RST}"
     fi
@@ -234,7 +241,7 @@ fi
 # Cost — cyan $X.XX
 _seg_cost=""
 if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
-  _seg_cost="\033[36m\$$(printf '%.2f' "$cost")${RST}"
+  _seg_cost="${CYAN}\$$(printf '%.2f' "$cost")${RST}"
 fi
 
 # Rate limits — 5h and 7d
@@ -250,9 +257,9 @@ if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
       if (( _rate_5h_pct < 50 )); then
         _reset_color="${DIM}"         # dim — not relevant
       elif (( _reset_min < 5 )); then
-        _reset_color="\033[0;32m"    # green — refresh imminent!
+        _reset_color="${GREEN}"       # green — refresh imminent!
       elif (( _reset_min < 60 )); then
-        _reset_color="\033[0;97m"    # bright white — getting close
+        _reset_color="${WHITE}"       # bright white — getting close
       elif (( _reset_min < 120 )); then
         _reset_color=""              # default — light at end of tunnel
       else
@@ -290,9 +297,9 @@ if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
       if (( _rate_7d_pct < 50 )); then
         _reset_7d_color="${DIM}"         # dim — not relevant
       elif (( _reset_7d_min < 5 )); then
-        _reset_7d_color="\033[0;32m"    # green — refresh imminent!
+        _reset_7d_color="${GREEN}"        # green — refresh imminent!
       elif (( _reset_7d_min < 60 )); then
-        _reset_7d_color="\033[0;97m"    # bright white — getting close
+        _reset_7d_color="${WHITE}"        # bright white — getting close
       elif (( _reset_7d_min < 120 )); then
         _reset_7d_color=""              # default — light at end of tunnel
       else
@@ -316,8 +323,8 @@ fi
 _seg_lines=""
 if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
    [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
-  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && _seg_lines+="\033[32m+${lines_add}${RST}"
-  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && _seg_lines+=" \033[31m-${lines_rm}${RST}"
+  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && _seg_lines+="${GREEN}+${lines_add}${RST}"
+  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && _seg_lines+=" ${RED}-${lines_rm}${RST}"
 fi
 
 # Duration: DIM Xm / Xh Xm
@@ -377,7 +384,7 @@ if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" && -n "$rate_5h" && "$
   if (( _d5 > 0 )); then
     _seg_delta5h="${DIM}Δ5h:${RST}$(_rlc "$rate_5h")+${_d5}%${RST}"
   elif (( _d5 < 0 )); then
-    _seg_delta5h="${DIM}Δ5h:${RST}\033[32m${_d5}%${RST}"
+    _seg_delta5h="${DIM}Δ5h:${RST}${GREEN}${_d5}%${RST}"
   fi
 fi
 
@@ -387,7 +394,7 @@ if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" && -n "$rate_7d" && "$
   if (( _d7 > 0 )); then
     _seg_delta7d="${DIM}Δ7d:${RST}$(_rlc "$rate_7d")+${_d7}%${RST}"
   elif (( _d7 < 0 )); then
-    _seg_delta7d="${DIM}Δ7d:${RST}\033[32m${_d7}%${RST}"
+    _seg_delta7d="${DIM}Δ7d:${RST}${GREEN}${_d7}%${RST}"
   fi
 fi
 
@@ -470,6 +477,6 @@ while IFS= read -r _line_segs; do
       else _line_out+="${SEP}${_val}"; fi
     fi
   done
-  [[ -n "$_line_out" ]] && echo -e "\033[0m${_line_out}" || true
+  [[ -n "$_line_out" ]] && echo -e "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 true
