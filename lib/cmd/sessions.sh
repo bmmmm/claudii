@@ -127,9 +127,9 @@ _cmd_cost_from_history() {
         prev = sid_baseline[sid]
         if (cost > prev) {
           running_spend[sid] += cost - prev
-        } else if (cost < prev) {
-          running_spend[sid] += cost  # reset: full post-reset value counts as new spend
-        }
+        } else if (cost < prev * 0.5) {
+          running_spend[sid] += cost  # genuine reset (context compaction)
+        } # else: minor fluctuation — update baseline silently
       } else {
         running_spend[sid] = cost  # first row: treat starting cost as spend (like prev=0)
       }
@@ -138,8 +138,8 @@ _cmd_cost_from_history() {
       # Token running_spend — same delta approach as cost
       if (sid in tok_baseline) {
         prev_tok = tok_baseline[sid]
-        if (total_tok > prev_tok)      { tok_running[sid] += total_tok - prev_tok }
-        else if (total_tok < prev_tok) { tok_running[sid] += total_tok }
+        if (total_tok > prev_tok)            { tok_running[sid] += total_tok - prev_tok }
+        else if (total_tok < prev_tok * 0.5) { tok_running[sid] += total_tok }
       } else {
         tok_running[sid] = total_tok
       }
@@ -175,14 +175,14 @@ _cmd_cost_from_history() {
           m = (k in sid_model) ? sid_model[k] : "?"
           prev_spend = cur_spend; prev_tok = cur_tok
           all_models[m] = 1
-          alltime_cost[m] += delta; alltime_sessions[m]++; alltime_tok += tok_delta
-          if (d == today)      { today_cost[m] += delta; today_sessions[m]++; today_tok += tok_delta }
-          if (d >= week_start) { week_cost[m]  += delta; week_sessions[m]++;  week_tok  += tok_delta }
+          alltime_cost[m] += delta; seen_sid_alltime[m SUBSEP sid] = 1; alltime_tok += tok_delta
+          if (d == today)      { today_cost[m] += delta; seen_sid_today[m SUBSEP sid] = 1; today_tok += tok_delta }
+          if (d >= week_start) { week_cost[m]  += delta; seen_sid_week[m SUBSEP sid]  = 1; week_tok  += tok_delta }
           mon_key = substr(d, 1, 7)
-          month_cost[m SUBSEP mon_key] += delta; month_sessions[m SUBSEP mon_key]++; month_tok[mon_key] += tok_delta
+          month_cost[m SUBSEP mon_key] += delta; seen_sid_month[m SUBSEP mon_key SUBSEP sid] = 1; month_tok[mon_key] += tok_delta
           all_months[mon_key] = 1
           yr_key = substr(d, 1, 4)
-          year_cost[m SUBSEP yr_key] += delta; year_sessions[m SUBSEP yr_key]++; year_tok[yr_key] += tok_delta
+          year_cost[m SUBSEP yr_key] += delta; seen_sid_year[m SUBSEP yr_key SUBSEP sid] = 1; year_tok[yr_key] += tok_delta
           all_years[yr_key] = 1
         }
       }
@@ -195,6 +195,19 @@ _cmd_cost_from_history() {
       n_yr = 0; for (yk in all_years) yr_keys[++n_yr] = yk
       for (i = 1; i <= n_yr; i++) for (j = i+1; j <= n_yr; j++)
         if (yr_keys[i] < yr_keys[j]) { tmp = yr_keys[i]; yr_keys[i] = yr_keys[j]; yr_keys[j] = tmp }
+
+      # Derive session counts from distinct-SID sets (Bug 1 fix: count unique SIDs, not day-entries)
+      for (k in seen_sid_alltime) { split(k, _p, SUBSEP); alltime_sessions[_p[1]]++ }
+      for (k in seen_sid_today)   { split(k, _p, SUBSEP); today_sessions[_p[1]]++ }
+      for (k in seen_sid_week)    { split(k, _p, SUBSEP); week_sessions[_p[1]]++ }
+      for (k in seen_sid_month) {
+        split(k, _p, SUBSEP)   # _p[1]=model _p[2]=mon_key _p[3]=sid
+        month_sessions[_p[1] SUBSEP _p[2]]++
+      }
+      for (k in seen_sid_year) {
+        split(k, _p, SUBSEP)   # _p[1]=model _p[2]=yr_key _p[3]=sid
+        year_sessions[_p[1] SUBSEP _p[2]]++
+      }
 
       # --- JSON output ---
       if (fmt == "json") {
@@ -334,7 +347,7 @@ _cmd_cost_from_history() {
       } else { printf "    (none)\n" }
 
       printf "\n"
-      printf "  %sWeek%s\n", pink, reset
+      printf "  %sWeek%s  %s(%s \342\200\223 %s)%s\n", pink, reset, dim, week_start, today, reset
       total = 0; has = 0
       for (m in all_models) {
         if (!(m in week_cost) || week_sessions[m] == 0) continue

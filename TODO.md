@@ -6,33 +6,6 @@
 
 ## Pending
 
-### Bug: `claudii cost` — falsche Summen (Session-Counts, Opus overcount, Week-Datumsbereich)
-
-**Type: Bug**
-**Complexity: Medium**
-**Touches: lib/cmd/sessions.sh**
-
-Drei konkrete Bugs:
-
-**1. Session-Count falsch** — `alltime_sessions[m]++` im END-Block des awk zählt
-(Session, Tag)-Paare, nicht distinkte Sessions. Eine 3-tägige Session zählt als
-"3 sessions". Fix: Im END-Block `sid_model[m SUBSEP sid] = 1` tracken, in Ausgabe
-über `for k in ...` zählen wie viele distinkte SIDs pro Modell existieren.
-
-**2. False Context-Reset → Opus overcount** — Reset-Heuristik:
-`else if (cost < prev) { running_spend[sid] += cost }` hat keine Schwelle.
-Floating-point Rauschen (z.B. cost geht von 10.003 auf 10.002) löst einen "Reset"
-aus und addiert den vollen Post-Reset-Wert erneut. Opus ist teurer → mehr Rauschen
-→ mehr overcounting. Fix: Reset nur wenn `cost < prev * 0.5` (echter Compaction-Drop
-ist immer >50%); bei kleineren Rückgängen `prev = cost` setzen ohne running_spend zu erhöhen.
-
-**3. Week > laufender Monat — fehlender Datumsbereich** — Wenn die Woche den
-Monatsanfang überspannt (z.B. KW enthält noch März-Tage, laufender Monat = April)
-ist Week-Total > April-Total. Kein Rechenfehler, aber irreführend. Fix: Wochentitel
-zeigt Datumspanne: `Week  (Mon 31 Mar – Thu 3 Apr  ·  Mon–Thu)`.
-
----
-
 ### Refactor: `claudii se` — alle Kostenwerte entfernen
 
 **Type: Refactor**
@@ -68,19 +41,6 @@ Konkret: `trends` entfernt die Text-Zeile "Week: $X.XX  Last: $Y.YY" (die ist je
 `cost` mit mehr Detail). `cost` entfernt keine Periode, bekommt aber den Wochentitel
 mit Datumspanne (aus dem Bug-Fix oben). Man-Page + Completions: beide Commands
 mit je 1-Satz-Beschreibung der Abgrenzung aktualisieren.
-
----
-
-### A: api-duration Ratio im Segment
-
-**Type: Enhancement**
-**Complexity: Small**
-**Touches: bin/claudii-sessionline**
-
-`api-duration` Segment zeigt aktuell nur Absolutzeit (`api:45m`). Stattdessen Ratio ergänzen:
-`api:45m (73%)` — API-Zeit als % der Gesamtsession-Laufzeit.
-
-Berechnung: `api_duration_ms / duration_ms * 100`. Nur anzeigen wenn beide Werte > 0.
 
 ---
 

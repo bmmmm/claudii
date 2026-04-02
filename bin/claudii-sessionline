@@ -346,7 +346,18 @@ fi
 _seg_api_dur=""
 if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
   _api_fmt=$(_dur "$api_duration_ms")
-  [[ -n "$_api_fmt" ]] && _seg_api_dur="${DIM}api:${_api_fmt}${RST}"
+  if [[ -n "$_api_fmt" ]]; then
+    _seg_api_dur="${DIM}api:${_api_fmt}${RST}"
+    # Add ratio if total duration available and > 0
+    if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
+      _dur_int=${duration_ms%.*}
+      _api_int=${api_duration_ms%.*}
+      if (( _dur_int > 0 && _api_int > 0 && _api_int <= _dur_int )); then
+        _api_pct=$(awk "BEGIN { printf \"%d\", int($_api_int / $_dur_int * 100) }")
+        _seg_api_dur+=" ${DIM}(${_api_pct}%)${RST}"
+      fi
+    fi
+  fi
 fi
 
 # Session deltas: only the change since session start (current rate is already on line 1)

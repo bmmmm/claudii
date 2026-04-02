@@ -126,3 +126,76 @@ assert_not_contains "cost (empty tok cols): no 'tok' in output" "tok" "$cost_emp
 
 rm -rf "$_COST_EMPTY_TOK_TMP"
 unset _COST_EMPTY_TOK_TMP _now_ts cost_empty_tok_out cost_empty_tok_err
+
+# ── cost: Bug 1 — session spanning 3 days counts as 1 session, not 3 ────────
+# A single SID that appears on 3 consecutive days must be counted as 1 session
+# in the alltime output, not 3.
+_COST_MULTIDAY_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+_day0=$(( _now_ts - 86400 * 10 ))  # 10 days ago
+_day1=$(( _day0 + 86400 ))
+_day2=$(( _day0 + 86400 * 2 ))
+
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_day0" "claude-sonnet-4-5" "1.00" "multiday-sid" "1.00" "5000" "1000" \
+  "$_day1" "claude-sonnet-4-5" "2.00" "multiday-sid" "2.00" "5000" "1000" \
+  "$_day2" "claude-sonnet-4-5" "3.00" "multiday-sid" "3.00" "5000" "1000" \
+  > "$_COST_MULTIDAY_TMP/history.tsv"
+
+cost_multiday_out=$(CLAUDII_CACHE_DIR="$_COST_MULTIDAY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+
+assert_contains "cost (multiday): shows 1 session not 3" "1 session" "$cost_multiday_out"
+assert_not_contains "cost (multiday): does not show 3 sessions" "3 sessions" "$cost_multiday_out"
+
+rm -rf "$_COST_MULTIDAY_TMP"
+unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out
+
+# ── cost: Bug 2 — minor cost fluctuation must not trigger a false reset ───────
+# A cost drop of <50% (floating-point noise) should NOT count as extra spend.
+# A cost drop of >50% (genuine compaction) SHOULD count as extra spend.
+_COST_RESET_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+_base=$(( _now_ts - 3600 ))
+
+# Session A: cost goes 10.00 → 10.002 → 10.001 (minor noise, should not reset)
+# Total real spend: ~10.001 (just the initial cost + tiny increment)
+# Session B: cost goes 5.00 → 0.10 (genuine compaction drop >50%, should add 0.10)
+# Total real spend: ~5.10
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(( _base - 200 ))" "claude-opus-4-5" "10.000" "noise-sid" "10.000" "5000" "1000" \
+  "$(( _base - 100 ))" "claude-opus-4-5" "10.002" "noise-sid" "10.002" "5000" "1000" \
+  "$(( _base - 50  ))" "claude-opus-4-5" "10.001" "noise-sid" "10.001" "5000" "1000" \
+  "$(( _base - 300 ))" "claude-opus-4-5" "5.000"  "reset-sid" "5.000"  "5000" "1000" \
+  "$_base"              "claude-opus-4-5" "0.100"  "reset-sid" "0.100"  "5000" "1000" \
+  > "$_COST_RESET_TMP/history.tsv"
+
+cost_reset_out=$(CLAUDII_CACHE_DIR="$_COST_RESET_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+
+# The noise-sid should contribute ~10.00 total (not ~20.00 from false reset)
+# The reset-sid should contribute ~5.10 (5.00 + 0.10 post-compaction)
+# Combined alltime Opus should be in 14-16 range, definitely not 25+
+_cost_alltime=$(printf '%s\n' "$cost_reset_out" | awk -F'\t' '$1=="alltime" && $2=="Opus" {print $3}')
+assert_eq "cost (reset threshold): alltime Opus in range (no false reset)" "1" \
+  "$(awk "BEGIN{print (\"$_cost_alltime\"+0 < 17) ? 1 : 0}")"
+
+rm -rf "$_COST_RESET_TMP"
+unset _COST_RESET_TMP _now_ts _base cost_reset_out _cost_alltime
+
+# ── cost: Bug 3 — Week header shows date range ────────────────────────────────
+# The Week section header must include the date range (week_start – today).
+_COST_WEEKHDR_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(( _now_ts - 3600 ))" "claude-sonnet-4-5" "1.00" "wk-sid" "1.00" "5000" "1000" \
+  > "$_COST_WEEKHDR_TMP/history.tsv"
+
+cost_weekhdr_out=$(CLAUDII_CACHE_DIR="$_COST_WEEKHDR_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+
+# Week header must contain a date range in YYYY-MM-DD format (week_start – today)
+_week_line=$(printf '%s\n' "$cost_weekhdr_out" | grep -i 'Week')
+assert_contains "cost (week header): Week line shows date range" "(" "$_week_line"
+assert_contains "cost (week header): Week line has a year" "20" "$_week_line"
+
+rm -rf "$_COST_WEEKHDR_TMP"
+unset _COST_WEEKHDR_TMP _now_ts cost_weekhdr_out _week_line

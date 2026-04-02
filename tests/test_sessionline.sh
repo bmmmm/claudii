@@ -215,3 +215,28 @@ assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 
 # No bc in the script
 assert_eq "no bc subprocess in claudii-sessionline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-sessionline" || true)"
+
+# api-duration ratio: shown when both api_duration_ms and duration_ms are present
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":60000,"total_api_duration_ms":44000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "api-duration ratio: shows api: label" "1" "$(echo "$strip" | grep -c 'api:' || true)"
+assert_eq "api-duration ratio: shows parenthesized pct" "1" "$(echo "$strip" | grep -cE 'api:.*\([0-9]+%\)' || true)"
+
+# api-duration ratio: NOT shown when duration_ms is absent
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_api_duration_ms":44000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "api-duration ratio absent without duration_ms: no (%)" "0" "$(echo "$strip" | grep -cE '\([0-9]+%\)' || true)"
+
+# api-duration ratio: NOT shown when duration_ms is 0
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":0,"total_api_duration_ms":44000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "api-duration ratio absent when duration_ms=0: no (%)" "0" "$(echo "$strip" | grep -cE '\([0-9]+%\)' || true)"
+
+# api-duration ratio: capped — api_duration_ms > duration_ms produces no ratio (guard)
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":30000,"total_api_duration_ms":60000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "api-duration ratio guard: api > total → no ratio shown" "0" "$(echo "$strip" | grep -cE '\([0-9]+%\)' || true)"
