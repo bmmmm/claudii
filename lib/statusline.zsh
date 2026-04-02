@@ -167,6 +167,24 @@ function _claudii_collect_sessions {
     [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*$'\n'reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
+    # Fallback: if cost is missing or zero, look up last known cost in history.tsv
+    if [[ -z "$s_cost" || "$s_cost" == "0" ]]; then
+      local s_sid=""
+      [[ $'\n'"$sc" == *$'\n'session_id=* ]] && s_sid="${${sc#*$'\n'session_id=}%%$'\n'*}"
+      if [[ -n "$s_sid" ]]; then
+        local _hist="$_cache_base/history.tsv"
+        if [[ -f "$_hist" ]]; then
+          # Find last non-zero cost for this session_id (col 6 = session_id, col 3 = cost)
+          local _hcost
+          _hcost=$(awk -F'\t' -v sid="$s_sid" '
+            $6==sid && $3!="" && $3+0 > 0 { c=$3 }
+            END { if (c!="") print c }
+          ' "$_hist" 2>/dev/null)
+          [[ -n "$_hcost" ]] && s_cost="$_hcost"
+        fi
+      fi
+    fi
+
     _CLAUDII_SDASH_MODELS+=("$s_model")
     _CLAUDII_SDASH_CTXS+=("$s_ctx")
     _CLAUDII_SDASH_COSTS+=("$s_cost")

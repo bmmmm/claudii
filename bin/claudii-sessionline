@@ -115,10 +115,11 @@ _tmp_session="${_session_file}.tmp.$$"
   > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
-# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id
+# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok
 _now=$(date +%s)
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
+  "${input_tok:-0}" "${output_tok:-0}" \
   >> "$_cache_dir/history.tsv" 2>/dev/null || true
 
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
@@ -189,14 +190,14 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
   (( local_pct > 100 )) && local_pct=100
-  filled=$(( local_pct / 10 ))
+  # Usable context %: raw_pct / 0.8 — scales to the 80% practical usable window
+  # Example: 76% raw → 76/0.8 = 95% usable. Bar and number both reflect usable %.
+  _usable_pct=$(awk "BEGIN { v = int($local_pct / 0.8); if (v > 100) v = 100; printf \"%d\", v }")
+  filled=$(( _usable_pct / 10 ))
   empty=$(( 10 - filled ))
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
-  # Usable context %: raw_pct / 0.8 — scales to the 80% practical usable window
-  # Example: 76% raw → 76/0.8 = 95% usable
-  _usable_pct=$(awk "BEGIN { v = int($local_pct / 0.8); if (v > 100) v = 100; printf \"%d\", v }")
   # Context window size indicator (1M = extended)
   win=""
   if [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
@@ -358,6 +359,21 @@ while IFS= read -r _line_segs; do
       burn-eta)      _val="$_seg_eta"      ;;
       worktree)      _val="$_seg_worktree" ;;
       agent)         _val="$_seg_agent"    ;;
+      cwd)           _val="$_seg_cwd"      ;;
+      ruler)
+        # Fill remaining terminal width with ─
+        # Strip ANSI from current line to measure visible length
+        if (( _first )); then
+          _used=0
+        else
+          _vis=$(echo -e "$_line_out" | sed 's/\x1b\[[0-9;]*m//g')
+          _used=$(( ${#_vis} + 5 ))  # +5 for the " │ " separator that will be prepended
+        fi
+        _fill=$(( _term_cols - _used ))
+        (( _fill > 1 )) || _fill=1
+        printf -v _v "%${_fill}s" ""
+        _val="${DIM}${_v// /─}${RST}"
+        ;;
       *)             _val=""               ;;
     esac
     if [[ -n "$_val" ]]; then

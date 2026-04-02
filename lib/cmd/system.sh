@@ -162,10 +162,11 @@ _cmd_status() {
                   {
                     gsub(/^[^<]*<p>/, "")
                     if (length($0) < 5) next
-                    # Extract time from <small>...</small>
+                    # Extract time from <small>...</small> — strip any nested tags (e.g. <a href="...">)
                     time_str = $0
                     sub(/.*<small>/, "", time_str)
                     sub(/<\/small>.*/, "", time_str)
+                    gsub(/<[^>]*>/, "", time_str)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", time_str)
                     # Extract status from <strong>...</strong>
                     status = $0
@@ -173,11 +174,13 @@ _cmd_status() {
                     sub(/<\/strong>.*/, "", status)
                     # Extract message (after </strong> - )
                     msg = $0
-                    sub(/.*<\/strong> - /, "", msg)
+                    sub(/.*<\/strong>[[:space:]]*-[[:space:]]*/, "", msg)
                     gsub(/<[^>]*>/, "", msg)
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", msg)
-                    if (length(status) > 0 && length(time_str) > 0)
+                    if (length(status) > 0 && length(time_str) > 0) {
+                      print ""
                       print "    " time_str "  " status " — " msg
+                    }
                   }
                 ' | while IFS= read -r _line; do
                   printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_line"
@@ -242,13 +245,15 @@ _cmd_status() {
               # Parse individual updates: each <p> has date + status + message
               printf '%s\n' "$_inc_desc" | tr '\n' ' ' | sed 's/<\/p>/\n/g' | \
               while IFS= read -r _para; do
-                _ptime=$(echo "$_para" | sed -n 's/.*<small>\([^<]*\)<\/small>.*/\1/p')
+                _ptime=$(echo "$_para" | sed 's/.*<small>//' | sed 's/<\/small>.*//' | \
+                  sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
                 _pstat=$(echo "$_para" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p')
                 _pmsg=$(echo "$_para" | sed 's/.*<\/strong>[[:space:]]*-[[:space:]]*//' | \
                   sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/  */ /g')
                 [[ -z "$_pstat" ]] && continue
                 printf "    ${CLAUDII_CLR_DIM}%-18s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
                   "${_ptime}" "$_pstat" "$_pmsg"
+                printf '\n'
               done
               printf '\n'
             fi

@@ -615,3 +615,74 @@ assert_eq "PID guard: no new spawn when previous fetch still running" "$_TEST_LI
 
 rm -rf "$PID_TMP"
 unset PID_TMP pid_guard_out _TEST_LIVE_PID
+
+# ── history.tsv cost fallback ─────────────────────────────────────────────────
+
+HIST_TMP="$CLAUDII_HOME/tmp/test_statusline_hist"
+rm -rf "$HIST_TMP"
+mkdir -p "$HIST_TMP/config/claudii"
+jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$HIST_TMP/config/claudii/config.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$HIST_TMP/status-models"
+_live_pid=$$
+
+# 1. cost=0 in cache + matching history.tsv entry → dashboard shows cost from history
+printf 'model=Sonnet\nctx_pct=48\ncost=0\nrate_5h=31\nreset_5h=\nsession_id=histtest1\nppid=%s\n' "$_live_pid" \
+  > "$HIST_TMP/session-histtest1"
+# history.tsv: tab-separated, col1=ts col2=model col3=cost col4=ctx col5=rate5h col6=session_id
+printf '1700000000\tsonnet\t12.34\t48\t31\thisttest1\n' > "$HIST_TMP/history.tsv"
+
+hist_cost_out=$(
+  CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+assert_contains "history fallback: cost=0 in cache + history entry → shows cost" "\$12.34" "$hist_cost_out"
+
+# 2. cost=0 in cache + no history.tsv entry → no cost shown, no crash
+rm -f "$HIST_TMP/history.tsv"
+# Remove session file and recreate (still cost=0, no history)
+printf 'model=Sonnet\nctx_pct=48\ncost=0\nrate_5h=31\nreset_5h=\nsession_id=histtest2\nppid=%s\n' "$_live_pid" \
+  > "$HIST_TMP/session-histtest1"
+
+hist_nocost_out=$(
+  CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+# Should show session (model name present) but no dollar cost
+assert_contains "history fallback: cost=0 no history → session shown" "Sonnet" "$hist_nocost_out"
+if printf '%s' "$hist_nocost_out" | grep -qF '$'; then
+  assert_eq "history fallback: cost=0 no history → no cost shown" "no dollar" "dollar found"
+else
+  assert_eq "history fallback: cost=0 no history → no cost shown" "no dollar" "no dollar"
+fi
+
+# 3. cost=15.51 in cache → shows cost directly (regression guard, no history needed)
+rm -f "$HIST_TMP/session-histtest1"
+printf 'model=Sonnet\nctx_pct=48\ncost=15.51\nrate_5h=31\nreset_5h=\nsession_id=histtest3\nppid=%s\n' "$_live_pid" \
+  > "$HIST_TMP/session-histtest3"
+
+hist_direct_out=$(
+  CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+assert_contains "history fallback: cost=15.51 in cache → shows cost directly" "\$15.51" "$hist_direct_out"
+
+rm -rf "$HIST_TMP"
+unset HIST_TMP hist_cost_out hist_nocost_out hist_direct_out
