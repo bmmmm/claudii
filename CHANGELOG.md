@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Changed
 - **README:** Sessionline example updated to reflect 3-line multi-segment default; cost segment removed from example
+- **`claudii cost`:** Session counts and token totals removed from display — pure dollar accounting; Total label highlighted in accent color with blank line after each section
 
 ---
 

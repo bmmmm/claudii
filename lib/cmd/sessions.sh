@@ -336,14 +336,13 @@ _cmd_cost_from_history() {
       total = 0; has = 0
       for (m in all_models) {
         if (!(m in today_cost) || today_sessions[m] == 0) continue
-        n = today_sessions[m]; s = (n != 1) ? "s" : ""
-        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, today_cost[m], reset, n, s
+        printf "    %-10s %s$%.2f%s\n", m, cyan, today_cost[m], reset
         total += today_cost[m]; has = 1
       }
       if (has) {
         printf "%s\n", line
-        _ts = fmt_tok(today_tok); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
-        printf "    %-10s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+        printf "    %s%-10s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
+        printf "\n"
       } else { printf "    (none)\n" }
 
       printf "\n"
@@ -351,14 +350,13 @@ _cmd_cost_from_history() {
       total = 0; has = 0
       for (m in all_models) {
         if (!(m in week_cost) || week_sessions[m] == 0) continue
-        n = week_sessions[m]; s = (n != 1) ? "s" : ""
-        printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, week_cost[m], reset, n, s
+        printf "    %-10s %s$%.2f%s\n", m, cyan, week_cost[m], reset
         total += week_cost[m]; has = 1
       }
       if (has) {
         printf "%s\n", line
-        _ts = fmt_tok(week_tok); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
-        printf "    %-10s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+        printf "    %s%-10s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
+        printf "\n"
       } else { printf "    (none)\n" }
 
       printf "\n"
@@ -381,23 +379,21 @@ _cmd_cost_from_history() {
         for (mi2 = 1; mi2 <= 3; mi2++) {
           m = _mo[mi2]; k = m SUBSEP mk
           if (k in month_cost) {
-            n = month_sessions[k]; s = (n != 1) ? "s" : ""
-            printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, month_cost[k], reset, n, s
+            printf "      %-8s %s$%.2f%s\n", m, cyan, month_cost[k], reset
           }
         }
         for (m in all_models) {
           if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
             k = m SUBSEP mk
             if (k in month_cost) {
-              n = month_sessions[k]; s = (n != 1) ? "s" : ""
-              printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, month_cost[k], reset, n, s
+              printf "      %-8s %s$%.2f%s\n", m, cyan, month_cost[k], reset
             }
           }
         }
         if (n_mod > 1) {
           printf "%s\n", line
-          _ts = fmt_tok(month_tok[mk]); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
-          printf "      %-8s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+          printf "      %s%-8s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
+          printf "\n"
         }
       }
       if (n_mon == 0) printf "    (none)\n"
@@ -422,23 +418,21 @@ _cmd_cost_from_history() {
         for (mi2 = 1; mi2 <= 3; mi2++) {
           m = _mo[mi2]; k = m SUBSEP yk
           if (k in year_cost) {
-            n = year_sessions[k]; s = (n != 1) ? "s" : ""
-            printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, year_cost[k], reset, n, s
+            printf "      %-8s %s$%.2f%s\n", m, cyan, year_cost[k], reset
           }
         }
         for (m in all_models) {
           if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
             k = m SUBSEP yk
             if (k in year_cost) {
-              n = year_sessions[k]; s = (n != 1) ? "s" : ""
-              printf "      %-8s %s$%.2f%s  (%d session%s)\n", m, cyan, year_cost[k], reset, n, s
+              printf "      %-8s %s$%.2f%s\n", m, cyan, year_cost[k], reset
             }
           }
         }
         if (n_mod > 1) {
           printf "%s\n", line
-          _ts = fmt_tok(year_tok[yk]); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
-          printf "      %-8s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+          printf "      %s%-8s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
+          printf "\n"
         }
       }
       if (n_yr == 0) printf "    (none)\n"

@@ -22,7 +22,7 @@ assert_eq "cost (tokens): no errors on stderr" "" "$cost_tok_err"
 assert_eq "cost (tokens): exit 0" "0" \
   "$(CLAUDII_CACHE_DIR="$_COST_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" cost >/dev/null 2>&1; echo $?)"
 assert_no_literal_ansi "cost (tokens): no literal \\033 in output" "$cost_tok_out"
-assert_contains "cost (tokens): shows tok in Total row" "tok" "$cost_tok_out"
+assert_contains "cost (tokens): shows dollar amount" "$" "$cost_tok_out"
 
 rm -rf "$_COST_TOK_TMP"
 unset _COST_TOK_TMP _now_ts cost_tok_out cost_tok_err
@@ -144,8 +144,8 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 
 cost_multiday_out=$(CLAUDII_CACHE_DIR="$_COST_MULTIDAY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
 
-assert_contains "cost (multiday): shows 1 session not 3" "1 session" "$cost_multiday_out"
-assert_not_contains "cost (multiday): does not show 3 sessions" "3 sessions" "$cost_multiday_out"
+assert_contains "cost (multiday): shows Sonnet cost" "Sonnet" "$cost_multiday_out"
+assert_not_contains "cost (multiday): no session counts in output" "session" "$cost_multiday_out"
 
 rm -rf "$_COST_MULTIDAY_TMP"
 unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out
