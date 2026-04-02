@@ -7,7 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [0.10.0] — 2026-04-03
+
 ### Added
+
 - **`claudii trends`:** Daily API wait time shown per day (`api:1h23m`) — `api_duration_ms` now persisted in `history.tsv` (field 9)
 - **Sessionline:** `api-duration` segment now shows ratio `api:45m (73%)` — API time as % of total session runtime
 - **`claudii cost`/`claudii trends`:** Token usage tracking — `input_tok` and `output_tok` stored in `history.tsv`; displayed as `X.XK tok` / `X.XM tok` after each Total line
