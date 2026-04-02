@@ -187,9 +187,12 @@ zsh_out=$(
 assert_contains "zsh: stale cache → ⟳ in RPROMPT" "⟳" "$zsh_out"
 
 # No cache → […] loading indicator
-rm -f "$ZSH_TMP/status-models"
+# Use a fresh tmp dir — avoids race condition where the background claudii-status
+# spawned by the stale-cache test above recreates status-models before rm -f completes.
+ZSH_NOCACHE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_nocache.XXXXXX")
+mkdir -p "$ZSH_NOCACHE_TMP/config/claudii"
 zsh_out=$(
-  CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ZSH_NOCACHE_TMP" XDG_CONFIG_HOME="$ZSH_NOCACHE_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -197,6 +200,7 @@ zsh_out=$(
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
 )
+rm -rf "$ZSH_NOCACHE_TMP"
 assert_contains "zsh: no cache → […] in RPROMPT" "…" "$zsh_out"
 
 # Disabled: RPROMPT empty
