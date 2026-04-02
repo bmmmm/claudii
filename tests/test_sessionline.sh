@@ -240,3 +240,21 @@ output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percenta
   | bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "api-duration ratio guard: api > total → no ratio shown" "0" "$(echo "$strip" | grep -cE '\([0-9]+%\)' || true)"
+
+# history.tsv field 9: api_duration_ms written correctly
+_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+echo '{"session_id":"testhist9aaa","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":3000,"total_output_tokens":500,"context_window_size":200000},"cost":{"total_cost_usd":0.10,"total_duration_ms":120000,"total_api_duration_ms":75000}}' \
+  | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
+_tsv_line="$(tail -1 "$_test_cache_dir/history.tsv" 2>/dev/null)"
+_field9="$(echo "$_tsv_line" | awk -F'\t' '{print $9}')"
+assert_eq "history.tsv field 9 is api_duration_ms" "75000" "$_field9"
+rm -rf "$_test_cache_dir"
+
+# history.tsv field 9: defaults to 0 when api_duration_ms absent from JSON
+_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+echo '{"session_id":"testhist9bbb","model":{"display_name":"Haiku"},"context_window":{"used_percentage":5,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
+_tsv_line="$(tail -1 "$_test_cache_dir/history.tsv" 2>/dev/null)"
+_field9="$(echo "$_tsv_line" | awk -F'\t' '{print $9}')"
+assert_eq "history.tsv field 9 defaults to 0 when absent" "0" "$_field9"
+rm -rf "$_test_cache_dir"

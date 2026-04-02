@@ -126,10 +126,11 @@ _cmd_trends() {
       day = epoch_to_date(ts)
       model = $2; cost = $3 + 0; sid = $6
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
+      api_dur = ($9 == "" ? 0 : $9 + 0)
       if      (model ~ /[Oo]pus/)   model = "Opus"
       else if (model ~ /[Ss]onnet/) model = "Sonnet"
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
-      print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok
+      print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
     }
   ' "$history_file")
 
@@ -141,6 +142,12 @@ _cmd_trends() {
   if [[ -n "$_claudii_spinner_label_file" ]]; then
     rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
   fi
+
+  # Pre-compute daily API duration totals from augmented data (field 7 = api_dur_ms)
+  _daily_api=$(echo "$_trends_augmented" | awk -F'\t' '
+    NF >= 7 && $7 > 0 { daily[$1] += $7 }
+    END { for (d in daily) print d "\t" daily[d] }
+  ' | sort)
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   echo "$_trends_augmented" | awk -F'\t' \
@@ -155,6 +162,7 @@ _cmd_trends() {
     -v dim="$CLAUDII_CLR_DIM" \
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
+    -v daily_api="$_daily_api" \
     -f "$CLAUDII_HOME/lib/trends.awk"
 }
 

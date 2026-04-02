@@ -1,8 +1,18 @@
 # trends.awk — claudii trends aggregation and formatting
 # Standalone awk program, called via -f from _cmd_trends()
-# Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok
+# Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
 # Variables (passed via -v): today, this_mon, last_mon, last_sun, thirty,
-#   week_days, fmt, cyan, dim, pink, reset
+#   week_days, fmt, cyan, dim, pink, reset, daily_api
+
+BEGIN {
+  # Parse daily_api "date\tms\ndate\tms\n..." into api_by_day[date] = ms
+  n = split(daily_api, _api_parts, "\n")
+  for (i = 1; i <= n; i++) {
+    if (_api_parts[i] == "") continue
+    split(_api_parts[i], _ap, "\t")
+    if (_ap[1] != "") api_by_day[_ap[1]] = _ap[2] + 0
+  }
+}
 
 function fmt_tok(t) {
   if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
@@ -167,8 +177,18 @@ END {
       s_suffix = (sess != 1) ? "s" : ""
       _ts = fmt_tok(d in day_tok ? day_tok[d] : 0)
       _tpart = (_ts != "") ? ("  " _ts " tok") : ""
-      printf "    %-7s %s$%.2f%s%s  (%d session%s, %s)\n", \
-        label, cyan, day_cost[d], reset, _tpart, sess, s_suffix, detail
+      _api_str = ""
+      if (d in api_by_day && api_by_day[d] > 0) {
+        api_ms = api_by_day[d]
+        api_h = int(api_ms / 3600000)
+        api_m = int((api_ms % 3600000) / 60000)
+        if (api_h > 0)
+          _api_str = "  " dim "api:" api_h "h" api_m "m" reset
+        else if (api_m > 0)
+          _api_str = "  " dim "api:" api_m "m" reset
+      }
+      printf "    %-7s %s$%.2f%s%s  (%d session%s, %s)%s\n", \
+        label, cyan, day_cost[d], reset, _tpart, sess, s_suffix, detail, _api_str
     }
   }
 
