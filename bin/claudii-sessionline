@@ -89,12 +89,16 @@ fi
 # Burn-rate ETA — computed for dashboard cache, not rendered in sessionline
 _burn_eta=""
 if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
-  _session_min_f=$(awk "BEGIN { printf \"%.4f\", $duration_ms / 60000 }")
-  _session_min_int=${_session_min_f%.*}
   _rate_5h_int=${rate_5h%.*}
+  _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if [[ -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]] && \
      (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    _burn_eta=$(awk "BEGIN { r=$rate_5h; m=$_session_min_f; printf \"%d\", int((100-r)/(r/m) + 0.5) }")
+    read -r _session_min_f _burn_eta <<< "$(awk "BEGIN {
+      m = $duration_ms / 60000
+      r = $rate_5h + 0
+      eta = (r > 0) ? int((100-r)/(r/m) + 0.5) : 0
+      printf \"%.4f %d\", m, eta
+    }")"
   fi
 fi
 
@@ -136,10 +140,13 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 _tok() {
   local n=$1
   [[ -z "$n" || "$n" == "null" ]] && return
-  if   (( n >= 1000000 )); then awk "BEGIN{printf \"%.1fM\",$n/1000000}"
-  elif (( n >= 1000    )); then awk "BEGIN{printf \"%.1fK\",$n/1000}"
-  else printf "%d" "$n"
-  fi
+  awk "BEGIN{
+    n=$n+0
+    if (n==0) exit
+    if (n>=1000000) printf \"%.1fM\",n/1000000
+    else if (n>=1000) printf \"%.1fK\",n/1000
+    else printf \"%d\",n
+  }"
 }
 
 # Format duration: ms -> "<1m", "5m", "1h 23m"
@@ -197,7 +204,8 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   (( local_pct > 100 )) && local_pct=100
   # Usable context %: raw_pct / 0.8 — scales to the 80% practical usable window
   # Example: 76% raw → 76/0.8 = 95% usable. Bar and number both reflect usable %.
-  _usable_pct=$(awk "BEGIN { v = int($local_pct / 0.8); if (v > 100) v = 100; printf \"%d\", v }")
+  (( _usable_pct = local_pct * 100 / 80 ))
+  (( _usable_pct > 100 )) && _usable_pct=100
   filled=$(( _usable_pct / 10 ))
   empty=$(( 10 - filled ))
   bar=""
@@ -236,7 +244,8 @@ if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _seg_rate5h="$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
   # Reset countdown ↺Xm — color depends on rate level and time remaining
   if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
-    _reset_min=$(awk "BEGIN { d=$reset_5h - $_now; printf \"%d\", (d > 0 ? int(d/60 + 0.5) : 0) }")
+    (( _reset_min = reset_5h - _now ))
+    (( _reset_min > 0 )) && (( _reset_min = (_reset_min + 30) / 60 )) || _reset_min=0
     if (( _reset_min > 0 )); then
       if (( _rate_5h_pct < 50 )); then
         _reset_color="${DIM}"         # dim — not relevant
@@ -260,7 +269,8 @@ if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _seg_rate7d="$(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
   # 7d reset countdown — format depends on remaining time
   if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
-    _reset_7d_sec=$(awk "BEGIN { d=$reset_7d - $_now; printf \"%d\", (d > 0 ? int(d + 0.5) : 0) }")
+    (( _reset_7d_sec = reset_7d - _now ))
+    (( _reset_7d_sec < 0 )) && _reset_7d_sec=0
     if (( _reset_7d_sec > 0 )); then
       _reset_7d_min=$(( _reset_7d_sec / 60 ))
       _reset_7d_hr=$(( _reset_7d_sec / 3600 ))
@@ -353,7 +363,7 @@ if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
       _dur_int=${duration_ms%.*}
       _api_int=${api_duration_ms%.*}
       if (( _dur_int > 0 && _api_int > 0 && _api_int <= _dur_int )); then
-        _api_pct=$(awk "BEGIN { printf \"%d\", int($_api_int / $_dur_int * 100) }")
+        (( _api_pct = _api_int * 100 / _dur_int ))
         _seg_api_dur+=" ${DIM}(${_api_pct}%)${RST}"
       fi
     fi
