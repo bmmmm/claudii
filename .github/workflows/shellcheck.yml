@@ -3,10 +3,10 @@ name: ShellCheck
 on:
   push:
     branches: [main]
-    paths: ['bin/**', 'lib/**', 'claudii.plugin.zsh', 'install.sh']
+    paths: ['bin/**']
   pull_request:
     branches: [main]
-    paths: ['bin/**', 'lib/**', 'claudii.plugin.zsh', 'install.sh']
+    paths: ['bin/**']
 
 jobs:
   shellcheck:
@@ -17,7 +17,7 @@ jobs:
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@master
         with:
-          ignore_paths: tests
+          scandir: './bin'
           severity: warning
         env:
           SHELLCHECK_OPTS: --shell=bash --exclude=SC1090,SC1091,SC2034

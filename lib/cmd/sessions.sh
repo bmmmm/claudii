@@ -672,10 +672,10 @@ _cmd_sessions_inactive() {
         _is_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
       fi
 
-      _is_line="  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
+      _is_line="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
 
       if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
-        _is_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
+        _is_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${CLAUDII_SYM_CACHE}${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
       fi
 
       # Rate limits
@@ -905,9 +905,9 @@ _cmd_sessions() {
   printf '\n'
   for (( _i=0; _i<_sf_count; _i++ )); do
     if [[ "${_sf_is_active[$_i]}" -eq 1 ]]; then
-      status_icon="${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET}"
+      status_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET}"
     else
-      status_icon="${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET}"
+      status_icon="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
     fi
     _render_age "${_sf_age[$_i]}"
 
@@ -930,19 +930,19 @@ _cmd_sessions() {
       detail+="${_CTX_BAR} ${_sf_ctx[$_i]%.*}%"
     fi
     if [[ -n "${_sf_rate5h[$_i]}" ]]; then
-      detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:${_sf_rate5h[$_i]%.*}%"
+      detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} 5h:${_sf_rate5h[$_i]%.*}%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then
         _rem=$(( ${_sf_reset5h[$_i]} - now ))
         (( _rem > 0 )) && detail+=" ↺$(( _rem / 60 ))m"
       fi
     fi
-    detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
+    detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
     [[ -n "${_sf_sid[$_i]}" ]] && detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$detail"
 
     # Line 3: fingerprint (top-5 files accessed) — only when non-empty
     if [[ -n "${_sf_fingerprint[$_i]}" ]]; then
-      printf "    ${CLAUDII_CLR_DIM}✦ %s${CLAUDII_CLR_RESET}\n" "${_sf_fingerprint[$_i]}"
+      printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_FINGERPRINT} %s${CLAUDII_CLR_RESET}\n" "${_sf_fingerprint[$_i]}"
     fi
 
     printf '\n'
@@ -960,7 +960,7 @@ _cmd_sessions() {
     printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
   fi
   printf '\n'
-  printf "  ${CLAUDII_CLR_DIM}● active  ○ ended  ✦ file(N) = most-read files · N = access count  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_ACTIVE} active  ${CLAUDII_SYM_INACTIVE} ended  ${CLAUDII_SYM_FINGERPRINT} file(N) = most-read files · N = access count  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
   printf '\n'
 }
 
@@ -1033,7 +1033,7 @@ _cmd_default() {
   # ── Account ───────────────────────────────────────────────────────
   printf '\n'
   if [[ -n "$_ov_acct_5h" ]]; then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Account${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Account${CLAUDII_CLR_RESET}\n"
 
     _ov_5h_int=${_ov_acct_5h%.*}
     # 5h urgency color: < 50% green, 50-79% yellow, >= 80% red
@@ -1101,7 +1101,7 @@ _cmd_default() {
     fi
     printf '%s\n' "$_ov_acct_line"
   else
-    printf "  ${CLAUDII_CLR_DIM}○ Account                         rate limits appear after first session${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Account                         rate limits appear after first session${CLAUDII_CLR_RESET}\n"
   fi
 
   # ── Agents ────────────────────────────────────────────────────────
@@ -1110,12 +1110,12 @@ _cmd_default() {
   [[ -z "$_ov_agents_json" ]] && _ov_agents_json=$(jq -r 'if (.agents // {}) | keys | length > 0 then .agents | tojson else empty end' "$DEFAULTS" 2>/dev/null)
 
   if [[ -n "$_ov_agents_json" ]]; then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Agents${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Agents${CLAUDII_CLR_RESET}\n"
     while IFS=$'\t' read -r _a_alias _a_skill _a_model _a_effort; do
       printf "    %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
     done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
   else
-    printf "  ${CLAUDII_CLR_DIM}○ Agents                          claudii agents to configure${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Agents                          claudii agents to configure${CLAUDII_CLR_RESET}\n"
   fi
 
   # ── Services ──────────────────────────────────────────────────────
@@ -1139,9 +1139,9 @@ _cmd_default() {
   (( _ov_watch_on ))             && _ov_svc_any=1
 
   if (( _ov_svc_any )); then
-    printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
   else
-    printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
   fi
 
   # ClaudeStatus — with inline model health when on
@@ -1159,9 +1159,9 @@ _cmd_default() {
           *)      _om_cap="$_om"   ;;
         esac
         case "$_os" in
-          ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ✓${CLAUDII_CLR_RESET} " ;;
-          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ⚠${CLAUDII_CLR_RESET} " ;;
-          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ✗${CLAUDII_CLR_RESET} " ;;
+          ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} " ;;
+          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
+          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} " ;;
         esac
       done < "$_ov_status_cache"
       [[ -n "$_ov_health_str" ]] && _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
