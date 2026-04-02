@@ -19,7 +19,8 @@ _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
-  cache_read cache_create worktree_name agent_name model_id cwd <<< "$(
+  cache_read cache_create worktree_name agent_name model_id cwd \
+  session_name worktree_branch api_duration_ms exceeds_200k <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -37,11 +38,15 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.rate_limits.seven_day.resets_at // "" | tostring),
     (.context_window.current_usage.cache_read_input_tokens // "" | tostring),
     (.context_window.current_usage.cache_creation_input_tokens // "" | tostring),
-    (.workspace.name // .worktree.name // .workspace.worktree_name // ""),
-    (.agent.name // .agent_name // ""),
+    (.worktree.name // ""),
+    (.agent.name // ""),
     (.model.id // ""),
-    (.cwd // .workspace.cwd // .workspace.path // "")
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.workspace.current_dir // .cwd // ""),
+    (.session_name // ""),
+    (.worktree.branch // ""),
+    (.cost.total_api_duration_ms // "" | tostring),
+    (.exceeds_200k_tokens // false | tostring)
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Cache hit percentage — computed from cache_read vs input tokens
@@ -170,7 +175,7 @@ _rlc() {
 
 RST="\033[0m"
 DIM="\033[2m"
-SEP="${DIM} │${RST} "
+SEP="${DIM}  │  ${RST}"
 
 # --- segment pre-computation ---
 
@@ -198,9 +203,12 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
-  # Context window size indicator (1M = extended)
+  # Context size indicator: >200k flag (current API call exceeded 200k tokens)
+  # or 1M label when extended context window active
   win=""
-  if [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
+  if [[ "$exceeds_200k" == "true" ]]; then
+    win=" \033[31m>200k${RST}"
+  elif [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
     win=" ${DIM}1M${RST}"
   fi
   _seg_context="$(_thr "$_usable_pct")${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
@@ -315,10 +323,11 @@ if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] 2>/dev/null; then
   _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
 fi
 
-# Worktree: DIM worktree_name (only when set)
+# Worktree: name + branch if available (only when in a worktree session)
 _seg_worktree=""
 if [[ -n "$worktree_name" ]]; then
   _seg_worktree="${DIM}${worktree_name}${RST}"
+  [[ -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
 fi
 
 # Agent: DIM @agent_name (only when set)
@@ -327,10 +336,61 @@ if [[ -n "$agent_name" ]]; then
   _seg_agent="${DIM}@${agent_name}${RST}"
 fi
 
+# Session name: custom name set via /rename or --name (only when set)
+_seg_session_name=""
+if [[ -n "$session_name" ]]; then
+  _seg_session_name="${DIM}${session_name}${RST}"
+fi
+
+# API duration: time actually spent waiting for Claude (vs. total wall-clock)
+_seg_api_dur=""
+if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
+  _api_fmt=$(_dur "$api_duration_ms")
+  [[ -n "$_api_fmt" ]] && _seg_api_dur="${DIM}api:${_api_fmt}${RST}"
+fi
+
+# Session deltas: only the change since session start (current rate is already on line 1)
+_seg_delta5h=""
+if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+  _d5=$(( ${rate_5h%.*} - ${_rate_5h_start%.*} ))
+  if (( _d5 > 0 )); then
+    _seg_delta5h="${DIM}Δ5h:${RST}$(_rlc "$rate_5h")+${_d5}%${RST}"
+  elif (( _d5 < 0 )); then
+    _seg_delta5h="${DIM}Δ5h:${RST}\033[32m${_d5}%${RST}"
+  fi
+fi
+
+_seg_delta7d=""
+if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" && -n "$rate_7d" && "$rate_7d" != "null" ]]; then
+  _d7=$(( ${rate_7d%.*} - ${_rate_7d_start%.*} ))
+  if (( _d7 > 0 )); then
+    _seg_delta7d="${DIM}Δ7d:${RST}$(_rlc "$rate_7d")+${_d7}%${RST}"
+  elif (( _d7 < 0 )); then
+    _seg_delta7d="${DIM}Δ7d:${RST}\033[32m${_d7}%${RST}"
+  fi
+fi
+
+# Cache writes: tokens written INTO cache this session (costs extra vs cache reads)
+# Distinct from ⚡cache-pct (hit ratio) — this shows write volume
+_seg_cache_create=""
+if [[ -n "$cache_create" && "$cache_create" != "null" && "$cache_create" != "0" ]]; then
+  _cc_fmt=$(_tok "$cache_create")
+  [[ -n "$_cc_fmt" ]] && _seg_cache_create="${DIM}✎${_cc_fmt}${RST}"
+fi
+
+# Terminal width — used by ruler segment to fill remaining space
+# COLUMNS (exported by parent shell) is more reliable than tput cols in piped context
+_term_cols=""
+[[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
+[[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
+# If width unknown or implausible: set to 0 — ruler will silently skip
+(( _term_cols > 20 )) || _term_cols=0
+
 # --- layout config ---
 
-_DEFAULT_LINES="model,context-bar,cost,rate-5h,rate-7d
-tokens,lines-changed,duration,burn-eta,worktree,agent"
+_DEFAULT_LINES="model,context-bar,cache-create
+rate-5h,rate-7d,burn-eta,lines-changed
+api-duration,tokens,worktree"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
@@ -357,22 +417,30 @@ while IFS= read -r _line_segs; do
       lines-changed) _val="$_seg_lines"    ;;
       duration)      _val="$_seg_dur"      ;;
       burn-eta)      _val="$_seg_eta"      ;;
-      worktree)      _val="$_seg_worktree" ;;
-      agent)         _val="$_seg_agent"    ;;
-      cwd)           _val="$_seg_cwd"      ;;
+      worktree)      _val="$_seg_worktree"       ;;
+      agent)         _val="$_seg_agent"         ;;
+      session-name)  _val="$_seg_session_name"  ;;
+      api-duration)  _val="$_seg_api_dur"       ;;
+      delta-5h)      _val="$_seg_delta5h"       ;;
+      delta-7d)      _val="$_seg_delta7d"       ;;
+      cache-create)  _val="$_seg_cache_create"  ;;
       ruler)
         # Fill remaining terminal width with ─
-        # Strip ANSI from current line to measure visible length
-        if (( _first )); then
-          _used=0
-        else
-          _vis=$(echo -e "$_line_out" | sed 's/\x1b\[[0-9;]*m//g')
-          _used=$(( ${#_vis} + 5 ))  # +5 for the " │ " separator that will be prepended
+        # Skip entirely if width unknown — prevents overflow and wrapping in narrow terminals
+        _val=""
+        if (( _term_cols > 0 )); then
+          if (( _first )); then
+            _used=0
+          else
+            _vis=$(echo -e "$_line_out" | sed 's/\x1b\[[0-9;]*m//g')
+            _used=$(( ${#_vis} + 5 ))  # +5 for the "  │  " separator to be prepended
+          fi
+          _fill=$(( _term_cols - _used ))
+          if (( _fill > 1 )); then
+            printf -v _v "%${_fill}s" ""
+            _val="${DIM}${_v// /─}${RST}"
+          fi
         fi
-        _fill=$(( _term_cols - _used ))
-        (( _fill > 1 )) || _fill=1
-        printf -v _v "%${_fill}s" ""
-        _val="${DIM}${_v// /─}${RST}"
         ;;
       *)             _val=""               ;;
     esac

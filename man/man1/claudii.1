@@ -147,17 +147,44 @@ Each segment is separated by a dim
 character.
 Segments are omitted when their data is absent.
 .PP
-The output is configurable: by default two lines are emitted.
+The output is configurable: by default three lines are emitted.
 The layout is controlled by the
 .B statusline.lines
 config key (see
 .BR "CONFIG FILE" ).
+.PP
+Available segments:
+.PP
+.TS
+l l l.
+Segment	Example	Description
+_
+model	\fBClaude Sonnet 4.5\fR	Model name (bold); effort mode appended if != high
+context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62% \[u26A1]73%	Context bar + usable% + cache hit ratio
+rate-5h	5h:17% \[u21BA]249m	5h rate limit with reset countdown
+rate-7d	7d:50% \[u21BA]3d15h	7d rate limit with reset countdown
+cost	$0.42	Session cost in USD (cyan)
+tokens	42.1K\(ua 8.3K\(da	Input/output tokens with K/M suffixes
+lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
+duration	1h 23m	Wall-clock session duration (dim)
+api-duration	api:45m	Time spent waiting for Claude API responses (dim)
+burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim)
+delta-5h	\[u03B4]5h:+12%	5h rate change since session start
+delta-7d	\[u03B4]7d:+3%	7d rate change since session start
+cache-create	\[u270E]1.2K	Cache write volume (tokens written into prompt cache)
+session-name	my-feature	Session name (set via /rename or --name)
+worktree	feat/login \[u23B7] main	Worktree name + branch (dim)
+agent	@orc	Agent name (dim, prefixed @)
+ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
+.TE
+.PP
+Segment details:
 .TP
 .B model
 The model display name in
 .B bold
 (e.g.\&
-.BR "claude-opus-4-5" ).
+.BR "Claude Sonnet 4.5" ).
 If the
 .B CLAUDII_EFFORT
 environment variable is set to anything other than
@@ -168,36 +195,19 @@ text (e.g.\&
 .IR max ).
 .TP
 .B context-bar
-A 10-character block bar showing context window usage:
-.B \[u2588]
-(filled) and
-.B \[u2591]
-(empty) characters.
+A 10-character block bar showing context window usage.
 Color thresholds are based on the usable context percentage
 (used tokens divided by 80% of the context window size):
 green < 70%, yellow 70\(en89%, red \(>= 90%.
-Followed by the usable percentage in dim text.
 A dim
 .B 1M
-indicator is appended when the context window size is >= 1,000,000 tokens
-(extended context mode).
+indicator is appended when the context window size is >= 1,000,000 tokens.
+A
+.B >200k
+indicator (red) is shown when the current API call exceeded 200k tokens.
 When cache read tokens are present, a cache hit ratio is appended as
 .B \[u26A1]XX%
 (green >= 60%, yellow < 30%, dim otherwise).
-.TP
-.B cost
-Session cost formatted as
-.B $X.XX
-in cyan.
-Omitted when cost is zero.
-.TP
-.B tokens
-Input tokens (with
-.B \(ua
-arrow) and output tokens (with
-.B \(da
-arrow) formatted with K/M suffixes (e.g.\&
-.BR "15.2K\(ua 4.1K\(da" ).
 .TP
 .B rate-5h
 5-hour usage shown as
@@ -219,11 +229,26 @@ format.
 Color: same thresholds as
 .BR rate-5h .
 .TP
+.B cost
+Session cost formatted as
+.B $X.XX
+in cyan.
+Omitted when cost is zero.
+.TP
+.B tokens
+Input tokens (with
+.B \(ua
+arrow) and output tokens (with
+.B \(da
+arrow) formatted with K/M suffixes (e.g.\&
+.BR "15.2K\(ua 4.1K\(da" ).
+.TP
 .B lines-changed
 Lines added in green
 .RB ( +N )
 and lines removed in red
 .RB ( \-N ).
+Session-cumulative total (does not reset on git commit).
 Omitted when both are zero.
 .TP
 .B duration
@@ -234,21 +259,69 @@ or
 .B 1h 23m
 (dim text).
 .TP
+.B api-duration
+Time actually spent waiting for Claude API responses (as opposed to total wall-clock time),
+formatted identically to
+.BR duration .
+Shown as
+.B api:Xm
+(dim text).
+.TP
 .B burn-eta
 Estimated time until the 5-hour rate limit is exhausted, shown as
 .B ETA:Xm
 in dim text.
 Only shown when a burn rate can be computed (session >= 3 minutes and rate > 0).
 .TP
+.B delta-5h
+Change in 5h usage since session start, shown as
+.B \[u03B4]5h:+N%
+or
+.BR \[u03B4]5h:\-N% .
+Omitted when unchanged.
+.TP
+.B delta-7d
+Change in 7d usage since session start.
+Same format as
+.BR delta-5h .
+.TP
+.B cache-create
+Volume of tokens written into the prompt cache this session, shown as
+.B \[u270E]N
+with K/M suffixes (dim text).
+Distinct from the
+.B \[u26A1]
+cache hit ratio in
+.BR context-bar :
+this shows write volume, not read savings.
+Omitted when zero.
+.TP
+.B session-name
+Custom session name set via
+.B /rename
+or the
+.B \-\-name
+flag (dim text).
+Omitted when not set.
+.TP
 .B worktree
-Worktree name in dim text.
-Shown only when present in the session JSON.
+Worktree name plus branch (
+.BR \[u23B7] " branch" )
+in dim text.
+Shown only when a worktree is active.
 .TP
 .B agent
 Agent name prefixed with
 .B @
 in dim text.
 Shown only when present in the session JSON.
+.TP
+.B ruler
+Fills the remaining terminal width with horizontal rule characters (\(em).
+Relies on
+.B $COLUMNS
+(exported by the parent shell) for width detection.
+Silently skipped when width cannot be determined.
 .
 .SH COMMANDS
 .
@@ -452,7 +525,7 @@ Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
 Shows model name, context usage bar, cost, token counts, rate limits,
 lines changed, session duration, burn-eta, worktree name, and agent context.
-The output is split across configurable lines (default: 2 lines) via
+The output is split across configurable lines (default: 3 lines) via
 .B statusline.lines
 in config.
 .
@@ -810,7 +883,7 @@ fallback.opus.model     fallback model when opus is down
 status.cache_ttl        cache TTL in seconds (default: 900)
 statusline.enabled      ClaudeStatus in RPROMPT (default: true)
 statusline.models       models to monitor (default: opus,sonnet,haiku)
-statusline.lines        CC-Statusline layout: array of arrays, each inner array is one output line listing segment IDs in order (default: 2 lines — see SESSIONLINE SEGMENTS). Valid segment IDs: model, context-bar, cost, rate-5h, rate-7d, tokens, lines-changed, duration, burn-eta, worktree, agent. A single inner array restores 1-line behavior.
+statusline.lines        CC-Statusline layout: array of arrays, each inner array is one output line listing segment IDs in order (default: 3 lines — see SESSIONLINE SEGMENTS for all valid IDs). A single inner array produces a 1-line statusline.
 session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)
