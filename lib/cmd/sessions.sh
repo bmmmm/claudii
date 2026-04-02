@@ -13,10 +13,32 @@ _cmd_cost_from_history() {
   local _date_cmd="gnu"
   date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1 && _date_cmd="macos"
 
+  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
+  local _tz_offset
+  _tz_offset=$(date +%z | awk '{
+    s = (substr($0,1,1) == "-") ? -1 : 1
+    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
+  }')
+
+  # Read configurable week_start (default: monday)
+  local _ws_name _ws_dow
+  _ws_name=$(_cfgget cost.week_start)
+  _ws_name="${_ws_name:-monday}"
+  case "$_ws_name" in
+    monday)    _ws_dow=1 ;;
+    tuesday)   _ws_dow=2 ;;
+    wednesday) _ws_dow=3 ;;
+    thursday)  _ws_dow=4 ;;
+    friday)    _ws_dow=5 ;;
+    saturday)  _ws_dow=6 ;;
+    sunday)    _ws_dow=7 ;;
+    *)         _ws_dow=1 ;;
+  esac
+
   # Pure-awk date conversion — avoids 1 date(1) subprocess per row (was O(n) forks).
   # epoch_to_date() works on BSD awk (macOS) + GNU awk — no strftime needed.
   local _augmented
-  _augmented=$(awk -F'\t' '
+  _augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" '
     function is_leap(y,    l) {
       l = 0
       if (y % 4 == 0) l = 1
@@ -25,7 +47,7 @@ _cmd_cost_from_history() {
       return l
     }
     function epoch_to_date(ts,    days, y, leap, m, mdays) {
-      days = int(ts / 86400)
+      days = int((ts + tz_offset) / 86400)
       y = 1970
       for (;;) {
         leap = is_leap(y)
@@ -55,16 +77,18 @@ _cmd_cost_from_history() {
     return
   fi
 
-  # Compute week start (Monday of current week)
-  local today_dow week_start_str today_mon today_year _week_start_ts
+  # Compute week start based on configured week_start day (local time)
+  local today_dow week_start_str today_mon today_year _week_start_ts _days_back
   if [[ "$_date_cmd" == "macos" ]]; then
-    today_dow=$(TZ=UTC date -j -f '%Y-%m-%d' "$today_str" '+%u' 2>/dev/null)
-    _week_start_ts=$(( $(TZ=UTC date -j -f '%Y-%m-%d' "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
-    week_start_str=$(TZ=UTC date -j -f '%s' "$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+    today_dow=$(date -j -f '%Y-%m-%d' "$today_str" '+%u' 2>/dev/null)
+    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
+    _week_start_ts=$(( $(date -j -f '%Y-%m-%d' "$today_str" '+%s' 2>/dev/null) - _days_back * 86400 ))
+    week_start_str=$(date -j -f '%s' "$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
   else
-    today_dow=$(TZ=UTC date -d "$today_str" '+%u' 2>/dev/null)
-    _week_start_ts=$(( $(TZ=UTC date -d "$today_str" '+%s' 2>/dev/null) - (today_dow - 1) * 86400 ))
-    week_start_str=$(TZ=UTC date -d "@$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
+    today_dow=$(date -d "$today_str" '+%u' 2>/dev/null)
+    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
+    _week_start_ts=$(( $(date -d "$today_str" '+%s' 2>/dev/null) - _days_back * 86400 ))
+    week_start_str=$(date -d "@$_week_start_ts" '+%Y-%m-%d' 2>/dev/null)
   fi
   today_mon="${today_str:0:7}"   # YYYY-MM
   today_year="${today_str:0:4}"  # YYYY
@@ -412,13 +436,14 @@ _cmd_cost_from_history() {
 }
 
 _cmd_cost() {
+  _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
   # Prefer history.tsv (Flight Recorder) for correct daily-delta cost attribution.
   # Falls back to session-cache files when no history exists yet.
   history_file="$cache_dir/history.tsv"
   if [[ -f "$history_file" && -s "$history_file" ]]; then
-    today_str=$(TZ=UTC date '+%Y-%m-%d')  # UTC — must match epoch_to_date() in awk
+    today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
     _hist_spinner_pid="" _hist_label_file=""
     if ! _plain; then
       _hist_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
@@ -522,14 +547,12 @@ _cmd_cost() {
     fi
 
     # Accumulate all-time
-    _alltime_cost[$idx]=$(printf '%.4f' \
-      "$(echo "${_alltime_cost[$idx]} + $cost" | bc -l 2>/dev/null || echo "${_alltime_cost[$idx]}")")
+    _alltime_cost[$idx]=$(awk "BEGIN{printf \"%.4f\", ${_alltime_cost[$idx]} + $cost}")
     _alltime_count[$idx]=$(( ${_alltime_count[$idx]} + 1 ))
 
     # Accumulate today (mtime within last 24h)
     if (( mtime >= cutoff )); then
-      _today_cost[$idx]=$(printf '%.4f' \
-        "$(echo "${_today_cost[$idx]} + $cost" | bc -l 2>/dev/null || echo "${_today_cost[$idx]}")")
+      _today_cost[$idx]=$(awk "BEGIN{printf \"%.4f\", ${_today_cost[$idx]} + $cost}")
       _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))
     fi
   done
@@ -544,20 +567,18 @@ _cmd_cost() {
   fi
 
   if [[ "$_FORMAT" == "json" ]]; then
-    # Build JSON with today + alltime breakdown
-    today_obj="{}"
-    alltime_obj="{}"
+    # Build JSON inline — avoids one jq subprocess per model
+    _today_inner="" _alltime_inner=""
     for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
       m="${_cost_models[$_i]}"
+      [[ -n "$_alltime_inner" ]] && _alltime_inner+=","
+      _alltime_inner+="\"$m\":{\"cost\":${_alltime_cost[$_i]},\"sessions\":${_alltime_count[$_i]}}"
       if [[ "${_today_count[$_i]}" != "0" ]]; then
-        today_obj=$(echo "$today_obj" | jq --arg m "$m" --argjson c "${_today_cost[$_i]}" --argjson n "${_today_count[$_i]}" \
-          '.[$m] = {cost: $c, sessions: $n}')
+        [[ -n "$_today_inner" ]] && _today_inner+=","
+        _today_inner+="\"$m\":{\"cost\":${_today_cost[$_i]},\"sessions\":${_today_count[$_i]}}"
       fi
-      alltime_obj=$(echo "$alltime_obj" | jq --arg m "$m" --argjson c "${_alltime_cost[$_i]}" --argjson n "${_alltime_count[$_i]}" \
-        '.[$m] = {cost: $c, sessions: $n}')
     done
-    jq -n --argjson today "$today_obj" --argjson alltime "$alltime_obj" \
-      '{"today": $today, "alltime": $alltime}'
+    printf '{"today":{%s},"alltime":{%s}}\n' "$_today_inner" "$_alltime_inner"
     exit 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
     printf "period\tmodel\tcost\tsessions\n"
@@ -585,7 +606,7 @@ _cmd_cost() {
       [[ "$_pn" == "0" ]] && continue
       printf "    %-12s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}  %s session%s\n" \
         "$_pm" "$(printf '%.2f' "$_pc")" "$_pn" "$( (( _pn != 1 )) && echo 's' || true)"
-      total=$(echo "$total + $_pc" | bc -l)
+      total=$(awk "BEGIN{print $total + $_pc}")
       has_data=1
     done
     if (( has_data )); then
@@ -734,7 +755,7 @@ _cmd_sessions() {
 
     # Accumulate cost
     if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-      total_cost=$(echo "$total_cost + $_PSC_cost" | bc 2>/dev/null || echo "$total_cost")
+      total_cost=$(awk "BEGIN{print $total_cost + $_PSC_cost}")
     fi
 
     # Track freshest rate limits
@@ -999,7 +1020,7 @@ _cmd_default() {
       if (( _PSC_mtime >= _ov_cutoff )); then
         _ov_today_count=$(( _ov_today_count + 1 ))
         if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-          _ov_today_cost=$(echo "$_ov_today_cost + $_PSC_cost" | bc 2>/dev/null || echo "$_ov_today_cost")
+          _ov_today_cost=$(awk "BEGIN{print $_ov_today_cost + $_PSC_cost}")
         fi
       fi
 

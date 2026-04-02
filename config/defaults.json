@@ -26,6 +26,9 @@
   "search": {
     "dir": "~/claude-search"
   },
+  "cost": {
+    "week_start": "monday"
+  },
   "session-dashboard": {
     "enabled": "off"
   },

@@ -504,3 +504,297 @@ _cgval_dot=$(XDG_CONFIG_HOME="$_CFGGET_TMP" bash "$CLAUDII_HOME/bin/claudii" con
 assert_eq "cfgget: dot key statusline.enabled returns default" "true" "$_cgval_dot"
 rm -rf "$_CFGGET_TMP"
 unset _CFGGET_TMP _cgval_hyph _cgval_dot
+
+# ── cost.week_start default config ────────────────────────────────────────────
+_WS_CFG_TMP="$(mktemp -d)"
+mkdir -p "$_WS_CFG_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_CFG_TMP/claudii/config.json"
+_ws_default=$(XDG_CONFIG_HOME="$_WS_CFG_TMP" bash "$CLAUDII_HOME/bin/claudii" config get cost.week_start 2>&1)
+assert_eq "cost.week_start: defaults to monday" "monday" "$_ws_default"
+# Verify it's in defaults.json directly (jq read)
+_ws_json_default=$(jq -r '."cost"."week_start"' "$CLAUDII_HOME/config/defaults.json" 2>/dev/null)
+assert_eq "cost.week_start: defaults.json has monday" "monday" "$_ws_json_default"
+rm -rf "$_WS_CFG_TMP"
+unset _WS_CFG_TMP _ws_default _ws_json_default
+
+# ── cost.week_start: config set and read back ────────────────────────────────
+_WS_SET_TMP="$(mktemp -d)"
+mkdir -p "$_WS_SET_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_SET_TMP/claudii/config.json"
+XDG_CONFIG_HOME="$_WS_SET_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start sunday >/dev/null 2>&1
+_ws_set_val=$(XDG_CONFIG_HOME="$_WS_SET_TMP" bash "$CLAUDII_HOME/bin/claudii" config get cost.week_start 2>&1)
+assert_eq "cost.week_start: set sunday reads back sunday" "sunday" "$_ws_set_val"
+XDG_CONFIG_HOME="$_WS_SET_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start monday >/dev/null 2>&1
+_ws_reset_val=$(XDG_CONFIG_HOME="$_WS_SET_TMP" bash "$CLAUDII_HOME/bin/claudii" config get cost.week_start 2>&1)
+assert_eq "cost.week_start: reset back to monday" "monday" "$_ws_reset_val"
+rm -rf "$_WS_SET_TMP"
+unset _WS_SET_TMP _ws_set_val _ws_reset_val
+
+# ── cost.week_start: monday week boundary (default) ──────────────────────────
+# Build a history.tsv where:
+#   - one session on "today"
+#   - one session 1 day before this Monday (= last week when week_start=monday)
+#   - one session on Monday of this week (should be in "this week")
+# Then verify week totals include Monday-session but not prev-Sunday-session.
+_WS_MON_TMP="$(mktemp -d)"
+mkdir -p "$_WS_MON_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_MON_TMP/claudii/config.json"
+_wm_now=$(date +%s)
+_wm_today_str=$(date '+%Y-%m-%d')
+# Day of week: 1=Mon..7=Sun
+if date -j -f '%s' "$_wm_now" '+%u' >/dev/null 2>&1; then
+  _wm_dow=$(date -j -f '%s' "$_wm_now" '+%u')
+else
+  _wm_dow=$(date -d "@$_wm_now" '+%u')
+fi
+_wm_days_back=$(( (_wm_dow - 1 + 7) % 7 ))  # days since Monday
+_wm_mon_ts=$(( _wm_now - _wm_days_back * 86400 ))
+_wm_prev_sun_ts=$(( _wm_mon_ts - 86400 ))  # Sunday before this Monday = last week
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wm_now}	claude-sonnet-4-5	5.00	50	30	sid-wm-today" \
+  "${_wm_mon_ts}	claude-sonnet-4-5	3.00	40	20	sid-wm-monday" \
+  "${_wm_prev_sun_ts}	claude-sonnet-4-5	2.00	30	10	sid-wm-prevsun" \
+  > "$_WS_MON_TMP/history.tsv"
+_wm_tsv=$(CLAUDII_CACHE_DIR="$_WS_MON_TMP" XDG_CONFIG_HOME="$_WS_MON_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+# Week total (today + monday session) = 5.00 + 3.00 = 8.00
+_wm_week_total=$(echo "$_wm_tsv" | awk -F'\t' '$1=="week" && $2=="Sonnet" {s+=$3} END{printf "%.4f",s}')
+assert_eq "cost.week_start monday: week includes Monday session (≥3.00)" \
+  "1" "$(echo "$_wm_week_total >= 3.0" | awk '{print ($1+0 >= 3.0)}')"
+# Prev-Sunday session must NOT be in this week
+_wm_week_sessions=$(echo "$_wm_tsv" | awk -F'\t' '$1=="week" && $2=="Sonnet" {s+=$4} END{print s+0}')
+assert_eq "cost.week_start monday: prev-Sunday not in this week (2 sessions max)" \
+  "1" "$(echo "$_wm_week_sessions <= 2" | awk '{print ($1+0 <= 2)}')"
+rm -rf "$_WS_MON_TMP"
+unset _WS_MON_TMP _wm_now _wm_today_str _wm_dow _wm_days_back _wm_mon_ts _wm_prev_sun_ts
+unset _wm_tsv _wm_week_total _wm_week_sessions
+
+# ── cost.week_start: sunday week boundary ─────────────────────────────────────
+# When week_start=sunday, a session from the most recent Sunday should be in "this week".
+_WS_SUN_TMP="$(mktemp -d)"
+mkdir -p "$_WS_SUN_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_SUN_TMP/claudii/config.json"
+# Set week_start to sunday
+XDG_CONFIG_HOME="$_WS_SUN_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start sunday >/dev/null 2>&1
+_ws_now=$(date +%s)
+if date -j -f '%s' "$_ws_now" '+%u' >/dev/null 2>&1; then
+  _ws_dow=$(date -j -f '%s' "$_ws_now" '+%u')
+else
+  _ws_dow=$(date -d "@$_ws_now" '+%u')
+fi
+# DOW for sunday=7; days_back = (dow - 7 + 7) % 7
+_ws_days_back=$(( (_ws_dow - 7 + 7) % 7 ))
+_ws_sun_ts=$(( _ws_now - _ws_days_back * 86400 ))
+_ws_prev_sat_ts=$(( _ws_sun_ts - 86400 ))  # Saturday before this Sunday = last week
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_ws_now}	claude-sonnet-4-5	4.00	50	30	sid-ws-today" \
+  "${_ws_sun_ts}	claude-sonnet-4-5	6.00	40	20	sid-ws-sunday" \
+  "${_ws_prev_sat_ts}	claude-sonnet-4-5	1.00	30	10	sid-ws-prevsat" \
+  > "$_WS_SUN_TMP/history.tsv"
+_ws_tsv=$(CLAUDII_CACHE_DIR="$_WS_SUN_TMP" XDG_CONFIG_HOME="$_WS_SUN_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+# Sunday session should be in this week
+_ws_week_total=$(echo "$_ws_tsv" | awk -F'\t' '$1=="week" && $2=="Sonnet" {s+=$3} END{printf "%.4f",s}')
+assert_eq "cost.week_start sunday: week includes Sunday session (≥4.00)" \
+  "1" "$(echo "$_ws_week_total >= 4.0" | awk '{print ($1+0 >= 4.0)}')"
+# Prev-Saturday must NOT be in this week
+_ws_week_sessions=$(echo "$_ws_tsv" | awk -F'\t' '$1=="week" && $2=="Sonnet" {s+=$4} END{print s+0}')
+assert_eq "cost.week_start sunday: prev-Saturday not in this week (2 sessions max)" \
+  "1" "$(echo "$_ws_week_sessions <= 2" | awk '{print ($1+0 <= 2)}')"
+rm -rf "$_WS_SUN_TMP"
+unset _WS_SUN_TMP _ws_now _ws_dow _ws_days_back _ws_sun_ts _ws_prev_sat_ts
+unset _ws_tsv _ws_week_total _ws_week_sessions
+
+# ── cost.week_start: no errors with all day names ────────────────────────────
+_WS_DAYS_TMP="$(mktemp -d)"
+mkdir -p "$_WS_DAYS_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_DAYS_TMP/claudii/config.json"
+_wd_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wd_now}	claude-sonnet-4-5	1.00	50	30	sid-wd-test" \
+  > "$_WS_DAYS_TMP/history.tsv"
+for _wd_day in monday tuesday wednesday thursday friday saturday sunday; do
+  XDG_CONFIG_HOME="$_WS_DAYS_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start "$_wd_day" >/dev/null 2>&1
+  _wd_err=$(CLAUDII_CACHE_DIR="$_WS_DAYS_TMP" XDG_CONFIG_HOME="$_WS_DAYS_TMP" \
+    bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>/dev/null >/dev/null; echo $?)
+  assert_eq "cost.week_start ${_wd_day}: no crash (exit 0)" "0" "$_wd_err"
+done
+rm -rf "$_WS_DAYS_TMP"
+unset _WS_DAYS_TMP _wd_now _wd_day _wd_err
+
+# ── cost.week_start: trends command uses week_start ──────────────────────────
+_WS_TR_TMP="$(mktemp -d)"
+mkdir -p "$_WS_TR_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_TR_TMP/claudii/config.json"
+_wt_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wt_now}	claude-sonnet-4-5	3.00	50	30	sid-tr-today" \
+  > "$_WS_TR_TMP/history.tsv"
+# trends --json with default week_start=monday: must not crash
+_wt_json=$(CLAUDII_CACHE_DIR="$_WS_TR_TMP" XDG_CONFIG_HOME="$_WS_TR_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+assert_eq "cost.week_start trends: json output valid" "0" \
+  "$(echo "$_wt_json" | jq . >/dev/null 2>&1; echo $?)"
+assert_contains "cost.week_start trends: json has this_week key" '"this_week"' "$_wt_json"
+assert_contains "cost.week_start trends: json has last_week key" '"last_week"' "$_wt_json"
+# trends --json with sunday start: must also not crash
+XDG_CONFIG_HOME="$_WS_TR_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start sunday >/dev/null 2>&1
+_wt_json_sun=$(CLAUDII_CACHE_DIR="$_WS_TR_TMP" XDG_CONFIG_HOME="$_WS_TR_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+assert_eq "cost.week_start trends sunday: json output valid" "0" \
+  "$(echo "$_wt_json_sun" | jq . >/dev/null 2>&1; echo $?)"
+assert_contains "cost.week_start trends sunday: json has this_week" '"this_week"' "$_wt_json_sun"
+rm -rf "$_WS_TR_TMP"
+unset _WS_TR_TMP _wt_now _wt_json _wt_json_sun
+
+# ── epoch_to_date timezone: tz_offset shifts day attribution ─────────────────
+# Fix: epoch_to_date(ts) now uses tz_offset so sessions near midnight land on
+# the correct local day rather than the UTC day.
+# Strategy: build a history.tsv with a known epoch, then verify the day output
+# matches what `date` says locally (not UTC).
+_TZ_TMP="$(mktemp -d)"
+mkdir -p "$_TZ_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_TZ_TMP/claudii/config.json"
+_tz_now=$(date +%s)
+_tz_today_local=$(date '+%Y-%m-%d')
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_tz_now}	claude-sonnet-4-5	5.00	50	30	sid-tz-today" \
+  > "$_TZ_TMP/history.tsv"
+_tz_tsv=$(CLAUDII_CACHE_DIR="$_TZ_TMP" XDG_CONFIG_HOME="$_TZ_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+# The "today" row must exist (session epoch resolves to local today)
+_tz_today_row=$(echo "$_tz_tsv" | awk -F'\t' '$1=="today" && $2=="Sonnet" {print $3}')
+assert_eq "epoch_to_date: local-time today session appears in today row" "5.0000" "$_tz_today_row"
+# Ensure no UTC-only today row issue: the local date must match what awk computed
+_tz_cost_out=$(CLAUDII_CACHE_DIR="$_TZ_TMP" XDG_CONFIG_HOME="$_TZ_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_contains "epoch_to_date: cost pretty output shows Today section" "Today" "$_tz_cost_out"
+assert_contains "epoch_to_date: cost pretty output shows today's cost" "5.00" "$_tz_cost_out"
+rm -rf "$_TZ_TMP"
+unset _TZ_TMP _tz_now _tz_today_local _tz_tsv _tz_today_row _tz_cost_out
+
+# ── epoch_to_date timezone: positive offset (simulate UTC+N) ─────────────────
+# Pick a UTC midnight (00:00:00 UTC). With a positive local offset (e.g. UTC+2),
+# that same epoch is 02:00 local, which is still the same day.
+# The session should land on the day that date(1) says locally.
+_TZ_POS_TMP="$(mktemp -d)"
+mkdir -p "$_TZ_POS_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_TZ_POS_TMP/claudii/config.json"
+_tzp_now=$(date +%s)
+_tzp_local_today=$(date '+%Y-%m-%d')
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_tzp_now}	claude-opus-4-5	7.00	60	40	sid-tzp" \
+  > "$_TZ_POS_TMP/history.tsv"
+_tzp_tsv=$(CLAUDII_CACHE_DIR="$_TZ_POS_TMP" XDG_CONFIG_HOME="$_TZ_POS_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+_tzp_today=$(echo "$_tzp_tsv" | awk -F'\t' '$1=="today" && $2=="Opus" {print $3}')
+assert_eq "epoch_to_date tz+: current timestamp in today row" "7.0000" "$_tzp_today"
+assert_eq "epoch_to_date tz+: no errors in tsv" "0" \
+  "$(CLAUDII_CACHE_DIR="$_TZ_POS_TMP" XDG_CONFIG_HOME="$_TZ_POS_TMP" \
+     bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>/dev/null >/dev/null; echo $?)"
+rm -rf "$_TZ_POS_TMP"
+unset _TZ_POS_TMP _tzp_now _tzp_local_today _tzp_tsv _tzp_today
+
+# ── epoch_to_date timezone: trends uses tz_offset ────────────────────────────
+_TZ_TR_TMP="$(mktemp -d)"
+mkdir -p "$_TZ_TR_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_TZ_TR_TMP/claudii/config.json"
+_tztr_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_tztr_now}	claude-sonnet-4-5	2.00	50	30	sid-tztr" \
+  > "$_TZ_TR_TMP/history.tsv"
+_tztr_json=$(CLAUDII_CACHE_DIR="$_TZ_TR_TMP" XDG_CONFIG_HOME="$_TZ_TR_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+assert_eq "epoch_to_date: trends --json valid after tz fix" "0" \
+  "$(echo "$_tztr_json" | jq . >/dev/null 2>&1; echo $?)"
+# This week total must include the session cost
+_tztr_tw=$(echo "$_tztr_json" | jq -r '.this_week_total' 2>/dev/null)
+assert_eq "epoch_to_date: trends this_week_total = 2.00" "1" \
+  "$(echo "$_tztr_tw >= 2.0" | awk '{print ($1+0 >= 2.0)}')"
+# The this_week array must have at least one entry with cost > 0
+_tztr_has_cost=$(echo "$_tztr_json" | jq '[.this_week[]|.cost]|add//0' 2>/dev/null)
+assert_eq "epoch_to_date: trends this_week has cost > 0" "1" \
+  "$(echo "$_tztr_has_cost >= 2.0" | awk '{print ($1+0 >= 2.0)}')"
+rm -rf "$_TZ_TR_TMP"
+unset _TZ_TR_TMP _tztr_now _tztr_json _tztr_tw _tztr_has_cost
+
+# ── cost --tsv: week period present with history data ────────────────────────
+_WK_TSV_TMP="$(mktemp -d)"
+mkdir -p "$_WK_TSV_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WK_TSV_TMP/claudii/config.json"
+_wk_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wk_now}	claude-sonnet-4-5	9.00	50	30	sid-wk" \
+  > "$_WK_TSV_TMP/history.tsv"
+_wk_tsv=$(CLAUDII_CACHE_DIR="$_WK_TSV_TMP" XDG_CONFIG_HOME="$_WK_TSV_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+assert_contains "cost --tsv: week period present" "week" "$_wk_tsv"
+assert_contains "cost --tsv: today period present" "today" "$_wk_tsv"
+assert_contains "cost --tsv: month period present" "month" "$_wk_tsv"
+assert_contains "cost --tsv: alltime period present" "alltime" "$_wk_tsv"
+rm -rf "$_WK_TSV_TMP"
+unset _WK_TSV_TMP _wk_now _wk_tsv
+
+# ── cost pretty output: no TZ=UTC artifacts ────────────────────────────────
+# After removing TZ=UTC prefix from date calls, output must still be clean.
+_TZ_CLEAN_TMP="$(mktemp -d)"
+mkdir -p "$_TZ_CLEAN_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_TZ_CLEAN_TMP/claudii/config.json"
+_tzc_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_tzc_now}	claude-sonnet-4-5	3.00	50	30	sid-tzc" \
+  > "$_TZ_CLEAN_TMP/history.tsv"
+_tzc_out=$(CLAUDII_CACHE_DIR="$_TZ_CLEAN_TMP" XDG_CONFIG_HOME="$_TZ_CLEAN_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_not_contains "cost: output does not contain TZ=UTC artifact" "TZ=UTC" "$_tzc_out"
+assert_contains "cost: output shows Today header after tz fix" "Today" "$_tzc_out"
+assert_contains "cost: output shows Sonnet after tz fix" "Sonnet" "$_tzc_out"
+_tzc_err=$(CLAUDII_CACHE_DIR="$_TZ_CLEAN_TMP" XDG_CONFIG_HOME="$_TZ_CLEAN_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null >/dev/null; echo $?)
+assert_eq "cost: exits 0 after tz fix" "0" "$_tzc_err"
+rm -rf "$_TZ_CLEAN_TMP"
+unset _TZ_CLEAN_TMP _tzc_now _tzc_out _tzc_err
+
+# ── cost.week_start: pretty output has Week section ──────────────────────────
+_WS_PRETTY_TMP="$(mktemp -d)"
+mkdir -p "$_WS_PRETTY_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_PRETTY_TMP/claudii/config.json"
+_wsp_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wsp_now}	claude-sonnet-4-5	2.00	50	30	sid-wsp" \
+  > "$_WS_PRETTY_TMP/history.tsv"
+_wsp_out=$(CLAUDII_CACHE_DIR="$_WS_PRETTY_TMP" XDG_CONFIG_HOME="$_WS_PRETTY_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_contains "cost.week_start pretty: Week section present" "Week" "$_wsp_out"
+assert_contains "cost.week_start pretty: Sonnet in week section" "Sonnet" "$_wsp_out"
+# With sunday week_start: same structure
+XDG_CONFIG_HOME="$_WS_PRETTY_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start sunday >/dev/null 2>&1
+_wsp_sun_out=$(CLAUDII_CACHE_DIR="$_WS_PRETTY_TMP" XDG_CONFIG_HOME="$_WS_PRETTY_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_contains "cost.week_start sunday pretty: Week section present" "Week" "$_wsp_sun_out"
+assert_contains "cost.week_start sunday pretty: Sonnet present" "Sonnet" "$_wsp_sun_out"
+rm -rf "$_WS_PRETTY_TMP"
+unset _WS_PRETTY_TMP _wsp_now _wsp_out _wsp_sun_out
+
+# ── cost --json: week section with week_start config ────────────────────────
+_WS_JSON_TMP="$(mktemp -d)"
+mkdir -p "$_WS_JSON_TMP/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_WS_JSON_TMP/claudii/config.json"
+_wsj_now=$(date +%s)
+printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
+  "${_wsj_now}	claude-sonnet-4-5	4.00	50	30	sid-wsj" \
+  > "$_WS_JSON_TMP/history.tsv"
+_wsj_json=$(CLAUDII_CACHE_DIR="$_WS_JSON_TMP" XDG_CONFIG_HOME="$_WS_JSON_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
+assert_eq "cost --json week_start monday: valid json" "0" \
+  "$(echo "$_wsj_json" | jq . >/dev/null 2>&1; echo $?)"
+_wsj_week_cost=$(echo "$_wsj_json" | jq -r '.week.Sonnet.cost // 0' 2>/dev/null)
+assert_eq "cost --json week_start monday: week.Sonnet.cost = 4.00" "1" \
+  "$(echo "$_wsj_week_cost >= 4.0" | awk '{print ($1+0 >= 4.0)}')"
+XDG_CONFIG_HOME="$_WS_JSON_TMP" bash "$CLAUDII_HOME/bin/claudii" config set cost.week_start sunday >/dev/null 2>&1
+_wsj_sun_json=$(CLAUDII_CACHE_DIR="$_WS_JSON_TMP" XDG_CONFIG_HOME="$_WS_JSON_TMP" \
+  bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
+assert_eq "cost --json week_start sunday: valid json" "0" \
+  "$(echo "$_wsj_sun_json" | jq . >/dev/null 2>&1; echo $?)"
+rm -rf "$_WS_JSON_TMP"
+unset _WS_JSON_TMP _wsj_now _wsj_json _wsj_week_cost _wsj_sun_json

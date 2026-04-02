@@ -2,6 +2,7 @@
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
 _cmd_trends() {
+  _cfg_init
   # Flight Recorder — weekly/daily aggregates from persistent history
   history_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/history.tsv"
 
@@ -14,6 +15,28 @@ _cmd_trends() {
   # all aggregation and formatting (no associative arrays needed in bash).
   now=$(date +%s)
 
+  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
+  local _tz_offset
+  _tz_offset=$(date +%z | awk '{
+    s = (substr($0,1,1) == "-") ? -1 : 1
+    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
+  }')
+
+  # Read configurable week_start (default: monday)
+  local _ws_name _ws_dow
+  _ws_name=$(_cfgget cost.week_start)
+  _ws_name="${_ws_name:-monday}"
+  case "$_ws_name" in
+    monday)    _ws_dow=1 ;;
+    tuesday)   _ws_dow=2 ;;
+    wednesday) _ws_dow=3 ;;
+    thursday)  _ws_dow=4 ;;
+    friday)    _ws_dow=5 ;;
+    saturday)  _ws_dow=6 ;;
+    sunday)    _ws_dow=7 ;;
+    *)         _ws_dow=1 ;;
+  esac
+
   # Detect macOS vs GNU date
   if date -j -f '%s' "$now" '+%u' >/dev/null 2>&1; then
     _date_cmd="macos"
@@ -21,42 +44,44 @@ _cmd_trends() {
     _date_cmd="gnu"
   fi
 
-  # Precompute date boundaries
-  # All date strings use UTC to match epoch_to_date() in awk (TZ=UTC prefix per call)
+  # Precompute date boundaries (local time + configurable week_start)
+  local _days_back
   if [[ "$_date_cmd" == "macos" ]]; then
-    today_str=$(TZ=UTC date -j -f '%s' "$now" '+%Y-%m-%d')
-    today_dow=$(TZ=UTC date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
-    this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
-    this_monday_str=$(TZ=UTC date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
+    today_str=$(date -j -f '%s' "$now" '+%Y-%m-%d')
+    today_dow=$(date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
+    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
+    this_monday_ts=$(( now - _days_back * 86400 ))
+    this_monday_str=$(date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
     last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(TZ=UTC date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
+    last_monday_str=$(date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
     last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(TZ=UTC date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
+    last_sunday_str=$(date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
     thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(TZ=UTC date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
+    thirty_days_ago_str=$(date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
   else
-    today_str=$(TZ=UTC date -d "@$now" '+%Y-%m-%d')
-    today_dow=$(TZ=UTC date -d "@$now" '+%u')
-    this_monday_ts=$(( now - (today_dow - 1) * 86400 ))
-    this_monday_str=$(TZ=UTC date -d "@$this_monday_ts" '+%Y-%m-%d')
+    today_str=$(date -d "@$now" '+%Y-%m-%d')
+    today_dow=$(date -d "@$now" '+%u')
+    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
+    this_monday_ts=$(( now - _days_back * 86400 ))
+    this_monday_str=$(date -d "@$this_monday_ts" '+%Y-%m-%d')
     last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(TZ=UTC date -d "@$last_monday_ts" '+%Y-%m-%d')
+    last_monday_str=$(date -d "@$last_monday_ts" '+%Y-%m-%d')
     last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(TZ=UTC date -d "@$last_sunday_ts" '+%Y-%m-%d')
+    last_sunday_str=$(date -d "@$last_sunday_ts" '+%Y-%m-%d')
     thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(TZ=UTC date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
+    thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
   fi
 
-  # Build week_days string: "date:name,date:name,..." for Mon..Sun (up to today)
+  # Build week_days string: "date:name,date:name,..." for week-start..today
   _week_days=""
   for (( d=0; d<7; d++ )); do
     day_ts=$(( this_monday_ts + d * 86400 ))
     if [[ "$_date_cmd" == "macos" ]]; then
-      _wd=$(TZ=UTC date -j -f '%s' "$day_ts" '+%Y-%m-%d')
-      _wn=$(TZ=UTC date -j -f '%s' "$day_ts" '+%a')
+      _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
+      _wn=$(date -j -f '%s' "$day_ts" '+%a')
     else
-      _wd=$(TZ=UTC date -d "@$day_ts" '+%Y-%m-%d')
-      _wn=$(TZ=UTC date -d "@$day_ts" '+%a')
+      _wd=$(date -d "@$day_ts" '+%Y-%m-%d')
+      _wn=$(date -d "@$day_ts" '+%a')
     fi
     [[ -n "$_week_days" ]] && _week_days+=","
     _week_days+="${_wd}:${_wn}"
@@ -75,7 +100,7 @@ _cmd_trends() {
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
   # Pure-awk epoch_to_date — avoids O(n) date(1) subprocesses.
-  _trends_augmented=$(awk -F'\t' '
+  _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" '
     function is_leap(y,    l) {
       l = 0
       if (y % 4 == 0) l = 1
@@ -84,7 +109,7 @@ _cmd_trends() {
       return l
     }
     function epoch_to_date(ts,    days, y, leap, m, mdays) {
-      days = int(ts / 86400); y = 1970
+      days = int((ts + tz_offset) / 86400); y = 1970
       for (;;) {
         leap = is_leap(y)
         if (days < 365 + leap) break
