@@ -269,17 +269,12 @@ else
   _notes_extra=$(printf '\n\n---\n**Homebrew SHA256:** `%s`' "$_sha256")
   if [[ -n "$_prev_tag" ]]; then
     _compare_url="https://github.com/${_gh_owner}/${_gh_repo}/compare/${_prev_tag}...${_rel_tag}"
-    _commits_md=$(git -C "$CLAUDII_HOME" log "${_prev_tag}..${_rel_tag}" --oneline --no-merges \
-      | while read -r _csha _cmsg; do
-          printf '- [%s](https://github.com/%s/%s/commit/%s) %s\n' \
-            "$_csha" "$_gh_owner" "$_gh_repo" "$_csha" "$_cmsg"
-        done)
-    _notes_extra=$(printf '%s\n\n**Commits** ([%s...%s](%s)):\n%s' \
-      "$_notes_extra" "$_prev_tag" "$_rel_tag" "$_compare_url" "$_commits_md")
+    _notes_extra=$(printf '%s\n**Full Changelog:** [%s...%s](%s)' \
+      "$_notes_extra" "$_prev_tag" "$_rel_tag" "$_compare_url")
   fi
   gh release edit "${_rel_tag}" --repo "${_gh_owner}/${_gh_repo}" \
     --notes "${_release_body}${_notes_extra}" >/dev/null
-  _rel_ok "Release Notes: SHA256 + Commits verlinkt"
+  _rel_ok "Release Notes: SHA256 + Changelog-Link angehängt"
 fi
 
 # ── Done ──
