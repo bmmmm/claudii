@@ -260,6 +260,26 @@ else
       --jq '.commit.sha' >/dev/null
     _rel_ok "bmmmm/homebrew-tap → ${_rel_version} (sha256: ${_sha256:0:12}…)"
   fi
+
+  # Append SHA256 + linked commit list to GitHub release notes
+  _prev_tag=$(git -C "$CLAUDII_HOME" tag --sort=-version:refname \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${_rel_tag}$" | head -1)
+  _release_body=$(gh release view "${_rel_tag}" \
+    --repo "${_gh_owner}/${_gh_repo}" --json body -q .body 2>/dev/null || echo "")
+  _notes_extra=$(printf '\n\n---\n**Homebrew SHA256:** `%s`' "$_sha256")
+  if [[ -n "$_prev_tag" ]]; then
+    _compare_url="https://github.com/${_gh_owner}/${_gh_repo}/compare/${_prev_tag}...${_rel_tag}"
+    _commits_md=$(git -C "$CLAUDII_HOME" log "${_prev_tag}..${_rel_tag}" --oneline --no-merges \
+      | while read -r _csha _cmsg; do
+          printf '- [%s](https://github.com/%s/%s/commit/%s) %s\n' \
+            "$_csha" "$_gh_owner" "$_gh_repo" "$_csha" "$_cmsg"
+        done)
+    _notes_extra=$(printf '%s\n\n**Commits** ([%s...%s](%s)):\n%s' \
+      "$_notes_extra" "$_prev_tag" "$_rel_tag" "$_compare_url" "$_commits_md")
+  fi
+  gh release edit "${_rel_tag}" --repo "${_gh_owner}/${_gh_repo}" \
+    --notes "${_release_body}${_notes_extra}" >/dev/null
+  _rel_ok "Release Notes: SHA256 + Commits verlinkt"
 fi
 
 # ── Done ──

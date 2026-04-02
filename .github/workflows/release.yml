@@ -49,14 +49,4 @@ jobs:
             --title "claudii ${{ github.ref_name }}" \
             --notes-file /tmp/release-notes.md
 
-      - name: Compute tarball SHA256 and append to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.ref_name }}"
-          URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
-          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
-          echo "sha256=${SHA}" >> "$GITHUB_ENV"
-          CURRENT=$(gh release view "$TAG" --json body -q .body)
-          UPDATED=$(printf '%s\n\n---\n**Homebrew Formula SHA256:** `%s`' "$CURRENT" "$SHA")
-          gh release edit "$TAG" --notes "$UPDATED"
+      # SHA256 + linked commits are appended by scripts/release.sh after this workflow completes.
