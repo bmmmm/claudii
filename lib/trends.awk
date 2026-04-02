@@ -1,11 +1,19 @@
 # trends.awk — claudii trends aggregation and formatting
 # Standalone awk program, called via -f from _cmd_trends()
-# Input: tab-separated lines: day\tmodel\tcost\tsid
+# Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok
 # Variables (passed via -v): today, this_mon, last_mon, last_sun, thirty,
 #   week_days, fmt, cyan, dim, pink, reset
 
+function fmt_tok(t) {
+  if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
+  if (t >= 1000)    return sprintf("%.0fK", t / 1000)
+  if (t > 0)        return t ""
+  return ""
+}
+
 {
   day = $1; model = $2; cost = $3 + 0; sid = $4
+  in_tok = $5 + 0; out_tok = $6 + 0; total_tok = in_tok + out_tok
   if (sid == "") next
 
   # running_spend: attribute incremental cost delta to this row's day.
@@ -25,6 +33,18 @@
   sid_baseline[sid] = cost
 
   if (delta > 0) day_cost[day] += delta
+
+  # Token running_spend — same delta approach as cost
+  if (sid in tok_baseline) {
+    prev_tok = tok_baseline[sid]
+    if (total_tok > prev_tok)      tok_delta = total_tok - prev_tok
+    else if (total_tok < prev_tok) tok_delta = total_tok
+    else                           tok_delta = 0
+  } else {
+    tok_delta = total_tok
+  }
+  tok_baseline[sid] = total_tok
+  if (tok_delta > 0) day_tok[day] += tok_delta
 
   # Count each session once per (day, sid) for session counts and model split
   if (!((sid, day) in session_day_seen)) {
@@ -51,11 +71,15 @@ END {
   }
 
   # This week + last week totals
-  tw_cost = 0; tw_sessions = 0
-  lw_cost = 0; lw_sessions = 0
+  tw_cost = 0; tw_sessions = 0; tw_tok = 0
+  lw_cost = 0; lw_sessions = 0; lw_tok = 0
   for (d in day_cost) {
-    if (d >= this_mon) { tw_cost += day_cost[d]; tw_sessions += day_sessions[d] }
-    if (d >= last_mon && d <= last_sun) { lw_cost += day_cost[d]; lw_sessions += day_sessions[d] }
+    if (d >= this_mon) {
+      tw_cost += day_cost[d]; tw_sessions += day_sessions[d]; tw_tok += (d in day_tok ? day_tok[d] : 0)
+    }
+    if (d >= last_mon && d <= last_sun) {
+      lw_cost += day_cost[d]; lw_sessions += day_sessions[d]; lw_tok += (d in day_tok ? day_tok[d] : 0)
+    }
   }
 
   # Parse week_days string into arrays: wd_date[0..n], wd_name[0..n]
@@ -75,13 +99,13 @@ END {
     for (i = 1; i <= n_days; i++) {
       d = wd_date[i]
       if (i > 1) printf ","
-      printf "{\"date\":\"%s\",\"day\":\"%s\",\"cost\":%.2f,\"sessions\":%d}", \
-        d, wd_name[i], (d in day_cost ? day_cost[d] : 0), (d in day_sessions ? day_sessions[d] : 0)
+      printf "{\"date\":\"%s\",\"day\":\"%s\",\"cost\":%.2f,\"tokens\":%d,\"sessions\":%d}", \
+        d, wd_name[i], (d in day_cost ? day_cost[d] : 0), (d in day_tok ? day_tok[d] : 0), (d in day_sessions ? day_sessions[d] : 0)
     }
     printf "],"
 
-    printf "\"this_week_total\":%.2f,", tw_cost
-    printf "\"last_week\":{\"cost\":%.2f,\"sessions\":%d},", lw_cost, lw_sessions
+    printf "\"this_week_total\":%.2f,\"this_week_tokens\":%d,", tw_cost, tw_tok
+    printf "\"last_week\":{\"cost\":%.2f,\"tokens\":%d,\"sessions\":%d},", lw_cost, lw_tok, lw_sessions
 
     # model_split_30d
     printf "\"model_split_30d\":{"
@@ -141,19 +165,23 @@ END {
       }
       sess = day_sessions[d]
       s_suffix = (sess != 1) ? "s" : ""
-      printf "    %-7s %s$%.2f%s  (%d session%s, %s)\n", \
-        label, cyan, day_cost[d], reset, sess, s_suffix, detail
+      _ts = fmt_tok(d in day_tok ? day_tok[d] : 0)
+      _tpart = (_ts != "") ? ("  " _ts " tok") : ""
+      printf "    %-7s %s$%.2f%s%s  (%d session%s, %s)\n", \
+        label, cyan, day_cost[d], reset, _tpart, sess, s_suffix, detail
     }
   }
 
   printf "%s\n", sep
-  printf "    %-7s %s$%.2f%s\n", "Total", cyan, tw_cost, reset
+  _ts = fmt_tok(tw_tok); _tfx = (_ts != "") ? ("  " _ts " tok") : ""
+  printf "    %-7s %s$%.2f%s%s\n", "Total", cyan, tw_cost, reset, _tfx
 
   # Last week
   printf "\n  %sLast week%s\n", pink, reset
   if (lw_sessions > 0) {
     s_suffix = (lw_sessions != 1) ? "s" : ""
-    printf "    Total  %s$%.2f%s  (%d session%s)\n", cyan, lw_cost, reset, lw_sessions, s_suffix
+    _ts = fmt_tok(lw_tok); _tfx = (_ts != "") ? ("  " _ts " tok") : ""
+    printf "    Total  %s$%.2f%s%s  (%d session%s)\n", cyan, lw_cost, reset, _tfx, lw_sessions, s_suffix
   } else {
     printf "    %s(no data)%s\n", dim, reset
   }

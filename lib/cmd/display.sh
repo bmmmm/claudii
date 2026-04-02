@@ -100,10 +100,11 @@ _cmd_trends() {
       ts = $1 + 0; if (ts == 0) next
       day = epoch_to_date(ts)
       model = $2; cost = $3 + 0; sid = $6
+      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
       if      (model ~ /[Oo]pus/)   model = "Opus"
       else if (model ~ /[Ss]onnet/) model = "Sonnet"
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
-      print day "\t" model "\t" cost "\t" sid
+      print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok
     }
   ' "$history_file")
 

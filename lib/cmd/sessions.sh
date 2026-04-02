@@ -42,10 +42,11 @@ _cmd_cost_from_history() {
       ts = $1 + 0; if (ts == 0) next
       day = epoch_to_date(ts)
       model = $2; cost = $3 + 0; sid = $6; raw = $2
+      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
       if      (model ~ /[Oo]pus/)   model = "Opus"
       else if (model ~ /[Ss]onnet/) model = "Sonnet"
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
-      print day "\t" model "\t" cost "\t" sid "\t" raw
+      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
   ' "$history_file")
 
@@ -78,8 +79,15 @@ _cmd_cost_from_history() {
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
     '
+    function fmt_tok(t) {
+      if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
+      if (t >= 1000)    return sprintf("%.0fK", t / 1000)
+      if (t > 0)        return t ""
+      return ""
+    }
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
+      in_tok = $6 + 0; out_tok = $7 + 0; total_tok = in_tok + out_tok
       if (sid == "" || day == "") next
       key = sid SUBSEP day
 
@@ -103,6 +111,17 @@ _cmd_cost_from_history() {
       }
       sid_baseline[sid] = cost
 
+      # Token running_spend — same delta approach as cost
+      if (sid in tok_baseline) {
+        prev_tok = tok_baseline[sid]
+        if (total_tok > prev_tok)      { tok_running[sid] += total_tok - prev_tok }
+        else if (total_tok < prev_tok) { tok_running[sid] += total_tok }
+      } else {
+        tok_running[sid] = total_tok
+      }
+      tok_baseline[sid] = total_tok
+      day_tok_snapshot[key] = tok_running[sid]
+
       # Record running_spend snapshot at end of each (session, day)
       day_spend[key] = running_spend[sid]
       sid_model[key] = model
@@ -119,24 +138,27 @@ _cmd_cost_from_history() {
         for (i = 1; i <= n; i++)
           for (j = i + 1; j <= n; j++)
             if (days_arr[i] > days_arr[j]) { tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp }
-        prev_spend = 0
+        prev_spend = 0; prev_tok = 0
         for (i = 1; i <= n; i++) {
           d = days_arr[i]
           k = sid SUBSEP d
           cur_spend = (k in day_spend) ? day_spend[k] : 0
-          delta = cur_spend - prev_spend
-          if (delta < 0) delta = 0  # safety net: running_spend is monotone, should not happen
+          cur_tok   = (k in day_tok_snapshot) ? day_tok_snapshot[k] : 0
+          delta     = cur_spend - prev_spend
+          tok_delta = cur_tok - prev_tok
+          if (delta < 0)     delta = 0
+          if (tok_delta < 0) tok_delta = 0
           m = (k in sid_model) ? sid_model[k] : "?"
-          prev_spend = cur_spend
+          prev_spend = cur_spend; prev_tok = cur_tok
           all_models[m] = 1
-          alltime_cost[m] += delta; alltime_sessions[m]++
-          if (d == today)      { today_cost[m] += delta; today_sessions[m]++ }
-          if (d >= week_start) { week_cost[m]  += delta; week_sessions[m]++  }
+          alltime_cost[m] += delta; alltime_sessions[m]++; alltime_tok += tok_delta
+          if (d == today)      { today_cost[m] += delta; today_sessions[m]++; today_tok += tok_delta }
+          if (d >= week_start) { week_cost[m]  += delta; week_sessions[m]++;  week_tok  += tok_delta }
           mon_key = substr(d, 1, 7)
-          month_cost[m SUBSEP mon_key] += delta; month_sessions[m SUBSEP mon_key]++
+          month_cost[m SUBSEP mon_key] += delta; month_sessions[m SUBSEP mon_key]++; month_tok[mon_key] += tok_delta
           all_months[mon_key] = 1
           yr_key = substr(d, 1, 4)
-          year_cost[m SUBSEP yr_key] += delta; year_sessions[m SUBSEP yr_key]++
+          year_cost[m SUBSEP yr_key] += delta; year_sessions[m SUBSEP yr_key]++; year_tok[yr_key] += tok_delta
           all_years[yr_key] = 1
         }
       }
@@ -281,8 +303,11 @@ _cmd_cost_from_history() {
         printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, today_cost[m], reset, n, s
         total += today_cost[m]; has = 1
       }
-      if (has) { printf "%s\n", line; printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset }
-      else      { printf "    (none)\n" }
+      if (has) {
+        printf "%s\n", line
+        _ts = fmt_tok(today_tok); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
+        printf "    %-10s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+      } else { printf "    (none)\n" }
 
       printf "\n"
       printf "  %sWeek%s\n", pink, reset
@@ -293,8 +318,11 @@ _cmd_cost_from_history() {
         printf "    %-10s %s$%.2f%s  (%d session%s)\n", m, cyan, week_cost[m], reset, n, s
         total += week_cost[m]; has = 1
       }
-      if (has) { printf "%s\n", line; printf "    %-10s %s$%.2f%s\n", "Total", cyan, total, reset }
-      else      { printf "    (none)\n" }
+      if (has) {
+        printf "%s\n", line
+        _ts = fmt_tok(week_tok); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
+        printf "    %-10s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+      } else { printf "    (none)\n" }
 
       printf "\n"
       printf "  %sMonths%s\n", pink, reset
@@ -329,7 +357,11 @@ _cmd_cost_from_history() {
             }
           }
         }
-        if (n_mod > 1) { printf "%s\n", line; printf "      %-8s %s$%.2f%s\n", "Total", cyan, total, reset }
+        if (n_mod > 1) {
+          printf "%s\n", line
+          _ts = fmt_tok(month_tok[mk]); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
+          printf "      %-8s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+        }
       }
       if (n_mon == 0) printf "    (none)\n"
 
@@ -366,7 +398,11 @@ _cmd_cost_from_history() {
             }
           }
         }
-        if (n_mod > 1) { printf "%s\n", line; printf "      %-8s %s$%.2f%s\n", "Total", cyan, total, reset }
+        if (n_mod > 1) {
+          printf "%s\n", line
+          _ts = fmt_tok(year_tok[yk]); _tfx = (_ts != "") ? ("  " dim _ts " tok" reset) : ""
+          printf "      %-8s %s$%.2f%s%s\n", "Total", cyan, total, reset, _tfx
+        }
       }
       if (n_yr == 0) printf "    (none)\n"
 
