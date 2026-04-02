@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **`claudii trends`:** False-reset threshold applied — cost/token deltas < 50% drop no longer treated as context compaction (same fix as `claudii cost` in v0.9.0)
+
+### Changed
+- **README:** Sessionline example updated to reflect 3-line multi-segment default; cost segment removed from example
+
 ---
 
 ## [0.10.0] — 2026-04-03

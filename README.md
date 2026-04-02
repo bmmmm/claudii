@@ -39,13 +39,15 @@ bash ~/claudii/install.sh
 Three display layers, all read-only — claudii never modifies your sessions or makes API calls:
 
 ### 1. CC-Statusline — inside Claude Code
-Dense metrics on every turn via the native `statusLine` hook.
+Dense metrics on every turn via the native `statusLine` hook. Three lines by default:
 
 ```
-claude-sonnet-4-5  ●●●●●●○○○○  $1.24  12.4k ⚡73%  5h:28%  +47/-12  0:42
+claude-sonnet-4-6  ████████░░  ⚡73%
+5h:28%  7d:12%  eta:4h  +47/-12
+api:23m (71%)  12.4k tok  wt:feature-branch
 ```
 
-model · context bar · cost · tokens + cache ratio · rate limits · lines changed · duration
+model + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree
 
 ### 2. Dashboard — above your shell prompt
 Appears automatically when Claude sessions are running. One line per active session:
