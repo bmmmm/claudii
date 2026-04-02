@@ -680,10 +680,6 @@ _cmd_sessions_inactive() {
 
       _is_line="  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
 
-      if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-        _is_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "$_PSC_cost")${CLAUDII_CLR_RESET}"
-      fi
-
       if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
         _is_line+=" ${CLAUDII_CLR_DIM}│ ⚡${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
       fi
@@ -741,7 +737,7 @@ _cmd_sessions() {
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s)
-  active=0 stale=0 total_cost=0
+  active=0 stale=0
   latest_5h="" latest_7d="" latest_reset=""
 
   # Collect all session data into parallel arrays
@@ -765,11 +761,6 @@ _cmd_sessions() {
     [[ -f "$sf" ]] || continue
     [[ -n "$_claudii_spinner_label_file" ]] && printf '%s' "${sf/#$HOME/\~}" > "$_claudii_spinner_label_file"
     _parse_session_cache "$sf"
-
-    # Accumulate cost
-    if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-      total_cost=$(awk "BEGIN{print $total_cost + $_PSC_cost}")
-    fi
 
     # Track freshest rate limits
     if [[ -n "$_PSC_rate_5h" ]] && [[ "$_PSC_is_active" -eq 1 ]]; then
@@ -944,9 +935,6 @@ _cmd_sessions() {
       _render_ctx_bar "${_sf_ctx[$_i]%.*}"
       detail+="${_CTX_BAR} ${_sf_ctx[$_i]%.*}%"
     fi
-    if [[ -n "${_sf_cost[$_i]}" && "${_sf_cost[$_i]}" != "0" ]]; then
-      detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$$(printf '%.2f' "${_sf_cost[$_i]}")${CLAUDII_CLR_RESET}"
-    fi
     if [[ -n "${_sf_rate5h[$_i]}" ]]; then
       detail+="  ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 5h:${_sf_rate5h[$_i]%.*}%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then
@@ -968,8 +956,7 @@ _cmd_sessions() {
 
   # Summary
   printf '\n'
-  total_fmt=$(printf '$%.2f' "$total_cost")
-  printf "  ${CLAUDII_CLR_ACCENT}%d aktiv, %d beendet, %s total${CLAUDII_CLR_RESET}" "$active" "$stale" "$total_fmt"
+  printf "  ${CLAUDII_CLR_ACCENT}%d aktiv, %d beendet${CLAUDII_CLR_RESET}" "$active" "$stale"
   if [[ -n "$latest_5h" ]]; then
     reset_str=""
     if [[ -n "$latest_reset" && "$latest_reset" != "0" ]]; then
@@ -979,7 +966,7 @@ _cmd_sessions() {
     printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
   fi
   printf '\n'
-  printf "  ${CLAUDII_CLR_DIM}● active  ○ ended  ✦ file(N) = most-read files · N = access count  ·  cost = session total  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}● active  ○ ended  ✦ file(N) = most-read files · N = access count  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
   printf '\n'
 }
 

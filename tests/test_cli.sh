@@ -284,8 +284,11 @@ _se_exit=$?
 
 assert_eq "claudii se: exits 0 — grep-no-match regression" "0" "$_se_exit"
 assert_contains "claudii se: shows model name" "Sonnet" "$_se_out"
-assert_contains "claudii se: shows cost" "1.23" "$_se_out"
 assert_contains "claudii se: shows project path" "se-test-project" "$_se_out"
+# cost is no longer shown in pretty output (use 'claudii cost' for cost accounting)
+_se_json=$(HOME="$_SE_TMP" CLAUDII_CACHE_DIR="$_SE_CACHE" XDG_CONFIG_HOME="$_SE_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" sessions --json 2>&1)
+assert_contains "claudii se --json: still has cost field" '"cost"' "$_se_json"
 
 rm -rf "$_SE_TMP"
 unset _SE_TMP _SE_XDG _SE_CACHE _SE_PROJ _se_out _se_exit
