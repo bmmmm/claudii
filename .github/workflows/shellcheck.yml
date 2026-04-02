@@ -1,0 +1,23 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+    paths: ['bin/**', 'lib/**', 'claudii.plugin.zsh', 'install.sh']
+  pull_request:
+    branches: [main]
+    paths: ['bin/**', 'lib/**', 'claudii.plugin.zsh', 'install.sh']
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          ignore_paths: tests
+          severity: warning
+        env:
+          SHELLCHECK_OPTS: --shell=bash --exclude=SC1090,SC1091,SC2034

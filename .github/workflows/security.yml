@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  secrets-scan:
-    name: Secret scan (gitleaks)
+  security:
+    name: Security checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,12 +19,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  file-guard:
-    name: Forbidden file check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Check for forbidden files
         run: |
@@ -38,7 +32,7 @@ jobs:
           fi
           echo "No forbidden files found."
 
-      - name: Check for hardcoded tokens in source
+      - name: Check for hardcoded tokens
         run: |
           # Patterns: GitHub PAT, gh classic token, Anthropic key, generic Bearer/API key assignments
           matches=$(grep -rn \
