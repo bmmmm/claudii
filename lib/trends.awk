@@ -32,10 +32,10 @@ function fmt_tok(t) {
     prev = sid_baseline[sid]
     if (cost > prev) {
       delta = cost - prev
-    } else if (cost < prev) {
-      delta = cost   # reset: add post-reset starting value
+    } else if (cost < prev * 0.5) {
+      delta = cost   # genuine reset: post-compaction baseline
     } else {
-      delta = 0
+      delta = 0      # noise or tiny decrease — ignore
     }
   } else {
     delta = cost     # first row for this session
@@ -47,9 +47,9 @@ function fmt_tok(t) {
   # Token running_spend — same delta approach as cost
   if (sid in tok_baseline) {
     prev_tok = tok_baseline[sid]
-    if (total_tok > prev_tok)      tok_delta = total_tok - prev_tok
-    else if (total_tok < prev_tok) tok_delta = total_tok
-    else                           tok_delta = 0
+    if (total_tok > prev_tok)             tok_delta = total_tok - prev_tok
+    else if (total_tok < prev_tok * 0.5)  tok_delta = total_tok
+    else                                  tok_delta = 0
   } else {
     tok_delta = total_tok
   }

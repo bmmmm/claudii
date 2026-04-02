@@ -121,6 +121,33 @@ assert_matches "trends (no history): actionable message" "No history|CC-Statusli
 rm -rf "$_TRENDS_NOHIST_TMP"
 unset _TRENDS_NOHIST_TMP trends_nohist_out
 
+# ── trends: small cost decrease (< 50% drop) → NOT treated as reset ──────────
+# A tiny floating-point decrease (e.g. $10.003 → $10.002) must produce zero
+# delta, not attribute the post-decrease value as a new session cost.
+# history.tsv format: timestamp model cost ctx_pct rate_5h session_id in_tok out_tok
+_TRENDS_NOISE_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+
+# Two rows for same session (col6=noise-sid): cost 10.003 → 10.002 (noise, <50% drop)
+printf '%s\tclaude-sonnet-4-5\t10.003\t45\t0.5\tnoise-sid\t5000\t1000\n' "$(( _now_ts - 120 ))" \
+  > "$_TRENDS_NOISE_TMP/history.tsv"
+printf '%s\tclaude-sonnet-4-5\t10.002\t45\t0.5\tnoise-sid\t5001\t1001\n' "$(( _now_ts - 60 ))" \
+  >> "$_TRENDS_NOISE_TMP/history.tsv"
+
+trends_noise_json=$(CLAUDII_CACHE_DIR="$_TRENDS_NOISE_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+
+# Total cost for the day should be ~10.00 (first row only), not ~20.00
+_noise_day=$(date +%Y-%m-%d)
+_noise_day_cost=$(echo "$trends_noise_json" | jq -r --arg d "$_noise_day" '
+  .this_week[] | select(.date == $d) | .cost
+')
+
+assert_eq "trends (noise reset): small cost decrease not treated as reset" "0" \
+  "$(awk "BEGIN { print (\"$_noise_day_cost\" + 0 > 15) ? 1 : 0 }")"
+
+rm -rf "$_TRENDS_NOISE_TMP"
+unset _TRENDS_NOISE_TMP _now_ts trends_noise_json _noise_day _noise_day_cost
+
 # ── trends: explicitly empty cols 6+7 → no crash, no "tok" ───────────────────
 # Entries from the planned new format with explicit empty token fields.
 _TRENDS_EMPTY_TOK_TMP="$(mktemp -d)"
