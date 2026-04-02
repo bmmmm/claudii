@@ -177,9 +177,11 @@ else
   _spin_idx=0
 
   while (( _poll_elapsed < _poll_timeout )); do
-    # Look for a workflow run triggered by the tag push
+    # Look for a workflow run triggered by the tag push.
+    # Note: GitHub API reports head_branch as "main" for tag pushes — filter by head_sha instead.
+    _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
     _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
-      --jq ".workflow_runs[] | select(.event == \"push\" and (.head_branch == \"refs/tags/${_rel_tag}\" or .head_branch == \"${_rel_tag}\")) | {id: .id, status: .status, conclusion: .conclusion, name: .name}" \
+      --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_head}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion, name: .name}" \
       2>/dev/null || echo "")
 
     if [[ -n "$_runs" ]]; then
@@ -226,6 +228,38 @@ else
   # 7. GitHub Release is created by the release.yml workflow — just report URL
   _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
   _rel_ok "Release-Workflow hat GitHub Release erstellt"
+fi
+
+# ── Homebrew Tap ──
+_rel_box_sep "Homebrew Tap"
+_tap_owner="bmmmm"
+_tap_repo="homebrew-tap"
+_tap_formula="Formula/claudii.rb"
+_tarball_url="https://github.com/${_gh_owner:-bmmmm}/${_gh_repo:-claudii}/archive/refs/tags/${_rel_tag}.tar.gz"
+if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "Tap-Update — skipped (dry-run)"
+else
+  _sha256=$(curl -fsSL "$_tarball_url" | shasum -a 256 | cut -d' ' -f1)
+  _tap_file_sha=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
+    --jq '.sha' 2>/dev/null || echo "")
+  if [[ -z "$_tap_file_sha" ]]; then
+    _rel_fail "Tap: ${_tap_formula} nicht gefunden in ${_tap_owner}/${_tap_repo}"
+  else
+    _tap_current=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
+      --jq '.content' | base64 -d)
+    _tap_new=$(printf '%s' "$_tap_current" \
+      | sed "s|url \"https://.*\.tar\.gz\"|url \"${_tarball_url}\"|" \
+      | sed "s|sha256 \"[a-f0-9]*\"|sha256 \"${_sha256}\"|" \
+      | sed "s|version \"[0-9.]*\"|version \"${_rel_version}\"|")
+    _tap_encoded=$(printf '%s' "$_tap_new" | base64)
+    gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
+      --method PUT \
+      --field message="chore: update claudii to ${_rel_tag}" \
+      --field content="$_tap_encoded" \
+      --field sha="$_tap_file_sha" \
+      --jq '.commit.sha' >/dev/null
+    _rel_ok "bmmmm/homebrew-tap → ${_rel_version} (sha256: ${_sha256:0:12}…)"
+  fi
 fi
 
 # ── Done ──
