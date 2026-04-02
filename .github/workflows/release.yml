@@ -58,7 +58,5 @@ jobs:
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
           echo "sha256=${SHA}" >> "$GITHUB_ENV"
           CURRENT=$(gh release view "$TAG" --json body -q .body)
-          gh release edit "$TAG" --notes "${CURRENT}
-
----
-**Homebrew Formula SHA256:** \`${SHA}\`"
+          UPDATED=$(printf '%s\n\n---\n**Homebrew Formula SHA256:** `%s`' "$CURRENT" "$SHA")
+          gh release edit "$TAG" --notes "$UPDATED"
