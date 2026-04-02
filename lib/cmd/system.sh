@@ -129,9 +129,9 @@ _cmd_status() {
             _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
             _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
             case "${_sm_state:-unknown}" in
-              ok)       _sm_icon="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
-              degraded) _sm_icon="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
-              down)     _sm_icon="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
+              ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
+              degraded) _sm_icon="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
+              down)     _sm_icon="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
               *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
             esac
             printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
@@ -323,7 +323,7 @@ _cmd_update() {
     echo "claudii: cannot determine install method — try: brew upgrade claudii  or  cd $CLAUDII_HOME && git pull" >&2
     exit 1
   fi
-  printf "${CLAUDII_CLR_GREEN}✓ Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
+  printf "${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
 }
 
 _cmd_watch() {
@@ -569,9 +569,9 @@ _cmd_doctor() {
     exit 0
   fi
 
-  ok="${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}"
-  warn="${CLAUDII_CLR_YELLOW}⚠${CLAUDII_CLR_RESET}"
-  fail="${CLAUDII_CLR_RED}✗${CLAUDII_CLR_RESET}"
+  ok="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}"
+  warn="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}"
+  fail="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}"
   info="${CLAUDII_CLR_DIM}·${CLAUDII_CLR_RESET}"
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n"

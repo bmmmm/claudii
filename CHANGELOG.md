@@ -14,6 +14,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline:** Reduced awk subprocess forks from 8 to 2 per update — integer arithmetic now uses bash `(( ))`
 - **README:** Sessionline example updated to reflect 3-line multi-segment default; cost segment removed from example
 - **`claudii cost`:** Session counts and token totals removed from display — pure dollar accounting; Total label highlighted in accent color with blank line after each section
+- **Internal:** Hardcoded symbols (`●`, `○`, `│`, `✓`, `✗`, `⚠`, `⚡`) replaced with `CLAUDII_SYM_*` constants; added `CLAUDII_SYM_CACHE` and `CLAUDII_SYM_FINGERPRINT` to `visual.sh`
 
 ---
 

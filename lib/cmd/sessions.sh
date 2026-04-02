@@ -1166,42 +1166,42 @@ _cmd_default() {
       done < "$_ov_status_cache"
       [[ -n "$_ov_health_str" ]] && _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
     fi
-    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ClaudeStatus%s\n" "$_ov_model_health"
+    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ClaudeStatus%s\n" "$_ov_model_health"
   else
-    printf "    ${CLAUDII_CLR_DIM}○ ClaudeStatus%-20s claudii on${CLAUDII_CLR_RESET}\n" ""
+    printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} ClaudeStatus%-20s claudii on${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # Session Dashboard
   if [[ "$_ov_dash_en" != "off" ]]; then
-    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} Dashboard\n"
+    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} Dashboard\n"
   else
-    printf "    ${CLAUDII_CLR_DIM}○ Dashboard%-23s claudii dashboard on${CLAUDII_CLR_RESET}\n" ""
+    printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Dashboard%-23s claudii dashboard on${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # CC-Statusline
   if (( _ov_sl_on )); then
-    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} CC-Statusline\n"
+    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} CC-Statusline\n"
   else
-    printf "    ${CLAUDII_CLR_DIM}○ CC-Statusline%-20s claudii cc-statusline on${CLAUDII_CLR_RESET}\n" ""
+    printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} CC-Statusline%-20s claudii cc-statusline on${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # Watch
   if (( _ov_watch_on )); then
-    printf "    ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} Watch\n"
+    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} Watch\n"
   else
-    printf "    ${CLAUDII_CLR_DIM}○ Watch%-27s claudii watch start${CLAUDII_CLR_RESET}\n" ""
+    printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Watch%-27s claudii watch start${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # ── Sessions — summary only; details via `claudii se` ────────────
   printf '\n'
   if (( _ov_any_session )); then
     if (( _ov_active_count > 0 )); then
-      printf "  ${CLAUDII_CLR_GREEN}●${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
+      printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
       _ov_s=""; (( _ov_active_count != 1 )) && _ov_s="s"
       printf "    %d active session%s  ${CLAUDII_CLR_DIM}·  claudii se for details${CLAUDII_CLR_RESET}\n" \
         "$_ov_active_count" "$_ov_s"
     else
-      printf "  ${CLAUDII_CLR_DIM}○${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
+      printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
     fi
 
     (( _ov_inactive_count > 0 )) && \
@@ -1211,7 +1211,7 @@ _cmd_default() {
     (( _ov_stale > 5 )) && \
       printf "    ${CLAUDII_CLR_DIM}%d stale sessions  ·  claudii si${CLAUDII_CLR_RESET}\n" "$_ov_stale"
   else
-    printf "  ${CLAUDII_CLR_DIM}○ Sessions                        start Claude to see data here${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Sessions                        start Claude to see data here${CLAUDII_CLR_RESET}\n"
   fi
 
   printf '\n'
