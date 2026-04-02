@@ -196,16 +196,6 @@ END {
   _ts = fmt_tok(tw_tok); _tfx = (_ts != "") ? ("  " _ts " tok") : ""
   printf "    %-7s %s$%.2f%s%s\n", "Total", cyan, tw_cost, reset, _tfx
 
-  # Last week
-  printf "\n  %sLast week%s\n", pink, reset
-  if (lw_sessions > 0) {
-    s_suffix = (lw_sessions != 1) ? "s" : ""
-    _ts = fmt_tok(lw_tok); _tfx = (_ts != "") ? ("  " _ts " tok") : ""
-    printf "    Total  %s$%.2f%s%s  (%d session%s)\n", cyan, lw_cost, reset, _tfx, lw_sessions, s_suffix
-  } else {
-    printf "    %s(no data)%s\n", dim, reset
-  }
-
   # Model split (30d)
   if (total_sessions_30d > 0) {
     printf "\n"

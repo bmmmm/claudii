@@ -584,14 +584,9 @@ Alias:
 .
 .TP
 .B cost
-Aggregate session costs with correct daily attribution.
-When the Flight Recorder history file
-.RI ( history.tsv )
-exists, costs are computed as daily deltas per session:
-the cost attributed to each day equals the last recorded cost on that day
-minus the last recorded cost on the previous day for the same session.
-This ensures multi-day sessions are split correctly across days rather
-than attributing the full cumulative cost to a single day.
+Accounting view: exact costs per period (today, week, month, year, all-time),
+per-model breakdown, and session counts.
+Week period includes a date range.
 Falls back to session cache files
 .RI ( session-* )
 when no history exists yet.
@@ -603,14 +598,11 @@ Supports
 .
 .TP
 .B trends
-Weekly and daily cost trends from persistent history (Flight Recorder).
+Visualization view: per-day cost bar chart for the current week, 30-day model
+distribution split, and the costliest day in the last 30 days.
 The CC-Statusline handler appends a line to
 .I ~/.cache/claudii/history.tsv
 on every update.
-.B trends
-reads this file, deduplicates by session (takes the max cost per session_id),
-and shows a per-day breakdown for the current week, a total for last week,
-a 30-day model distribution split, and the costliest day.
 Supports
 .BR \-\-json .
 .
