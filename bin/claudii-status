@@ -15,7 +15,7 @@ set -uo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-mkdir -p "$CACHE_DIR"
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 CACHE_FILE="$CACHE_DIR/status-cache.xml"
 CACHE_STATUS="$CACHE_DIR/status-models"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
@@ -33,6 +33,15 @@ RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
 COMPONENTS_URL="${CLAUDII_COMPONENTS_URL:-$(_cfg status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-$(_def status.components_url)}"
 COMPONENTS_URL="${COMPONENTS_URL:-${RSS_URL%/history.rss}/api/v2/components.json}"
+
+case "${RSS_URL}" in
+  https://*) ;;
+  *) printf "error: RSS_URL must use https:// (got: %s)\n" "$RSS_URL" >&2; exit 1 ;;
+esac
+case "${COMPONENTS_URL}" in
+  https://*) ;;
+  *) printf "error: COMPONENTS_URL must use https:// (got: %s)\n" "$COMPONENTS_URL" >&2; exit 1 ;;
+esac
 
 _mtime() { stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0; }
 
