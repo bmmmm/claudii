@@ -85,27 +85,17 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 4. `.gitignore` — clean up stale rules if files were removed
 5. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry (local only — never commit, never `git add .claude/`)
 
-## Available skills for this project
+## Project skills
 
-| Skill | When to use |
-|-------|-------------|
-| `/shape` | Hygiene check + feature ideas → TODOs |
-| `/orchestrate` | Implement tasks from TODO.md via parallel agents |
-| `/explore` | Competitive intelligence, ecosystem scan, upstream skill tracking |
-| `/commit` | Auto-generate commit message and commit |
-| `/commit-push-pr` | Commit + push + open PR in one step |
-| `/clean_gone` | Clean up stale remote-deleted branches |
-| `/revise-claude-md` | Update this CLAUDE.md with session learnings |
-| `/claude-md-improver` | Audit and improve CLAUDE.md quality |
-| `/skill-creator` | Create or improve skills in `.claude/skills/` |
+`/shape` — hygiene + TODOs · `/orchestrate` — implement TODOs · `/explore` — ecosystem scan
 
-## When orchestrating (wave tags + revert patterns)
+## When orchestrating
 
-- **Before each wave:** `git tag before-wave-N` — enables `git revert before-wave-N..HEAD` to undo the whole wave
-- **After each wave (tests green):** `git tag wave-N-done`
-- **Revert a single merge commit:** `git revert <hash> -m 1 --no-edit` — the `-m 1` is mandatory for merge commits
-- **Agents touching `lib/statusline.zsh`:** always warn them about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`) so they don't re-add them from stale worktree state
-- **Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously
+Use `/orchestrate`. Each agent works on its own `worktree-<name>` branch — orchestrator merges back to main.
+Set `git tag -f before-wave-N` before spawning, `git tag -f wave-N-done` after tests are green.
+Revert full wave: `git revert before-wave-N..HEAD`. Single merge commit: `git revert <hash> -m 1 --no-edit`.
+**Agents touching `lib/statusline.zsh`:** warn about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`).
+**Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously.
 
 ## When committing
 
