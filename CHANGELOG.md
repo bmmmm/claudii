@@ -9,6 +9,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 - **Sessionline:** `duration` segment added to default line 3 — shows total session runtime, giving context to the `api-duration` ratio (e.g. `api:45m (73%)` is more readable when you can see total session was `1h02m`)
+- **`claudii trends`:** Rolling 7-day window replaces calendar week — always shows exactly 7 days regardless of weekday; most recent day (Today) shown first
+- **`claudii trends`:** Total line now includes session count and model breakdown (`21 sessions, 5 Opus, 16 Sonnet`)
+- **`claudii trends`:** Two new stat lines — `Median: $X.XX/day (30d)` and `Trend: $X/day (7d) vs $X/day (30d) ↑/↓` for spend pattern awareness
 
 ### Fixed
 - **`claudii trends`:** False-reset threshold applied — cost/token deltas < 50% drop no longer treated as context compaction (same fix as `claudii cost` in v0.9.0)
