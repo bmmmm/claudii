@@ -72,10 +72,16 @@ _cmd_trends() {
     thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
   fi
 
-  # Build week_days string: "date:name,date:name,..." for week-start..today
+  # Build week_days string: "date:name,date:name,..." for rolling 7-day window (6 days ago..today)
   _week_days=""
+  _seven_days_ago_ts=$(( now - 6 * 86400 ))
+  if [[ "$_date_cmd" == "macos" ]]; then
+    week_start_str=$(date -j -f '%s' "$_seven_days_ago_ts" '+%Y-%m-%d')
+  else
+    week_start_str=$(date -d "@$_seven_days_ago_ts" '+%Y-%m-%d')
+  fi
   for (( d=0; d<7; d++ )); do
-    day_ts=$(( this_monday_ts + d * 86400 ))
+    day_ts=$(( _seven_days_ago_ts + d * 86400 ))
     if [[ "$_date_cmd" == "macos" ]]; then
       _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
       _wn=$(date -j -f '%s' "$day_ts" '+%a')
@@ -85,7 +91,6 @@ _cmd_trends() {
     fi
     [[ -n "$_week_days" ]] && _week_days+=","
     _week_days+="${_wd}:${_wn}"
-    [[ "$_wd" == "$today_str" ]] && break
   done
 
   # Show spinner for pretty output (not JSON/TSV — those are piped)
@@ -153,7 +158,7 @@ _cmd_trends() {
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   echo "$_trends_augmented" | awk -F'\t' \
     -v today="$today_str" \
-    -v this_mon="$this_monday_str" \
+    -v week_start="$week_start_str" \
     -v last_mon="$last_monday_str" \
     -v last_sun="$last_sunday_str" \
     -v thirty="$thirty_days_ago_str" \

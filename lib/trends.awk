@@ -1,7 +1,7 @@
 # trends.awk — claudii trends aggregation and formatting
 # Standalone awk program, called via -f from _cmd_trends()
 # Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
-# Variables (passed via -v): today, this_mon, last_mon, last_sun, thirty,
+# Variables (passed via -v): today, week_start, last_mon, last_sun, thirty,
 #   week_days, fmt, cyan, dim, pink, reset, daily_api
 
 BEGIN {
@@ -66,7 +66,7 @@ function fmt_tok(t) {
     if (day >= thirty && !((sid, "30d") in session_30d_seen)) {
       session_30d_seen[sid, "30d"] = 1
       model_sessions_30d[model]++
-      total_sessions_30d++
+      ++total_sessions_30d
     }
   }
 }
@@ -80,15 +80,27 @@ END {
     }
   }
 
-  # This week + last week totals
+  # Rolling 7-day window totals (week_start = 6 days ago)
   tw_cost = 0; tw_sessions = 0; tw_tok = 0
   lw_cost = 0; lw_sessions = 0; lw_tok = 0
   for (d in day_cost) {
-    if (d >= this_mon) {
-      tw_cost += day_cost[d]; tw_sessions += day_sessions[d]; tw_tok += (d in day_tok ? day_tok[d] : 0)
+    if (d >= week_start) {
+      tw_cost += day_cost[d]
+      tw_sessions += day_sessions[d]
+      tw_tok += (d in day_tok ? day_tok[d] : 0)
+      # Accumulate model breakdown for Total line
+      for (m in model_sessions_30d) { _dummy = m }  # force array init
     }
     if (d >= last_mon && d <= last_sun) {
       lw_cost += day_cost[d]; lw_sessions += day_sessions[d]; lw_tok += (d in day_tok ? day_tok[d] : 0)
+    }
+  }
+
+  # Accumulate tw_model_sessions separately (day_model_sessions keyed by day,model)
+  for (combo in day_model_sessions) {
+    split(combo, cp, SUBSEP)
+    if (cp[1] >= week_start) {
+      tw_model_sessions[cp[2]] += day_model_sessions[combo]
     }
   }
 
@@ -145,9 +157,10 @@ END {
 
   printf "\n"
   printf "  %sclaudii trends%s\n\n", cyan, reset
-  printf "  %sThis week%s (Mon\xe2\x80\x93Sun)\n", pink, reset
+  printf "  %sLast 7 days%s\n", pink, reset
 
-  for (i = 1; i <= n_days; i++) {
+  # Reverse order: Today first (i = n_days down to 1)
+  for (i = n_days; i >= 1; i--) {
     d = wd_date[i]
     label = (d == today) ? "Today" : wd_name[i]
 
@@ -193,8 +206,32 @@ END {
   }
 
   printf "%s\n", sep
+
+  # Total line with session count and model breakdown
   _ts = fmt_tok(tw_tok); _tfx = (_ts != "") ? ("  " _ts " tok") : ""
-  printf "    %-7s %s$%.2f%s%s\n", "Total", cyan, tw_cost, reset, _tfx
+  tw_s = (tw_sessions != 1) ? "s" : ""
+  tw_detail = ""
+  for (mi = 1; mi <= 3; mi++) {
+    m = models_order[mi]
+    if (m in tw_model_sessions) {
+      if (tw_detail != "") tw_detail = tw_detail ", "
+      tw_detail = tw_detail tw_model_sessions[m] " " m
+    }
+  }
+  # Unknown models in total
+  for (m in tw_model_sessions) {
+    if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
+      if (tw_detail != "") tw_detail = tw_detail ", "
+      tw_detail = tw_detail tw_model_sessions[m] " " m
+    }
+  }
+  if (tw_sessions > 0 && tw_detail != "") {
+    printf "    %-7s %s$%.2f%s%s  (%d session%s, %s)\n", "Total", cyan, tw_cost, reset, _tfx, tw_sessions, tw_s, tw_detail
+  } else if (tw_sessions > 0) {
+    printf "    %-7s %s$%.2f%s%s  (%d session%s)\n", "Total", cyan, tw_cost, reset, _tfx, tw_sessions, tw_s
+  } else {
+    printf "    %-7s %s$%.2f%s%s\n", "Total", cyan, tw_cost, reset, _tfx
+  }
 
   # Model split (30d)
   if (total_sessions_30d > 0) {
@@ -224,5 +261,38 @@ END {
   if (max_day != "") {
     printf "  Costliest day: %s (%s$%.2f%s)\n", max_day, cyan, max_day_cost, reset
   }
+
+  # Median daily cost (30d) — insertion sort (n <= 30, O(n²) is fine for BSD awk)
+  n_med = 0
+  for (d in day_cost) {
+    if (d >= thirty && day_cost[d] > 0) med_arr[++n_med] = day_cost[d]
+  }
+  for (i = 2; i <= n_med; i++) {
+    key = med_arr[i]; j = i - 1
+    while (j >= 1 && med_arr[j] > key) { med_arr[j+1] = med_arr[j]; j-- }
+    med_arr[j+1] = key
+  }
+  median_cost = (n_med > 0) ? med_arr[int((n_med + 1) / 2)] : 0
+  if (median_cost > 0) {
+    printf "  Median:        %s$%.2f/day (30d)%s\n", cyan, median_cost, reset
+  }
+
+  # 7d vs 30d spend trend
+  avg_7d = (tw_cost > 0) ? tw_cost / 7 : 0
+
+  cost_30d = 0
+  for (d in day_cost) { if (d >= thirty) cost_30d += day_cost[d] }
+  avg_30d = cost_30d / 30   # fixed 30-day denominator (honest burn rate)
+
+  if (avg_30d > 0) {
+    trend_pct = int((avg_7d - avg_30d) / avg_30d * 100 + 0.5)
+    trend_arrow = (trend_pct > 0) ? "\342\206\221" : (trend_pct < 0 ? "\342\206\223" : "\342\206\222")
+    trend_sign  = (trend_pct >= 0) ? "+" : ""
+    avg_7d_fmt  = sprintf("$%d", int(avg_7d + 0.5))
+    avg_30d_fmt = sprintf("$%d", int(avg_30d + 0.5))
+    printf "  Trend:         %s/day (7d) %svs %s/day (30d)%s %s%s%d%%\n", \
+      avg_7d_fmt, dim, avg_30d_fmt, reset, trend_arrow, trend_sign, trend_pct
+  }
+
   printf "\n"
 }

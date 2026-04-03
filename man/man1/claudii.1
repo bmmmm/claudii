@@ -598,8 +598,11 @@ Supports
 .
 .TP
 .B trends
-Visualization view: per-day cost bar chart for the current week, 30-day model
-distribution split, and the costliest day in the last 30 days.
+Visualization view: rolling 7-day window (most recent day first) with per-day cost,
+tokens, session count, and model breakdown.
+Also shows 30-day model distribution split, the costliest day in the last 30 days,
+median daily cost (30d), and a 7-day vs 30-day spend trend with direction arrow.
+The Total line includes session count and model breakdown for the 7-day window.
 The CC-Statusline handler appends a line to
 .I ~/.cache/claudii/history.tsv
 on every update.
