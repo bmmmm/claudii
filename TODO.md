@@ -6,6 +6,7 @@
 
 ## Pending
 
+
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**
