@@ -87,6 +87,22 @@ assert_contains "config import rejects invalid JSON" "gültiges JSON" "$output"
 output=$(bash "$CLAUDII_HOME/bin/claudii" config import /nonexistent/file.json 2>&1 || true)
 assert_contains "config import rejects missing file" "nicht gefunden" "$output"
 
+# config import — unknown top-level key rejected
+unknown_key_file="$XDG_CONFIG_HOME/claudii/unknown_key.json"
+jq '. + {"__evil_key": "pwned"}' "$CLAUDII_HOME/config/defaults.json" > "$unknown_key_file"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config import "$unknown_key_file" 2>&1 || true)
+assert_contains "config import rejects unknown top-level key" "unknown keys" "$output"
+bash "$CLAUDII_HOME/bin/claudii" config import "$unknown_key_file" >/dev/null 2>&1 && _import_exit=0 || _import_exit=$?
+assert_eq "config import unknown key exits non-zero" "1" "$_import_exit"
+
+# config import — invalid agent name rejected
+bad_agent_file="$XDG_CONFIG_HOME/claudii/bad_agent.json"
+jq '.agents = {"../evil": {"model": "sonnet", "skill": "pwn"}}' "$CLAUDII_HOME/config/defaults.json" > "$bad_agent_file"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config import "$bad_agent_file" 2>&1 || true)
+assert_contains "config import rejects invalid agent name" "invalid agent name" "$output"
+bash "$CLAUDII_HOME/bin/claudii" config import "$bad_agent_file" >/dev/null 2>&1 && _agent_exit=0 || _agent_exit=$?
+assert_eq "config import invalid agent exits non-zero" "1" "$_agent_exit"
+
 # ── Hyphenated key regression (jq interprets '-' as subtraction without quoting) ──
 bash "$CLAUDII_HOME/bin/claudii" config set session-dashboard.enabled on >/dev/null 2>&1
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)
