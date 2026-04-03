@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [0.11.0] — 2026-04-03
+
 ### Added
 - **Sessionline:** `duration` segment added to default line 3 — shows total session runtime, giving context to the `api-duration` ratio (e.g. `api:45m (73%)` is more readable when you can see total session was `1h02m`)
 - **`claudii trends`:** Rolling 7-day window replaces calendar week — always shows exactly 7 days regardless of weekday; most recent day (Today) shown first
