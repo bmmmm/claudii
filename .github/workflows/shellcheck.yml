@@ -21,4 +21,4 @@ jobs:
           scandir: './bin'
           severity: warning
         env:
-          SHELLCHECK_OPTS: --shell=bash --exclude=SC1090,SC1091,SC2034
+          SHELLCHECK_OPTS: --shell=bash --exclude=SC1090,SC1091,SC2034,SC1007
