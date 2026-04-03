@@ -1,5 +1,5 @@
 #!/bin/bash
-# claudii release — tag, push, and create a GitHub release
+# claudii release — bump version, run tests, tag, push, and create a GitHub release
 # Usage: scripts/release.sh <version> [--dry-run]
 
 set -euo pipefail
@@ -29,7 +29,7 @@ _rel_version="${_rel_version#v}"
 _rel_tag="v${_rel_version}"
 
 # Parse remote URL early — needed for CI HEAD check and release creation
-_remote_url=$(git -C "${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}" remote get-url origin 2>/dev/null || echo "")
+_remote_url=$(git -C "${CLAUDII_HOME}" remote get-url origin 2>/dev/null || echo "")
 if [[ "$_remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
   _gh_owner="${BASH_REMATCH[1]}"
   _gh_repo="${BASH_REMATCH[2]}"
@@ -54,42 +54,16 @@ printf '\033[0;36mclaudii release\033[0m \033[38;5;213m%s\033[0m\n\n' "$_rel_tag
 # ── Pre-flight ──
 _rel_box_start "Pre-Flight"
 
-# 1. Run tests
-if [[ "$_dry_run" -eq 1 ]]; then
-  _rel_ok "Tests — skipped (dry-run)"
-else
-  _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" 2>&1)
-  _test_exit=$?
-  if [[ $_test_exit -eq 0 ]]; then
-    _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
-    _rel_ok "Tests lokal grün ($_test_passed)"
-  else
-    _rel_fail "Tests fehlgeschlagen"
-    echo "$_test_out" | tail -20 >&2
-    exit 1
-  fi
-fi
-
-# 2. Version sync check
-_bin_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | tr -d '"' | cut -d= -f2)
-_man_version=$(grep -oE 'claudii [0-9]+\.[0-9]+\.[0-9]+' "$CLAUDII_HOME/man/man1/claudii.1" | head -1 | awk '{print $2}')
-
-_ver_ok=1
-if [[ "$_bin_version" != "$_rel_version" ]]; then
-  _rel_fail "bin/claudii VERSION=$_bin_version != $_rel_version"
-  _ver_ok=0
-fi
-if [[ "$_man_version" != "$_rel_version" ]]; then
-  _rel_fail "man page version=$_man_version != $_rel_version"
-  _ver_ok=0
-fi
-if [[ "$_ver_ok" -eq 0 ]]; then
-  echo "  Update VERSION in bin/claudii and man/man1/claudii.1 to $_rel_version" >&2
+# 1. Working tree must be clean
+_git_dirty=$(git -C "$CLAUDII_HOME" status --porcelain 2>/dev/null)
+if [[ -n "$_git_dirty" ]]; then
+  _rel_fail "Working tree nicht sauber — bitte erst committen"
+  git -C "$CLAUDII_HOME" status --short >&2
   exit 1
 fi
-_rel_ok "Versionen synchron (bin=$_bin_version, man=$_man_version)"
+_rel_ok "Working tree sauber"
 
-# 3. No existing tag
+# 2. No existing tag
 _existing_tag=$(git -C "$CLAUDII_HOME" tag -l "$_rel_tag")
 if [[ -n "$_existing_tag" ]]; then
   _rel_fail "Tag $_rel_tag existiert bereits"
@@ -99,7 +73,7 @@ if [[ -n "$_existing_tag" ]]; then
 fi
 _rel_ok "Kein offener Tag $_rel_tag"
 
-# 4. CI check: HEAD commit must have a completed, successful CI run
+# 3. CI check: HEAD commit must have a completed, successful CI run
 if command -v gh >/dev/null 2>&1 && [[ -n "$_gh_owner" ]]; then
   _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
   _ci_checks=$(gh api "repos/${_gh_owner}/${_gh_repo}/commits/${_head}/check-runs" \
@@ -125,21 +99,90 @@ if command -v gh >/dev/null 2>&1 && [[ -n "$_gh_owner" ]]; then
   fi
 fi
 
-# ── Release ──
+# ── Version Bump ──
+_rel_box_sep "Version Bump"
+
+_bin_file="$CLAUDII_HOME/bin/claudii"
+_man_file="$CLAUDII_HOME/man/man1/claudii.1"
+_changelog="$CLAUDII_HOME/CHANGELOG.md"
+_today=$(date +%Y-%m-%d)
+
+if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "bin/claudii VERSION → $_rel_version (dry-run)"
+  _rel_ok "man/man1/claudii.1 → $_rel_version (dry-run)"
+  _rel_ok "CHANGELOG.md [Unreleased] → [$_rel_version] (dry-run)"
+else
+  # Bump VERSION in bin/claudii
+  sed -i '' "s/^VERSION=.*/VERSION=\"${_rel_version}\"/" "$_bin_file"
+  _new_bin=$(grep '^VERSION=' "$_bin_file" | tr -d '"' | cut -d= -f2)
+  [[ "$_new_bin" == "$_rel_version" ]] || { _rel_fail "bin/claudii VERSION bump fehlgeschlagen"; exit 1; }
+  _rel_ok "bin/claudii VERSION → $_rel_version"
+
+  # Bump version in man page
+  sed -i '' "s/\"claudii [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"claudii ${_rel_version}\"/" "$_man_file"
+  _new_man=$(grep -oE 'claudii [0-9]+\.[0-9]+\.[0-9]+' "$_man_file" | head -1 | awk '{print $2}')
+  [[ "$_new_man" == "$_rel_version" ]] || { _rel_fail "man page version bump fehlgeschlagen"; exit 1; }
+  _rel_ok "man/man1/claudii.1 → $_rel_version"
+
+  # Promote [Unreleased] → [X.Y.Z — DATE] and insert new empty [Unreleased] block
+  if ! grep -q '^\#\# \[Unreleased\]' "$_changelog"; then
+    _rel_fail "CHANGELOG.md hat keinen [Unreleased]-Block"
+    exit 1
+  fi
+  awk -v ver="$_rel_tag" -v date="$_today" '
+    /^## \[Unreleased\]/ {
+      print "## [Unreleased]"
+      print ""
+      print "---"
+      print ""
+      print "## [" ver "] \342\200\224 " date
+      next
+    }
+    { print }
+  ' "$_changelog" > "${_changelog}.tmp" && mv "${_changelog}.tmp" "$_changelog"
+  _rel_ok "CHANGELOG.md [Unreleased] → [$_rel_tag] — $_today"
+fi
+
+# ── Tests ──
+_rel_box_sep "Tests"
+
+if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "Tests — skipped (dry-run)"
+else
+  _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" 2>&1)
+  _test_exit=$?
+  if [[ $_test_exit -eq 0 ]]; then
+    _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
+    _rel_ok "Tests grün ($_test_passed)"
+  else
+    _rel_fail "Tests fehlgeschlagen — version bump rückgängig machen"
+    echo "$_test_out" | tail -20 >&2
+    # Restore files on test failure
+    git -C "$CLAUDII_HOME" checkout -- "$_bin_file" "$_man_file" "$_changelog" 2>/dev/null || true
+    exit 1
+  fi
+fi
+
+# ── Commit & Release ──
 _rel_box_sep "Release"
 
-# 5. Push main branch, then create and push tag
 if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "Commit version bump — skipped (dry-run)"
   _rel_ok "Push origin main — skipped (dry-run)"
   _rel_ok "Tag $_rel_tag — skipped (dry-run)"
   _rel_ok "Push origin $_rel_tag — skipped (dry-run)"
 else
+  # Commit version bump
+  git -C "$CLAUDII_HOME" add "$_bin_file" "$_man_file" "$_changelog"
+  git -C "$CLAUDII_HOME" commit -m "chore(release): bump version to $_rel_version" 2>&1
+  _rel_ok "Committed: chore(release): bump version to $_rel_version"
+
   # Push commits first — tag must not land on GitHub before the code does
   _cur_branch=$(git -C "$CLAUDII_HOME" branch --show-current 2>/dev/null || echo "main")
   git -C "$CLAUDII_HOME" push origin "$_cur_branch" 2>&1
   _push_branch_exit=$?
   if [[ $_push_branch_exit -ne 0 ]]; then
-    _rel_fail "Push von branch '$_cur_branch' fehlgeschlagen — commits müssen vor dem Tag auf GitHub sein"
+    _rel_fail "Push von branch '$_cur_branch' fehlgeschlagen"
     exit 1
   fi
   _rel_ok "Branch '$_cur_branch' gepusht"
@@ -157,7 +200,9 @@ else
   _rel_ok "Tag $_rel_tag gepusht"
 fi
 
-# 6. Poll GitHub Actions
+# ── Poll GitHub Actions ──
+_rel_box_sep "GitHub Actions"
+
 if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "GitHub Actions — skipped (dry-run)"
 else
@@ -177,8 +222,6 @@ else
   _spin_idx=0
 
   while (( _poll_elapsed < _poll_timeout )); do
-    # Look for a workflow run triggered by the tag push.
-    # Note: GitHub API reports head_branch as "main" for tag pushes — filter by head_sha instead.
     _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
     _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
       --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_head}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion, name: .name}" \
@@ -188,14 +231,12 @@ else
       _run_id=$(echo "$_runs" | jq -r '.id' | head -1)
       _run_status=$(echo "$_runs" | jq -r '.status' | head -1)
       _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1)
-      _run_name=$(echo "$_runs" | jq -r '.name' | head -1)
 
       if [[ "$_run_status" == "completed" ]]; then
         break
       fi
     fi
 
-    # Spinner update
     _spin_char="${_spinner_chars:$(( _spin_idx % ${#_spinner_chars} )):1}"
     printf '\r│ %s Warte auf GitHub Actions... (%ds)  ' "$_spin_char" "$_poll_elapsed"
     _spin_idx=$(( _spin_idx + 1 ))
@@ -203,7 +244,7 @@ else
     sleep "$_poll_interval"
     _poll_elapsed=$(( _poll_elapsed + _poll_interval ))
   done
-  printf '\r'  # Clear spinner line
+  printf '\r'
 
   if [[ -z "$_run_id" ]]; then
     _rel_fail "Kein GitHub-Actions-Run für $_rel_tag gefunden (Timeout ${_poll_timeout}s)"
@@ -218,14 +259,12 @@ else
   else
     _rel_fail "Workflow fehlgeschlagen: conclusion=$_run_conclusion"
     echo "  $_run_url" >&2
-    # Cleanup: remove the pushed tag since release failed
     git -C "$CLAUDII_HOME" push origin ":refs/tags/$_rel_tag" 2>/dev/null || true
     git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
     echo "  Tag $_rel_tag wurde entfernt." >&2
     exit 1
   fi
 
-  # 7. GitHub Release is created by the release.yml workflow — just report URL
   _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
   _rel_ok "Release-Workflow hat GitHub Release erstellt"
 fi
