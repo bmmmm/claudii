@@ -381,7 +381,7 @@ _cmd_watch() {
 
   case "${2:-start}" in
     start)
-      [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
+      [[ -d "$cache_dir" ]] || { mkdir -p "$cache_dir" && chmod 0700 "$cache_dir"; }
       # Check if already running
       if [[ -f "$pid_file" ]]; then
         existing_pid=$(<"$pid_file")

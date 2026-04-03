@@ -12,7 +12,7 @@ read -r json
 
 # Write session data to cache (key=value) — RPROMPT reads this without jq
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-[[ -d "$_cache_dir" ]] || mkdir -p "$_cache_dir"
+[[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
 
 # Parse all fields in one jq call — single process, max efficiency
 # Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
@@ -126,6 +126,7 @@ _tmp_session="${_session_file}.tmp.$$"
 # Append to persistent history (Flight Recorder) — one TSV line per update
 # Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok, api_duration_ms
 _now=$(date +%s)
+[[ -f "$_cache_dir/history.tsv" ]] || { touch "$_cache_dir/history.tsv"; chmod 0600 "$_cache_dir/history.tsv"; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
   "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
