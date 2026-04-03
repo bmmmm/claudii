@@ -1070,7 +1070,7 @@ _cmd_default() {
       else
         _ov_7d_clr="${CLAUDII_CLR_GREEN}"
       fi
-      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} 7d: ${_ov_7d_clr}${_ov_7d_int}%${CLAUDII_CLR_RESET}"
+      _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} 7d: ${_ov_7d_clr}${_ov_7d_int}%${CLAUDII_CLR_RESET}"
       # 7d delta
       if [[ -n "$_ov_acct_7d_start" ]]; then
         _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
@@ -1097,7 +1097,7 @@ _cmd_default() {
     if (( _ov_today_count > 0 )); then
       _ov_today_fmt=$(printf '%.2f' "$_ov_today_cost")
       _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
-      _ov_acct_line+=" ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
+      _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
     fi
     printf '%s\n' "$_ov_acct_line"
   else

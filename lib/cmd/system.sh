@@ -235,10 +235,10 @@ _cmd_status() {
             if [[ -n "$_inc_title" ]]; then
               _inc_curstat_lc=$(echo "$_inc_curstat" | tr '[:upper:]' '[:lower:]')
               case "$_inc_curstat_lc" in
-                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="✓ Resolved"     ;;
-                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Monitoring"   ;;
-                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="◎ Investigating" ;;
-                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="○"              ;;
+                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                  ;;
+                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Monitoring"     ;;
+                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Investigating"  ;;
+                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE}"                  ;;
               esac
               printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_inc_title"
               printf '\n'

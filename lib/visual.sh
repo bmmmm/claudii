@@ -13,8 +13,9 @@ CLAUDII_SYM_DEGRADED="~"   # model degraded
 CLAUDII_SYM_SEP="│"        # separator
 CLAUDII_SYM_BAR_FULL="█"   # progress bar — filled block
 CLAUDII_SYM_BAR_EMPTY="░"  # progress bar — empty block
-CLAUDII_SYM_CACHE="⚡"      # cache hit / cache prompt tokens
+CLAUDII_SYM_CACHE="⚡"       # cache hit / cache prompt tokens
 CLAUDII_SYM_FINGERPRINT="✦" # session fingerprint / file access marker
+CLAUDII_SYM_MONITORING="◎"  # incident monitoring / investigating
 
 # ── ANSI colors ───────────────────────────────────────────────────────────────
 CLAUDII_CLR_GREEN=$'\033[0;32m'
