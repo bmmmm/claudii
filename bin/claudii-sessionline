@@ -418,7 +418,7 @@ _term_cols=""
 
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,tokens,worktree"
+api-duration,tokens,duration,worktree"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
