@@ -56,6 +56,16 @@ _cmd_config() {
       file="${3:?Usage: claudii config import <file>}"
       [[ -f "$file" ]] || { echo "Datei nicht gefunden: $file — Hinweis: Pfad prüfen" >&2; exit 1; }
       jq '.' "$file" >/dev/null 2>&1 || { echo "Kein gültiges JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
+      # Validate only known top-level keys
+      _known='["statusline","watch","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard"]'
+      _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
+      [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
+
+      # Validate agent names match allowed pattern
+      if jq -e '.agents | type == "object"' "$file" >/dev/null 2>&1; then
+        _bad_agents=$(jq -r '.agents | to_entries[] | select(.key | test("^[a-zA-Z_][a-zA-Z0-9_-]*$") | not) | .key' "$file")
+        [[ -z "$_bad_agents" ]] || { printf "config import: invalid agent name(s): %s\n" "$_bad_agents" >&2; exit 1; }
+      fi
       cp "$CONFIG" "${CONFIG}.bak"
       cp "$file" "$CONFIG"
       echo "Config importiert aus $file  (Backup: ${CONFIG}.bak)"
