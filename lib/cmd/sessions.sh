@@ -454,6 +454,7 @@ _cmd_cost() {
     _hist_spinner_pid="" _hist_label_file=""
     if ! _plain; then
       _hist_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+      chmod 0600 "$_hist_label_file"
       export CLAUDII_SPINNER_LABEL_FILE="$_hist_label_file"
       printf '%s' "${history_file/#$HOME/\~}" > "$_hist_label_file"
       _claudii_spinner &
@@ -506,6 +507,7 @@ _cmd_cost() {
   _cost_spinner_pid="" _claudii_spinner_label_file=""
   if ! _plain; then
     _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+    chmod 0600 "$_claudii_spinner_label_file"
     export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
     _claudii_spinner &
     _cost_spinner_pid=$!
@@ -745,6 +747,7 @@ _cmd_sessions() {
   _se_spinner_pid="" _claudii_spinner_label_file=""
   if ! _plain; then
     _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
+    chmod 0600 "$_claudii_spinner_label_file"
     export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
     _claudii_spinner &
     _se_spinner_pid=$!
