@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Sessionline:** `duration` segment added to default line 3 — shows total session runtime, giving context to the `api-duration` ratio (e.g. `api:45m (73%)` is more readable when you can see total session was `1h02m`)
+
 ### Fixed
 - **`claudii trends`:** False-reset threshold applied — cost/token deltas < 50% drop no longer treated as context compaction (same fix as `claudii cost` in v0.9.0)
 
