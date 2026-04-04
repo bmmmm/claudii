@@ -140,7 +140,7 @@ assert_eq "sessionline shows reset countdown" "1" "$(echo "$strip" | grep -cE '�
 # Reset countdown color: green (\033[32m) when rate_5h >= 50% and < 5min remaining
 _reset_soon=$(( $(date +%s) + 180 ))
 output_soon=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":67,\"resets_at\":${_reset_soon}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
-assert_eq "reset countdown < 5min + rate>=50%: green color code present" "1" "$(printf '%s' "$output_soon" | grep -c $'\033\[0;32m' || true)"
+assert_eq "reset countdown < 5min + rate>=50%: green color code present" "1" "$(printf '%s' "$output_soon" | grep -c $'\033\[0;32m↺' || true)"
 
 # Burn-ETA removed — "~Xmin" must NOT appear in output
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":47,"total_input_tokens":64900,"total_output_tokens":121100,"context_window_size":200000},"cost":{"total_cost_usd":12.53,"total_duration_ms":3600000},"rate_limits":{"five_hour":{"used_percentage":67},"seven_day":{"used_percentage":65}}}' | COLUMNS=150 bash "$SL" 2>&1)
@@ -193,10 +193,10 @@ assert_eq "7d countdown >= 24h shows ↺XdYh" "1" "$(echo "$strip" | grep -cE '�
 
 # --- new tests (multi-line layout + segment pre-computation) ---
 
-# Default output has exactly 3 non-empty lines
+# Default output has exactly 4 non-empty lines (line 4 = claude-status)
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_api_duration_ms":50000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | bash "$SL" 2>/dev/null)
 _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
-assert_eq "default output has exactly 3 non-empty lines" "3" "$_nonempty_lines"
+assert_eq "default output has exactly 4 non-empty lines" "4" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"

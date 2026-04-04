@@ -419,7 +419,8 @@ _term_cols=""
 
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,tokens,duration,worktree"
+api-duration,tokens,duration,worktree
+claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
@@ -427,6 +428,42 @@ if [[ -f "$_config_file" ]]; then
   _from_cfg=$(jq -r 'if .statusline.lines then (.statusline.lines | .[] | join(",")) else empty end' \
     "$_config_file" 2>/dev/null)
   [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+fi
+
+# ClaudeStatus — model health indicators from status-models cache
+_seg_claude_status=""
+_status_cache="${_cache_dir}/status-models"
+if [[ -f "$_status_cache" ]]; then
+  _sc=""
+  { _sc=$(<"$_status_cache"); } 2>/dev/null
+  if [[ -n "$_sc" ]]; then
+    _sc_models=("opus" "sonnet" "haiku")
+    if [[ -f "$_config_file" ]]; then
+      _sc_models_cfg=$(jq -r '.statusline.models // empty' "$_config_file" 2>/dev/null)
+      if [[ -n "$_sc_models_cfg" ]]; then
+        IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
+      fi
+    fi
+    for _scm in "${_sc_models[@]}"; do
+      _scm="${_scm// /}"
+      [[ -z "$_scm" ]] && continue
+      case "$_scm" in
+        opus)   _scm_lbl="Opus"   ;;
+        sonnet) _scm_lbl="Sonnet" ;;
+        haiku)  _scm_lbl="Haiku"  ;;
+        *)      _scm_lbl="$_scm"  ;;
+      esac
+      if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
+        _scm_icon="${RED}↓${RST}"
+      elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then
+        _scm_icon="${YELLOW}~${RST}"
+      else
+        _scm_icon="${GREEN}✓${RST}"
+      fi
+      [[ -n "$_seg_claude_status" ]] && _seg_claude_status+="  "
+      _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
+    done
+  fi
 fi
 
 # --- layout loop ---
@@ -452,7 +489,8 @@ while IFS= read -r _line_segs; do
       api-duration)  _val="$_seg_api_dur"       ;;
       delta-5h)      _val="$_seg_delta5h"       ;;
       delta-7d)      _val="$_seg_delta7d"       ;;
-      cache-create)  _val="$_seg_cache_create"  ;;
+      cache-create)    _val="$_seg_cache_create"    ;;
+      claude-status)   _val="$_seg_claude_status"  ;;
       ruler)
         # Fill remaining terminal width with ─
         # Skip entirely if width unknown — prevents overflow and wrapping in narrow terminals
