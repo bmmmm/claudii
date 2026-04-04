@@ -13,7 +13,6 @@ typeset -g _CLAUDII_DOLLAR='$'
 typeset -gi _CLAUDII_SHOWED_SESSIONS=0
 typeset -g _CLAUDII_LAST_CMD=""
 # PID of the last background status-fetch job — used to skip redundant spawns
-typeset -g _CLAUDII_STATUS_PID=""
 # Set while _claudii_statusline is executing — reentrancy guard
 typeset -g _CLAUDII_PRECMD_RUNNING=""
 
@@ -54,11 +53,7 @@ function _claudii_statusline_render {
 
   if [[ ! -f "$status_cache" ]]; then
     # Skip spawn if a previous fetch is still running
-    kill -0 "${_CLAUDII_STATUS_PID:-}" 2>/dev/null || {
-      "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
-      typeset -g _CLAUDII_STATUS_PID=$!
-      disown "$_CLAUDII_STATUS_PID" 2>/dev/null
-    }
+    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
     RPROMPT="%F{8}[…]%f"; return
   fi
 
@@ -74,12 +69,7 @@ function _claudii_statusline_render {
 
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
-    # Skip spawn if a previous fetch is still running
-    kill -0 "${_CLAUDII_STATUS_PID:-}" 2>/dev/null || {
-      "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null &
-      typeset -g _CLAUDII_STATUS_PID=$!
-      disown "$_CLAUDII_STATUS_PID" 2>/dev/null
-    }
+    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
