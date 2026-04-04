@@ -454,16 +454,20 @@ if [[ -f "$_status_cache" ]]; then
         *)      _scm_lbl="$_scm"  ;;
       esac
       if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
-        _scm_icon="${RED}↓${RST}"; _sc_has_issue=1
+        _scm_icon="${RED}↓${RST}"; _sc_worst="down"
       elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then
-        _scm_icon="${YELLOW}~${RST}"; _sc_has_issue=1
+        _scm_icon="${YELLOW}~${RST}"; [[ "${_sc_worst:-}" != "down" ]] && _sc_worst="degraded"
       else
         _scm_icon="${GREEN}✓${RST}"
       fi
       [[ -n "$_seg_claude_status" ]] && _seg_claude_status+="  "
       _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
     done
-    [[ -n "${_sc_has_issue:-}" ]] && _seg_claude_status+="  ${DIM}claudii status${RST}"
+    if [[ "${_sc_worst:-}" == "down" ]]; then
+      _seg_claude_status+="  ${RED}⚠ claudii status${RST}"
+    elif [[ "${_sc_worst:-}" == "degraded" ]]; then
+      _seg_claude_status+="  ${YELLOW}⚠ claudii status${RST}"
+    fi
   fi
 fi
 
