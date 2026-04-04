@@ -21,7 +21,8 @@
     "lines": [
       ["model", "context-bar", "cache-create"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
-      ["api-duration", "tokens", "duration", "worktree"]
+      ["api-duration", "tokens", "duration", "worktree"],
+      ["claude-status"]
     ]
   },
   "search": {

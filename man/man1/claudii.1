@@ -147,7 +147,7 @@ Each segment is separated by a dim
 character.
 Segments are omitted when their data is absent.
 .PP
-The output is configurable: by default three lines are emitted.
+The output is configurable: by default four lines are emitted.
 The layout is controlled by the
 .B statusline.lines
 config key (see
@@ -176,6 +176,7 @@ session-name	my-feature	Session name (set via /rename or --name)
 worktree	feat/login \[u23B7] main	Worktree name + branch (dim)
 agent	@orc	Agent name (dim, prefixed @)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
+claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache; \[u26A0] hint (colored) when degraded/down
 .TE
 .PP
 Segment details:
@@ -525,7 +526,7 @@ Rendered inside Claude Code sessions via
 .IR ~/.claude/settings.json .
 Shows model name, context usage bar, cost, token counts, rate limits,
 lines changed, session duration, burn-eta, worktree name, and agent context.
-The output is split across configurable lines (default: 3 lines) via
+The output is split across configurable lines (default: 4 lines) via
 .B statusline.lines
 in config.
 .

@@ -125,6 +125,7 @@ _claudii() {
                 'status.rss_url:Status RSS feed URL'
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
+                'statusline.lines:CC-Statusline layout (array of segment arrays)'
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
