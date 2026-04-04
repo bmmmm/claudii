@@ -150,10 +150,11 @@ _cmd_trends() {
   fi
 
   # Pre-compute daily API duration totals from augmented data (field 7 = api_dur_ms)
+  # Use | as record separator — BSD awk (macOS) rejects literal newlines in -v values
   _daily_api=$(echo "$_trends_augmented" | awk -F'\t' '
     NF >= 7 && $7 > 0 { daily[$1] += $7 }
     END { for (d in daily) print d "\t" daily[d] }
-  ' | sort)
+  ' | sort | tr '\n' '|')
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   echo "$_trends_augmented" | awk -F'\t' \

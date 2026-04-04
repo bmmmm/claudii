@@ -5,8 +5,8 @@
 #   week_days, fmt, cyan, dim, pink, reset, daily_api
 
 BEGIN {
-  # Parse daily_api "date\tms\ndate\tms\n..." into api_by_day[date] = ms
-  n = split(daily_api, _api_parts, "\n")
+  # Parse daily_api "date\tms|date\tms|..." into api_by_day[date] = ms
+  n = split(daily_api, _api_parts, "|")
   for (i = 1; i <= n; i++) {
     if (_api_parts[i] == "") continue
     split(_api_parts[i], _ap, "\t")
