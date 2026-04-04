@@ -35,6 +35,22 @@ done
 assert_eq "toggle removed from bin/claudii" "" \
   "$(grep -E '^\s+toggle\)' "$CLI" || true)"
 
+# ── Sessionline segments documented in man page ─────────────────────────────
+# Every segment in the layout loop must have a row in the man page segments table.
+# Update this list whenever a new segment is added to bin/claudii-sessionline.
+SL_SEGMENTS=(
+  model context-bar rate-5h rate-7d cost tokens lines-changed duration
+  api-duration burn-eta delta-5h delta-7d cache-create session-name
+  worktree agent ruler claude-status
+)
+for seg in "${SL_SEGMENTS[@]}"; do
+  assert_contains "man page documents segment: $seg" "$seg" "$(cat "$MAN")"
+done
+
+# defaults.json must be readable JSON (basic sanity)
+assert_eq "config/defaults.json is valid JSON" "0" \
+  "$(jq empty "$CLAUDII_HOME/config/defaults.json" >/dev/null 2>&1; echo $?)"
+
 # ── Static lint: (( var++ )) regression ─────────────────────────────────────
 # Regression: standalone post-increment (( var++ )) exits 1 under set -e when
 # var==0 on bash 5.x (Ubuntu CI). All occurrences must use pre-increment (( ++var )).

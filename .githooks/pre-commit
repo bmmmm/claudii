@@ -1,0 +1,15 @@
+#!/bin/bash
+# Pre-commit: verify docs stay in sync with code
+# Runs fast (~0.5s) — always runs, no file-filter needed
+
+CLAUDII_HOME="$(cd "$(dirname "$0")/.." && pwd)"
+
+bash "$CLAUDII_HOME/tests/run.sh" "$CLAUDII_HOME/tests/test_docs.sh" 2>&1
+exit_code=$?
+
+if [[ $exit_code -ne 0 ]]; then
+  echo ""
+  echo "  Docs out of sync — update man page, completions, or config/defaults.json"
+  echo "  before committing. Run: bash tests/run.sh test_docs"
+  exit 1
+fi
