@@ -9,7 +9,7 @@ claudii.plugin.zsh      # Entry point (sources lib/)
 bin/claudii             # CLI dispatcher + shared helpers (<300 lines)
 bin/claudii-status      # ClaudeStatus health checker (components API + RSS)
 bin/claudii-sessionline # Sessionline handler (bash+jq, reads stdin JSON)
-lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, watch, doctor
+lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, doctor
 lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default
 lib/cmd/display.sh      # Commands: trends, version, changelog, layers, 42
 lib/cmd/config.sh       # Commands: config, agents, search

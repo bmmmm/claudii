@@ -137,7 +137,7 @@ Data flow:
 .RS
 .nf
 Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboard (precmd)
-                                           \(-> history.tsv (Flight Recorder)
+                                           \(-> history-YYYY-MM.tsv (Flight Recorder)
 .fi
 .RE
 .
@@ -580,8 +580,22 @@ Alias:
 .B sessions-inactive
 Show inactive (ended or stale) Claude Code sessions.
 Lists sessions that are no longer active, with age, context usage, and rate-limit data.
+Each session shows a status badge: pinned (protected from GC), stale (pending GC),
+or idle (recently ended).
+A shortened session ID is shown for use with
+.BR pin / unpin .
 Alias:
 .BR si .
+.
+.TP
+.BI "pin " session-id
+Protect an inactive session from garbage collection.
+Matches by session ID substring (first match wins).
+Pinned sessions are preserved indefinitely until explicitly unpinned.
+.
+.TP
+.BI "unpin " session-id
+Remove GC protection from a pinned session.
 .
 .TP
 .B cost
@@ -604,9 +618,11 @@ tokens, session count, and model breakdown.
 Also shows 30-day model distribution split, the costliest day in the last 30 days,
 median daily cost (30d), and a 7-day vs 30-day spend trend with direction arrow.
 The Total line includes session count and model breakdown for the 7-day window.
-The CC-Statusline handler appends a line to
-.I ~/.cache/claudii/history.tsv
-on every update.
+The CC-Statusline handler appends a line to monthly files
+.RI ( ~/.cache/claudii/history-YYYY-MM.tsv )
+on every update. Legacy
+.I history.tsv
+files are also read for backward compatibility.
 Supports
 .BR \-\-json .
 .
@@ -660,72 +676,6 @@ The theme name is stored as
 in
 .IR config.json .
 Unknown theme names print an error and exit non-zero.
-.
-.SS Watch
-Background watcher that monitors session cache files and sends a macOS notification
-when a 5-hour rate limit resets.
-Uses
-.B terminal-notifier
-if installed, otherwise falls back to
-.BR osascript .
-The watcher polls every 60 seconds and only notifies once per reset timestamp.
-The process ID is stored in
-.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/watch.pid" .
-.
-.TP
-.B watch
-Start the background watcher (same as
-.BR "watch start" ).
-.
-.TP
-.B "watch start"
-Start the background watcher.
-Prints the PID and exits immediately.
-Does nothing if a watcher is already running.
-.
-.TP
-.B "watch stop"
-Stop the background watcher and remove the PID file.
-.
-.TP
-.B "watch status"
-Show whether the watcher is running and its PID.
-.
-.TP
-.B "watch test"
-Send a test notification immediately to verify that notifications work.
-Useful for checking
-.B watch.sound
-configuration.
-.
-.TP
-.B "watch volume"
-Show the current notification volume (0\(en100).
-.
-.TP
-.BI "watch volume " N
-Set the notification volume to
-.I N
-(0\(en100).
-Example:
-.BR "claudii watch volume 75" .
-.
-.TP
-.B "watch sound"
-Show the current notification sound file path, or
-.B (default)
-if none is set.
-.
-.TP
-.BI "watch sound " file
-Set a custom sound file to play on notification.
-The file must exist.
-Example:
-.BR "claudii watch sound /System/Library/Sounds/Glass.aiff" .
-.
-.TP
-.B "watch sound default"
-Reset the notification sound to the system default (no custom sound file).
 .
 .SS Agents
 .
@@ -883,8 +833,6 @@ statusline.lines        CC-Statusline layout: array of arrays, each inner array 
 session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)
-watch.sound             path to a sound file played on notification (default: empty = no sound)
-watch.volume            notification sound volume, 0\(en100 (default: 50)
 .fi
 .RE
 .
@@ -943,12 +891,18 @@ Per-model status cache.
 Per-session cache files written by the CC-Statusline handler.
 Contains model, context percentage, cost, and rate limit data.
 .TP
-.I ~/.cache/claudii/history.tsv
-Persistent session history (Flight Recorder).
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+Persistent session history (Flight Recorder), rotated monthly.
 TSV file with one line per CC-Statusline update:
-timestamp, model, cost, context percentage, 5-hour rate, session_id.
+timestamp, model, cost, context percentage, 5-hour rate, session_id,
+input_tok, output_tok, api_duration_ms.
+Legacy
+.I history.tsv
+is also read for backward compatibility.
 Read by
-.BR "claudii trends" .
+.BR "claudii trends"
+and
+.BR "claudii cost" .
 .TP
 .I ~/.claude/settings.json
 Claude Code settings, modified by

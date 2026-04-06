@@ -69,7 +69,6 @@ Model health in your right prompt. Cache-only, never blocks your prompt.
 - **Cost tracking** — per-session, per-day, per-model breakdown (`claudii cost`, `claudii trends`)
 - **Rate-limit intelligence** — 5h/7d usage with reset countdown, auto-fallback to healthy models
 - **Cache-hit ratio** — see how efficiently Claude uses prompt caching (`⚡73%`)
-- **Notifications** — get pinged when your rate limit resets (`claudii watch`)
 - **Fast aliases** — `cl` (Sonnet), `clo` (Opus), `clm` (Opus max) with auto-fallback on outage
 
 ## How it works
@@ -109,7 +108,6 @@ claudii status                   # live model health check        (shortcut: s)
 claudii sessions                 # active + recent sessions       (shortcut: ss)
 claudii cost                     # per-model cost breakdown       (shortcut: c)
 claudii trends                   # weekly/daily cost history      (shortcut: t)
-claudii watch                    # notify when rate limit resets
 claudii doctor                   # installation health check      (shortcut: d)
 claudii config get/set <key>     # read/write config
 ```
@@ -128,8 +126,6 @@ All commands support `--json` and `--tsv` for scripting. Full reference: `man cl
 | `status.cache_ttl` | `900` | Health check interval (seconds) |
 | `statusline.models` | `opus,sonnet,haiku` | Models shown in RPROMPT |
 | `dashboard.enabled` | `auto` | Dashboard mode (auto/true/off) |
-| `watch.sound` | `` | Path to sound file for notifications |
-| `watch.volume` | `50` | Notification volume (0-100) |
 
 ## License
 

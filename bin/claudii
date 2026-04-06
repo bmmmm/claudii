@@ -33,19 +33,50 @@ unset _args_filtered _arg
 _plain() { [[ "$_TTY" -eq 0 ]] || [[ -n "$_FORMAT" ]]; }
 
 command -v jq >/dev/null 2>&1 || {
-  echo "claudii: jq nicht gefunden. Install: brew install jq" >&2; exit 1
+  echo "claudii: jq not found. Install: brew install jq" >&2; exit 1
 }
 
 # ── Shared helpers (used by lib/cmd/*.sh) ──────────────────────────────────
 
+# Session JSONL map — build once, O(1) lookup per session.
+# Uses parallel arrays (bash 3.2 compatible — no declare -A).
+_SID_MAP_KEYS=()
+_SID_MAP_VALS=()
+_session_build_map() {
+  _SID_MAP_KEYS=()
+  _SID_MAP_VALS=()
+  local _jsonl _sid _i=0
+  for _jsonl in "$HOME/.claude/projects"/*/*.jsonl; do
+    [[ -f "$_jsonl" ]] || continue
+    _sid="${_jsonl##*/}"
+    _sid="${_sid%.jsonl}"
+    _SID_MAP_KEYS[$_i]="$_sid"
+    _SID_MAP_VALS[$_i]="$_jsonl"
+    (( ++_i ))
+  done
+}
+
+# Resolve JSONL path for a session_id (uses map if built, falls back to scan).
+_session_jsonl() {
+  local sid="$1" _j
+  [[ -z "$sid" ]] && return
+  # Map lookup
+  for (( _j=0; _j<${#_SID_MAP_KEYS[@]}; _j++ )); do
+    if [[ "${_SID_MAP_KEYS[$_j]}" == "$sid" ]]; then
+      echo "${_SID_MAP_VALS[$_j]}"
+      return
+    fi
+  done
+  # Fallback: direct scan
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && echo "${_d}${sid}.jsonl" && return
+  done
+}
+
 # Resolve project path (cwd) for a given session_id from JSONL transcript.
 _session_project_path() {
-  local sid="$1"
-  [[ -z "$sid" ]] && return
-  local jsonl=""
-  for _d in "$HOME/.claude/projects"/*/; do
-    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
-  done
+  local sid="$1" jsonl
+  jsonl=$(_session_jsonl "$sid")
   [[ -z "$jsonl" ]] && return
   local cwd
   cwd=$(grep -m5 '"cwd"' "$jsonl" 2>/dev/null | head -1 | grep -o '"cwd":"[^"]*"' | sed 's/"cwd":"//; s/"$//' || true)
@@ -57,62 +88,104 @@ _session_project_path() {
   echo "$short"
 }
 
-# Extract session name from rename entries in JSONL transcript.
+# Single-pass JSONL resolver: extracts name, fingerprint, last_message in one awk.
+# Output: 3 lines (name\nfingerprint\nlast_message), any may be empty.
+_session_resolve() {
+  local sid="$1" jsonl
+  jsonl=$(_session_jsonl "$sid")
+  [[ -z "$jsonl" ]] && { printf '\n\n\n'; return; }
+  awk '
+    # Session name: last "Session renamed to:" match
+    match($0, /"Session renamed to: [^"\\]*"/) {
+      name = substr($0, RSTART+21, RLENGTH-22)
+      # Strip ANSI escapes
+      gsub(/\033\[[0-9;]*m/, "", name)
+      gsub(/\\033\[[0-9;]*m/, "", name)
+      gsub(/\\e\[[0-9;]*m/, "", name)
+    }
+    # Fingerprint: collect file_path occurrences
+    {
+      pos = 0
+      s = $0
+      while (match(s, /"file_path":"[^"]*"/)) {
+        fp = substr(s, RSTART+13, RLENGTH-14)
+        # basename
+        n = split(fp, parts, "/")
+        bn = parts[n]
+        files[bn]++
+        s = substr(s, RSTART + RLENGTH)
+      }
+    }
+    # Last user message
+    /"role":"user"/ { last_user = $0 }
+    END {
+      # Name (max 60 chars)
+      if (length(name) > 60) name = substr(name, 1, 60)
+      print name
+
+      # Fingerprint: top-5 by count
+      n = 0
+      for (f in files) { n++; fnames[n] = f; fcounts[n] = files[f] }
+      # Simple selection sort (max 5 from n)
+      fp_out = ""
+      for (i = 1; i <= 5 && i <= n; i++) {
+        max_idx = i
+        for (j = i+1; j <= n; j++) {
+          if (fcounts[j] > fcounts[max_idx]) max_idx = j
+        }
+        if (max_idx != i) {
+          tmp = fnames[i]; fnames[i] = fnames[max_idx]; fnames[max_idx] = tmp
+          tmp = fcounts[i]; fcounts[i] = fcounts[max_idx]; fcounts[max_idx] = tmp
+        }
+        fp_out = fp_out (fp_out == "" ? "" : " ") fnames[i] "(" fcounts[i] ")"
+      }
+      print fp_out
+
+      # Last user message (max 80 chars)
+      msg = ""
+      if (last_user != "") {
+        if (match(last_user, /"text":"[^"]*"/)) {
+          msg = substr(last_user, RSTART+7, RLENGTH-8)
+        }
+        if (length(msg) > 80) msg = substr(msg, 1, 80)
+      }
+      print msg
+    }
+  ' "$jsonl" 2>/dev/null || printf '\n\n\n'
+}
+
+# Legacy wrappers (used individually in some code paths)
 _session_name() {
-  local sid="$1"
-  [[ -z "$sid" ]] && return
-  local jsonl=""
-  for _d in "$HOME/.claude/projects"/*/; do
-    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
-  done
-  [[ -z "$jsonl" ]] && return
-  grep -o '"Session renamed to: [^"\\]*"' "$jsonl" 2>/dev/null \
-    | tail -1 \
-    | sed 's/^"Session renamed to: //; s/"$//' \
-    | sed $'s/\033\\[[0-9;]*m//g' \
-    | sed 's/\\033\[[0-9;]*m//g; s/\\e\[[0-9;]*m//g; s/\\033//g; s/\\e//g' \
-    | LC_ALL=C tr -cd '[:print:]' \
-    | cut -c1-60 \
-    | tr -d '\n' || true
+  local sid="$1" result
+  result=$(_session_resolve "$sid")
+  echo "$result" | head -1
 }
 
-# Extract session fingerprint: top-5 files accessed via tool_input.file_path in JSONL.
-# Returns "name(N) name(N) ..." or empty if no JSONL / no tool calls found.
 _session_fingerprint() {
-  local sid="$1"
-  [[ -z "$sid" ]] && return
-  local jsonl=""
-  for _d in "$HOME/.claude/projects"/*/; do
-    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
-  done
-  [[ -z "$jsonl" ]] && return
-  local result
-  result=$(grep -o '"file_path":"[^"]*"' "$jsonl" 2>/dev/null \
-    | sed 's/"file_path":"//; s/"$//' \
-    | while IFS= read -r fp; do basename "$fp"; done \
-    | sort | uniq -c | sort -rn | head -5 \
-    | awk '{printf "%s(%s) ", $2, $1}' \
-    | sed 's/ $//' || true)
-  echo "$result"
+  local sid="$1" result
+  result=$(_session_resolve "$sid")
+  echo "$result" | sed -n '2p'
 }
 
-# Extract last user message from JSONL (max 80 chars), or empty if not found.
 _session_last_user_message() {
-  local sid="$1"
-  [[ -z "$sid" ]] && return
-  local jsonl=""
-  for _d in "$HOME/.claude/projects"/*/; do
-    [[ -f "${_d}${sid}.jsonl" ]] && jsonl="${_d}${sid}.jsonl" && break
-  done
-  [[ -z "$jsonl" ]] && return
-  local msg
-  msg=$(grep '"role":"user"' "$jsonl" 2>/dev/null \
-    | tail -1 \
-    | grep -o '"text":"[^"]*"' \
-    | head -1 \
-    | sed 's/"text":"//; s/"$//' \
-    | cut -c1-80 || true)
-  echo "$msg"
+  local sid="$1" result
+  result=$(_session_resolve "$sid")
+  echo "$result" | sed -n '3p'
+}
+
+# Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
+# Usage: _jq_update <file> <jq-filter> [jq-args...]
+# Example: _jq_update "$CONFIG" '.debug.level = "info"'
+# Example: _jq_update "$CONFIG" --argjson v 900 '.status.cache_ttl = $v'
+_jq_update() {
+  local _file="$1"; shift
+  local _tmp; _tmp=$(mktemp) || return 1
+  if jq "$@" "$_file" > "$_tmp"; then
+    mv "$_tmp" "$_file"
+  else
+    rm -f "$_tmp"
+    return 1
+  fi
 }
 
 # Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
@@ -152,11 +225,12 @@ usage() {
   printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET} — Claude Interaction Intelligence\n" "$VERSION"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}aliases${CLAUDII_CLR_RESET}\n"
-  printf "    %-5s  %-7s  %-6s  $d %s\n" "cl"  "sonnet" "high"   "default"
-  printf "    %-5s  %-7s  %-6s  $d %s\n" "clo" "opus"   "high"   "complex tasks"
-  printf "    %-5s  %-7s  %-6s  $d %s\n" "clm" "opus"   "max"    "max effort"
-  printf "    %-5s  %-7s  %-6s  $d %s\n" "clq" "sonnet" "medium" "search  (claudii search ['query'])"
-  printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "this alias table + current model status"
+  local _def="${CLAUDII_HOME}/config/defaults.json"
+  while IFS=$'\t' read -r _a _m _e _desc; do
+    [[ -z "$_a" ]] && continue
+    printf "    %-5s  %-7s  %-6s  $d %s\n" "$_a" "$_m" "$_e" "$_desc"
+  done < <(jq -r '.aliases // {} | to_entries[] | [.key, .value.model, .value.effort, .value.description] | @tsv' "$_def" 2>/dev/null)
+  printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + model status"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
@@ -168,11 +242,9 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
   printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
+  printf "    %-33s $d %s\n" "pin / unpin <session-id>"        "protect session from GC"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}Watch${CLAUDII_CLR_RESET}\n"
-  printf "    %-33s $d %s\n" "watch [start|stop|status|test|volume|sound]" "rate-limit reset notifications"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Config${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
@@ -198,6 +270,7 @@ _parse_session_cache() {
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
   _PSC_model_id= _PSC_burn_eta= _PSC_rate_5h_start= _PSC_project_path=
+  _PSC_pinned=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
@@ -217,6 +290,7 @@ _parse_session_cache() {
       burn_eta)       _PSC_burn_eta="$_v" ;;
       rate_5h_start)  _PSC_rate_5h_start="$_v" ;;
       project_path)   _PSC_project_path="$_v" ;;
+      pinned)         _PSC_pinned="$_v" ;;
     esac
   done < "$1"
   if stat -f %m "$1" >/dev/null 2>&1; then
@@ -292,7 +366,6 @@ case "${1:-}" in
   sessionline)         exec "$0" cc-statusline "${@:2}" ;;
   install-sessionline) exec "$0" cc-statusline on ;;
   update)              _cmd_update            ;;
-  watch)               _cmd_watch "$@"        ;;
   doctor)              _cmd_doctor            ;;
 
   # Session commands
@@ -304,6 +377,8 @@ case "${1:-}" in
     _cmd_sessions "$@"
     ;;
   sessions-inactive)   _cmd_sessions_inactive ;;
+  pin)                 _cmd_pin "$@"          ;;
+  unpin)               _cmd_unpin "$@"        ;;
   "")                  _cmd_default           ;;
 
   # Display commands

@@ -66,6 +66,8 @@ _claudii_session_gc() {
     (( now - mtime < 3600 )) && continue
     # Never delete if ppid alive
     [[ -n "$ppid" ]] && kill -0 "$ppid" 2>/dev/null && continue
+    # Never delete pinned sessions
+    grep -q '^pinned=1$' "$f" 2>/dev/null && continue
     rm -f "$f"
   done
 }

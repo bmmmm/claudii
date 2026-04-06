@@ -152,7 +152,7 @@ unset sess_out
 _cost_tmp2="$(mktemp -d)"
 cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
 assert_no_literal_ansi "cost: no literal \\033 in output" "$cost_out2"
-assert_matches "cost: shows no-sessions text" "No session|keine" "$cost_out2"
+assert_matches "cost: shows no-sessions text" "No session" "$cost_out2"
 rm -rf "$_cost_tmp2"
 unset _cost_tmp2 cost_out2
 
@@ -240,7 +240,7 @@ printf '%s\n' \
 _sn_result=$(bash -c '
   CLAUDII_HOME="$1" HOME="$2"
   source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(sed -n '/^# Extract session name/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
   _session_name sntest01
 ' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
 
@@ -253,7 +253,7 @@ printf '' > "$_SN_PROJ/sntest02.jsonl"
 _sn_empty=$(bash -c '
   CLAUDII_HOME="$1" HOME="$2"
   source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(sed -n '/^# Extract session name/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
   _session_name sntest02
 ' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
 assert_eq "_session_name: empty JSONL → empty output" "" "$_sn_empty"
@@ -350,7 +350,7 @@ assert_contains "cost (history) --tsv: has month row" "month" "$cost_h_tsv"
 printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
   > "$_COST_H_TMP/history.tsv"
 cost_h_empty=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
-assert_matches "cost (history): empty history → actionable message" "No history|No session|keine" "$cost_h_empty"
+assert_matches "cost (history): empty history → actionable message" "No history|No session data" "$cost_h_empty"
 
 rm -rf "$_COST_H_TMP"
 unset _COST_H_TMP _now_ts _today_ts _week_ts _old_ts cost_h_out cost_h_err cost_h_json cost_h_tsv cost_h_empty
@@ -403,7 +403,7 @@ unset _cost_hist_tsv _cost_dedup_tsv _sonnet_today _opus_today _sonnet_alltime _
 # ── cost (history): falls back gracefully when no history.tsv ────────────────
 _COST_NOHIST_TMP="$(mktemp -d)"
 _cost_nohist_out=$(CLAUDII_CACHE_DIR="$_COST_NOHIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
-assert_matches "cost (no history): shows no-data message" "No session|keine" "$_cost_nohist_out"
+assert_matches "cost (no history): shows no-data message" "No session" "$_cost_nohist_out"
 rm -rf "$_COST_NOHIST_TMP"
 unset _COST_NOHIST_TMP _cost_nohist_out
 
@@ -424,7 +424,7 @@ printf '%s\n' \
 _fp_result=$(bash -c '
   CLAUDII_HOME="$1" HOME="$2"
   source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
   _session_fingerprint fptest01
 ' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
 
@@ -437,7 +437,7 @@ printf '' > "$_FP_PROJ/fptest02.jsonl"
 _fp_empty=$(bash -c '
   CLAUDII_HOME="$1" HOME="$2"
   source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
   _session_fingerprint fptest02
 ' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
 assert_eq "_session_fingerprint: empty JSONL → empty output" "" "$_fp_empty"
@@ -446,7 +446,7 @@ assert_eq "_session_fingerprint: empty JSONL → empty output" "" "$_fp_empty"
 _fp_none=$(bash -c '
   CLAUDII_HOME="$1" HOME="$2"
   source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(sed -n '/^# Extract session fingerprint/,/^}/p' "$CLAUDII_HOME/bin/claudii")"'
+  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
   _session_fingerprint nonexistent-session-id
 ' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
 assert_eq "_session_fingerprint: no JSONL → empty output" "" "$_fp_none"

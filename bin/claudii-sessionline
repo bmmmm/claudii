@@ -124,13 +124,15 @@ _tmp_session="${_session_file}.tmp.$$"
   > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
 # Append to persistent history (Flight Recorder) — one TSV line per update
+# Monthly rotation: history-YYYY-MM.tsv (legacy history.tsv stays, readers glob both)
 # Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok, api_duration_ms
 _now=$(date +%s)
-[[ -f "$_cache_dir/history.tsv" ]] || { touch "$_cache_dir/history.tsv"; chmod 0600 "$_cache_dir/history.tsv"; }
+_history_file="$_cache_dir/history-$(date +%Y-%m).tsv"
+[[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
   "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
-  >> "$_cache_dir/history.tsv" 2>/dev/null || true
+  >> "$_history_file" 2>/dev/null || true
 
 _claudii_log debug "input: $(echo "$json" | head -c 200)"
 _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name} model_id=${model_id}"

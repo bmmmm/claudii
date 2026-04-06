@@ -33,9 +33,9 @@ _cmd_config() {
       value="${4:?Usage: claudii config set <key> <value>}"
       jq_path=$(_build_jq_path "$key")
       if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
-        _jq_tmp=$(mktemp) && jq --argjson v "$value" "$jq_path = \$v" "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+        _jq_update "$CONFIG" --argjson v "$value" "$jq_path = \$v"
       else
-        _jq_tmp=$(mktemp) && jq --arg v "$value" "$jq_path = \$v" "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+        _jq_update "$CONFIG" --arg v "$value" "$jq_path = \$v"
       fi
       echo "Set $key = $value"
       ;;
@@ -47,17 +47,17 @@ _cmd_config() {
       file="${3:-}"
       if [[ -n "$file" ]]; then
         cp "$CONFIG" "$file"
-        echo "Config exportiert nach $file"
+        echo "Config exported to $file"
       else
         cat "$CONFIG"
       fi
       ;;
     import)
       file="${3:?Usage: claudii config import <file>}"
-      [[ -f "$file" ]] || { echo "Datei nicht gefunden: $file — Hinweis: Pfad prüfen" >&2; exit 1; }
-      jq '.' "$file" >/dev/null 2>&1 || { echo "Kein gültiges JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
+      [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; exit 1; }
+      jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
       # Validate only known top-level keys
-      _known='["statusline","watch","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard"]'
+      _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard"]'
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
       [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
 
@@ -93,7 +93,7 @@ _cmd_config() {
           exit 1
         fi
         # Set theme.name in user config
-        _jq_tmp=$(mktemp) && jq --arg name "$theme_arg" '.theme.name = $name' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+        _jq_update "$CONFIG" --arg name "$theme_arg" '.theme.name = $name'
         echo "Theme set to: $theme_arg"
       fi
       ;;

@@ -81,11 +81,11 @@ assert_file_exists "config import creates backup" "$XDG_CONFIG_HOME/claudii/conf
 # config import — invalid JSON rejected
 echo "not json" > "$XDG_CONFIG_HOME/claudii/bad.json"
 output=$(bash "$CLAUDII_HOME/bin/claudii" config import "$XDG_CONFIG_HOME/claudii/bad.json" 2>&1 || true)
-assert_contains "config import rejects invalid JSON" "gültiges JSON" "$output"
+assert_contains "config import rejects invalid JSON" "valid JSON" "$output"
 
 # config import — missing file rejected
 output=$(bash "$CLAUDII_HOME/bin/claudii" config import /nonexistent/file.json 2>&1 || true)
-assert_contains "config import rejects missing file" "nicht gefunden" "$output"
+assert_contains "config import rejects missing file" "not found" "$output"
 
 # config import — unknown top-level key rejected
 unknown_key_file="$XDG_CONFIG_HOME/claudii/unknown_key.json"

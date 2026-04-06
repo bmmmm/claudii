@@ -14,12 +14,12 @@ FAKE_SETTINGS="$TEST_TMP/claude_settings.json"
 # ── sessionline status: settings file missing ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: missing settings shows info" "nicht konfiguriert" "$output"
+assert_contains "sessionline: missing settings shows info" "not configured" "$output"
 
 # ── sessionline on: settings file missing → error ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1 || true)
-assert_contains "sessionline on: missing settings exits with error" "nicht gefunden" "$output"
+assert_contains "sessionline on: missing settings exits with error" "not found" "$output"
 
 # ── prepare fake settings.json ──
 
@@ -29,7 +29,7 @@ echo '{}' > "$TEST_TMP/.claude/settings.json"
 # ── sessionline on: adds statusLine ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline on: reports aktiviert" "aktiviert" "$output"
+assert_contains "sessionline on: reports enabled" "enabled" "$output"
 
 # Verify settings.json now contains statusLine
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
@@ -38,17 +38,17 @@ assert_eq "sessionline on: settings.json has command" "claudii-sessionline" "$va
 # ── sessionline on: idempotent ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline on: already active → bereits aktiv" "bereits" "$output"
+assert_contains "sessionline on: already active" "already" "$output"
 
 # ── sessionline status: shows active ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: shows aktiv" "aktiv" "$output"
+assert_contains "sessionline: shows active" "active" "$output"
 
 # ── sessionline off: removes statusLine ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline off 2>&1)
-assert_contains "sessionline off: reports deaktiviert" "deaktiviert" "$output"
+assert_contains "sessionline off: reports disabled" "disabled" "$output"
 
 val=$(jq 'has("statusLine")' "$TEST_TMP/.claude/settings.json")
 assert_eq "sessionline off: statusLine removed" "false" "$val"
@@ -56,17 +56,17 @@ assert_eq "sessionline off: statusLine removed" "false" "$val"
 # ── sessionline off: idempotent ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline off 2>&1)
-assert_contains "sessionline off: already off → not configured msg" "nicht konfiguriert" "$output"
+assert_contains "sessionline off: already off → not configured msg" "not configured" "$output"
 
 # ── sessionline status: shows not configured after off ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: not configured after off" "nicht konfiguriert" "$output"
+assert_contains "sessionline: not configured after off" "not configured" "$output"
 
 # ── backwards compat: sessionline shim → cc-statusline ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline shim: routes to cc-statusline on → aktiviert" "aktiviert" "$output"
+assert_contains "sessionline shim: routes to cc-statusline on → enabled" "enabled" "$output"
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
 assert_eq "sessionline shim: sets command" "claudii-sessionline" "$val"
 

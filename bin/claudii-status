@@ -53,7 +53,18 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 quiet=false
-[[ "${1:-}" == "--quiet" ]] && quiet=true
+_pid_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) quiet=true ;;
+    --pid-file) shift; _pid_file="${1:-}" ;;
+    --pid-file=*) _pid_file="${1#--pid-file=}" ;;
+  esac
+  shift
+done
+
+# Write own PID to file if requested (for spawn dedup from precmd)
+[[ -n "$_pid_file" ]] && echo $$ > "$_pid_file"
 
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
 models_raw="${models_raw:-$(_def statusline.models)}"
@@ -87,7 +98,7 @@ fi
 
 _claudii_log info "Fetching $COMPONENTS_URL"
 components_json=$(curl -sf --max-time 5 "$COMPONENTS_URL" 2>/dev/null) || {
-  $quiet || echo -e "${YELLOW}claudii: Status-API nicht erreichbar${NC}" >&2
+  $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2
   _claudii_log warn "API unreachable — writing all-ok fallback"
   # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
   _tmp_status="${CACHE_STATUS}.tmp.$$"

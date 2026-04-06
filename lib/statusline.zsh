@@ -13,6 +13,7 @@ typeset -g _CLAUDII_DOLLAR='$'
 typeset -gi _CLAUDII_SHOWED_SESSIONS=0
 typeset -g _CLAUDII_LAST_CMD=""
 # PID of the last background status-fetch job — used to skip redundant spawns
+typeset -g _CLAUDII_STATUS_PID=""
 # Set while _claudii_statusline is executing — reentrancy guard
 typeset -g _CLAUDII_PRECMD_RUNNING=""
 
@@ -40,6 +41,24 @@ function _claudii_statusline {
   typeset -g _CLAUDII_PRECMD_RUNNING=
 }
 
+# Spawn claudii-status in background, but only if no previous fetch is still running.
+# Uses PID file for dedup — ( cmd & ) subshell pattern prevents [N] PID job-control leak.
+function _claudii_status_spawn {
+  local _pid_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status.pid"
+  # Check _CLAUDII_STATUS_PID (in-memory) or PID file
+  local _check_pid="${_CLAUDII_STATUS_PID:-}"
+  if [[ -z "$_check_pid" && -f "$_pid_file" ]]; then
+    { _check_pid=$(<"$_pid_file"); } 2>/dev/null
+  fi
+  if [[ -n "$_check_pid" ]] && kill -0 "$_check_pid" 2>/dev/null; then
+    return  # still running, skip
+  fi
+  # ( cmd & ) — subshell exits immediately, grandchild is orphaned to init.
+  # PID written by claudii-status itself (see --pid-file). No $! available with this pattern.
+  _CLAUDII_STATUS_PID=""
+  ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_pid_file" &>/dev/null & )
+}
+
 function _claudii_statusline_render {
   # Restore PROMPT to the user's original every cycle
   PROMPT="${_CLAUDII_USER_PROMPT}"
@@ -52,8 +71,7 @@ function _claudii_statusline_render {
   local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
 
   if [[ ! -f "$status_cache" ]]; then
-    # Skip spawn if a previous fetch is still running
-    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+    _claudii_status_spawn
     RPROMPT="%F{8}[…]%f"; return
   fi
 
@@ -69,7 +87,7 @@ function _claudii_statusline_render {
 
   if (( age > ttl )); then
     _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
-    ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+    _claudii_status_spawn
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
@@ -156,24 +174,6 @@ function _claudii_collect_sessions {
     [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*$'\n'rate_5h=}%%$'\n'*}"
     [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*$'\n'reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
-
-    # Fallback: if cost is missing or zero, look up last known cost in history.tsv
-    if [[ -z "$s_cost" || "$s_cost" == "0" ]]; then
-      local s_sid=""
-      [[ $'\n'"$sc" == *$'\n'session_id=* ]] && s_sid="${${sc#*$'\n'session_id=}%%$'\n'*}"
-      if [[ -n "$s_sid" ]]; then
-        local _hist="$_cache_base/history.tsv"
-        if [[ -f "$_hist" ]]; then
-          # Find last non-zero cost for this session_id (col 6 = session_id, col 3 = cost)
-          local _hcost
-          _hcost=$(awk -F'\t' -v sid="$s_sid" '
-            $6==sid && $3!="" && $3+0 > 0 { c=$3 }
-            END { if (c!="") print c }
-          ' "$_hist" 2>/dev/null)
-          [[ -n "$_hcost" ]] && s_cost="$_hcost"
-        fi
-      fi
-    fi
 
     _CLAUDII_SDASH_MODELS+=("$s_model")
     _CLAUDII_SDASH_CTXS+=("$s_ctx")

@@ -54,7 +54,7 @@ done
 
 # status subcommand via claudii shows output
 output=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
-if echo "$output" | grep -qE '✗|~|✓|verfügbar|down|degraded'; then
+if echo "$output" | grep -qE '✗|~|✓|available|down|degraded'; then
   assert_eq "claudii status shows meaningful output" "true" "true"
 else
   assert_eq "claudii status shows meaningful output" "contains status text" "$output"

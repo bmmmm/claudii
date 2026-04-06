@@ -5,6 +5,7 @@
 # ── Symbols ──────────────────────────────────────────────────────────────────
 CLAUDII_SYM_ACTIVE="●"     # active session
 CLAUDII_SYM_INACTIVE="○"   # ended / inactive
+CLAUDII_SYM_PIN="⊡"        # pinned (protected from GC)
 CLAUDII_SYM_WARN="⚠"       # warning (rate limit, stale, etc.)
 CLAUDII_SYM_ERROR="✗"      # error / failure
 CLAUDII_SYM_OK="✓"         # ok / success

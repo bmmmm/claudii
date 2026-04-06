@@ -9,6 +9,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 - **CC-Statusline:** New `claude-status` segment (default line 4) — shows model health indicators (`Opus ✓  Sonnet ✓  Haiku ✓`) from the ClaudeStatus cache directly inside Claude Code
+- **History rotation:** Flight Recorder now writes monthly files (`history-YYYY-MM.tsv`) — prevents unbounded growth, old `history.tsv` still read for backward compat
+- **Dynamic aliases:** Shell aliases (`cl`, `clo`, `clm`, `clq`) now registered dynamically from `aliases.*` in config — add/remove aliases without editing code
+- **`claudii pin/unpin`:** Protect inactive sessions from garbage collection — pinned sessions show `⊡` badge in `claudii si`, stale sessions marked with `stale` tag
+- **Shared epoch_to_date:** Deduplicated awk date function into `lib/epoch_to_date.awk`
+
+### Removed
+- **`claudii watch`** — Background notification watcher removed. Rate-limit info is already visible in Sessionline and Dashboard. Slot reserved for a better notification mechanism in the future.
+
+### Changed
+- **Internal:** Atomic jq-write pattern extracted into `_jq_update()` helper — replaces 14 inline instances across `system.sh` and `config.sh`
+- **Internal:** Session JSONL lookup uses `_session_build_map` + single-pass `_session_resolve` — one awk per session instead of 3 greps
+- **i18n:** All user-facing strings translated to English (config descriptions, error messages, prompts, table headers)
+- **`claudii help`:** Alias table now reads from `config/defaults.json` dynamically
+
+### Fixed
+- **Performance:** Removed awk subprocess spawning in precmd hook (cost=0 history fallback) — eliminates latency spikes when history.tsv is large
+- **Performance:** `claudii status` no longer fetches RSS twice — reads cached `status-cache.xml` from previous `claudii-status` run
+- **Performance:** Prevent duplicate `claudii-status` background spawns via PID lock file
 
 ---
 

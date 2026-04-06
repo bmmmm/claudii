@@ -599,22 +599,23 @@ rm -rf "$PID_TMP"
 mkdir -p "$PID_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$PID_TMP/config/claudii/config.json"
 
-# Simulate a still-running background job: use $$ (test runner's PID) as live PID.
-# Pass it via env var so both the assertion and the zsh subprocess use the same value.
+# Simulate a still-running background job: write test runner's PID to PID file.
+# _claudii_status_spawn checks PID file → kill -0 succeeds → skips spawn.
 _TEST_LIVE_PID=$$
+echo "$_TEST_LIVE_PID" > "$PID_TMP/status.pid"
 pid_guard_out=$(
   CLAUDII_CACHE_DIR="$PID_TMP" XDG_CONFIG_HOME="$PID_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   _TEST_LIVE_PID="$_TEST_LIVE_PID" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     # No cache file → would normally trigger a background spawn
-    # Set _CLAUDII_STATUS_PID to a live PID to suppress the spawn
-    _CLAUDII_STATUS_PID=\"\$_TEST_LIVE_PID\"
+    # But PID file contains a live PID → spawn is suppressed
     _claudii_statusline
-    printf '%s' \"\$_CLAUDII_STATUS_PID\"
+    # PID file should still contain the original PID (no new spawn)
+    cat \"\$CLAUDII_CACHE_DIR/status.pid\" 2>/dev/null
   " 2>/dev/null
 )
-# PID must be unchanged — no new spawn happened
+# PID file must still contain original PID — no new spawn happened
 assert_eq "PID guard: no new spawn when previous fetch still running" "$_TEST_LIVE_PID" "$pid_guard_out"
 
 rm -rf "$PID_TMP"
@@ -629,10 +630,9 @@ jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > 
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$HIST_TMP/status-models"
 _live_pid=$$
 
-# 1. cost=0 in cache + matching history.tsv entry → dashboard shows cost from history
+# 1. cost=0 in cache → session shown but no dollar cost (history lookup removed for performance)
 printf 'model=Sonnet\nctx_pct=48\ncost=0\nrate_5h=31\nreset_5h=\nsession_id=histtest1\nppid=%s\n' "$_live_pid" \
   > "$HIST_TMP/session-histtest1"
-# history.tsv: tab-separated, col1=ts col2=model col3=cost col4=ctx col5=rate5h col6=session_id
 printf '1700000000\tsonnet\t12.34\t48\t31\thisttest1\n' > "$HIST_TMP/history.tsv"
 
 hist_cost_out=$(
@@ -645,7 +645,8 @@ hist_cost_out=$(
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
-assert_contains "history fallback: cost=0 in cache + history entry → shows cost" "\$12.34" "$hist_cost_out"
+# Session is shown (model name present) but cost=0 means no dollar amount displayed
+assert_contains "history fallback removed: cost=0 → session shown" "Sonnet" "$hist_cost_out"
 
 # 2. cost=0 in cache + no history.tsv entry → no cost shown, no crash
 rm -f "$HIST_TMP/history.tsv"

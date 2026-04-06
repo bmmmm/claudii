@@ -6,8 +6,9 @@
 # Each session's cost on a given day = last_cost_that_day - last_cost_previous_day.
 # This avoids attributing multi-day sessions' full cost to their last active day.
 _cmd_cost_from_history() {
-  local history_file="$1"  # path to history.tsv
-  local today_str="$2"     # YYYY-MM-DD for "today" cutoff
+  # Last argument is today_str, all preceding args are history file paths
+  local today_str="${@: -1}"   # YYYY-MM-DD for "today" cutoff
+  local -a _history_files=("${@:1:$#-1}")
 
   # Detect macOS vs GNU date
   local _date_cmd="gnu"
@@ -35,30 +36,13 @@ _cmd_cost_from_history() {
     *)         _ws_dow=1 ;;
   esac
 
-  # Pure-awk date conversion — avoids 1 date(1) subprocess per row (was O(n) forks).
-  # epoch_to_date() works on BSD awk (macOS) + GNU awk — no strftime needed.
+  # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
+  local _epoch_awk
+  _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
   local _augmented
-  _augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" '
-    function is_leap(y,    l) {
-      l = 0
-      if (y % 4 == 0) l = 1
-      if (y % 100 == 0) l = 0
-      if (y % 400 == 0) l = 1
-      return l
-    }
-    function epoch_to_date(ts,    days, y, leap, m, mdays) {
-      days = int((ts + tz_offset) / 86400)
-      y = 1970
-      for (;;) {
-        leap = is_leap(y)
-        if (days < 365 + leap) break
-        days -= 365 + leap; y++
-      }
-      leap = is_leap(y)
-      split("31 " (28+leap) " 31 30 31 30 31 31 30 31 30 31", mdays, " ")
-      for (m = 1; m <= 12; m++) { if (days < mdays[m]) break; days -= mdays[m] }
-      return sprintf("%04d-%02d-%02d", y, m, days + 1)
-    }
+  _augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
+${_epoch_awk}
+"'
     $1 == "timestamp" || $1 == "" || $6 == "" { next }
     {
       ts = $1 + 0; if (ts == 0) next
@@ -70,7 +54,7 @@ _cmd_cost_from_history() {
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
       print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
-  ' "$history_file")
+  ' "${_history_files[@]}")
 
   if [[ -z "$_augmented" ]]; then
     echo "  No history data found — start a Claude session to record costs."
@@ -446,21 +430,26 @@ _cmd_cost() {
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
-  # Prefer history.tsv (Flight Recorder) for correct daily-delta cost attribution.
+  # Prefer history (Flight Recorder) for correct daily-delta cost attribution.
+  # Monthly rotation: read history-*.tsv + legacy history.tsv
   # Falls back to session-cache files when no history exists yet.
-  history_file="$cache_dir/history.tsv"
-  if [[ -f "$history_file" && -s "$history_file" ]]; then
+  _cost_hist_files=()
+  [[ -f "$cache_dir/history.tsv" && -s "$cache_dir/history.tsv" ]] && _cost_hist_files+=("$cache_dir/history.tsv")
+  for _chf in "$cache_dir"/history-*.tsv; do
+    [[ -f "$_chf" && -s "$_chf" ]] && _cost_hist_files+=("$_chf")
+  done
+  if [[ ${#_cost_hist_files[@]} -gt 0 ]]; then
     today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
     _hist_spinner_pid="" _hist_label_file=""
     if ! _plain; then
       _hist_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
       chmod 0600 "$_hist_label_file"
       export CLAUDII_SPINNER_LABEL_FILE="$_hist_label_file"
-      printf '%s' "${history_file/#$HOME/\~}" > "$_hist_label_file"
+      printf '%s' "${cache_dir/#$HOME/\~}/history-*.tsv" > "$_hist_label_file"
       _claudii_spinner &
       _hist_spinner_pid=$!
     fi
-    _cmd_cost_from_history "$history_file" "$today_str"
+    _cmd_cost_from_history "${_cost_hist_files[@]}" "$today_str"
     if [[ -n "$_hist_spinner_pid" ]]; then
       kill "$_hist_spinner_pid" 2>/dev/null; wait "$_hist_spinner_pid" 2>/dev/null || true
       printf '\r\033[K' >&2
@@ -674,7 +663,19 @@ _cmd_sessions_inactive() {
         _is_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
       fi
 
-      _is_line="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
+      # Status badge: pinned (protected) vs stale (GC candidate) vs idle
+      local _is_badge _is_tag=""
+      if [[ "$_PSC_pinned" == "1" ]]; then
+        _is_badge="${CLAUDII_CLR_CYAN}${CLAUDII_SYM_PIN:-⊡}${CLAUDII_CLR_RESET}"
+        _is_tag=" ${CLAUDII_CLR_CYAN}pinned${CLAUDII_CLR_RESET}"
+      elif (( _PSC_age >= 3600 )); then
+        _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
+        _is_tag=" ${CLAUDII_CLR_DIM}stale${CLAUDII_CLR_RESET}"
+      else
+        _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
+      fi
+
+      _is_line="  ${_is_badge} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
 
       if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
         _is_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${CLAUDII_SYM_CACHE}${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
@@ -695,9 +696,16 @@ _cmd_sessions_inactive() {
         _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
       fi
 
-      # Age
+      # Age + status tag
       _render_age "$_PSC_age"
-      _is_line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
+      _is_line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}${_is_tag}"
+
+      # Session ID (shortened) for pin/unpin reference
+      if [[ -n "$_PSC_session_id" ]]; then
+        local _short_sid="${_PSC_session_id}"
+        (( ${#_short_sid} > 8 )) && _short_sid="${_short_sid:0:8}…"
+        _is_line+="  ${CLAUDII_CLR_DIM}${_short_sid}${CLAUDII_CLR_RESET}"
+      fi
 
       printf '%s\n' "$_is_line"
       _rendered_any=1
@@ -710,23 +718,76 @@ _cmd_sessions_inactive() {
     printf "  No session data found.\n"
   fi
 
-  # GC footer: count stale files (ppid dead AND age > 3600s)
+  # GC footer: count stale and pinned files
   _is_now=$(date +%s)
-  _is_stale=0
+  _is_stale=0 _is_pinned=0
   for _is_gc_f in "${_is_files[@]}"; do
     [[ -f "$_is_gc_f" ]] || continue
     _is_gc_ppid=$(grep '^ppid=' "$_is_gc_f" 2>/dev/null | cut -d= -f2 || true)
-    _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
-    (( _is_now - _is_gc_mtime < 3600 )) && continue
     [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
-    (( ++_is_stale ))
+    _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
+    if grep -q '^pinned=1$' "$_is_gc_f" 2>/dev/null; then
+      (( ++_is_pinned ))
+    elif (( _is_now - _is_gc_mtime >= 3600 )); then
+      (( ++_is_stale ))
+    fi
   done
-  if (( _is_stale > 0 )); then
-    printf "  ${CLAUDII_CLR_DIM}%d stale session%s pending GC${CLAUDII_CLR_RESET}\n" \
-      "$_is_stale" "$( (( _is_stale != 1 )) && printf 's' || true)"
-  fi
+  local _gc_parts=""
+  (( _is_stale > 0 )) && _gc_parts="${_is_stale} stale"
+  (( _is_pinned > 0 )) && {
+    [[ -n "$_gc_parts" ]] && _gc_parts+=", "
+    _gc_parts+="${_is_pinned} pinned"
+  }
+  [[ -n "$_gc_parts" ]] && printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_gc_parts"
 
   printf '\n'
+}
+
+# Pin/unpin a session — pinned sessions are protected from GC.
+# Matches by session_id substring (first match wins).
+_cmd_pin() {
+  local needle="${2:-}"
+  [[ -z "$needle" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }
+  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local found=0
+  for f in "$cache_dir"/session-*; do
+    [[ -f "$f" ]] || continue
+    local sid
+    sid=$(grep '^session_id=' "$f" 2>/dev/null | cut -d= -f2)
+    if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
+      if grep -q '^pinned=1$' "$f" 2>/dev/null; then
+        echo "Already pinned: $sid"
+      else
+        echo "pinned=1" >> "$f"
+        echo "Pinned: $sid"
+      fi
+      found=1; break
+    fi
+  done
+  (( found )) || { echo "No session matching '$needle'" >&2; exit 1; }
+}
+
+_cmd_unpin() {
+  local needle="${2:-}"
+  [[ -z "$needle" ]] && { echo "Usage: claudii unpin <session-id>" >&2; exit 1; }
+  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local found=0
+  for f in "$cache_dir"/session-*; do
+    [[ -f "$f" ]] || continue
+    local sid
+    sid=$(grep '^session_id=' "$f" 2>/dev/null | cut -d= -f2)
+    if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
+      if grep -q '^pinned=1$' "$f" 2>/dev/null; then
+        # Remove pinned line (portable: works on both macOS and GNU sed)
+        local tmp; tmp=$(grep -v '^pinned=1$' "$f") && printf '%s\n' "$tmp" > "$f"
+        echo "Unpinned: $sid"
+      else
+        echo "Not pinned: $sid"
+      fi
+      found=1; break
+    fi
+  done
+  (( found )) || { echo "No session matching '$needle'" >&2; exit 1; }
 }
 
 _cmd_sessions() {
@@ -752,6 +813,9 @@ _cmd_sessions() {
     _claudii_spinner &
     _se_spinner_pid=$!
   fi
+
+  # Build session→JSONL map once (O(1) lookup per session instead of O(dirs) scan)
+  _session_build_map
 
   shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
@@ -780,16 +844,18 @@ _cmd_sessions() {
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
-      _sf_sesname[$_sf_count]=$(_session_name "$_PSC_session_id")
-      # Fallback 1: project_path written directly by sessionline (agents without session_id)
+      # Single awk pass for name + fingerprint + last_message (was 3 separate greps)
+      local _resolved
+      _resolved=$(_session_resolve "$_PSC_session_id")
+      _sf_sesname[$_sf_count]=$(echo "$_resolved" | head -1)
+      _sf_fingerprint[$_sf_count]=$(echo "$_resolved" | sed -n '2p')
+      _sf_last_msg[$_sf_count]=$(echo "$_resolved" | sed -n '3p')
+      # Fallback: project_path written directly by sessionline (agents without session_id)
       if [[ -z "${_sf_projpath[$_sf_count]}" && -n "$_PSC_project_path" ]]; then
         _ppath="${_PSC_project_path/#$HOME/\~}"
         (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
         _sf_projpath[$_sf_count]="$_ppath"
       fi
-      # Fallback 2: collected post-loop for batch lsof (see below)
-      _sf_fingerprint[$_sf_count]=$(_session_fingerprint "$_PSC_session_id")
-      _sf_last_msg[$_sf_count]=$(_session_last_user_message "$_PSC_session_id")
     else
       _sf_projpath[$_sf_count]=""
       _sf_sesname[$_sf_count]=""
@@ -1131,15 +1197,10 @@ _cmd_default() {
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
   [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
-  _ov_watch_pid="$cache_dir/watch.pid"
-  _ov_watch_on=0
-  [[ -f "$_ov_watch_pid" ]] && kill -0 "$(<"$_ov_watch_pid")" 2>/dev/null && _ov_watch_on=1
-
   _ov_svc_any=0
   [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
   [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1
   (( _ov_sl_on ))                && _ov_svc_any=1
-  (( _ov_watch_on ))             && _ov_svc_any=1
 
   if (( _ov_svc_any )); then
     printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
@@ -1186,13 +1247,6 @@ _cmd_default() {
     printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} CC-Statusline\n"
   else
     printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} CC-Statusline%-20s claudii cc-statusline on${CLAUDII_CLR_RESET}\n" ""
-  fi
-
-  # Watch
-  if (( _ov_watch_on )); then
-    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} Watch\n"
-  else
-    printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Watch%-27s claudii watch start${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # ── Sessions — summary only; details via `claudii se` ────────────

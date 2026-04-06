@@ -42,11 +42,11 @@ function _claudii_rl_warn {
     _color="$CLAUDII_CLR_YELLOW"
     (( _rl_int >= 90 )) && _color="$CLAUDII_CLR_RED"
 
-    printf "${_color}⚠ ${(C)_model} 5h bei ${_rl_int}%%${_reset_str}${CLAUDII_CLR_RESET}\n"
+    printf "${_color}⚠ ${(C)_model} 5h at ${_rl_int}%%${_reset_str}${CLAUDII_CLR_RESET}\n"
     if [[ "$_model" == "opus" ]]; then
       _fb_model=$(claudii_config_get "fallback.opus.model")
       [[ -z "$_fb_model" ]] && _fb_model="sonnet"
-      printf "  ${_fb_model} stattdessen? ${CLAUDII_CLR_DIM}[Enter] starten · [s] ${_fb_model} · [w] warten${CLAUDII_CLR_RESET} "
+      printf "  Switch to ${_fb_model}? ${CLAUDII_CLR_DIM}[Enter] proceed · [s] ${_fb_model} · [w] wait${CLAUDII_CLR_RESET} "
       _choice=""
       read -k1 _choice
       echo ""
@@ -58,7 +58,7 @@ function _claudii_rl_warn {
           printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${_fb_effort:-$(claudii_config_get aliases.$_model_var.effort)}${CLAUDII_CLR_RESET}\n"
           ;;
         w|W)
-          printf "${CLAUDII_CLR_DIM}Abgebrochen.${CLAUDII_CLR_RESET}\n"
+          printf "${CLAUDII_CLR_DIM}Cancelled.${CLAUDII_CLR_RESET}\n"
           return 1
           ;;
       esac
@@ -103,10 +103,22 @@ function _claudii_launch {
   CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" "$@"
 }
 
-function cl  { _claudii_launch cl "$@"; }
-function clo { _claudii_launch clo "$@"; }
-function clm { _claudii_launch clm "$@"; }
-function clq { _claudii_launch clq "$@"; }
+# Register alias shell functions dynamically from config (aliases.*)
+# Creates functions like cl, clo, clm, clq — no hardcoded list.
+function _claudii_register_aliases {
+  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  [[ -f "$config" ]] || return
+  local aliases_json
+  aliases_json=$(jq -r '.aliases // {} | keys[]' "$config" 2>/dev/null) || return
+  [[ -z "$aliases_json" ]] && return
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    [[ "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || { echo "claudii: invalid alias name: $name" >&2; continue; }
+    eval "function $name { _claudii_launch $name \"\$@\"; }"
+    _claudii_log debug "registered alias: $name"
+  done <<< "$aliases_json"
+}
+_claudii_register_aliases
 
 # Agent launcher — starts claude with a skill as system prompt
 # Looks in: .claude/skills/<name>/SKILL.md (project) → ~/.claude/agents/<name>.md (global)
@@ -239,7 +251,7 @@ function claudii {
 
 function clh {
   printf '  ┌───────┬────────┬────────┬────────────────────────────┐\n'
-  printf '  │ Alias │ Modell │ Effort │          Kontext           │\n'
+  printf '  │ Alias │ Model  │ Effort │          Context           │\n'
   printf '  ├───────┼────────┼────────┼────────────────────────────┤\n'
 
   local alias_list=($(jq -r '.aliases | keys[]' "$CLAUDII_CONFIG" 2>/dev/null))
@@ -255,6 +267,6 @@ function clh {
   printf '  └───────┴────────┴────────┴────────────────────────────┘\n'
   echo ""
   "$CLAUDII_HOME/bin/claudii-status" 2>&1; local _status_exit=$?
-  [[ $_status_exit -eq 0 ]] && printf "${CLAUDII_CLR_GREEN}  ✓ Alle Modelle verfügbar${CLAUDII_CLR_RESET}\n"
+  [[ $_status_exit -eq 0 ]] && printf "${CLAUDII_CLR_GREEN}  ✓ All models available${CLAUDII_CLR_RESET}\n"
   return $_status_exit
 }

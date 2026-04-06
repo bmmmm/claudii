@@ -1,15 +1,15 @@
 # lib/cmd/system.sh — system/control commands
-# (on, off, claudestatus, session-dashboard, status, cc-statusline, update, watch, doctor)
+# (on, off, claudestatus, session-dashboard, status, cc-statusline, update, doctor)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
 _cmd_on() {
   _cfg_init
   # Enable all three layers
-  _jq_tmp=$(mktemp) && jq '.statusline.enabled = true | ."session-dashboard".enabled = "on"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+  _jq_update "$CONFIG" '.statusline.enabled = true | ."session-dashboard".enabled = "on"'
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
     if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-      _jq_tmp=$(mktemp) && jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
+      _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}'
     fi
   fi
   echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
@@ -18,10 +18,10 @@ _cmd_on() {
 _cmd_off() {
   _cfg_init
   # Disable all three layers
-  _jq_tmp=$(mktemp) && jq '.statusline.enabled = false | ."session-dashboard".enabled = "off"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+  _jq_update "$CONFIG" '.statusline.enabled = false | ."session-dashboard".enabled = "off"'
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
-    _jq_tmp=$(mktemp) && jq 'del(.statusLine)' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
+    _jq_update "$SETTINGS" 'del(.statusLine)'
   fi
   echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }
@@ -30,12 +30,12 @@ _cmd_claudestatus() {
   _cfg_init
   case "${2:-}" in
     on)
-      _jq_tmp=$(mktemp) && jq '.statusline.enabled = true' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-      echo -e "${CLAUDII_CLR_GREEN}ClaudeStatus aktiviert${CLAUDII_CLR_RESET}"
+      _jq_update "$CONFIG" '.statusline.enabled = true'
+      echo -e "${CLAUDII_CLR_GREEN}ClaudeStatus enabled${CLAUDII_CLR_RESET}"
       ;;
     off)
-      _jq_tmp=$(mktemp) && jq '.statusline.enabled = false' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-      echo -e "${CLAUDII_CLR_YELLOW}ClaudeStatus deaktiviert${CLAUDII_CLR_RESET}"
+      _jq_update "$CONFIG" '.statusline.enabled = false'
+      echo -e "${CLAUDII_CLR_YELLOW}ClaudeStatus disabled${CLAUDII_CLR_RESET}"
       ;;
     "")
       enabled=$(_cfgget statusline.enabled)
@@ -55,11 +55,11 @@ _cmd_session_dashboard() {
   _cfg_init
   case "${2:-}" in
     on)
-      _jq_tmp=$(mktemp) && jq '."session-dashboard".enabled = "on"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+      _jq_update "$CONFIG" '."session-dashboard".enabled = "on"'
       echo -e "${CLAUDII_CLR_GREEN}Dashboard: on${CLAUDII_CLR_RESET}"
       ;;
     off)
-      _jq_tmp=$(mktemp) && jq '."session-dashboard".enabled = "off"' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
+      _jq_update "$CONFIG" '."session-dashboard".enabled = "off"'
       echo -e "${CLAUDII_CLR_YELLOW}Dashboard: off${CLAUDII_CLR_RESET}"
       ;;
     "")
@@ -90,7 +90,7 @@ _cmd_status() {
         _int_num="$interval"
       fi
       if ! [[ "$_int_num" =~ ^[0-9]+$ ]]; then
-        echo "Ungültiges Intervall: $interval (mindestens 30s) — gültige Werte: 5m, 15m, 30m" >&2; exit 1
+        echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1
       fi
       if [[ "$interval" == *m ]]; then
         seconds=$(( _int_num * 60 ))
@@ -98,10 +98,10 @@ _cmd_status() {
         seconds="$_int_num"
       fi
       if (( seconds < 30 )); then
-        echo "Ungültiges Intervall: $interval (mindestens 30s) — gültige Werte: 5m, 15m, 30m" >&2; exit 1
+        echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1
       fi
-      _jq_tmp=$(mktemp) && jq --argjson v "$seconds" '.status.cache_ttl = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-      echo "Refresh-Intervall: ${interval} (${seconds}s)"
+      _jq_update "$CONFIG" --argjson v "$seconds" '.status.cache_ttl = $v'
+      echo "Refresh interval: ${interval} (${seconds}s)"
       ;;
     "")
       cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
@@ -209,11 +209,11 @@ _cmd_status() {
           printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
         fi
 
-        # ── Current incident from status.claude.com RSS ────────────────
+        # ── Current incident from status.claude.com RSS (cached by claudii-status) ──
         printf '\n'
-        _inc_rss_url=$(_cfgget status.rss_url)
-        _inc_rss_url="${_inc_rss_url:-https://status.claude.com/history.rss}"
-        _inc_rss=$(curl -sf --max-time 8 "$_inc_rss_url" 2>/dev/null || true)
+        _rss_cache_file="${cache_file%/*}/status-cache.xml"
+        _inc_rss=""
+        [[ -f "$_rss_cache_file" ]] && { _inc_rss=$(<"$_rss_cache_file"); } 2>/dev/null
         if [[ -n "$_inc_rss" ]]; then
           # Extract first <item> (most recent incident)
           _inc_item=$(echo "$_inc_rss" | awk '
@@ -273,37 +273,37 @@ _cmd_cc_statusline() {
   case "${2:-}" in
     on)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Fehler: $SETTINGS nicht gefunden — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
       if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline bereits aktiv${CLAUDII_CLR_RESET}"
+        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}"
       else
-        _jq_tmp=$(mktemp) && jq '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
-        echo -e "${CLAUDII_CLR_GREEN}CC-Statusline aktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten zum Aktivieren"
+        _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}'
+        echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  → restart Claude Code to activate"
       fi
       ;;
     off)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Fehler: $SETTINGS nicht gefunden — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
       if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
-        _jq_tmp=$(mktemp) && jq 'del(.statusLine)' "$SETTINGS" > "$_jq_tmp" && mv "$_jq_tmp" "$SETTINGS"
-        echo -e "${CLAUDII_CLR_YELLOW}CC-Statusline deaktiviert${CLAUDII_CLR_RESET}  → Claude Code neu starten"
+        _jq_update "$SETTINGS" 'del(.statusLine)'
+        echo -e "${CLAUDII_CLR_YELLOW}CC-Statusline disabled${CLAUDII_CLR_RESET}  → restart Claude Code"
       else
-        echo "CC-Statusline war nicht konfiguriert"
+        echo "CC-Statusline was not configured"
       fi
       ;;
     "")
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "CC-Statusline: nicht konfiguriert  ($SETTINGS fehlt)"
+        echo "CC-Statusline: not configured  ($SETTINGS missing)"
       elif jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-        echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}aktiv${CLAUDII_CLR_RESET}  ($SETTINGS)"
+        echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ($SETTINGS)"
       elif jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
         other=$(jq -r '.statusLine.command // .statusLine' "$SETTINGS")
-        echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}andere Konfiguration${CLAUDII_CLR_RESET}  ($other)"
+        echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($other)"
       else
-        echo "CC-Statusline: nicht konfiguriert"
-        echo "  → claudii cc-statusline on  zum Aktivieren"
+        echo "CC-Statusline: not configured"
+        echo "  → claudii cc-statusline on  to enable"
       fi
       ;;
     *)
@@ -324,154 +324,6 @@ _cmd_update() {
     exit 1
   fi
   printf "${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
-}
-
-_cmd_watch() {
-  cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  pid_file="$cache_dir/watch.pid"
-
-  _watch_notify() {
-    local title="claudii watch" msg="$1"
-    if command -v terminal-notifier >/dev/null 2>&1; then
-      terminal-notifier -title "$title" -message "$msg" >/dev/null 2>&1
-    else
-      local _safe_msg="${msg//\"/\\\"}" _safe_title="${title//\"/\\\"}"
-      osascript -e "display notification \"${_safe_msg}\" with title \"${_safe_title}\"" >/dev/null 2>&1
-    fi
-    local sound volume
-    _cfg_init
-    sound=$(_cfgget watch.sound 2>/dev/null || true)
-    volume=$(_cfgget watch.volume 2>/dev/null || true)
-    if [[ -n "$sound" && -f "$sound" ]]; then
-      # Validate volume is numeric; pass as awk variable (not interpolated) to prevent injection
-      local _vol_safe="${volume:-50}"; [[ "$_vol_safe" =~ ^[0-9]+$ ]] || _vol_safe="50"
-      ( afplay -v "$(awk -v vol="$_vol_safe" 'BEGIN { printf "%.2f", vol/100 }')" "$sound" & ) 2>/dev/null
-    fi
-  }
-
-  _watch_loop() {
-    local cache_dir="$1" pid_file="$2"
-    local last_notified=0
-
-    # Clean up PID file on exit (signal or natural termination)
-    trap 'rm -f "$pid_file"' EXIT TERM INT HUP
-
-    while true; do
-      sleep 60
-      local now
-      now=$(date +%s)
-
-      for sf in "$cache_dir"/session-*; do
-        [[ -f "$sf" ]] || continue
-        local reset_ts=""
-        while IFS='=' read -r key val; do
-          [[ "$key" == "reset_5h" ]] && reset_ts="$val"
-        done < "$sf"
-
-        [[ -z "$reset_ts" || "$reset_ts" == "0" ]] && continue
-        # Rate limit has reset and we haven't notified for this timestamp yet
-        if (( now >= reset_ts && reset_ts != last_notified )); then
-          _watch_notify "5h rate limit reset — Claude is ready"
-          last_notified="$reset_ts"
-          break
-        fi
-      done
-    done
-  }
-
-  case "${2:-start}" in
-    start)
-      [[ -d "$cache_dir" ]] || { mkdir -p "$cache_dir" && chmod 0700 "$cache_dir"; }
-      # Check if already running
-      if [[ -f "$pid_file" ]]; then
-        existing_pid=$(<"$pid_file")
-        if kill -0 "$existing_pid" 2>/dev/null; then
-          echo "claudii watch already running (PID $existing_pid)"
-          exit 0
-        fi
-      fi
-      # Export functions needed in subshell
-      export -f _watch_notify _watch_loop _cfg_init _cfgget _validate_key 2>/dev/null || true
-      ( _watch_loop "$cache_dir" "$pid_file" &>/dev/null & echo $! > "$pid_file" ) &>/dev/null
-      disown %% 2>/dev/null || true
-      sleep 0.2
-      if [[ -f "$pid_file" ]]; then
-        watcher_pid=$(<"$pid_file")
-        echo "claudii watch started (PID $watcher_pid)"
-      else
-        echo "claudii watch started"
-      fi
-      ;;
-    stop)
-      if [[ -f "$pid_file" ]]; then
-        watcher_pid=$(<"$pid_file")
-        if kill -0 "$watcher_pid" 2>/dev/null; then
-          kill "$watcher_pid" 2>/dev/null
-          rm -f "$pid_file"
-          echo "claudii watch stopped (PID $watcher_pid)"
-        else
-          rm -f "$pid_file"
-          echo "claudii watch was not running (stale PID file removed)"
-        fi
-      else
-        echo "claudii watch is not running"
-      fi
-      ;;
-    status)
-      if [[ -f "$pid_file" ]]; then
-        watcher_pid=$(<"$pid_file")
-        if kill -0 "$watcher_pid" 2>/dev/null; then
-          echo -e "claudii watch: ${CLAUDII_CLR_GREEN}running${CLAUDII_CLR_RESET} (PID $watcher_pid)"
-        else
-          rm -f "$pid_file"
-          echo "claudii watch: not running (stale PID file removed)"
-        fi
-      else
-        echo "claudii watch: not running"
-      fi
-      ;;
-    test)
-      _watch_notify "claudii watch is active"
-      echo "claudii watch: test notification sent"
-      ;;
-    volume)
-      _cfg_init
-      if [[ -z "${3:-}" ]]; then
-        val=$(_cfgget watch.volume)
-        [[ -z "$val" ]] && val="50"
-        echo "watch.volume: $val"
-      else
-        vol="${3}"
-        if ! [[ "$vol" =~ ^[0-9]+$ ]] || (( vol < 0 || vol > 100 )); then
-          echo "Invalid volume: $vol — valid values: 0-100 (e.g. claudii watch volume 75)" >&2; exit 1
-        fi
-        _jq_tmp=$(mktemp) && jq --argjson v "$vol" '.watch.volume = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-        echo "watch.volume: $vol"
-      fi
-      ;;
-    sound)
-      _cfg_init
-      if [[ -z "${3:-}" ]]; then
-        val=$(_cfgget watch.sound)
-        if [[ -z "$val" ]]; then
-          echo "watch.sound: (default)"
-        else
-          echo "watch.sound: $val"
-        fi
-      elif [[ "${3}" == "default" ]]; then
-        _jq_tmp=$(mktemp) && jq '.watch.sound = ""' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-        echo "watch.sound: (default)"
-      else
-        sound_file="${3}"
-        [[ -f "$sound_file" ]] || { echo "File not found: $sound_file"; exit 1; }
-        _jq_tmp=$(mktemp) && jq --arg v "$sound_file" '.watch.sound = $v' "$CONFIG" > "$_jq_tmp" && mv "$_jq_tmp" "$CONFIG"
-        echo "watch.sound: $sound_file"
-      fi
-      ;;
-    *)
-      echo "Usage: claudii watch [start|stop|status|test|volume|sound] — run 'claudii watch start' to begin watching" >&2; exit 1
-      ;;
-  esac
 }
 
 _cmd_doctor() {

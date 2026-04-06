@@ -57,21 +57,21 @@ _rel_box_start "Pre-Flight"
 # 1. Working tree must be clean
 _git_dirty=$(git -C "$CLAUDII_HOME" status --porcelain 2>/dev/null)
 if [[ -n "$_git_dirty" ]]; then
-  _rel_fail "Working tree nicht sauber — bitte erst committen"
+  _rel_fail "Working tree not clean — commit first"
   git -C "$CLAUDII_HOME" status --short >&2
   exit 1
 fi
-_rel_ok "Working tree sauber"
+_rel_ok "Working tree clean"
 
 # 2. No existing tag
 _existing_tag=$(git -C "$CLAUDII_HOME" tag -l "$_rel_tag")
 if [[ -n "$_existing_tag" ]]; then
-  _rel_fail "Tag $_rel_tag existiert bereits"
-  echo "  git tag -d $_rel_tag  (lokal löschen)" >&2
-  echo "  git push origin :refs/tags/$_rel_tag  (remote löschen)" >&2
+  _rel_fail "Tag $_rel_tag already exists"
+  echo "  git tag -d $_rel_tag  (delete locally)" >&2
+  echo "  git push origin :refs/tags/$_rel_tag  (delete remote)" >&2
   exit 1
 fi
-_rel_ok "Kein offener Tag $_rel_tag"
+_rel_ok "No existing tag $_rel_tag"
 
 # 3. CI check: HEAD commit must have a completed, successful CI run
 if command -v gh >/dev/null 2>&1 && [[ -n "$_gh_owner" ]]; then
@@ -115,18 +115,18 @@ else
   # Bump VERSION in bin/claudii
   sed -i '' "s/^VERSION=.*/VERSION=\"${_rel_version}\"/" "$_bin_file"
   _new_bin=$(grep '^VERSION=' "$_bin_file" | tr -d '"' | cut -d= -f2)
-  [[ "$_new_bin" == "$_rel_version" ]] || { _rel_fail "bin/claudii VERSION bump fehlgeschlagen"; exit 1; }
+  [[ "$_new_bin" == "$_rel_version" ]] || { _rel_fail "bin/claudii VERSION bump failed"; exit 1; }
   _rel_ok "bin/claudii VERSION → $_rel_version"
 
   # Bump version in man page
   sed -i '' "s/\"claudii [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"claudii ${_rel_version}\"/" "$_man_file"
   _new_man=$(grep -oE 'claudii [0-9]+\.[0-9]+\.[0-9]+' "$_man_file" | head -1 | awk '{print $2}')
-  [[ "$_new_man" == "$_rel_version" ]] || { _rel_fail "man page version bump fehlgeschlagen"; exit 1; }
+  [[ "$_new_man" == "$_rel_version" ]] || { _rel_fail "man page version bump failed"; exit 1; }
   _rel_ok "man/man1/claudii.1 → $_rel_version"
 
   # Promote [Unreleased] → [X.Y.Z — DATE] and insert new empty [Unreleased] block
   if ! grep -q '^\#\# \[Unreleased\]' "$_changelog"; then
-    _rel_fail "CHANGELOG.md hat keinen [Unreleased]-Block"
+    _rel_fail "CHANGELOG.md has no [Unreleased] block"
     exit 1
   fi
   awk -v ver="$_rel_tag" -v date="$_today" '
@@ -153,9 +153,9 @@ else
   _test_exit=$?
   if [[ $_test_exit -eq 0 ]]; then
     _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
-    _rel_ok "Tests grün ($_test_passed)"
+    _rel_ok "Tests green ($_test_passed)"
   else
-    _rel_fail "Tests fehlgeschlagen — version bump rückgängig machen"
+    _rel_fail "Tests failed — reverting version bump"
     echo "$_test_out" | tail -20 >&2
     # Restore files on test failure
     git -C "$CLAUDII_HOME" checkout -- "$_bin_file" "$_man_file" "$_changelog" 2>/dev/null || true
@@ -182,22 +182,22 @@ else
   git -C "$CLAUDII_HOME" push origin "$_cur_branch" 2>&1
   _push_branch_exit=$?
   if [[ $_push_branch_exit -ne 0 ]]; then
-    _rel_fail "Push von branch '$_cur_branch' fehlgeschlagen"
+    _rel_fail "Push of branch '$_cur_branch' failed"
     exit 1
   fi
-  _rel_ok "Branch '$_cur_branch' gepusht"
+  _rel_ok "Branch '$_cur_branch' pushed"
 
   git -C "$CLAUDII_HOME" tag -a "$_rel_tag" -m "$_rel_tag" 2>&1
-  _rel_ok "Tag $_rel_tag gesetzt"
+  _rel_ok "Tag $_rel_tag created"
 
   git -C "$CLAUDII_HOME" push origin "$_rel_tag" 2>&1
   _push_exit=$?
   if [[ $_push_exit -ne 0 ]]; then
-    _rel_fail "Push von $_rel_tag fehlgeschlagen"
+    _rel_fail "Push of $_rel_tag failed"
     git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
     exit 1
   fi
-  _rel_ok "Tag $_rel_tag gepusht"
+  _rel_ok "Tag $_rel_tag pushed"
 fi
 
 # ── Poll GitHub Actions ──
@@ -207,11 +207,11 @@ if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "GitHub Actions — skipped (dry-run)"
 else
   if [[ -z "$_gh_owner" ]]; then
-    _rel_fail "Kein GitHub-Remote gefunden: $_remote_url"
+    _rel_fail "No GitHub remote found: $_remote_url"
     exit 1
   fi
 
-  _rel_spin "Warte auf GitHub Actions..."
+  _rel_spin "Waiting for GitHub Actions..."
 
   _poll_timeout=300
   _poll_interval=10
@@ -238,7 +238,7 @@ else
     fi
 
     _spin_char="${_spinner_chars:$(( _spin_idx % ${#_spinner_chars} )):1}"
-    printf '\r│ %s Warte auf GitHub Actions... (%ds)  ' "$_spin_char" "$_poll_elapsed"
+    printf '\r│ %s Waiting for GitHub Actions... (%ds)  ' "$_spin_char" "$_poll_elapsed"
     _spin_idx=$(( _spin_idx + 1 ))
 
     sleep "$_poll_interval"
@@ -247,21 +247,21 @@ else
   printf '\r'
 
   if [[ -z "$_run_id" ]]; then
-    _rel_fail "Kein GitHub-Actions-Run für $_rel_tag gefunden (Timeout ${_poll_timeout}s)"
-    echo "  Prüfe: https://github.com/${_gh_owner}/${_gh_repo}/actions" >&2
+    _rel_fail "No GitHub Actions run found for $_rel_tag (timeout ${_poll_timeout}s)"
+    echo "  Check: https://github.com/${_gh_owner}/${_gh_repo}/actions" >&2
     exit 1
   fi
 
   _run_url="https://github.com/${_gh_owner}/${_gh_repo}/actions/runs/${_run_id}"
 
   if [[ "$_run_conclusion" == "success" ]]; then
-    _rel_ok "Release-Workflow grün (Run #${_run_id})"
+    _rel_ok "Release workflow green (Run #${_run_id})"
   else
-    _rel_fail "Workflow fehlgeschlagen: conclusion=$_run_conclusion"
+    _rel_fail "Workflow failed: conclusion=$_run_conclusion"
     echo "  $_run_url" >&2
     git -C "$CLAUDII_HOME" push origin ":refs/tags/$_rel_tag" 2>/dev/null || true
     git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
-    echo "  Tag $_rel_tag wurde entfernt." >&2
+    echo "  Tag $_rel_tag removed." >&2
     exit 1
   fi
 
@@ -282,7 +282,7 @@ else
   _tap_file_sha=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
     --jq '.sha' 2>/dev/null || echo "")
   if [[ -z "$_tap_file_sha" ]]; then
-    _rel_fail "Tap: ${_tap_formula} nicht gefunden in ${_tap_owner}/${_tap_repo}"
+    _rel_fail "Tap: ${_tap_formula} not found in ${_tap_owner}/${_tap_repo}"
   else
     _tap_current=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
       --jq '.content' | base64 -d)
@@ -313,12 +313,12 @@ else
   fi
   gh release edit "${_rel_tag}" --repo "${_gh_owner}/${_gh_repo}" \
     --notes "${_release_body}${_notes_extra}" >/dev/null
-  _rel_ok "Release Notes: SHA256 + Changelog-Link angehängt"
+  _rel_ok "Release notes: SHA256 + changelog link appended"
 fi
 
 # ── Done ──
 if [[ "$_dry_run" -eq 1 ]]; then
-  _rel_box_end "Dry-run abgeschlossen — keine Änderungen vorgenommen"
+  _rel_box_end "Dry-run complete — no changes made"
 else
   _rel_box_end "Done — ${_release_url:-https://github.com/bmmmm/claudii/releases/tag/${_rel_tag}}"
 fi

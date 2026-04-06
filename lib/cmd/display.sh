@@ -4,9 +4,15 @@
 _cmd_trends() {
   _cfg_init
   # Flight Recorder — weekly/daily aggregates from persistent history
-  history_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/history.tsv"
+  # Monthly rotation: read history-*.tsv + legacy history.tsv
+  local _hist_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local _hist_files=()
+  [[ -f "$_hist_dir/history.tsv" && -s "$_hist_dir/history.tsv" ]] && _hist_files+=("$_hist_dir/history.tsv")
+  for _hf in "$_hist_dir"/history-*.tsv; do
+    [[ -f "$_hf" && -s "$_hf" ]] && _hist_files+=("$_hf")
+  done
 
-  if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+  if [[ ${#_hist_files[@]} -eq 0 ]]; then
     echo "No history data yet. Start a Claude session with CC-Statusline enabled."
     exit 0
   fi
@@ -99,33 +105,18 @@ _cmd_trends() {
     _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
     chmod 0600 "$_claudii_spinner_label_file"
     export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
-    printf '%s' "${history_file/#$HOME/\~}" > "$_claudii_spinner_label_file"
+    printf '%s' "${_hist_dir/#$HOME/\~}/history-*.tsv" > "$_claudii_spinner_label_file"
     _claudii_spinner &
     _trends_spinner_pid=$!
   fi
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
-  # Pure-awk epoch_to_date — avoids O(n) date(1) subprocesses.
-  _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" '
-    function is_leap(y,    l) {
-      l = 0
-      if (y % 4 == 0) l = 1
-      if (y % 100 == 0) l = 0
-      if (y % 400 == 0) l = 1
-      return l
-    }
-    function epoch_to_date(ts,    days, y, leap, m, mdays) {
-      days = int((ts + tz_offset) / 86400); y = 1970
-      for (;;) {
-        leap = is_leap(y)
-        if (days < 365 + leap) break
-        days -= 365 + leap; y++
-      }
-      leap = is_leap(y)
-      split("31 " (28+leap) " 31 30 31 30 31 31 30 31 30 31", mdays, " ")
-      for (m = 1; m <= 12; m++) { if (days < mdays[m]) break; days -= mdays[m] }
-      return sprintf("%04d-%02d-%02d", y, m, days + 1)
-    }
+  # Shared epoch_to_date from lib/epoch_to_date.awk
+  local _epoch_awk
+  _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+  _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
+${_epoch_awk}
+"'
     $1 == "timestamp" || $1 == "" || $6 == "" { next }
     {
       ts = $1 + 0; if (ts == 0) next
@@ -138,7 +129,7 @@ _cmd_trends() {
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
       print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
     }
-  ' "$history_file")
+  ' "${_hist_files[@]}")
 
   # Kill spinner before output
   if [[ -n "$_trends_spinner_pid" ]]; then
@@ -265,12 +256,12 @@ _cmd_layers() {
   if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
     sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
     if [[ -n "$sl_cmd" && "$sl_cmd" == *claudii* ]]; then
-      sl_state="${CLAUDII_CLR_GREEN}aktiv${CLAUDII_CLR_RESET}"
+      sl_state="${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}"
     else
-      sl_state="${CLAUDII_CLR_DIM}nicht konfiguriert${CLAUDII_CLR_RESET}"
+      sl_state="${CLAUDII_CLR_DIM}not configured${CLAUDII_CLR_RESET}"
     fi
   else
-    sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json nicht gefunden${CLAUDII_CLR_RESET}"
+    sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json not found${CLAUDII_CLR_RESET}"
   fi
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"

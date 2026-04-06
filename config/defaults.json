@@ -1,8 +1,8 @@
 {
   "aliases": {
-    "cl":  { "model": "sonnet", "effort": "high",   "description": "Standard-Coding" },
-    "clo": { "model": "opus",   "effort": "high",   "description": "Server, komplex" },
-    "clm": { "model": "opus",   "effort": "max",    "description": "Härteste Nüsse" },
+    "cl":  { "model": "sonnet", "effort": "high",   "description": "Standard coding" },
+    "clo": { "model": "opus",   "effort": "high",   "description": "Server, complex" },
+    "clm": { "model": "opus",   "effort": "max",    "description": "Hardest problems" },
     "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" }
   },
   "fallback": {
@@ -36,10 +36,6 @@
   },
   "debug": {
     "level": "off"
-  },
-  "watch": {
-    "sound": "",
-    "volume": 50
   },
   "agents": {
     "sh":      { "model": "haiku",  "effort": "high",   "skill": "shape",       "description": "Shaper — hygiene checks, TODO planning" },

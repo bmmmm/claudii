@@ -27,6 +27,8 @@ _claudii() {
         'se:Shorthand for sessions'
         'sessions-inactive:Inactive sessions with age, context and rate limits'
         'si:Shorthand for sessions-inactive'
+        'pin:Protect a session from GC (by session ID)'
+        'unpin:Remove GC protection from a session'
         'config:Read or write config values'
         'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
@@ -37,7 +39,6 @@ _claudii() {
         'restart:Reload plugin'
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
-        'watch:Background rate-limit reset watcher with macOS notifications'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
         'help:Show help'
       )
@@ -92,19 +93,6 @@ _claudii() {
           _describe 'cc-statusline option' sl_opts
           ;;
 
-        watch)
-          local -a watch_cmds
-          watch_cmds=(
-            'start:Start the background watcher (default)'
-            'stop:Stop the background watcher'
-            'status:Show watcher status'
-            'test:Send a test notification to verify watch works'
-            'volume:Show or set notification volume (0-100)'
-            'sound:Show or set notification sound file'
-          )
-          _describe 'watch subcommand' watch_cmds
-          ;;
-
         config)
           case $words[3] in
             get|set)
@@ -129,8 +117,6 @@ _claudii() {
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
-                'watch.sound:Path to sound file played on notification (empty = no sound)'
-                'watch.volume:Notification sound volume 0-100 (default: 50)'
               )
               _describe 'config key' keys
               ;;
