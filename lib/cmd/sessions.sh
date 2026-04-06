@@ -653,20 +653,10 @@ _cmd_sessions_inactive() {
       # Skip active sessions — this command shows only inactive
       if [[ $_PSC_is_active -eq 1 ]]; then continue; fi
 
-      # Context bar
-      _is_bar=""
-      if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        _is_pct=${_PSC_ctx_pct%.*}
-        (( _is_pct > 100 )) && _is_pct=100
-        (( _is_pct < 0 ))   && _is_pct=0
-        _render_ctx_bar "$_is_pct"
-        _is_bar=" ${_CTX_BAR} ${CLAUDII_CLR_DIM}${_is_pct}%${CLAUDII_CLR_RESET}"
-      fi
-
       # Status badge: pinned (protected) vs stale (GC candidate) vs idle
       local _is_badge _is_tag=""
       if [[ "$_PSC_pinned" == "1" ]]; then
-        _is_badge="${CLAUDII_CLR_CYAN}${CLAUDII_SYM_PIN:-⊡}${CLAUDII_CLR_RESET}"
+        _is_badge="${CLAUDII_CLR_CYAN}${CLAUDII_SYM_PIN}${CLAUDII_CLR_RESET}"
         _is_tag=" ${CLAUDII_CLR_CYAN}pinned${CLAUDII_CLR_RESET}"
       elif (( _PSC_age >= 3600 )); then
         _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
@@ -675,39 +665,39 @@ _cmd_sessions_inactive() {
         _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
       fi
 
-      _is_line="  ${_is_badge} ${CLAUDII_CLR_BOLD}${_PSC_model}${CLAUDII_CLR_RESET}${_is_bar}"
+      # Strip context window suffix from model name
+      local _is_model="${_PSC_model}"
+      _is_model="${_is_model% (*context)}"
+      _is_model="${_is_model% (*Context)}"
 
-      if [[ -n "$_PSC_cache_pct" && "$_PSC_cache_pct" != "0" ]]; then
-        _is_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${CLAUDII_SYM_CACHE}${_PSC_cache_pct}%${CLAUDII_CLR_RESET}"
-      fi
-
-      # Rate limits
-      if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] || [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]]; then
-        _is_line+="${CLAUDII_CLR_DIM}"
-        [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]] && _is_line+=" 5h:${_PSC_rate_5h%.*}%"
-        [[ -n "$_PSC_rate_7d" && "$_PSC_rate_7d" != "0" ]] && _is_line+=" 7d:${_PSC_rate_7d%.*}%"
-        _is_line+="${CLAUDII_CLR_RESET}"
-      fi
-
-      if [[ -n "$_PSC_worktree" ]]; then
-        _is_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
-      fi
-      if [[ -n "$_PSC_agent" ]]; then
-        _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
-      fi
-
-      # Age + status tag
-      _render_age "$_PSC_age"
-      _is_line+="  ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}${_is_tag}"
-
-      # Session ID (shortened) for pin/unpin reference
-      if [[ -n "$_PSC_session_id" ]]; then
-        local _short_sid="${_PSC_session_id}"
-        (( ${#_short_sid} > 8 )) && _short_sid="${_short_sid:0:8}…"
-        _is_line+="  ${CLAUDII_CLR_DIM}${_short_sid}${CLAUDII_CLR_RESET}"
-      fi
-
+      # Line 1: badge + model + metadata
+      _is_line="  ${_is_badge} ${CLAUDII_CLR_ACCENT}${_is_model}${CLAUDII_CLR_RESET}"
+      [[ -n "$_PSC_worktree" ]] && _is_line+=" ${CLAUDII_CLR_DIM}[wt:${_PSC_worktree}]${CLAUDII_CLR_RESET}"
+      [[ -n "$_PSC_agent" ]]    && _is_line+=" ${CLAUDII_CLR_DIM}[agent:${_PSC_agent}]${CLAUDII_CLR_RESET}"
       printf '%s\n' "$_is_line"
+
+      # Line 2: context bar + rate limits + age + status tag
+      local _is_detail="    "
+      if [[ -n "$_PSC_ctx_pct" && "$_PSC_ctx_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        _is_pct=${_PSC_ctx_pct%.*}
+        (( _is_pct > 100 )) && _is_pct=100
+        (( _is_pct < 0 ))   && _is_pct=0
+        _render_ctx_bar "$_is_pct"
+        _is_detail+="${_CTX_BAR} ${_is_pct}%"
+      fi
+      if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]]; then
+        _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_PSC_rate_5h%.*}%"
+      fi
+      _render_age "$_PSC_age"
+      _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}${_is_tag}"
+      printf '%s\n' "$_is_detail"
+
+      # Line 3: resume command with full session UUID
+      if [[ -n "$_PSC_session_id" ]]; then
+        printf "    ${CLAUDII_CLR_DIM}claude -r ${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_PSC_session_id"
+      fi
+
+      printf '\n'
       _rendered_any=1
     done
   fi
@@ -970,7 +960,49 @@ _cmd_sessions() {
     exit 0
   fi
 
-  # Pretty output — two lines per session for visual clarity
+  # ── Build cross-session file→color map ──────────────────────────────────────
+  # Collect all unique filenames from fingerprints, assign consistent colors.
+  local _fp_names=() _fp_colors=() _fp_count=0
+  local _palette_size=${#CLAUDII_FP_PALETTE[@]}
+  for (( _i=0; _i<_sf_count; _i++ )); do
+    local _fp="${_sf_fingerprint[$_i]}"
+    [[ -z "$_fp" ]] && continue
+    # Parse "file1(N) file2(N) ..." — extract bare filenames
+    local _word
+    for _word in $_fp; do
+      local _fname="${_word%%(*}"
+      [[ -z "$_fname" ]] && continue
+      # Check if already in map
+      local _found=0
+      for (( _k=0; _k<_fp_count; _k++ )); do
+        [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _found=1; break; }
+      done
+      if [[ $_found -eq 0 ]]; then
+        _fp_names[$_fp_count]="$_fname"
+        _fp_colors[$_fp_count]="${CLAUDII_FP_PALETTE[$(( _fp_count % _palette_size ))]}"
+        (( ++_fp_count ))
+      fi
+    done
+  done
+
+  # Helper: colorize a fingerprint string using the file→color map
+  _colorize_fingerprint() {
+    local _fp="$1" _out="" _word _fname _count_part
+    for _word in $_fp; do
+      _fname="${_word%%(*}"
+      _count_part="(${_word#*(}"
+      [[ "$_count_part" == "($_fname" ]] && _count_part=""  # no parens found
+      local _clr="$CLAUDII_CLR_DIM"
+      for (( _k=0; _k<_fp_count; _k++ )); do
+        [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _clr="${_fp_colors[$_k]}"; break; }
+      done
+      [[ -n "$_out" ]] && _out+=" "
+      _out+="${_clr}${_fname}${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}${_count_part}${CLAUDII_CLR_RESET}"
+    done
+    printf '%s' "$_out"
+  }
+
+  # ── Pretty output ────────────────────────────────────────────────────────────
   printf '\n'
   for (( _i=0; _i<_sf_count; _i++ )); do
     if [[ "${_sf_is_active[$_i]}" -eq 1 ]]; then
@@ -980,56 +1012,62 @@ _cmd_sessions() {
     fi
     _render_age "${_sf_age[$_i]}"
 
-    # Line 1: status indicator + model + project path + session name + metadata
-    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_sf_model[$_i]:-?}${CLAUDII_CLR_RESET}"
+    # Strip context window suffix from model name (e.g. "Opus 4.6 (1M context)" → "Opus 4.6")
+    local _display_model="${_sf_model[$_i]:-?}"
+    _display_model="${_display_model% (*context)}"
+    _display_model="${_display_model% (*Context)}"
+
+    # Line 1: status + model + project path + metadata
+    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}"
     if [[ -n "${_sf_projpath[$_i]}" ]]; then
       line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
-    else
-      line+="  ${CLAUDII_CLR_DIM}(path unknown)${CLAUDII_CLR_RESET}"
     fi
     [[ -n "${_sf_sesname[$_i]}" ]]  && line+="  ${CLAUDII_CLR_DIM}\"${_sf_sesname[$_i]}\"${CLAUDII_CLR_RESET}"
     [[ -n "${_sf_worktree[$_i]}" ]] && line+=" ${CLAUDII_CLR_DIM}[wt:${_sf_worktree[$_i]}]${CLAUDII_CLR_RESET}"
     [[ -n "${_sf_agent[$_i]}" ]]    && line+=" ${CLAUDII_CLR_DIM}[agent:${_sf_agent[$_i]}]${CLAUDII_CLR_RESET}"
     printf '%s\n' "$line"
 
-    # Line 2: context bar + cost + rate limits + age + session id (indented)
+    # Line 2: context bar + rate limits + age
     detail="    "
     if [[ -n "${_sf_ctx[$_i]}" && "${_sf_ctx[$_i]}" =~ ^[0-9] ]]; then
       _render_ctx_bar "${_sf_ctx[$_i]%.*}"
       detail+="${_CTX_BAR} ${_sf_ctx[$_i]%.*}%"
     fi
     if [[ -n "${_sf_rate5h[$_i]}" ]]; then
-      detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} 5h:${_sf_rate5h[$_i]%.*}%"
+      detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_sf_rate5h[$_i]%.*}%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then
         _rem=$(( ${_sf_reset5h[$_i]} - now ))
-        (( _rem > 0 )) && detail+=" ↺$(( _rem / 60 ))m"
+        (( _rem > 0 )) && detail+=" ${CLAUDII_CLR_DIM}↺$(( _rem / 60 ))m${CLAUDII_CLR_RESET}"
       fi
     fi
-    detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}${_AGE_STR}${CLAUDII_CLR_RESET}"
-    [[ -n "${_sf_sid[$_i]}" ]] && detail+="  ${CLAUDII_CLR_DIM}${_sf_sid[$_i]:0:8}${CLAUDII_CLR_RESET}"
+    detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$detail"
 
-    # Line 3: fingerprint (top-5 files accessed) — only when non-empty
+    # Line 3: resume command with full session UUID
+    if [[ -n "${_sf_sid[$_i]}" ]]; then
+      printf "    ${CLAUDII_CLR_DIM}claude -r ${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "${_sf_sid[$_i]}"
+    fi
+
+    # Line 4: fingerprint — cross-session colored file names
     if [[ -n "${_sf_fingerprint[$_i]}" ]]; then
-      printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_FINGERPRINT} %s${CLAUDII_CLR_RESET}\n" "${_sf_fingerprint[$_i]}"
+      printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_FINGERPRINT}${CLAUDII_CLR_RESET} %s\n" "$(_colorize_fingerprint "${_sf_fingerprint[$_i]}")"
     fi
 
     printf '\n'
   done
 
   # Summary
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}%d aktiv, %d beendet${CLAUDII_CLR_RESET}" "$active" "$stale"
+  printf "  ${CLAUDII_CLR_ACCENT}%d active, %d ended${CLAUDII_CLR_RESET}" "$active" "$stale"
   if [[ -n "$latest_5h" ]]; then
     reset_str=""
     if [[ -n "$latest_reset" && "$latest_reset" != "0" ]]; then
       remaining=$(( latest_reset - now ))
-      (( remaining > 0 )) && reset_str=" (Reset in $(( remaining / 60 ))min)"
+      (( remaining > 0 )) && reset_str=" (resets in $(( remaining / 60 ))min)"
     fi
     printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
   fi
   printf '\n'
-  printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_ACTIVE} active  ${CLAUDII_SYM_INACTIVE} ended  ${CLAUDII_SYM_FINGERPRINT} file(N) = most-read files · N = access count  ·  5h/7d = API rate limit${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_ACTIVE} active  ${CLAUDII_SYM_INACTIVE} ended  ${CLAUDII_SYM_FINGERPRINT} file(N) = most-touched files  ·  claude -r = resume session${CLAUDII_CLR_RESET}\n"
   printf '\n'
 }
 

@@ -18,6 +18,16 @@ CLAUDII_SYM_CACHE="⚡"       # cache hit / cache prompt tokens
 CLAUDII_SYM_FINGERPRINT="✦" # session fingerprint / file access marker
 CLAUDII_SYM_MONITORING="◎"  # incident monitoring / investigating
 
+# ── Fingerprint palette (muted 256-color, cycles for cross-session file coloring) ──
+CLAUDII_FP_PALETTE=(
+  $'\033[38;5;73m'   # muted teal
+  $'\033[38;5;139m'  # lavender
+  $'\033[38;5;179m'  # sand
+  $'\033[38;5;108m'  # sage
+  $'\033[38;5;132m'  # mauve
+  $'\033[38;5;103m'  # slate
+)
+
 # ── ANSI colors ───────────────────────────────────────────────────────────────
 CLAUDII_CLR_GREEN=$'\033[0;32m'
 CLAUDII_CLR_YELLOW=$'\033[0;33m'
