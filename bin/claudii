@@ -237,7 +237,7 @@ usage() {
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
-  printf "    %-33s $d %s\n" "layers"                          "component overview with status"
+  printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
@@ -383,8 +383,8 @@ case "${1:-}" in
 
   # Display commands
   trends)              _cmd_trends            ;;
-  layers)              _cmd_layers            ;;
-  components)          exec "$0" layers "${@:2}" ;;
+  explain)             _cmd_explain           ;;
+  layers|components)   exec "$0" explain "${@:2}" ;;
   version)             _cmd_version           ;;
   changelog)           _cmd_changelog         ;;
   42)                  _cmd_42                ;;

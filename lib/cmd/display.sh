@@ -1,4 +1,4 @@
-# lib/cmd/display.sh — display/visualization commands (trends, layers, version, changelog, 42)
+# lib/cmd/display.sh — display/visualization commands (trends, explain, version, changelog, 42)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
 _cmd_trends() {
@@ -198,12 +198,12 @@ _cmd_changelog() {
   printf '\n'
 }
 
-_cmd_layers() {
+_cmd_explain() {
   local_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _cfg_init
 
   printf '\n'
-  printf "  ${CLAUDII_CLR_CYAN}claudii layers${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_CYAN}claudii explain${CLAUDII_CLR_RESET}\n"
   printf "  ${CLAUDII_CLR_ACCENT}──────────────────────────────────────────────────────────${CLAUDII_CLR_RESET}\n"
   printf '\n'
 
