@@ -26,7 +26,9 @@
     ]
   },
   "search": {
-    "dir": "~/claude-search"
+    "dir": "~/claude-search",
+    "model": "sonnet",
+    "effort": "medium"
   },
   "cost": {
     "week_start": "monday"
