@@ -11,7 +11,7 @@
     "sonnet": { "model": "opus",   "effort": "high" }
   },
   "status": {
-    "components_url": "https://status.claude.com/api/v2/components.json",
+    "unresolved_url": "https://status.claude.com/api/v2/incidents/unresolved.json",
     "rss_url": "https://status.claude.com/history.rss",
     "cache_ttl": 300
   },

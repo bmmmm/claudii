@@ -2,21 +2,21 @@
 # claudii-status — checks model health
 #
 # Strategy:
-#   1. components.json → is "Claude API" operational? (fast, structured)
-#   2. history.rss     → only when non-operational: which models affected?
-#      If RSS mentions no specific model → all models get service-level status.
+#   1. unresolved.json → active incidents (authoritative, structured, no HTML parsing)
+#      Empty incidents[] = all OK. Non-empty = parse name + impact for affected models.
+#   2. RSS fallback → only when unresolved.json is unreachable
+#      Parses HTML-encoded <strong> status tags to skip resolved items.
 #
 # Cache format: model=ok|degraded|down  (+ optional _api=unreachable marker)
 # Exit codes:   0=all ok, 1=some degraded or down
 #
-# Env overrides: CLAUDII_COMPONENTS_URL, CLAUDII_RSS_URL, CLAUDII_CACHE_TTL
+# Env overrides: CLAUDII_UNRESOLVED_URL, CLAUDII_RSS_URL, CLAUDII_CACHE_TTL
 
 set -uo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
-CACHE_FILE="$CACHE_DIR/status-cache.xml"
 CACHE_STATUS="$CACHE_DIR/status-models"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
@@ -25,31 +25,32 @@ _def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end
 
 CACHE_TTL="${CLAUDII_CACHE_TTL:-$(_cfg status.cache_ttl)}"
 CACHE_TTL="${CACHE_TTL:-$(_def status.cache_ttl)}"
-CACHE_TTL="${CACHE_TTL:-900}"
+CACHE_TTL="${CACHE_TTL:-300}"
 
 RSS_URL="${CLAUDII_RSS_URL:-$(_cfg status.rss_url)}"
 RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
 
-COMPONENTS_URL="${CLAUDII_COMPONENTS_URL:-$(_cfg status.components_url)}"
-COMPONENTS_URL="${COMPONENTS_URL:-$(_def status.components_url)}"
-COMPONENTS_URL="${COMPONENTS_URL:-${RSS_URL%/history.rss}/api/v2/components.json}"
+_base_url="${RSS_URL%/history.rss}"
+UNRESOLVED_URL="${CLAUDII_UNRESOLVED_URL:-$(_cfg status.unresolved_url)}"
+UNRESOLVED_URL="${UNRESOLVED_URL:-$(_def status.unresolved_url)}"
+UNRESOLVED_URL="${UNRESOLVED_URL:-${_base_url}/api/v2/incidents/unresolved.json}"
 
 case "${RSS_URL}" in
   https://*) ;;
   *) printf "error: RSS_URL must use https:// (got: %s)\n" "$RSS_URL" >&2; exit 1 ;;
 esac
-case "${COMPONENTS_URL}" in
+case "${UNRESOLVED_URL}" in
   https://*) ;;
-  *) printf "error: COMPONENTS_URL must use https:// (got: %s)\n" "$COMPONENTS_URL" >&2; exit 1 ;;
+  *) printf "error: UNRESOLVED_URL must use https:// (got: %s)\n" "$UNRESOLVED_URL" >&2; exit 1 ;;
 esac
 
 _mtime() { stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0; }
+_tmp_status="${CACHE_STATUS}.tmp.$$"
 
 source "${CLAUDII_HOME}/lib/log.sh"
 
 RED='\033[0;31m'
 YELLOW='\033[0;33m'
-GREEN='\033[0;32m'
 NC='\033[0m'
 
 quiet=false
@@ -63,7 +64,6 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Write own PID to file if requested (for spawn dedup from precmd)
 [[ -n "$_pid_file" ]] && echo $$ > "$_pid_file"
 
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
@@ -72,7 +72,7 @@ models_raw="${models_raw:-opus,sonnet,haiku}"
 IFS=',' read -ra MODELS <<< "$models_raw"
 for i in "${!MODELS[@]}"; do MODELS[$i]="${MODELS[$i]// /}"; done
 
-_claudii_log debug "Components: $COMPONENTS_URL | RSS: $RSS_URL | TTL: ${CACHE_TTL}s | Models: ${MODELS[*]}"
+_claudii_log debug "Unresolved: $UNRESOLVED_URL | RSS: $RSS_URL | TTL: ${CACHE_TTL}s | Models: ${MODELS[*]}"
 
 # ── Cache check ───────────────────────────────────────────────────────────────
 
@@ -94,130 +94,130 @@ if [[ -f "$CACHE_STATUS" ]]; then
   _claudii_log debug "Cache stale (${cache_age}s > TTL ${CACHE_TTL}s)"
 fi
 
-# ── Step 1: components API → overall service status ───────────────────────────
+# ── Helper: write cache + output + exit ──────────────────────────────────────
 
-_claudii_log info "Fetching $COMPONENTS_URL"
-components_json=$(curl -sf --max-time 5 "$COMPONENTS_URL" 2>/dev/null) || {
-  $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2
-  _claudii_log warn "API unreachable — writing all-ok fallback"
-  # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
-  _tmp_status="${CACHE_STATUS}.tmp.$$"
-  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+_write_all_ok() {
+  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  _claudii_log info "Status: all ok"
   exit 0
 }
 
-# Find "Claude API" component (the one that governs model availability)
-claude_api_status=$(echo "$components_json" | jq -r '
-  .components[]
-  | select(.name | ascii_downcase | (contains("claude api") or contains("api.anthropic")))
-  | .status
-' 2>/dev/null | head -1)
+_write_incidents() {
+  local service_level="$1" down_models="$2" incident_detail="$3"
 
-_claudii_log debug "Claude API component status: ${claude_api_status:-not found}"
+  # If no specific model named in incident → all models affected
+  local no_model_named=true
+  for m in "${MODELS[@]}"; do
+    echo "$down_models" | grep -q " $m " && no_model_named=false && break
+  done
 
-# If component not found, try overall page status as fallback
-if [[ -z "$claude_api_status" ]]; then
-  claude_api_status=$(echo "$components_json" | jq -r '
-    .components | map(.status) |
-    if any(. == "major_outage" or . == "partial_outage") then "major_outage"
-    elif any(. == "degraded_performance") then "degraded_performance"
-    else "operational"
-    end
-  ' 2>/dev/null || echo "operational")
-  _claudii_log debug "Using aggregate status: $claude_api_status"
+  {
+    for model in "${MODELS[@]}"; do
+      if $no_model_named || echo "$down_models" | grep -q " $model "; then
+        printf '%s=%s\n' "$model" "$service_level"
+      else
+        printf '%s=ok\n' "$model"
+      fi
+    done
+  } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+
+  local summary="" any_issue=false
+  for m in "${MODELS[@]}"; do
+    ms=$(grep "^${m}=" "$CACHE_STATUS" | cut -d= -f2)
+    summary+=" ${m}=${ms}"
+    local label; label="$(echo "${m:0:1}" | tr '[:lower:]' '[:upper:]')${m:1}"
+    case "$ms" in
+      down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2;     any_issue=true ;;
+      degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2; any_issue=true ;;
+    esac
+  done
+  _claudii_log info "Status:${summary}"
+
+  if $any_issue && [[ -n "$incident_detail" ]]; then
+    $quiet || echo -e "${YELLOW}  ↳ ${incident_detail}${NC}" >&2
+  fi
+
+  $any_issue && exit 1 || exit 0
+}
+
+# ── Step 1: unresolved.json → active incidents ────────────────────────────────
+
+_claudii_log info "Fetching $UNRESOLVED_URL"
+unresolved=$(curl -sf --max-time 5 "$UNRESOLVED_URL" 2>/dev/null) || true
+
+if [[ -n "$unresolved" ]]; then
+  incident_count=$(echo "$unresolved" | jq -r '.incidents | length' 2>/dev/null || echo "")
+
+  if [[ "$incident_count" == "0" ]]; then
+    _claudii_log info "No active incidents"
+    _write_all_ok
+  fi
+
+  if [[ -n "$incident_count" && "$incident_count" != "0" ]]; then
+    _claudii_log info "$incident_count active incident(s)"
+
+    # Impact → service level (most severe wins)
+    service_level=$(echo "$unresolved" | jq -r '
+      .incidents | map(.impact) |
+      if any(. == "critical" or . == "major") then "down"
+      else "degraded"
+      end
+    ' 2>/dev/null || echo "degraded")
+
+    # Collect all incident names for model matching
+    incident_names=$(echo "$unresolved" | jq -r '.incidents[].name' 2>/dev/null || echo "")
+    incident_detail=$(echo "$unresolved" | jq -r '.incidents[0].name' 2>/dev/null || echo "")
+
+    down_models=" "
+    for m in "${MODELS[@]}"; do
+      echo "$incident_names" | grep -qi "$m" && down_models="$down_models$m "
+    done
+
+    _claudii_log debug "Incidents: $incident_names → service=$service_level down=[${down_models}]"
+    _write_incidents "$service_level" "$down_models" "$incident_detail"
+  fi
+
+  # jq parse failed — fall through to RSS
+  _claudii_log warn "unresolved.json parse failed — falling back to RSS"
 fi
 
-case "${claude_api_status:-operational}" in
-  operational)          service_level="ok" ;;
-  degraded_performance) service_level="degraded" ;;
-  *)                    service_level="down" ;;
-esac
+# ── Step 2: RSS fallback (unresolved.json unreachable or unparseable) ─────────
 
-# ── Step 2: RSS → always fetch (components API often lags behind real incidents)
+_claudii_log warn "unresolved.json unavailable — trying RSS fallback"
+$quiet || echo -e "${YELLOW}claudii: Primary status API unreachable, trying RSS${NC}" >&2
 
-_claudii_log info "Fetching RSS (always — components API may lag)"
 rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
+
+if [[ -z "$rss" ]]; then
+  $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2
+  _claudii_log warn "All status sources unreachable — writing all-ok fallback"
+  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  exit 0
+fi
 
 incident_detail=""
 down_models=" "
 rss_has_incident=false
 
-if [[ -n "$rss" ]]; then
-  echo "$rss" > "$CACHE_FILE"
-
-  while IFS= read -r item; do
-    (echo "$item" | grep -o '&lt;strong&gt;[^&]*&lt;/strong&gt;' | head -1 | sed 's/&lt;[^&]*&gt;//g' | grep -q '^Resolved$') && continue
-    echo "$item" | grep -qi '<title>[[:space:]]*Resolved[[:space:]]*</title>' && continue
-    title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
-    [[ -z "$title" ]] && continue
-    rss_has_incident=true
-    [[ -z "$incident_detail" ]] && incident_detail="$title"
-    for m in "${MODELS[@]}"; do
-      echo "$title" | grep -qi "$m" && down_models="$down_models$m "
-    done
-    _claudii_log debug "RSS item: '$title' → down: [${down_models}]"
-  done < <(
-    echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
-      awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
-  )
-fi
-
-# RSS override: components API may still show "operational" during early incidents
-if [[ "$service_level" == "ok" ]] && $rss_has_incident; then
-  service_level="degraded"
-  _claudii_log info "RSS override: components API=ok but unresolved incident found → degraded"
-fi
-
-# All clear — both sources agree
-if [[ "$service_level" == "ok" ]]; then
-  _claudii_log info "All operational"
-  _tmp_status="${CACHE_STATUS}.tmp.$$"
-  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
-  _claudii_log info "Status: all ok"
-  exit 0
-fi
-
-# If RSS names no specific model → assume all models are affected
-no_model_named=true
-for m in "${MODELS[@]}"; do
-  echo "$down_models" | grep -q " $m " && no_model_named=false && break
-done
-
-# ── Write cache ───────────────────────────────────────────────────────────────
-
-# Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
-_tmp_status="${CACHE_STATUS}.tmp.$$"
-{
-  for model in "${MODELS[@]}"; do
-    if $no_model_named || echo "$down_models" | grep -q " $model "; then
-      printf '%s=%s\n' "$model" "$service_level"
-    else
-      printf '%s=ok\n' "$model"
-    fi
+while IFS= read -r item; do
+  (echo "$item" | grep -o '&lt;strong&gt;[^&]*&lt;/strong&gt;' | head -1 | sed 's/&lt;[^&]*&gt;//g' | grep -q '^Resolved$') && continue
+  echo "$item" | grep -qi '<title>[[:space:]]*Resolved[[:space:]]*</title>' && continue
+  title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
+  [[ -z "$title" ]] && continue
+  rss_has_incident=true
+  [[ -z "$incident_detail" ]] && incident_detail="$title"
+  for m in "${MODELS[@]}"; do
+    echo "$title" | grep -qi "$m" && down_models="$down_models$m "
   done
-} > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  _claudii_log debug "RSS item: '$title' → down: [${down_models}]"
+done < <(
+  echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
+    awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
+)
 
-summary=""
-for m in "${MODELS[@]}"; do
-  ms=$(grep "^${m}=" "$CACHE_STATUS" | cut -d= -f2)
-  summary+=" ${m}=${ms}"
-done
-_claudii_log info "Status:${summary}"
-
-# ── Output ────────────────────────────────────────────────────────────────────
-
-any_issue=false
-for model in "${MODELS[@]}"; do
-  ms=$(grep "^${model}=" "$CACHE_STATUS" | cut -d= -f2)
-  label="$(echo "${model:0:1}" | tr '[:lower:]' '[:upper:]')${model:1}"
-  case "$ms" in
-    down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2;     any_issue=true ;;
-    degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2; any_issue=true ;;
-  esac
-done
-
-if $any_issue && [[ -n "$incident_detail" ]]; then
-  $quiet || echo -e "${YELLOW}  ↳ ${incident_detail}${NC}" >&2
+if ! $rss_has_incident; then
+  _claudii_log info "RSS: no unresolved incidents"
+  _write_all_ok
 fi
 
-$any_issue && exit 1 || exit 0
+_write_incidents "degraded" "$down_models" "$incident_detail"
