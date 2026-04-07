@@ -146,7 +146,7 @@ if [[ -n "$rss" ]]; then
   echo "$rss" > "$CACHE_FILE"
 
   while IFS= read -r item; do
-    (echo "$item" | grep -o '<strong>[^<]*</strong>' | tail -1 | sed 's/<[^>]*>//g' | grep -q '^Resolved$') && continue
+    (echo "$item" | grep -o '&lt;strong&gt;[^&]*&lt;/strong&gt;' | head -1 | sed 's/&lt;[^&]*&gt;//g' | grep -q '^Resolved$') && continue
     echo "$item" | grep -qi '<title>[[:space:]]*Resolved[[:space:]]*</title>' && continue
     title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
     [[ -z "$title" ]] && continue
