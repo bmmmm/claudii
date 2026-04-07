@@ -298,6 +298,16 @@ else
       --field sha="$_tap_file_sha" \
       --jq '.commit.sha' >/dev/null
     _rel_ok "bmmmm/homebrew-tap → ${_rel_version} (sha256: ${_sha256:0:12}…)"
+
+    # Keep local Formula/claudii.rb in sync (used for brew audit in CI)
+    sed -i.bak \
+      -e "s|url \"https://.*\.tar\.gz\"|url \"${_tarball_url}\"|" \
+      -e "s|sha256 \"[a-f0-9]*\"|sha256 \"${_sha256}\"|" \
+      -e "s|version \"[0-9.]*\"|version \"${_rel_version}\"|" \
+      "${CLAUDII_HOME}/${_tap_formula}" && rm -f "${CLAUDII_HOME}/${_tap_formula}.bak"
+    git -C "${CLAUDII_HOME}" add "${_tap_formula}"
+    git -C "${CLAUDII_HOME}" commit -m "chore(formula): sync local Formula to ${_rel_tag}" --no-verify 2>/dev/null || true
+    _rel_ok "Local Formula/claudii.rb synced"
   fi
 
   # Append SHA256 + linked commit list to GitHub release notes
