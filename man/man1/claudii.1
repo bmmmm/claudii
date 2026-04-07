@@ -600,6 +600,30 @@ Pinned sessions are preserved indefinitely until explicitly unpinned.
 Remove GC protection from a pinned session.
 .
 .TP
+.B gc
+Remove stale session cache files.
+A session cache file is removed when its associated Claude Code process is dead
+and the file is older than 300 seconds, or when no PID is tracked and the file
+is older than 300 seconds.
+Pinned sessions (set with
+.BR pin )
+are never removed.
+Equivalent to the automatic garbage collection that runs on shell load,
+but triggered manually.
+Use
+.B claudii si
+to inspect inactive sessions before running.
+.
+.TP
+.BI "resume " session-id
+Resume a Claude Code session by ID.
+Equivalent to running
+.BR "claude --resume " id .
+Use
+.B claudii se
+to list sessions with their IDs.
+.
+.TP
 .B cost
 Accounting view: exact costs per period (today, week, month, year, all-time),
 per-model breakdown, and session counts.

@@ -41,6 +41,8 @@ _claudii() {
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
+        'gc:Clean up stale session cache files'
+        'resume:Resume a session by ID'
         'help:Show help'
       )
       _describe 'command' commands
@@ -83,6 +85,16 @@ _claudii() {
             '--resume:Resume a session by ID (exec claude --resume <id>)'
           )
           _describe 'sessions option' se_opts
+          ;;
+
+        resume)
+          local _cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+          local -a _ids
+          for _f in "$_cache"/session-*(N); do
+            local _id="${_f##*/session-}"
+            _ids+=("$_id")
+          done
+          _describe 'session id' _ids
           ;;
 
         cc-statusline|sessionline)

@@ -408,6 +408,16 @@ _render_age() {
   fi
 }
 
+_cmd_resume() {
+  local _id="${2:-}"
+  if [[ -z "$_id" ]]; then
+    echo "Usage: claudii resume <session-id>" >&2
+    echo "  Use 'claudii se' to list sessions with their IDs" >&2
+    exit 1
+  fi
+  exec claude --resume "$_id"
+}
+
 # ── Source command modules ──────────────────────────────────────────────────
 source "$CLAUDII_HOME/lib/cmd/system.sh"
 source "$CLAUDII_HOME/lib/cmd/sessions.sh"
@@ -424,6 +434,7 @@ case "${1:-}" in
   c)     set -- cost               "${@:2}" ;;
   t)     set -- trends             "${@:2}" ;;
   d)     set -- doctor             "${@:2}" ;;
+  g)     set -- gc                 "${@:2}" ;;
 esac
 
 # ── Main dispatcher ─────────────────────────────────────────────────────────
@@ -452,6 +463,8 @@ case "${1:-}" in
   sessions-inactive)   _cmd_sessions_inactive ;;
   pin)                 _cmd_pin "$@"          ;;
   unpin)               _cmd_unpin "$@"        ;;
+  gc)                  _cmd_gc "$@"           ;;
+  resume)              _cmd_resume "$@"       ;;
   "")                  _cmd_default           ;;
 
   # Display commands
