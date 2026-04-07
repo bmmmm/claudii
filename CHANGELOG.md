@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.14.0] — 2026-04-07
+
 ### Fixed
 - **ClaudeStatus:** `unresolved.json` replaces `components.json` as primary source — authoritative active-incident list, no HTML parsing required. RSS remains fallback when API unreachable.
 - **ClaudeStatus:** PID recycling guard in `_claudii_status_spawn` — `kill -0` alone can match unrelated processes that reused the PID; now also checks `status.pid` mtime (> 30s → recycled) to ensure only our actual job is counted as running
