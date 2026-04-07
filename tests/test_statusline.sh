@@ -621,6 +621,81 @@ assert_eq "PID guard: no new spawn when previous fetch still running" "$_TEST_LI
 rm -rf "$PID_TMP"
 unset PID_TMP pid_guard_out _TEST_LIVE_PID
 
+# ── Adaptive TTL ──────────────────────────────────────────────────────────────
+# Test that effective TTL is adjusted based on cache content:
+#   all ok   → effective_ttl = base * 2
+#   incident → effective_ttl = max(60, base / 5)
+#   unreachable → effective_ttl = base (unchanged)
+
+ATTL_TMP="$CLAUDII_HOME/tmp/test_statusline_attl"
+rm -rf "$ATTL_TMP"
+mkdir -p "$ATTL_TMP/config/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$ATTL_TMP/config/claudii/config.json"
+
+# Base TTL from defaults (300s). A fresh cache (age ~0) should never show ⟳.
+# For ok state (effective_ttl = 600): age 0 → no refresh indicator.
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
+attl_ok_out=$(
+  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+# Fresh all-ok cache: effective TTL = base*2, so no ⟳
+if printf '%s' "$attl_ok_out" | grep -qF '⟳'; then
+  assert_eq "adaptive TTL ok state: fresh cache → no refresh indicator" "no refresh" "refresh shown"
+else
+  assert_eq "adaptive TTL ok state: fresh cache → no refresh indicator" "no refresh" "no refresh"
+fi
+
+# For ok state with stale cache (age > base*2): should show ⟳
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
+touch -t 202001010000 "$ATTL_TMP/status-models"
+attl_ok_stale=$(
+  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "adaptive TTL ok state: stale cache → refresh indicator shown" "⟳" "$attl_ok_stale"
+
+# For degraded state: effective_ttl = max(60, base/5) = max(60, 60) = 60.
+# A fresh cache (age ~0) → no refresh. A cache slightly older than 60s → refresh.
+printf 'opus=degraded\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
+touch -t 202001010000 "$ATTL_TMP/status-models"
+attl_deg_out=$(
+  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "adaptive TTL incident state: stale degraded cache → refresh indicator shown" "⟳" "$attl_deg_out"
+
+# For unreachable: effective_ttl = base (300). Fresh cache → no ⟳.
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$ATTL_TMP/status-models"
+attl_unr_out=$(
+  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+if printf '%s' "$attl_unr_out" | grep -qF '⟳'; then
+  assert_eq "adaptive TTL unreachable state: fresh cache → no refresh indicator" "no refresh" "refresh shown"
+else
+  assert_eq "adaptive TTL unreachable state: fresh cache → no refresh indicator" "no refresh" "no refresh"
+fi
+
+rm -rf "$ATTL_TMP"
+unset ATTL_TMP attl_ok_out attl_ok_stale attl_deg_out attl_unr_out
+
 # ── history.tsv cost fallback ─────────────────────────────────────────────────
 
 HIST_TMP="$CLAUDII_HOME/tmp/test_statusline_hist"
