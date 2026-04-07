@@ -31,11 +31,12 @@ _cmd_config() {
       key="${3:?Usage: claudii config set <key> <value>}"
       _validate_key "$key" || exit 1
       value="${4:?Usage: claudii config set <key> <value>}"
-      jq_path=$(_build_jq_path "$key")
       if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
-        _jq_update "$CONFIG" --argjson v "$value" "$jq_path = \$v"
+        _jq_update "$CONFIG" --arg k "$key" --argjson v "$value" \
+          'setpath($k | split("."); $v)'
       else
-        _jq_update "$CONFIG" --arg v "$value" "$jq_path = \$v"
+        _jq_update "$CONFIG" --arg k "$key" --arg v "$value" \
+          'setpath($k | split("."); $v)'
       fi
       echo "Set $key = $value"
       ;;
@@ -109,8 +110,17 @@ _cmd_search() {
   _cfg_init
   search_dir=$(_cfgget search.dir)
   search_dir="${search_dir/#\~/$HOME}"
-  model=$(_cfgget aliases.clq.model)
-  effort=$(_cfgget aliases.clq.effort)
+
+  # Try search.model first, fall back to aliases.clq.model, then to default sonnet
+  model=$(_cfgget search.model)
+  [[ -z "$model" ]] && model=$(_cfgget aliases.clq.model)
+  [[ -z "$model" ]] && model="sonnet"
+
+  # Try search.effort first, fall back to aliases.clq.effort, then to default medium
+  effort=$(_cfgget search.effort)
+  [[ -z "$effort" ]] && effort=$(_cfgget aliases.clq.effort)
+  [[ -z "$effort" ]] && effort="medium"
+
   cd "$search_dir" || { echo "claudii: search directory not found: $search_dir" >&2; exit 1; }
   exec claude --model "$model" --effort "$effort" "${@:2}"
 }
