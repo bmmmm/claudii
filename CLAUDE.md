@@ -97,6 +97,12 @@ Revert full wave: `git revert before-wave-N..HEAD`. Single merge commit: `git re
 **Agents touching `lib/statusline.zsh`:** warn about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`).
 **Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously.
 
+## After completing planned work
+
+If a `.claude/plans/*.md` file was used to plan the work, delete it after implementing:
+- Plan files are auto-loaded into every future session
+- Stale plans produce false "continue this work" prompts
+
 ## When committing
 
 Only check what the commit actually touches — skip checks that don't apply:
