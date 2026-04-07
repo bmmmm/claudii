@@ -11,6 +11,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [v0.13.0] — 2026-04-07
 
+---
+
+## [v0.13.0] — 2026-04-07
+
 ### Added
 - **`claudii gc`:** Manual session garbage collection — removes ended sessions that exceed the configured keep count
 - **`claudii resume <id>`:** Print the `claude -r <uuid>` command for a session by short ID or index
