@@ -38,27 +38,6 @@ CLAUDII_CLR_BOLD=$'\033[1m'
 CLAUDII_CLR_ACCENT=$'\033[38;5;213m'
 CLAUDII_CLR_RESET=$'\033[0m'
 
-# ── Helper ────────────────────────────────────────────────────────────────────
-# _claudii_sym <name>
-# Print a colored symbol to stdout.
-# Names: active inactive warn error ok down degraded sep
-_claudii_sym() {
-  local name="$1"
-  local color sym
-  case "$name" in
-    active)   color="$CLAUDII_CLR_GREEN"  sym="$CLAUDII_SYM_ACTIVE"   ;;
-    inactive) color="$CLAUDII_CLR_DIM"    sym="$CLAUDII_SYM_INACTIVE" ;;
-    warn)     color="$CLAUDII_CLR_YELLOW" sym="$CLAUDII_SYM_WARN"     ;;
-    error)    color="$CLAUDII_CLR_RED"    sym="$CLAUDII_SYM_ERROR"    ;;
-    ok)       color="$CLAUDII_CLR_GREEN"  sym="$CLAUDII_SYM_OK"       ;;
-    down)     color="$CLAUDII_CLR_RED"    sym="$CLAUDII_SYM_DOWN"     ;;
-    degraded) color="$CLAUDII_CLR_YELLOW" sym="$CLAUDII_SYM_DEGRADED" ;;
-    sep)      color=""                    sym="$CLAUDII_SYM_SEP"      ;;
-    *)        printf '%s\n' "$name"; return 1 ;;
-  esac
-  printf "${color}${sym}${CLAUDII_CLR_RESET}"
-}
-
 # ── Theme loader ──────────────────────────────────────────────────────────────
 # Reads theme.name from config and applies preset colors to CLAUDII_CLR_* vars.
 # POSIX-compatible (bash + zsh). Requires jq.
