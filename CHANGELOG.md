@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **ClaudeStatus:** `unresolved.json` replaces `components.json` as primary source — authoritative active-incident list, no HTML parsing required. RSS remains fallback when API unreachable.
+
+### Changed
+- **`scripts/cleanup-worktree.sh`:** `--all` flag removes all zombie `agent-*` dirs in one call; zombie dirs (no `.git` file) now cleaned via `rm -rf` fallback instead of `git worktree remove`
+
 ---
 
 ## [v0.13.0] — 2026-04-07
