@@ -614,9 +614,8 @@ _cmd_sessions_inactive() {
       fi
 
       # Strip context window suffix from model name
-      local _is_model="${_PSC_model}"
-      _is_model="${_is_model% (*context)}"
-      _is_model="${_is_model% (*Context)}"
+      local _is_model
+      _is_model="$(_strip_model_name "${_PSC_model}")"
 
       # Line 1: badge + model + metadata
       _is_line="  ${_is_badge} ${CLAUDII_CLR_ACCENT}${_is_model}${CLAUDII_CLR_RESET}"
@@ -732,6 +731,13 @@ _cmd_unpin() {
     fi
   done
   (( found )) || { echo "No session matching '$needle'" >&2; exit 1; }
+}
+
+_strip_model_name() {
+  local _m="$1"
+  _m="${_m% (*context)}"
+  _m="${_m% (*Context)}"
+  printf '%s' "$_m"
 }
 
 _cmd_sessions() {
@@ -954,9 +960,8 @@ _cmd_sessions() {
     _render_age "${_sf_age[$_i]}"
 
     # Strip context window suffix from model name (e.g. "Opus 4.6 (1M context)" → "Opus 4.6")
-    local _display_model="${_sf_model[$_i]:-?}"
-    _display_model="${_display_model% (*context)}"
-    _display_model="${_display_model% (*Context)}"
+    local _display_model
+    _display_model="$(_strip_model_name "${_sf_model[$_i]:-?}")"
 
     # Line 1: status + model + project path + metadata
     line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}"
@@ -1133,7 +1138,9 @@ _cmd_default() {
       else
         (( ++_ov_inactive_count ))
         if (( _PSC_age >= 86400 )); then
-          [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null && (( ++_ov_stale ))
+          if [[ -z "$_PSC_ppid" ]] || ! kill -0 "$_PSC_ppid" 2>/dev/null; then
+            (( ++_ov_stale ))
+          fi
         fi
       fi
     done
