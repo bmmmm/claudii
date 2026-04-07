@@ -10,31 +10,8 @@ _cmd_cost_from_history() {
   local today_str="${@: -1}"   # YYYY-MM-DD for "today" cutoff
   local -a _history_files=("${@:1:$#-1}")
 
-  # Detect macOS vs GNU date
-  local _date_cmd="gnu"
-  date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1 && _date_cmd="macos"
-
-  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
-  local _tz_offset
-  _tz_offset=$(date +%z | awk '{
-    s = (substr($0,1,1) == "-") ? -1 : 1
-    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
-  }')
-
-  # Read configurable week_start (default: monday)
-  local _ws_name _ws_dow
-  _ws_name=$(_cfgget cost.week_start)
-  _ws_name="${_ws_name:-monday}"
-  case "$_ws_name" in
-    monday)    _ws_dow=1 ;;
-    tuesday)   _ws_dow=2 ;;
-    wednesday) _ws_dow=3 ;;
-    thursday)  _ws_dow=4 ;;
-    friday)    _ws_dow=5 ;;
-    saturday)  _ws_dow=6 ;;
-    sunday)    _ws_dow=7 ;;
-    *)         _ws_dow=1 ;;
-  esac
+  _date_init
+  local _date_cmd="$_DATE_CMD" _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
 
   # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
   local _epoch_awk
@@ -433,28 +410,12 @@ _cmd_cost() {
   # Prefer history (Flight Recorder) for correct daily-delta cost attribution.
   # Monthly rotation: read history-*.tsv + legacy history.tsv
   # Falls back to session-cache files when no history exists yet.
-  _cost_hist_files=()
-  [[ -f "$cache_dir/history.tsv" && -s "$cache_dir/history.tsv" ]] && _cost_hist_files+=("$cache_dir/history.tsv")
-  for _chf in "$cache_dir"/history-*.tsv; do
-    [[ -f "$_chf" && -s "$_chf" ]] && _cost_hist_files+=("$_chf")
-  done
-  if [[ ${#_cost_hist_files[@]} -gt 0 ]]; then
+  _collect_history_files "$cache_dir"
+  if [[ ${#_HIST_FILES[@]} -gt 0 ]]; then
     today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
-    _hist_spinner_pid="" _hist_label_file=""
-    if ! _plain; then
-      _hist_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
-      chmod 0600 "$_hist_label_file"
-      export CLAUDII_SPINNER_LABEL_FILE="$_hist_label_file"
-      printf '%s' "${cache_dir/#$HOME/\~}/history-*.tsv" > "$_hist_label_file"
-      _claudii_spinner &
-      _hist_spinner_pid=$!
-    fi
-    _cmd_cost_from_history "${_cost_hist_files[@]}" "$today_str"
-    if [[ -n "$_hist_spinner_pid" ]]; then
-      kill "$_hist_spinner_pid" 2>/dev/null; wait "$_hist_spinner_pid" 2>/dev/null || true
-      printf '\r\033[K' >&2
-      rm -f "$_hist_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
-    fi
+    _spinner_start "${cache_dir/#$HOME/\~}/history-*.tsv"
+    _cmd_cost_from_history "${_HIST_FILES[@]}" "$today_str"
+    _spinner_stop
     return
   fi
 
@@ -493,18 +454,11 @@ _cmd_cost() {
   }
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
-  _cost_spinner_pid="" _claudii_spinner_label_file=""
-  if ! _plain; then
-    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
-    chmod 0600 "$_claudii_spinner_label_file"
-    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
-    _claudii_spinner &
-    _cost_spinner_pid=$!
-  fi
+  _spinner_start
 
   for f in "${session_files[@]}"; do
     [[ -f "$f" ]] || continue
-    [[ -n "$_claudii_spinner_label_file" ]] && printf '%s' "${f/#$HOME/\~}" > "$_claudii_spinner_label_file"
+    [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${f/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
 
     # Read key=value pairs
     cost="" model=""
@@ -556,13 +510,7 @@ _cmd_cost() {
   done
 
   # Kill spinner and clear spinner line
-  if [[ -n "$_cost_spinner_pid" ]]; then
-    kill "$_cost_spinner_pid" 2>/dev/null; wait "$_cost_spinner_pid" 2>/dev/null || true
-    printf '\r\033[K' >&2
-  fi
-  if [[ -n "$_claudii_spinner_label_file" ]]; then
-    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
-  fi
+  _spinner_stop
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON inline — avoids one jq subprocess per model
@@ -795,14 +743,7 @@ _cmd_sessions() {
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
-  _se_spinner_pid="" _claudii_spinner_label_file=""
-  if ! _plain; then
-    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
-    chmod 0600 "$_claudii_spinner_label_file"
-    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
-    _claudii_spinner &
-    _se_spinner_pid=$!
-  fi
+  _spinner_start
 
   # Build session→JSONL map once (O(1) lookup per session instead of O(dirs) scan)
   _session_build_map
@@ -810,7 +751,7 @@ _cmd_sessions() {
   shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
     [[ -f "$sf" ]] || continue
-    [[ -n "$_claudii_spinner_label_file" ]] && printf '%s' "${sf/#$HOME/\~}" > "$_claudii_spinner_label_file"
+    [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
     _parse_session_cache "$sf"
 
     # Track freshest rate limits
@@ -862,13 +803,7 @@ _cmd_sessions() {
   shopt -u nullglob
 
   # Kill spinner and clear spinner line
-  if [[ -n "$_se_spinner_pid" ]]; then
-    kill "$_se_spinner_pid" 2>/dev/null; wait "$_se_spinner_pid" 2>/dev/null || true
-    printf '\r\033[K' >&2
-  fi
-  if [[ -n "$_claudii_spinner_label_file" ]]; then
-    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
-  fi
+  _spinner_stop
 
   # Fallback 2 — batch lsof for active sessions still missing a project path.
   # Collects all ppids that need resolution, issues a single lsof call, then

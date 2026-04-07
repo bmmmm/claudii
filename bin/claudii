@@ -38,6 +38,85 @@ command -v jq >/dev/null 2>&1 || {
 
 # ── Shared helpers (used by lib/cmd/*.sh) ──────────────────────────────────
 
+# Collect history TSV files from a cache directory into global array _HIST_FILES.
+# Usage: _collect_history_files <dir>
+# Populates _HIST_FILES with non-empty history.tsv and history-*.tsv files found.
+_HIST_FILES=()
+_collect_history_files() {
+  local _dir="$1"
+  _HIST_FILES=()
+  [[ -f "$_dir/history.tsv" && -s "$_dir/history.tsv" ]] && _HIST_FILES+=("$_dir/history.tsv")
+  local _f
+  for _f in "$_dir"/history-*.tsv; do
+    [[ -f "$_f" && -s "$_f" ]] && _HIST_FILES+=("$_f")
+  done
+  return 0
+}
+
+# Date/timezone initialization — sets shared variables used by cost and trends commands.
+# Sets: _DATE_CMD ("macos" or "gnu"), _TZ_OFFSET (seconds), _WS_DOW (1=Mon..7=Sun)
+_DATE_CMD="" _TZ_OFFSET="" _WS_DOW=""
+_date_init() {
+  # Detect macOS vs GNU date
+  if date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1; then
+    _DATE_CMD="macos"
+  else
+    _DATE_CMD="gnu"
+  fi
+
+  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
+  _TZ_OFFSET=$(date +%z | awk '{
+    s = (substr($0,1,1) == "-") ? -1 : 1
+    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
+  }')
+
+  # Read configurable week_start (default: monday)
+  local _ws_name
+  _ws_name=$(_cfgget cost.week_start)
+  _ws_name="${_ws_name:-monday}"
+  case "$_ws_name" in
+    monday)    _WS_DOW=1 ;;
+    tuesday)   _WS_DOW=2 ;;
+    wednesday) _WS_DOW=3 ;;
+    thursday)  _WS_DOW=4 ;;
+    friday)    _WS_DOW=5 ;;
+    saturday)  _WS_DOW=6 ;;
+    sunday)    _WS_DOW=7 ;;
+    *)         _WS_DOW=1 ;;
+  esac
+}
+
+# Spinner start/stop — wraps the _claudii_spinner background job with label file management.
+# _spinner_start [label]  — starts spinner, writes optional initial label, sets _SPINNER_PID
+# _spinner_stop           — kills spinner, clears line, removes label file
+# Callers can update the displayed label at any time by writing to $CLAUDII_SPINNER_LABEL_FILE.
+_SPINNER_PID=""
+_spinner_start() {
+  local _label="${1:-}"
+  _SPINNER_PID=""
+  _plain && return
+  local _lf
+  _lf=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX") || return
+  chmod 0600 "$_lf"
+  export CLAUDII_SPINNER_LABEL_FILE="$_lf"
+  [[ -n "$_label" ]] && printf '%s' "$_label" > "$_lf"
+  _claudii_spinner &
+  _SPINNER_PID=$!
+}
+
+_spinner_stop() {
+  if [[ -n "${_SPINNER_PID:-}" ]]; then
+    kill "$_SPINNER_PID" 2>/dev/null
+    wait "$_SPINNER_PID" 2>/dev/null || true
+    printf '\r\033[K' >&2
+    _SPINNER_PID=""
+  fi
+  if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]]; then
+    rm -f "$CLAUDII_SPINNER_LABEL_FILE"
+    unset CLAUDII_SPINNER_LABEL_FILE
+  fi
+}
+
 # Session JSONL map — build once, O(1) lookup per session.
 # Uses parallel arrays (bash 3.2 compatible — no declare -A).
 _SID_MAP_KEYS=()
@@ -165,12 +244,6 @@ _session_fingerprint() {
   local sid="$1" result
   result=$(_session_resolve "$sid")
   echo "$result" | sed -n '2p'
-}
-
-_session_last_user_message() {
-  local sid="$1" result
-  result=$(_session_resolve "$sid")
-  echo "$result" | sed -n '3p'
 }
 
 # Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
