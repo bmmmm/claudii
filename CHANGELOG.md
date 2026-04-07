@@ -9,6 +9,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ---
 
+## [v0.13.0] — 2026-04-07
+
+### Added
+- **`claudii gc`:** Manual session garbage collection — removes ended sessions that exceed the configured keep count
+- **`claudii resume <id>`:** Print the `claude -r <uuid>` command for a session by short ID or index
+
+### Fixed
+- **ClaudeStatus:** Resolved incident detection now correctly matches HTML-encoded RSS entities (`&lt;strong&gt;`) — previously matched nothing, causing all recent incidents (including resolved ones) to trigger false degraded state
+- **ClaudeStatus:** `claudii status` no longer aborts silently under `set -e` when models are degraded — added `|| true` to status check call
+- **Config:** `claudii config set` now auto-creates nested parent paths using `setpath` — previously failed silently on missing intermediate keys
+- **Config:** Search model/effort falls back through `search.*` → `aliases.clq.*` → hardcoded default
+- **Sessions:** `claudii pin`/`unpin` use atomic `tmp+mv` write — eliminates race with concurrent sessionline rewrites
+- **`claudii status`:** Removed duplicate incident display block
+
+### Changed
+- **Internal:** Extracted `_collect_history_files`, `_date_init`, `_spinner_start/stop` helpers from `bin/claudii` — reduces duplication across cost/trends/sessions commands
+- **`scripts/cleanup-worktree.sh`:** Added `--all` flag and zombie dir support — handles physical dirs not registered in git worktree list
+
+---
+
 ## [v0.12.0] — 2026-04-07
 
 ### Added
