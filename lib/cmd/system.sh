@@ -106,7 +106,7 @@ _cmd_status() {
     "")
       cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
       rm -f "$cache_file"
-      "$CLAUDII_HOME/bin/claudii-status" --quiet
+      "$CLAUDII_HOME/bin/claudii-status" --quiet || true
       if [[ "$_FORMAT" == "json" ]]; then
         if [[ -f "$cache_file" ]]; then
           jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
@@ -263,7 +263,7 @@ _cmd_status() {
       fi
       ;;
     *)
-      echo "Unbekannte status-Option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval" >&2; exit 1
+      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval" >&2; exit 1
       ;;
   esac
 }

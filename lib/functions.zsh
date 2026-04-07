@@ -221,7 +221,7 @@ function claudii {
       printf "${CLAUDII_CLR_CYAN}Reloading claudii...${CLAUDII_CLR_RESET}\n"
       source "$HOME/.zshrc"
       cd "$_dir"
-      printf "${CLAUDII_CLR_GREEN}✓ claudii neu geladen  (%s)${CLAUDII_CLR_RESET}\n" "$(basename "$_dir")"
+      printf "${CLAUDII_CLR_GREEN}✓ claudii reloaded  (%s)${CLAUDII_CLR_RESET}\n" "$(basename "$_dir")"
       ;;
     update)
       local _dir="$PWD"

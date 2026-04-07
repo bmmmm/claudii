@@ -68,7 +68,7 @@ _cmd_config() {
       fi
       cp "$CONFIG" "${CONFIG}.bak"
       cp "$file" "$CONFIG"
-      echo "Config importiert aus $file  (Backup: ${CONFIG}.bak)"
+      echo "Config imported from $file  (Backup: ${CONFIG}.bak)"
       ;;
     theme)
       # claudii config theme         → list available themes
