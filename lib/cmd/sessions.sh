@@ -1071,6 +1071,67 @@ _cmd_sessions() {
   printf '\n'
 }
 
+_cmd_gc() {
+  local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local _removed=0 _kept=0 _now
+  _now=${EPOCHSECONDS:-$(date +%s)}
+
+  shopt -s nullglob
+  local _gc_files=("$_cache_base"/session-*)
+  shopt -u nullglob
+
+  for _sf in "${_gc_files[@]}"; do
+    [[ -f "$_sf" ]] || continue
+
+    local _sc _ppid _pinned _sf_mt _age
+    _sc=$(<"$_sf") 2>/dev/null || continue
+
+    # Extract ppid
+    _ppid=""
+    [[ $'\n'"$_sc" == *$'\n'ppid=* ]] && _ppid="${${_sc#*$'\n'ppid=}%%$'\n'*}"
+
+    # Extract pinned
+    _pinned=""
+    [[ $'\n'"$_sc" == *$'\n'pinned=* ]] && _pinned="${${_sc#*$'\n'pinned=}%%$'\n'*}"
+
+    # Never GC pinned sessions
+    if [[ "$_pinned" == "1" ]]; then
+      (( ++_kept ))
+      continue
+    fi
+
+    # Get file mtime
+    _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
+    _age=$(( _now - _sf_mt ))
+
+    if [[ "$_ppid" =~ ^[0-9]+$ && "$_ppid" != "0" ]]; then
+      # PID-tracked session: remove if PID dead AND age > 300s
+      if (( _age > 300 )) && ! kill -0 "$_ppid" 2>/dev/null; then
+        rm -f "$_sf" && (( ++_removed ))
+      else
+        (( ++_kept ))
+      fi
+    else
+      # Age-only session: remove if older than 300s
+      if (( _age > 300 )); then
+        rm -f "$_sf" && (( ++_removed ))
+      else
+        (( ++_kept ))
+      fi
+    fi
+  done
+
+  local _ks="" _rs=""
+  (( _kept    != 1 )) && _ks="s"
+  (( _removed != 1 )) && _rs="s"
+
+  if (( _removed == 0 )); then
+    printf "Nothing to clean up  (%d session file%s retained)\n" "$_kept" "$_ks"
+  else
+    printf "Removed %d stale session file%s  (%d retained)\n" "$_removed" "$_rs" "$_kept"
+  fi
+}
+
 _cmd_default() {
   # Smart account overview: Sessions · Account · Agents · Services
   _cfg_init
