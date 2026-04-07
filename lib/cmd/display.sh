@@ -6,13 +6,9 @@ _cmd_trends() {
   # Flight Recorder — weekly/daily aggregates from persistent history
   # Monthly rotation: read history-*.tsv + legacy history.tsv
   local _hist_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local _hist_files=()
-  [[ -f "$_hist_dir/history.tsv" && -s "$_hist_dir/history.tsv" ]] && _hist_files+=("$_hist_dir/history.tsv")
-  for _hf in "$_hist_dir"/history-*.tsv; do
-    [[ -f "$_hf" && -s "$_hf" ]] && _hist_files+=("$_hf")
-  done
+  _collect_history_files "$_hist_dir"
 
-  if [[ ${#_hist_files[@]} -eq 0 ]]; then
+  if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
     echo "No history data yet. Start a Claude session with CC-Statusline enabled."
     exit 0
   fi
@@ -21,34 +17,8 @@ _cmd_trends() {
   # all aggregation and formatting (no associative arrays needed in bash).
   now=$(date +%s)
 
-  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
-  local _tz_offset
-  _tz_offset=$(date +%z | awk '{
-    s = (substr($0,1,1) == "-") ? -1 : 1
-    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
-  }')
-
-  # Read configurable week_start (default: monday)
-  local _ws_name _ws_dow
-  _ws_name=$(_cfgget cost.week_start)
-  _ws_name="${_ws_name:-monday}"
-  case "$_ws_name" in
-    monday)    _ws_dow=1 ;;
-    tuesday)   _ws_dow=2 ;;
-    wednesday) _ws_dow=3 ;;
-    thursday)  _ws_dow=4 ;;
-    friday)    _ws_dow=5 ;;
-    saturday)  _ws_dow=6 ;;
-    sunday)    _ws_dow=7 ;;
-    *)         _ws_dow=1 ;;
-  esac
-
-  # Detect macOS vs GNU date
-  if date -j -f '%s' "$now" '+%u' >/dev/null 2>&1; then
-    _date_cmd="macos"
-  else
-    _date_cmd="gnu"
-  fi
+  _date_init
+  local _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW" _date_cmd="$_DATE_CMD"
 
   # Precompute date boundaries (local time + configurable week_start)
   local _days_back
@@ -100,15 +70,7 @@ _cmd_trends() {
   done
 
   # Show spinner for pretty output (not JSON/TSV — those are piped)
-  _trends_spinner_pid="" _claudii_spinner_label_file=""
-  if ! _plain; then
-    _claudii_spinner_label_file=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX")
-    chmod 0600 "$_claudii_spinner_label_file"
-    export CLAUDII_SPINNER_LABEL_FILE="$_claudii_spinner_label_file"
-    printf '%s' "${_hist_dir/#$HOME/\~}/history-*.tsv" > "$_claudii_spinner_label_file"
-    _claudii_spinner &
-    _trends_spinner_pid=$!
-  fi
+  _spinner_start "${_hist_dir/#$HOME/\~}/history-*.tsv"
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
   # Shared epoch_to_date from lib/epoch_to_date.awk
@@ -129,16 +91,10 @@ ${_epoch_awk}
       else if (model ~ /[Hh]aiku/)  model = "Haiku"
       print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
     }
-  ' "${_hist_files[@]}")
+  ' "${_HIST_FILES[@]}")
 
   # Kill spinner before output
-  if [[ -n "$_trends_spinner_pid" ]]; then
-    kill "$_trends_spinner_pid" 2>/dev/null; wait "$_trends_spinner_pid" 2>/dev/null || true
-    printf '\r\033[K' >&2
-  fi
-  if [[ -n "$_claudii_spinner_label_file" ]]; then
-    rm -f "$_claudii_spinner_label_file"; unset CLAUDII_SPINNER_LABEL_FILE
-  fi
+  _spinner_stop
 
   # Pre-compute daily API duration totals from augmented data (field 7 = api_dur_ms)
   # Use | as record separator — BSD awk (macOS) rejects literal newlines in -v values
