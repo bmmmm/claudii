@@ -10,9 +10,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Fixed
 - **ClaudeStatus:** `unresolved.json` replaces `components.json` as primary source — authoritative active-incident list, no HTML parsing required. RSS remains fallback when API unreachable.
 - **ClaudeStatus:** PID recycling guard in `_claudii_status_spawn` — `kill -0` alone can match unrelated processes that reused the PID; now also checks `status.pid` mtime (> 30s → recycled) to ensure only our actual job is counted as running
+- **Sessionline:** `pinned=` flag now preserved on every cache update — was silently dropped when session cache was rewritten atomically
+- **`_parse_session_cache`:** Removed dead fields `model_id` and `burn_eta` (no callers); `mv` → `mv -f` for consistent atomic overwrites
+- **`cleanup-worktree.sh --all`:** Active worktrees with uncommitted changes or unmerged commits are now skipped instead of deleted — prevents accidental removal of in-progress agent work across parallel sessions. `--force` overrides.
+- **Formula:** Local `Formula/claudii.rb` was stuck on v0.1.0; `scripts/release.sh` now syncs it on every release alongside the Homebrew tap.
 
 ### Changed
-- **`scripts/cleanup-worktree.sh`:** `--all` flag removes all zombie `agent-*` dirs in one call; zombie dirs (no `.git` file) now cleaned via `rm -rf` fallback instead of `git worktree remove`
+- **`scripts/cleanup-worktree.sh`:** `--all` flag removes all zombie `agent-*` dirs in one call; zombie dirs (no `.git` file) cleaned via `rm -rf` fallback (not `git worktree remove` — they aren't registered)
 - **ClaudeStatus adaptive TTL:** Cache refresh interval now adjusts based on last known status — all-ok → `ttl × 2` (600s default), incident → `max(60, ttl / 5)` (60s default); halves external calls in normal conditions, doubles check frequency during incidents. Base TTL default corrected from stale 900s to 300s.
 
 ---
