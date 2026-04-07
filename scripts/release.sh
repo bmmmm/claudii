@@ -200,81 +200,16 @@ else
   _rel_ok "Tag $_rel_tag pushed"
 fi
 
-# ── Poll GitHub Actions ──
-_rel_box_sep "GitHub Actions"
-
-if [[ "$_dry_run" -eq 1 ]]; then
-  _rel_ok "GitHub Actions — skipped (dry-run)"
-else
-  if [[ -z "$_gh_owner" ]]; then
-    _rel_fail "No GitHub remote found: $_remote_url"
-    exit 1
-  fi
-
-  _rel_spin "Waiting for GitHub Actions..."
-
-  _poll_timeout=300
-  _poll_interval=10
-  _poll_elapsed=0
-  _run_id=""
-  _run_conclusion=""
-  _spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  _spin_idx=0
-
-  while (( _poll_elapsed < _poll_timeout )); do
-    _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
-    _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
-      --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_head}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion, name: .name}" \
-      2>/dev/null || echo "")
-
-    if [[ -n "$_runs" ]]; then
-      _run_id=$(echo "$_runs" | jq -r '.id' | head -1)
-      _run_status=$(echo "$_runs" | jq -r '.status' | head -1)
-      _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1)
-
-      if [[ "$_run_status" == "completed" ]]; then
-        break
-      fi
-    fi
-
-    _spin_char="${_spinner_chars:$(( _spin_idx % ${#_spinner_chars} )):1}"
-    printf '\r│ %s Waiting for GitHub Actions... (%ds)  ' "$_spin_char" "$_poll_elapsed"
-    _spin_idx=$(( _spin_idx + 1 ))
-
-    sleep "$_poll_interval"
-    _poll_elapsed=$(( _poll_elapsed + _poll_interval ))
-  done
-  printf '\r'
-
-  if [[ -z "$_run_id" ]]; then
-    _rel_fail "No GitHub Actions run found for $_rel_tag (timeout ${_poll_timeout}s)"
-    echo "  Check: https://github.com/${_gh_owner}/${_gh_repo}/actions" >&2
-    exit 1
-  fi
-
-  _run_url="https://github.com/${_gh_owner}/${_gh_repo}/actions/runs/${_run_id}"
-
-  if [[ "$_run_conclusion" == "success" ]]; then
-    _rel_ok "Release workflow green (Run #${_run_id})"
-  else
-    _rel_fail "Workflow failed: conclusion=$_run_conclusion"
-    echo "  $_run_url" >&2
-    git -C "$CLAUDII_HOME" push origin ":refs/tags/$_rel_tag" 2>/dev/null || true
-    git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
-    echo "  Tag $_rel_tag removed." >&2
-    exit 1
-  fi
-
-  _release_url="https://github.com/${_gh_owner}/${_gh_repo}/releases/tag/${_rel_tag}"
-  _rel_ok "Release-Workflow hat GitHub Release erstellt"
-fi
-
 # ── Homebrew Tap ──
+# Runs immediately after tag push — tarball is available as soon as the tag exists.
+# Does NOT wait for GitHub Actions (the Release workflow creates the GitHub Release,
+# but the tarball URL is independent of it).
 _rel_box_sep "Homebrew Tap"
 _tap_owner="bmmmm"
 _tap_repo="homebrew-tap"
 _tap_formula="Formula/claudii.rb"
 _tarball_url="https://github.com/${_gh_owner:-bmmmm}/${_gh_repo:-claudii}/archive/refs/tags/${_rel_tag}.tar.gz"
+_sha256=""
 if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "Tap-Update — skipped (dry-run)"
 else
@@ -309,21 +244,79 @@ else
     git -C "${CLAUDII_HOME}" commit -m "chore(formula): sync local Formula to ${_rel_tag}" --no-verify 2>/dev/null || true
     _rel_ok "Local Formula/claudii.rb synced"
   fi
+fi
 
-  # Append SHA256 + linked commit list to GitHub release notes
-  _prev_tag=$(git -C "$CLAUDII_HOME" tag --sort=-version:refname \
-    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${_rel_tag}$" | head -1)
-  _release_body=$(gh release view "${_rel_tag}" \
-    --repo "${_gh_owner}/${_gh_repo}" --json body -q .body 2>/dev/null || echo "")
-  _notes_extra=$(printf '\n\n---\n**Homebrew SHA256:** `%s`' "$_sha256")
-  if [[ -n "$_prev_tag" ]]; then
-    _compare_url="https://github.com/${_gh_owner}/${_gh_repo}/compare/${_prev_tag}...${_rel_tag}"
-    _notes_extra=$(printf '%s\n**Full Changelog:** [%s...%s](%s)' \
-      "$_notes_extra" "$_prev_tag" "$_rel_tag" "$_compare_url")
+# ── Poll GitHub Actions (non-blocking) ──
+# Only purpose: (1) catch explicit workflow failures + rollback tag,
+# (2) append SHA256 to GitHub Release notes once the Release exists.
+# Timeout is non-fatal — tap + Formula are already updated above.
+_rel_box_sep "GitHub Actions"
+_release_url="https://github.com/${_gh_owner:-bmmmm}/${_gh_repo:-claudii}/releases/tag/${_rel_tag}"
+
+if [[ "$_dry_run" -eq 1 ]]; then
+  _rel_ok "GitHub Actions — skipped (dry-run)"
+elif [[ -z "$_gh_owner" ]]; then
+  _rel_ok "GitHub Actions — skipped (no remote)"
+else
+  _poll_timeout=300
+  _poll_interval=10
+  _poll_elapsed=0
+  _run_id=""
+  _run_conclusion=""
+  _spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  _spin_idx=0
+
+  while (( _poll_elapsed < _poll_timeout )); do
+    _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
+    _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
+      --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_head}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion}" \
+      2>/dev/null || echo "")
+
+    if [[ -n "$_runs" ]]; then
+      _run_id=$(echo "$_runs" | jq -r '.id' | head -1)
+      _run_status=$(echo "$_runs" | jq -r '.status' | head -1)
+      _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1)
+      [[ "$_run_status" == "completed" ]] && break
+    fi
+
+    _spin_char="${_spinner_chars:$(( _spin_idx % ${#_spinner_chars} )):1}"
+    printf '\r│ %s Waiting for release workflow... (%ds)  ' "$_spin_char" "$_poll_elapsed"
+    _spin_idx=$(( _spin_idx + 1 ))
+    sleep "$_poll_interval"
+    _poll_elapsed=$(( _poll_elapsed + _poll_interval ))
+  done
+  printf '\r'
+
+  if [[ -z "$_run_id" ]]; then
+    # Timeout — not fatal, tap is already updated
+    _rel_ok "Actions timeout — tap already updated. Check: https://github.com/${_gh_owner}/${_gh_repo}/actions"
+  elif [[ "$_run_conclusion" == "failure" || "$_run_conclusion" == "cancelled" ]]; then
+    # Explicit failure — roll back tag (tap update already happened, user must fix manually)
+    _rel_fail "Workflow ${_run_conclusion}: https://github.com/${_gh_owner}/${_gh_repo}/actions/runs/${_run_id}"
+    echo "  ⚠ Tap was already updated — revert manually if needed." >&2
+    git -C "$CLAUDII_HOME" push origin ":refs/tags/$_rel_tag" 2>/dev/null || true
+    git -C "$CLAUDII_HOME" tag -d "$_rel_tag" 2>/dev/null || true
+    echo "  Tag $_rel_tag removed." >&2
+    exit 1
+  else
+    _rel_ok "Release workflow green (Run #${_run_id})"
+    # Append SHA256 + changelog link to GitHub Release notes
+    if [[ -n "$_sha256" ]]; then
+      _prev_tag=$(git -C "$CLAUDII_HOME" tag --sort=-version:refname \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${_rel_tag}$" | head -1)
+      _release_body=$(gh release view "${_rel_tag}" \
+        --repo "${_gh_owner}/${_gh_repo}" --json body -q .body 2>/dev/null || echo "")
+      _notes_extra=$(printf '\n\n---\n**Homebrew SHA256:** `%s`' "$_sha256")
+      if [[ -n "$_prev_tag" ]]; then
+        _compare_url="https://github.com/${_gh_owner}/${_gh_repo}/compare/${_prev_tag}...${_rel_tag}"
+        _notes_extra=$(printf '%s\n**Full Changelog:** [%s...%s](%s)' \
+          "$_notes_extra" "$_prev_tag" "$_rel_tag" "$_compare_url")
+      fi
+      gh release edit "${_rel_tag}" --repo "${_gh_owner}/${_gh_repo}" \
+        --notes "${_release_body}${_notes_extra}" >/dev/null
+      _rel_ok "Release notes: SHA256 + changelog link appended"
+    fi
   fi
-  gh release edit "${_rel_tag}" --repo "${_gh_owner}/${_gh_repo}" \
-    --notes "${_release_body}${_notes_extra}" >/dev/null
-  _rel_ok "Release notes: SHA256 + changelog link appended"
 fi
 
 # ── Done ──
