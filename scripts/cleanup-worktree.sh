@@ -1,30 +1,57 @@
 #!/usr/bin/env bash
-# cleanup-worktree.sh <worktree-name>
+# cleanup-worktree.sh <worktree-name|--all>
 # Removes a claudii agent worktree + its branch safely.
-# Usage: bash scripts/cleanup-worktree.sh agent-abc12345
+# Handles both registered worktrees and zombie dirs (no .git file).
+#
+# Usage:
+#   bash scripts/cleanup-worktree.sh agent-abc12345   # single
+#   bash scripts/cleanup-worktree.sh --all             # all agent-* dirs
 
 set -euo pipefail
 
-name="${1:?Usage: bash scripts/cleanup-worktree.sh <worktree-name>}"
-
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-WORKTREE_PATH="$REPO/.claude/worktrees/$name"
-BRANCH="worktree-$name"
 
-# Remove worktree (--force handles dirty state)
-if git -C "$REPO" worktree list --porcelain | grep -q "^worktree $WORKTREE_PATH$"; then
-  git -C "$REPO" worktree remove "$WORKTREE_PATH" --force
-  echo "Removed worktree: $WORKTREE_PATH"
-else
-  echo "Worktree not found (already removed?): $WORKTREE_PATH"
-fi
+_cleanup_one() {
+  local name="$1"
+  local worktree_path="$REPO/.claude/worktrees/$name"
+  local branch="worktree-$name"
 
-# Delete branch if it exists
-if git -C "$REPO" branch --list "$BRANCH" | grep -q "$BRANCH"; then
-  git -C "$REPO" branch -D "$BRANCH"
-  echo "Deleted branch: $BRANCH"
+  if [[ ! -d "$worktree_path" ]]; then
+    echo "Not found, skipping: $name"
+    return
+  fi
+
+  # Registered worktree → use git worktree remove
+  if git -C "$REPO" worktree list --porcelain | grep -q "^worktree $worktree_path$"; then
+    git -C "$REPO" worktree remove "$worktree_path" --force
+    echo "Removed worktree: $name"
+  else
+    # Zombie: physical dir exists but not registered — remove directly
+    rm -rf "$worktree_path"
+    echo "Removed zombie dir: $name"
+  fi
+
+  # Delete branch if it exists
+  if git -C "$REPO" branch --list "$branch" | grep -q "$branch"; then
+    git -C "$REPO" branch -D "$branch"
+    echo "Deleted branch: $branch"
+  fi
+}
+
+arg="${1:?Usage: bash scripts/cleanup-worktree.sh <worktree-name|--all>}"
+
+if [[ "$arg" == "--all" ]]; then
+  shopt -s nullglob
+  dirs=("$REPO/.claude/worktrees/agent-"*/)
+  if [[ ${#dirs[@]} -eq 0 ]]; then
+    echo "No agent worktrees found."
+  else
+    for d in "${dirs[@]}"; do
+      _cleanup_one "$(basename "$d")"
+    done
+  fi
 else
-  echo "Branch not found (already deleted?): $BRANCH"
+  _cleanup_one "$arg"
 fi
 
 git -C "$REPO" worktree prune
