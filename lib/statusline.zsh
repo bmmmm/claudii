@@ -51,7 +51,21 @@ function _claudii_status_spawn {
     { _check_pid=$(<"$_pid_file"); } 2>/dev/null
   fi
   if [[ -n "$_check_pid" ]] && kill -0 "$_check_pid" 2>/dev/null; then
-    return  # still running, skip
+    # PID is alive — verify it's actually our job via PID file mtime.
+    # Status job completes in < 15s; if the file is older than 30s the PID was recycled.
+    local _pid_age=0
+    if (( _CLAUDII_HAVE_ZSTAT )); then
+      local -A _pst
+      zstat -H _pst "$_pid_file" 2>/dev/null \
+        && _pid_age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_pst[mtime]:-0} ))
+    else
+      _pid_age=$(( $(date +%s) - $(stat -c%Y "$_pid_file" 2>/dev/null || stat -f%m "$_pid_file" 2>/dev/null || echo 0) ))
+    fi
+    if (( _pid_age < 30 )); then
+      _claudii_log debug "status_spawn: job running (pid=$_check_pid age=${_pid_age}s)"
+      return  # genuinely our running job
+    fi
+    _claudii_log debug "status_spawn: PID $_check_pid alive but file ${_pid_age}s old — recycled, respawning"
   fi
   # ( cmd & ) — subshell exits immediately, grandchild is orphaned to init.
   # PID written by claudii-status itself (see --pid-file). No $! available with this pattern.
@@ -68,7 +82,7 @@ function _claudii_statusline_render {
   [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
 
   local status_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-  local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-900}}"
+  local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-300}}"
 
   if [[ ! -f "$status_cache" ]]; then
     _claudii_status_spawn
@@ -85,19 +99,29 @@ function _claudii_statusline_render {
     age=$(( $(date +%s) - $(stat -c%Y "$status_cache" 2>/dev/null || stat -f%m "$status_cache" 2>/dev/null || echo 0) ))
   fi
 
-  if (( age > ttl )); then
-    _claudii_log debug "statusline: cache stale (${age}s > ${ttl}s), refreshing in background"
+  # Read cache BEFORE TTL decision — needed to determine effective TTL
+  local cache_content=""
+  { cache_content=$(<"$status_cache"); } 2>/dev/null
+  [[ -z "$cache_content" ]] && { RPROMPT="%F{8}[…]%f"; return; }
+
+  # Adaptive TTL based on last known status
+  local effective_ttl=$ttl
+  if [[ $'\n'"$cache_content" != *$'\n'"_api=unreachable"* ]]; then
+    if [[ $'\n'"$cache_content" == *$'\n'*"=down"* || $'\n'"$cache_content" == *$'\n'*"=degraded"* ]]; then
+      effective_ttl=$(( ttl / 5 ))
+      (( effective_ttl < 60 )) && effective_ttl=60
+    else
+      effective_ttl=$(( ttl * 2 ))
+    fi
+  fi
+
+  if (( age > effective_ttl )); then
+    _claudii_log debug "statusline: cache stale (${age}s > effective TTL ${effective_ttl}s, base ${ttl}s), refreshing"
     _claudii_status_spawn
   fi
 
   local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
   local models=(${(s:,:)models_str})
-
-  # Read cache file once — $(<file) is a zsh builtin, no subprocess
-  # Guard against TOCTOU: file may be deleted between age check and read
-  local cache_content=""
-  { cache_content=$(<"$status_cache"); } 2>/dev/null
-  [[ -z "$cache_content" ]] && { RPROMPT="%F{8}[…]%f"; return; }
 
   local segments=""
   for model in "${models[@]}"; do
@@ -117,7 +141,7 @@ function _claudii_statusline_render {
   elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
   else age_str="$(( age / 3600 ))h"
   fi
-  (( age > ttl )) && refreshing=" %F{8}⟳%f"
+  (( age > effective_ttl )) && refreshing=" %F{8}⟳%f"
   [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
   RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
