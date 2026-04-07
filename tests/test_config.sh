@@ -21,7 +21,7 @@ output=$(bash "$CLAUDII_HOME/bin/claudii" config get fallback.enabled 2>&1)
 assert_eq "config get fallback.enabled" "true" "$output"
 
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get status.cache_ttl 2>&1)
-assert_eq "config get status.cache_ttl" "900" "$output"
+assert_eq "config get status.cache_ttl" "300" "$output"
 
 # config set string
 bash "$CLAUDII_HOME/bin/claudii" config set aliases.cl.model opus >/dev/null 2>&1

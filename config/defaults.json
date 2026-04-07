@@ -13,7 +13,7 @@
   "status": {
     "components_url": "https://status.claude.com/api/v2/components.json",
     "rss_url": "https://status.claude.com/history.rss",
-    "cache_ttl": 900
+    "cache_ttl": 300
   },
   "statusline": {
     "enabled": true,

@@ -133,24 +133,14 @@ case "${claude_api_status:-operational}" in
   *)                    service_level="down" ;;
 esac
 
-# ── All good — no RSS needed ───────────────────────────────────────────────────
+# ── Step 2: RSS → always fetch (components API often lags behind real incidents)
 
-if [[ "$service_level" == "ok" ]]; then
-  _claudii_log info "All operational — skipping RSS fetch"
-  # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
-  _tmp_status="${CACHE_STATUS}.tmp.$$"
-  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
-  _claudii_log info "Status: all ok"
-  exit 0
-fi
-
-# ── Step 2: RSS → which specific models are affected? ─────────────────────────
-
-_claudii_log info "Service ${service_level} — fetching RSS for per-model detail"
+_claudii_log info "Fetching RSS (always — components API may lag)"
 rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
 
 incident_detail=""
 down_models=" "
+rss_has_incident=false
 
 if [[ -n "$rss" ]]; then
   echo "$rss" > "$CACHE_FILE"
@@ -159,6 +149,7 @@ if [[ -n "$rss" ]]; then
     echo "$item" | grep -qi "Resolved" && continue
     title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
     [[ -z "$title" ]] && continue
+    rss_has_incident=true
     [[ -z "$incident_detail" ]] && incident_detail="$title"
     for m in "${MODELS[@]}"; do
       echo "$title" | grep -qi "$m" && down_models="$down_models$m "
@@ -168,6 +159,21 @@ if [[ -n "$rss" ]]; then
     echo "$rss" | sed -n '/<item>/,/<\/item>/p' | \
       awk '/<item>/{buf=""} {buf=buf $0 " "} /<\/item>/{print buf}'
   )
+fi
+
+# RSS override: components API may still show "operational" during early incidents
+if [[ "$service_level" == "ok" ]] && $rss_has_incident; then
+  service_level="degraded"
+  _claudii_log info "RSS override: components API=ok but unresolved incident found → degraded"
+fi
+
+# All clear — both sources agree
+if [[ "$service_level" == "ok" ]]; then
+  _claudii_log info "All operational"
+  _tmp_status="${CACHE_STATUS}.tmp.$$"
+  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  _claudii_log info "Status: all ok"
+  exit 0
 fi
 
 # If RSS names no specific model → assume all models are affected
