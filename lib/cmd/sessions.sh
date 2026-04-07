@@ -683,6 +683,9 @@ _cmd_sessions_inactive() {
 
 # Pin/unpin a session — pinned sessions are protected from GC.
 # Matches by session_id substring (first match wins).
+# NOTE: bin/claudii-sessionline does NOT preserve pinned=1 when rewriting the cache file.
+#       This is a known limitation. Future fix: sessionline should merge existing cache
+#       keys (like pinned=1) before rewriting to maintain pin state across updates.
 _cmd_pin() {
   local needle="${2:-}"
   [[ -z "$needle" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }
@@ -696,7 +699,9 @@ _cmd_pin() {
       if grep -q '^pinned=1$' "$f" 2>/dev/null; then
         echo "Already pinned: $sid"
       else
-        echo "pinned=1" >> "$f"
+        # Atomic pin write: tmp+mv prevents race between pin and sessionline rewrites
+        local _tmp="${f}.pin.$$"
+        { grep -v '^pinned=' "$f" 2>/dev/null; echo "pinned=1"; } > "$_tmp" && mv -f "$_tmp" "$f"
         echo "Pinned: $sid"
       fi
       found=1; break
@@ -716,8 +721,9 @@ _cmd_unpin() {
     sid=$(grep '^session_id=' "$f" 2>/dev/null | cut -d= -f2)
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
       if grep -q '^pinned=1$' "$f" 2>/dev/null; then
-        # Remove pinned line (portable: works on both macOS and GNU sed)
-        local tmp; tmp=$(grep -v '^pinned=1$' "$f") && printf '%s\n' "$tmp" > "$f"
+        # Atomic unpin write: tmp+mv prevents race with sessionline rewrites
+        local _tmp="${f}.unpin.$$"
+        grep -v '^pinned=' "$f" 2>/dev/null > "$_tmp" && mv -f "$_tmp" "$f"
         echo "Unpinned: $sid"
       else
         echo "Not pinned: $sid"
