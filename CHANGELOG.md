@@ -27,6 +27,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Performance:** Removed awk subprocess spawning in precmd hook (cost=0 history fallback) — eliminates latency spikes when history.tsv is large
 - **Performance:** `claudii status` no longer fetches RSS twice — reads cached `status-cache.xml` from previous `claudii-status` run
 - **Performance:** Prevent duplicate `claudii-status` background spawns via PID lock file
+- **ClaudeStatus:** RSS feed now always fetched alongside components API — catches incidents Anthropic hasn't yet reflected in component status (previously only fetched on non-operational signal)
+- **ClaudeStatus:** Default refresh interval reduced from 15min to 5min (`status.cache_ttl`: 900 → 300)
 
 ---
 
