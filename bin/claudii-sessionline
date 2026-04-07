@@ -105,9 +105,11 @@ fi
 # Write per-session cache (key=value) — RPROMPT + aliases read without jq
 # Include ppid so dashboard can check if Claude process is still alive
 # Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
+# Preserve pinned= flag from existing cache file if present
 _ppid="${PPID:-}"
 _tmp_session="${_session_file}.tmp.$$"
-{ printf '%s\n' \
+{ [[ -f "$_session_file" ]] && grep '^pinned=' "$_session_file" 2>/dev/null || true
+  printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
   "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
   "reset_5h=$reset_5h" "reset_7d=$reset_7d" \
