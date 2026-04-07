@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.12.0] — 2026-04-07
+
 ### Added
 - **CC-Statusline:** New `claude-status` segment (default line 4) — shows model health indicators (`Opus ✓  Sonnet ✓  Haiku ✓`) from the ClaudeStatus cache directly inside Claude Code
 - **History rotation:** Flight Recorder now writes monthly files (`history-YYYY-MM.tsv`) — prevents unbounded growth, old `history.tsv` still read for backward compat
