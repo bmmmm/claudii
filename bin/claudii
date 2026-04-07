@@ -254,7 +254,7 @@ _jq_update() {
   local _file="$1"; shift
   local _tmp; _tmp=$(mktemp) || return 1
   if jq "$@" "$_file" > "$_tmp"; then
-    mv "$_tmp" "$_file"
+    mv -f "$_tmp" "$_file"
   else
     rm -f "$_tmp"
     return 1
@@ -342,7 +342,7 @@ _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
-  _PSC_model_id= _PSC_burn_eta= _PSC_rate_5h_start= _PSC_project_path=
+  _PSC_rate_5h_start= _PSC_project_path=
   _PSC_pinned=
   while IFS='=' read -r _k _v; do
     case "$_k" in
@@ -359,8 +359,6 @@ _parse_session_cache() {
       agent)          _PSC_agent="$_v" ;;
       cache_pct)      _PSC_cache_pct="$_v" ;;
       rate_7d_start)  _PSC_rate_7d_start="$_v" ;;
-      model_id)       _PSC_model_id="$_v" ;;
-      burn_eta)       _PSC_burn_eta="$_v" ;;
       rate_5h_start)  _PSC_rate_5h_start="$_v" ;;
       project_path)   _PSC_project_path="$_v" ;;
       pinned)         _PSC_pinned="$_v" ;;
