@@ -213,7 +213,7 @@ _sha256=""
 if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "Tap-Update — skipped (dry-run)"
 else
-  _sha256=$(curl -fsSL "$_tarball_url" | shasum -a 256 | cut -d' ' -f1)
+  _sha256=$(python3 -c "import urllib.request,hashlib; r=urllib.request.urlopen('${_tarball_url}'); print(hashlib.sha256(r.read()).hexdigest())")
   _tap_file_sha=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
     --jq '.sha' 2>/dev/null || echo "")
   if [[ -z "$_tap_file_sha" ]]; then
