@@ -18,6 +18,7 @@ export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 CACHE_STATUS="$CACHE_DIR/status-models"
+CACHE_INCIDENTS="$CACHE_DIR/status-unresolved.json"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
 _cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
@@ -98,6 +99,7 @@ fi
 
 _write_all_ok() {
   printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  echo '{"incidents":[]}' > "$CACHE_INCIDENTS"
   _claudii_log info "Status: all ok"
   exit 0
 }
@@ -146,6 +148,7 @@ _claudii_log info "Fetching $UNRESOLVED_URL"
 unresolved=$(curl -sf --max-time 5 "$UNRESOLVED_URL" 2>/dev/null) || true
 
 if [[ -n "$unresolved" ]]; then
+  echo "$unresolved" > "$CACHE_INCIDENTS"
   incident_count=$(echo "$unresolved" | jq -r '.incidents | length' 2>/dev/null || echo "")
 
   if [[ "$incident_count" == "0" ]]; then

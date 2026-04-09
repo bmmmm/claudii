@@ -105,7 +105,6 @@ _cmd_status() {
       ;;
     "")
       cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-      rm -f "$cache_file"
       "$CLAUDII_HOME/bin/claudii-status" --quiet || true
       if [[ "$_FORMAT" == "json" ]]; then
         if [[ -f "$cache_file" ]]; then
@@ -157,54 +156,33 @@ _cmd_status() {
           printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
         fi
 
-        # ── Current incident from status.claude.com RSS (cached by claudii-status) ──
-        printf '\n'
-        _rss_cache_file="${cache_file%/*}/status-cache.xml"
-        _inc_rss=""
-        [[ -f "$_rss_cache_file" ]] && { _inc_rss=$(<"$_rss_cache_file"); } 2>/dev/null
-        if [[ -n "$_inc_rss" ]]; then
-          # Extract first <item> (most recent incident)
-          _inc_item=$(echo "$_inc_rss" | awk '
-            /<item/    { p=1; buf="" }
-            p          { buf = buf $0 "\n" }
-            /<\/item>/ { if (p) { printf "%s", buf; p=0; exit } }
-          ')
-          if [[ -n "$_inc_item" ]]; then
-            _inc_title=$(echo "$_inc_item" | sed -n 's/.*<title[^>]*>\(.*\)<\/title>.*/\1/p' | head -1 | \
-              sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
-            # Extract description (collapse newlines for multi-line CDATA)
-            _inc_desc=$(printf '%s' "$_inc_item" | tr '\n' '\001' | \
-              sed 's/.*<description[^>]*>\(.*\)<\/description>.*/\1/' | \
-              tr '\001' '\n' | \
-              sed 's/<!\[CDATA\[//g; s/\]\]>//g' | \
-              sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/&apos;/'"'"'/g; s/&quot;/"/g')
-            # Most recent status = LAST <strong> tag in description (RSS is oldest-first)
-            _inc_curstat=$(echo "$_inc_desc" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p' | tail -1)
-            if [[ -n "$_inc_title" ]]; then
-              _inc_curstat_lc=$(echo "$_inc_curstat" | tr '[:upper:]' '[:lower:]')
-              case "$_inc_curstat_lc" in
-                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                  ;;
-                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Monitoring"     ;;
-                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Investigating"  ;;
-                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE}"                  ;;
+        # ── Current incidents from unresolved.json (cached by claudii-status) ──
+        _inc_cache="${cache_file%/*}/status-unresolved.json"
+        if [[ -f "$_inc_cache" ]]; then
+          _inc_count=$(jq -r '.incidents | length' "$_inc_cache" 2>/dev/null || echo "0")
+          if [[ "$_inc_count" == "0" ]]; then
+            printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} No active incidents${CLAUDII_CLR_RESET}\n"
+          else
+            jq -r '.incidents[] | [.name, .status, (.incident_updates // [] | .[0:3][] | [.status, .body, .created_at] | @tsv)] | @tsv' \
+              "$_inc_cache" 2>/dev/null | \
+            while IFS=$'\t' read -r _name _status _upd_status _upd_body _upd_time; do
+              _status_lc=$(echo "$_status" | tr '[:upper:]' '[:lower:]')
+              case "$_status_lc" in
+                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"    ;;
+                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Monitoring"    ;;
+                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} ${_status}"   ;;
+                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"     ;;
               esac
-              printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_inc_title"
               printf '\n'
-              # Parse individual updates: each <p> has date + status + message
-              printf '%s\n' "$_inc_desc" | tr '\n' ' ' | sed 's/<\/p>/\n/g' | \
-              while IFS= read -r _para; do
-                _ptime=$(echo "$_para" | sed 's/.*<small>//' | sed 's/<\/small>.*//' | \
-                  sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-                _pstat=$(echo "$_para" | sed -n 's/.*<strong>\([^<]*\)<\/strong>.*/\1/p')
-                _pmsg=$(echo "$_para" | sed 's/.*<\/strong>[[:space:]]*-[[:space:]]*//' | \
-                  sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/  */ /g')
-                [[ -z "$_pstat" ]] && continue
-                printf "    ${CLAUDII_CLR_DIM}%-18s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
-                  "${_ptime}" "$_pstat" "$_pmsg"
-                printf '\n'
-              done
-              printf '\n'
-            fi
+              printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
+            done
+            jq -r '.incidents[] | .incident_updates[0:3][] | [.status, .created_at, .body] | @tsv' \
+              "$_inc_cache" 2>/dev/null | \
+            while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
+              _ts=$(echo "$_upd_time" | sed 's/T/ /; s/\..*//' 2>/dev/null || echo "$_upd_time")
+              printf "    ${CLAUDII_CLR_DIM}%-20s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
+                "$_ts" "$_upd_status" "$_upd_body"
+            done
           fi
         fi
         printf '\n'
