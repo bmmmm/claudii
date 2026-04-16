@@ -272,7 +272,7 @@ _cfg_init() {
 }
 
 # Validate config key — alphanumeric, dots, hyphens, underscores only (prevents jq injection)
-_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1" >&2; return 1; }; }
+_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1 (allowed: alphanumeric, dots, hyphens, underscores)" >&2; return 1; }; }
 
 # Config value lookup — user config first, falls back to defaults.json
 # Builds a properly quoted jq path so hyphenated keys (e.g. session-dashboard.enabled)

@@ -706,7 +706,7 @@ _cmd_pin() {
       found=1; break
     fi
   done
-  (( found )) || { echo "No session matching '$needle'" >&2; exit 1; }
+  (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; exit 1; }
 }
 
 _cmd_unpin() {
@@ -730,7 +730,7 @@ _cmd_unpin() {
       found=1; break
     fi
   done
-  (( found )) || { echo "No session matching '$needle'" >&2; exit 1; }
+  (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; exit 1; }
 }
 
 _strip_model_name() {
