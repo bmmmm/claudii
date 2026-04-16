@@ -43,7 +43,11 @@ done
 if ! $bin_ok; then
   path_line="export PATH=\"\$PATH:$CLAUDII_HOME/bin\""
   if ! grep -qF "$CLAUDII_HOME/bin" "$ZSHRC" 2>/dev/null; then
-    { echo ""; echo "# claudii bin"; echo "$path_line"; } >> "$ZSHRC"
+    _tmp=$(mktemp) || { echo "mktemp failed" >&2; exit 1; }
+    trap "rm -f '$_tmp'" EXIT
+    [[ -f "$ZSHRC" ]] && cat "$ZSHRC" > "$_tmp"
+    { echo ""; echo "# claudii bin"; echo "$path_line"; } >> "$_tmp"
+    mv "$_tmp" "$ZSHRC"
     echo -e "  ${GREEN}added${NC}: PATH entry in $ZSHRC"
   else
     echo "  PATH entry already in $ZSHRC"
@@ -55,7 +59,11 @@ source_line="source \"$CLAUDII_HOME/claudii.plugin.zsh\""
 if grep -qF "$CLAUDII_HOME/claudii.plugin.zsh" "$ZSHRC" 2>/dev/null; then
   echo "  already in: $(basename "$ZSHRC")"
 else
-  { echo ""; echo "# claudii — Claude Interaction Intelligence"; echo "$source_line"; } >> "$ZSHRC"
+  _tmp=$(mktemp) || { echo "mktemp failed" >&2; exit 1; }
+  trap "rm -f '$_tmp'" EXIT
+  [[ -f "$ZSHRC" ]] && cat "$ZSHRC" > "$_tmp"
+  { echo ""; echo "# claudii — Claude Interaction Intelligence"; echo "$source_line"; } >> "$_tmp"
+  mv "$_tmp" "$ZSHRC"
   echo -e "  ${GREEN}added${NC}: source line in $ZSHRC"
 fi
 

@@ -241,10 +241,10 @@ _cmd_cc_statusline() {
 _cmd_update() {
   if [[ "$CLAUDII_HOME" == "$(brew --prefix 2>/dev/null)"* ]]; then
     echo "claudii: Homebrew install detected"
-    brew upgrade claudii
+    brew upgrade claudii || { printf "claudii: brew upgrade failed\n" >&2; exit 1; }
   elif git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
     echo "claudii: Git install detected"
-    git -C "$CLAUDII_HOME" pull --ff-only
+    git -C "$CLAUDII_HOME" pull --ff-only || { printf "claudii: git pull failed\n" >&2; exit 1; }
   else
     echo "claudii: cannot determine install method — try: brew upgrade claudii  or  cd $CLAUDII_HOME && git pull" >&2
     exit 1

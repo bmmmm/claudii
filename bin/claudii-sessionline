@@ -324,8 +324,8 @@ _seg_tokens=""
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
   in_fmt=$(_tok "$input_tok")
   out_fmt=$(_tok "$output_tok")
-  _seg_tokens="${DIM}${in_fmt}↑${RST}"
-  [[ -n "$out_fmt" ]] && _seg_tokens+=" ${DIM}${out_fmt}↓${RST}"
+  [[ -n "$in_fmt" ]] && _seg_tokens="${DIM}${in_fmt}↑${RST}"
+  [[ -n "$out_fmt" ]] && _seg_tokens+="${_seg_tokens:+ }${DIM}${out_fmt}↓${RST}"
 fi
 
 # Lines changed: green +X red -X (only when > 0)
