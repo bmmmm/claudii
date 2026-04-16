@@ -156,7 +156,7 @@ else
   _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" 2>&1)
   _test_exit=$?
   if [[ $_test_exit -eq 0 ]]; then
-    _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
+    _test_passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1 || true)
     _rel_ok "Tests green ($_test_passed)"
   else
     _rel_fail "Tests failed — reverting version bump"
@@ -277,9 +277,9 @@ else
       2>/dev/null || echo "")
 
     if [[ -n "$_runs" ]]; then
-      _run_id=$(echo "$_runs" | jq -r '.id' | head -1)
-      _run_status=$(echo "$_runs" | jq -r '.status' | head -1)
-      _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1)
+      _run_id=$(echo "$_runs" | jq -r '.id' | head -1 || true)
+      _run_status=$(echo "$_runs" | jq -r '.status' | head -1 || true)
+      _run_conclusion=$(echo "$_runs" | jq -r '.conclusion' | head -1 || true)
       [[ "$_run_status" == "completed" ]] && break
     fi
 
