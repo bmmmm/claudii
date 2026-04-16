@@ -26,9 +26,9 @@ ${_epoch_awk}
       day = epoch_to_date(ts)
       model = $2; cost = $3 + 0; sid = $6; raw = $2
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
-      if      (model ~ /[Oo]pus/)   model = "Opus"
-      else if (model ~ /[Ss]onnet/) model = "Sonnet"
-      else if (model ~ /[Hh]aiku/)  model = "Haiku"
+      if      (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
+      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
+      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
       print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
   ' "${_history_files[@]}")
@@ -979,13 +979,14 @@ _cmd_sessions() {
 
     # Line 2: context bar + rate limits + age
     detail="    "
-    if [[ -n "${_sf_ctx[$_i]}" && "${_sf_ctx[$_i]}" =~ ^[0-9] ]]; then
+    if [[ -n "${_sf_ctx[$_i]}" && "${_sf_ctx[$_i]}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       _ctx_display="${_sf_ctx[$_i]%.*}"
       (( _ctx_display > 100 )) && _ctx_display=100
+      (( _ctx_display < 0 ))   && _ctx_display=0
       _render_ctx_bar "$_ctx_display"
       detail+="${_CTX_BAR} ${_ctx_display}%"
     fi
-    if [[ -n "${_sf_rate5h[$_i]}" ]]; then
+    if [[ -n "${_sf_rate5h[$_i]}" && "${_sf_rate5h[$_i]}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_sf_rate5h[$_i]%.*}%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then
         _rem=$(( ${_sf_reset5h[$_i]} - now ))

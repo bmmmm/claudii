@@ -344,6 +344,9 @@ _cmd_doctor() {
     done
     _json_arr+="]"
     echo "$_json_arr" | jq .
+    for (( i=0; i<_dc_count; i++ )); do
+      [[ "${_dc_status[$i]}" == "fail" ]] && exit 1
+    done
     exit 0
   fi
 
@@ -363,4 +366,10 @@ _cmd_doctor() {
     printf "  %b %s\n" "$icon" "${_dc_detail[$i]}"
   done
   printf '\n'
+
+  # Exit non-zero if any check failed — allows CI/automation to detect problems
+  for (( i=0; i<_dc_count; i++ )); do
+    [[ "${_dc_status[$i]}" == "fail" ]] && return 1
+  done
+  return 0
 }

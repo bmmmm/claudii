@@ -86,9 +86,9 @@ ${_epoch_awk}
       model = $2; cost = $3 + 0; sid = $6
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
       api_dur = ($9 == "" ? 0 : $9 + 0)
-      if      (model ~ /[Oo]pus/)   model = "Opus"
-      else if (model ~ /[Ss]onnet/) model = "Sonnet"
-      else if (model ~ /[Hh]aiku/)  model = "Haiku"
+      if      (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
+      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
+      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
       print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
     }
   ' "${_HIST_FILES[@]}")
