@@ -143,7 +143,7 @@ else
       next
     }
     { print }
-  ' "$_changelog" > "${_changelog}.tmp" && mv "${_changelog}.tmp" "$_changelog"
+  ' "$_changelog" > "${_changelog}.tmp.$$" && mv "${_changelog}.tmp.$$" "$_changelog"
   _rel_ok "CHANGELOG.md [Unreleased] → [$_rel_tag] — $_today"
 fi
 
@@ -217,7 +217,12 @@ _sha256=""
 if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "Tap-Update — skipped (dry-run)"
 else
-  _sha256=$(python3 -c "import urllib.request,hashlib; r=urllib.request.urlopen('${_tarball_url}'); print(hashlib.sha256(r.read()).hexdigest())")
+  _sha256=$(python3 - "$_tarball_url" <<'EOF'
+import sys, urllib.request, hashlib
+r = urllib.request.urlopen(sys.argv[1])
+print(hashlib.sha256(r.read()).hexdigest())
+EOF
+)
   _tap_file_sha=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
     --jq '.sha' 2>/dev/null || echo "")
   if [[ -z "$_tap_file_sha" ]]; then

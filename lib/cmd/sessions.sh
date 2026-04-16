@@ -916,8 +916,9 @@ _cmd_sessions() {
     local _fp="${_sf_fingerprint[$_i]}"
     [[ -z "$_fp" ]] && continue
     # Parse "file1(N) file2(N) ..." — extract bare filenames
-    local _word
-    for _word in $_fp; do
+    local _word _fp_words=()
+    IFS=' ' read -ra _fp_words <<< "$_fp"
+    for _word in "${_fp_words[@]}"; do
       local _fname="${_word%%(*}"
       [[ -z "$_fname" ]] && continue
       # Check if already in map
@@ -935,8 +936,9 @@ _cmd_sessions() {
 
   # Helper: colorize a fingerprint string using the file→color map
   _colorize_fingerprint() {
-    local _fp="$1" _out="" _word _fname _count_part
-    for _word in $_fp; do
+    local _fp="$1" _out="" _word _fname _count_part _fp_words=()
+    IFS=' ' read -ra _fp_words <<< "$_fp"
+    for _word in "${_fp_words[@]}"; do
       _fname="${_word%%(*}"
       _count_part="(${_word#*(}"
       [[ "$_count_part" == "($_fname" ]] && _count_part=""  # no parens found

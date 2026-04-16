@@ -30,6 +30,7 @@ done
 # 2. Remove source line, PATH entry, and comment markers from .zshrc
 if [[ -f "$ZSHRC" ]]; then
   _zshrc_tmp=$(mktemp) || { echo "mktemp failed" >&2; exit 1; }
+  trap "rm -f '$_zshrc_tmp'" EXIT
   grep -v -F "$CLAUDII_HOME" "$ZSHRC" \
     | grep -v "^# claudii — Claude Interaction Intelligence$" \
     | grep -v "^# claudii bin$" > "$_zshrc_tmp" || true

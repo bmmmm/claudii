@@ -170,9 +170,12 @@ function _claudii_register_agents {
 
   while IFS=$'\t' read -r name skill model effort; do
     [[ -z "$name" || -z "$skill" ]] && continue
-    [[ "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || { echo "claudii: invalid agent name: $name" >&2; continue; }
+    [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_]*$   ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
+    [[ "$skill"  =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo "claudii: invalid agent skill: $skill" >&2; continue; }
+    [[ "$model"  =~ ^[a-zA-Z][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent model: $model" >&2; continue; }
+    [[ "$effort" =~ ^[a-zA-Z]+$               ]] || { echo "claudii: invalid agent effort: $effort" >&2; continue; }
     # Create a shell function with this name
-    eval "function $name { _claudii_agent_launch $skill $model $effort \"\$@\"; }"
+    eval "function $name { _claudii_agent_launch \"$skill\" \"$model\" \"$effort\" \"\$@\"; }"
     _claudii_log debug "registered agent alias: $name → $skill ($model/$effort)"
   done <<< "$agents_json"
 }
@@ -254,7 +257,8 @@ function clh {
   printf '  │ Alias │ Model  │ Effort │          Context           │\n'
   printf '  ├───────┼────────┼────────┼────────────────────────────┤\n'
 
-  local alias_list=($(jq -r '.aliases | keys[]' "$CLAUDII_CONFIG" 2>/dev/null))
+  local alias_list=()
+  while IFS= read -r _a_key; do [[ -n "$_a_key" ]] && alias_list+=("$_a_key"); done < <(jq -r '.aliases | keys[]' "$CLAUDII_CONFIG" 2>/dev/null)
   local total=${#alias_list[@]} i=0
   for a in "${alias_list[@]}"; do
     (( ++i ))
