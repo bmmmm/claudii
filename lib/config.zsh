@@ -39,7 +39,7 @@ _claudii_cache_load() {
     local -A _zst
     zstat -H _zst "$CLAUDII_CONFIG" 2>/dev/null && mtime=${_zst[mtime]:-0}
   else
-    mtime=$(stat -c%Y "$CLAUDII_CONFIG" 2>/dev/null || stat -f%m "$CLAUDII_CONFIG" 2>/dev/null) || true
+    mtime=$(stat -f%m "$CLAUDII_CONFIG" 2>/dev/null || stat -c%Y "$CLAUDII_CONFIG" 2>/dev/null || echo 0)
   fi
   [[ "$mtime" == "$_CLAUDII_CFG_MTIME" ]] && return 0
   _CLAUDII_CFG_MTIME=$mtime
