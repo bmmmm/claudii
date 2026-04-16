@@ -20,6 +20,8 @@ _cmd_cost_from_history() {
   _augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
 "'
+    { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
+    NF < 6 { next }     # guard against short/malformed rows (history schema has >= 6 cols)
     $1 == "timestamp" || $1 == "" || $6 == "" { next }
     {
       ts = $1 + 0; if (ts == 0) next

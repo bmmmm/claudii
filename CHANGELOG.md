@@ -12,6 +12,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline ANSI injection:** `echo -e` with user-controlled session names now uses `printf %s` — prevents embedded escape sequences from being interpreted
 - **Token-in-URL:** Anthropic API key no longer visible in cURL/log output during `scripts/release.sh` SHA256 validation — replaced curl with python3
 - **Config eval validation:** Agent names validated before `eval` to prevent code injection via crafted aliases
+- **`_tok` awk injection:** Token-formatting helper now passes value via `-v` instead of string-interpolation — untrusted token counts can no longer inject awk code
+- **Agent name hyphen + reserved-name guard:** Aliases containing hyphens or shadowing built-ins (`cd`, `ls`, etc.) are rejected before `eval`
+- **Status feed size cap:** `curl --max-filesize 1m` on unresolved.json / RSS prevents memory exhaustion on oversize responses
 
 ### Fixed
 - **Session cost/timestamp arithmetic:** Float `$*_mtime` (milliseconds from `epoch_to_date`) now handled in bash arithmetic via explicit rounding — `reset_5h` and `reset_7d` no longer fail on non-integer timestamps
@@ -24,9 +27,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **`claudii update` exit code:** Now correctly exits 1 when brew/git commands fail (was returning 0 on syntax error in update check)
 - **Sessionline orphaned arrow:** `↑` indicator now hidden when `input_tok=0` (no pending input)
 - **`cc-statusline` usage to stderr:** Help text now printed to stderr, not stdout (consistent with other CLI tools)
-- **ClaudeStatus RSS parsing:** Title pattern widened to match Anthropic's incident wording variations; jq type guard added to prevent crashes when API response lacks expected fields
+- **ClaudeStatus RSS parsing:** Title pattern widened to match Anthropic's incident wording variations; jq type guard added to prevent crashes when API response lacks expected fields; RSS title now word-anchored to prevent `opus` matching `opus-3`-style substrings
 - **Status test vacuous:** Removed exit-code test in `test_status.sh` that was silently passing when function didn't execute
 - **Performance:** Removed awk subprocess spawning in precmd hook (cost=0 history fallback for performance)
+- **Session ctx_pct regex:** Weak `^[0-9]` accepted `"50abc"` and leaked non-numeric into arithmetic — strengthened to `^[0-9]+(\.[0-9]+)?$`, added lower clamp; same validation applied to `rate5h` display path
+- **Model word-anchoring in trends/sessions awk:** `/[Oo]pus/` substring match would misclassify fictional names like `sonnet-opus-hybrid` — replaced with word-anchored regex in both `sessions.sh` and `display.sh`
+- **`claudii doctor` exit code:** Always returned 0 even when checks failed, breaking CI/automation — now returns 1 if any check is `fail`, in both text and JSON modes
+- **history.tsv parse hardening:** awk now strips CR from fields (defense against CRLF-synced files) and guards `NF < 6` short rows in `trends` and `sessions` aggregations
 
 ### Changed
 - **Session lookup errors:** Error messages now show what was searched (ID, name, pattern) with hints on how to fix

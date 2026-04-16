@@ -148,7 +148,7 @@ _write_incidents() {
 # ── Step 1: unresolved.json → active incidents ────────────────────────────────
 
 _claudii_log info "Fetching $UNRESOLVED_URL"
-unresolved=$(curl -sf --max-time 5 --connect-timeout 3 "$UNRESOLVED_URL" 2>/dev/null) || true
+unresolved=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$UNRESOLVED_URL" 2>/dev/null) || true
 
 if [[ -n "$unresolved" ]]; then
   printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
@@ -193,7 +193,7 @@ fi
 _claudii_log warn "unresolved.json unavailable — trying RSS fallback"
 $quiet || echo -e "${YELLOW}claudii: Primary status API unreachable, trying RSS${NC}" >&2
 
-rss=$(curl -sf --max-time 5 --connect-timeout 3 "$RSS_URL" 2>/dev/null) || true
+rss=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$RSS_URL" 2>/dev/null) || true
 
 if [[ -z "$rss" ]]; then
   $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2
