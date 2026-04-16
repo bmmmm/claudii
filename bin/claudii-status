@@ -15,6 +15,7 @@
 set -uo pipefail
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-status: jq not found — install jq\n' >&2; exit 1; }
 CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 CACHE_STATUS="$CACHE_DIR/status-models"
@@ -206,7 +207,7 @@ rss_has_incident=false
 
 while IFS= read -r item; do
   echo "$item" | grep -qo '&lt;strong&gt;Resolved&lt;/strong&gt;' && continue
-  echo "$item" | grep -qi '<title>[[:space:]]*Resolved[[:space:]]*</title>' && continue
+  echo "$item" | grep -qi '<title>[^<]*Resolved[^<]*</title>' && continue
   title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
   [[ -z "$title" ]] && continue
   rss_has_incident=true

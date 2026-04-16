@@ -46,7 +46,9 @@ unset _claudii_t0
 # Head-start: fire status refresh now if cache is absent, so the background
 # job has more time to finish before the first prompt renders.
 [[ -f "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models" ]] || \
-  ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+  ( "$CLAUDII_HOME/bin/claudii-status" --quiet \
+      --pid-file "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status.pid" \
+      &>/dev/null & )
 
 # Session cache GC — runs at most once per hour, silently removes stale session
 # files whose Claude Code process has ended and that are older than 1 hour.

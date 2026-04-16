@@ -19,14 +19,11 @@ rm -f "$CLAUDII_CACHE_DIR"/status-models
 models_raw=$(jq -r '.statusline.models' "$XDG_CONFIG_HOME/claudii/config.json")
 IFS=',' read -ra STATUS_MODELS <<< "$models_raw"
 
-# status runs without error
+# status runs without crash — exit 0 (all ok) or 1 (degraded) are both valid
+exit_code=0
+bash "$CLAUDII_HOME/bin/claudii-status" >/dev/null 2>&1 || exit_code=$?
+assert_eq "status: no crash (exit 0 or 1)" "true" "$([[ $exit_code -le 1 ]] && echo true || echo false)"
 output=$(bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 || true)
-exit_code=$?
-if (( exit_code >= 0 && exit_code <= 3 )); then
-  assert_eq "status exit code is valid (0-3)" "true" "true"
-else
-  assert_eq "status exit code is valid (0-3)" "0-3" "$exit_code"
-fi
 
 # quiet mode suppresses output
 output=$(bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>&1 || true)
