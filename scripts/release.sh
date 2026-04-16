@@ -26,6 +26,10 @@ fi
 
 # Strip leading v if provided
 _rel_version="${_rel_version#v}"
+if ! [[ "$_rel_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must be X.Y.Z format (got: $_rel_version)" >&2
+  exit 1
+fi
 _rel_tag="v${_rel_version}"
 
 # Parse remote URL early — needed for CI HEAD check and release creation
