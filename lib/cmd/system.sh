@@ -233,7 +233,7 @@ _cmd_cc_statusline() {
       fi
       ;;
     *)
-      echo "Usage: claudii cc-statusline [on|off]"; exit 1
+      echo "Usage: claudii cc-statusline [on|off]" >&2; exit 1
       ;;
   esac
 }

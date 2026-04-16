@@ -59,7 +59,7 @@ function _claudii_status_spawn {
       zstat -H _pst "$_pid_file" 2>/dev/null \
         && _pid_age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_pst[mtime]:-0} ))
     else
-      _pid_age=$(( $(date +%s) - $(stat -c%Y "$_pid_file" 2>/dev/null || stat -f%m "$_pid_file" 2>/dev/null || echo 0) ))
+      _pid_age=$(( ${EPOCHSECONDS:-$(date +%s)} - $(stat -f%m "$_pid_file" 2>/dev/null || stat -c%Y "$_pid_file" 2>/dev/null || echo 0) ))
     fi
     if (( _pid_age < 30 )); then
       _claudii_log debug "status_spawn: job running (pid=$_check_pid age=${_pid_age}s)"
@@ -96,7 +96,7 @@ function _claudii_statusline_render {
     zstat -H _zst "$status_cache" 2>/dev/null \
       && age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_zst[mtime]:-0} ))
   else
-    age=$(( $(date +%s) - $(stat -c%Y "$status_cache" 2>/dev/null || stat -f%m "$status_cache" 2>/dev/null || echo 0) ))
+    age=$(( ${EPOCHSECONDS:-$(date +%s)} - $(stat -f%m "$status_cache" 2>/dev/null || stat -c%Y "$status_cache" 2>/dev/null || echo 0) ))
   fi
 
   # Read cache BEFORE TTL decision — needed to determine effective TTL
@@ -171,7 +171,7 @@ function _claudii_collect_sessions {
       _sfst=()
       zstat -H _sfst "$_sf" 2>/dev/null && _sf_mt=${_sfst[mtime]:-0}
     else
-      _sf_mt=$(stat -c%Y "$_sf" 2>/dev/null || stat -f%m "$_sf" 2>/dev/null || echo 0)
+      _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
     fi
     _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
 
