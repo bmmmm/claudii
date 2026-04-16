@@ -170,7 +170,8 @@ function _claudii_register_agents {
 
   while IFS=$'\t' read -r name skill model effort; do
     [[ -z "$name" || -z "$skill" ]] && continue
-    [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_]*$   ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
+    [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
+    [[ "$name" == claudii || "$name" == claude || "$name" == clh ]] && { echo "claudii: reserved name: $name" >&2; continue; }
     [[ "$skill"  =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo "claudii: invalid agent skill: $skill" >&2; continue; }
     [[ "$model"  =~ ^[a-zA-Z][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent model: $model" >&2; continue; }
     [[ "$effort" =~ ^[a-zA-Z]+$               ]] || { echo "claudii: invalid agent effort: $effort" >&2; continue; }

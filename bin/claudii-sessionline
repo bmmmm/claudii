@@ -144,13 +144,13 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 _tok() {
   local n=$1
   [[ -z "$n" || "$n" == "null" ]] && return
-  awk "BEGIN{
-    n=$n+0
+  awk -v n="$n" 'BEGIN{
+    n=n+0
     if (n==0) exit
-    if (n>=1000000) printf \"%.1fM\",n/1000000
-    else if (n>=1000) printf \"%.1fK\",n/1000
-    else printf \"%d\",n
-  }"
+    if (n>=1000000) printf "%.1fM",n/1000000
+    else if (n>=1000) printf "%.1fK",n/1000
+    else printf "%d",n
+  }'
 }
 
 # Format duration: ms -> "<1m", "5m", "1h 23m"
