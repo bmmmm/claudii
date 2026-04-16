@@ -245,7 +245,7 @@ else
       -e "s|version \"[0-9.]*\"|version \"${_rel_version}\"|" \
       "${CLAUDII_HOME}/${_tap_formula}" && rm -f "${CLAUDII_HOME}/${_tap_formula}.bak"
     git -C "${CLAUDII_HOME}" add "${_tap_formula}"
-    git -C "${CLAUDII_HOME}" commit -m "chore(formula): sync local Formula to ${_rel_tag}" --no-verify 2>/dev/null || true
+    git -C "${CLAUDII_HOME}" commit -m "chore(formula): sync local Formula to ${_rel_tag}" --no-verify || true
     _rel_ok "Local Formula/claudii.rb synced"
   fi
 fi

@@ -835,6 +835,7 @@ _cmd_sessions() {
       # Output format: pPID\nnPATH\npPID\nnPATH...
       _lsof_pids_map=()
       _lsof_cwd_map=()
+      _lsof_cur_pid=""
       _lsof_pid_list="$(IFS=,; echo "${_lsof_ppids[*]}")"
       while IFS= read -r _lsof_line; do
         case "$_lsof_line" in
