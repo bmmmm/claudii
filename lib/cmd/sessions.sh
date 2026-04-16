@@ -499,12 +499,12 @@ _cmd_cost() {
     fi
 
     # Accumulate all-time
-    _alltime_cost[$idx]=$(awk "BEGIN{printf \"%.4f\", ${_alltime_cost[$idx]} + $cost}")
+    _alltime_cost[$idx]=$(awk -v a="${_alltime_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
     _alltime_count[$idx]=$(( ${_alltime_count[$idx]} + 1 ))
 
     # Accumulate today (mtime within last 24h)
     if (( mtime >= cutoff )); then
-      _today_cost[$idx]=$(awk "BEGIN{printf \"%.4f\", ${_today_cost[$idx]} + $cost}")
+      _today_cost[$idx]=$(awk -v a="${_today_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
       _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))
     fi
   done
@@ -552,7 +552,7 @@ _cmd_cost() {
       [[ "$_pn" == "0" ]] && continue
       printf "    %-12s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}  %s session%s\n" \
         "$_pm" "$(printf '%.2f' "$_pc")" "$_pn" "$( (( _pn != 1 )) && echo 's' || true)"
-      total=$(awk "BEGIN{print $total + $_pc}")
+      total=$(awk -v a="$total" -v b="$_pc" 'BEGIN{print a+b}')
       has_data=1
     done
     if (( has_data )); then
@@ -979,8 +979,10 @@ _cmd_sessions() {
     # Line 2: context bar + rate limits + age
     detail="    "
     if [[ -n "${_sf_ctx[$_i]}" && "${_sf_ctx[$_i]}" =~ ^[0-9] ]]; then
-      _render_ctx_bar "${_sf_ctx[$_i]%.*}"
-      detail+="${_CTX_BAR} ${_sf_ctx[$_i]%.*}%"
+      _ctx_display="${_sf_ctx[$_i]%.*}"
+      (( _ctx_display > 100 )) && _ctx_display=100
+      _render_ctx_bar "$_ctx_display"
+      detail+="${_CTX_BAR} ${_ctx_display}%"
     fi
     if [[ -n "${_sf_rate5h[$_i]}" ]]; then
       detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_sf_rate5h[$_i]%.*}%"
@@ -1033,7 +1035,7 @@ _cmd_gc() {
     [[ -f "$_sf" ]] || continue
 
     local _sc _ppid _pinned _sf_mt _age
-    _sc=$(<"$_sf") 2>/dev/null || continue
+    { _sc=$(<"$_sf"); } 2>/dev/null || continue
 
     # Extract ppid
     _ppid=""
@@ -1135,7 +1137,7 @@ _cmd_default() {
       if (( _PSC_mtime >= _ov_cutoff )); then
         _ov_today_count=$(( _ov_today_count + 1 ))
         if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-          _ov_today_cost=$(awk "BEGIN{print $_ov_today_cost + $_PSC_cost}")
+          _ov_today_cost=$(awk -v a="$_ov_today_cost" -v b="$_PSC_cost" 'BEGIN{print a+b}')
         fi
       fi
 

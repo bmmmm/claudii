@@ -187,15 +187,15 @@ _rlc() {
   fi
 }
 
-RST="\033[0m"
-DIM="\033[2m"
-BOLD="\033[1m"
-CYAN="\033[0;36m"
-GREEN="\033[0;32m"
-YELLOW="\033[0;33m"
-RED="\033[0;31m"
-WHITE="\033[0;97m"
-ACCENT="\033[38;5;213m"
+RST=$'\033[0m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+CYAN=$'\033[0;36m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+RED=$'\033[0;31m'
+WHITE=$'\033[0;97m'
+ACCENT=$'\033[38;5;213m'
 SEP="${DIM}  │  ${RST}"
 
 # --- segment pre-computation ---
@@ -258,6 +258,7 @@ if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _seg_rate5h="$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
   # Reset countdown ↺Xm — color depends on rate level and time remaining
   if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
+    reset_5h="${reset_5h%.*}"
     (( _reset_min = reset_5h - _now ))
     (( _reset_min > 0 )) && (( _reset_min = (_reset_min + 30) / 60 )) || _reset_min=0
     if (( _reset_min > 0 )); then
@@ -283,6 +284,7 @@ if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _seg_rate7d="$(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
   # 7d reset countdown — format depends on remaining time
   if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
+    reset_7d="${reset_7d%.*}"
     (( _reset_7d_sec = reset_7d - _now ))
     (( _reset_7d_sec < 0 )) && _reset_7d_sec=0
     if (( _reset_7d_sec > 0 )); then
@@ -527,6 +529,6 @@ while IFS= read -r _line_segs; do
       else _line_out+="${SEP}${_val}"; fi
     fi
   done
-  [[ -n "$_line_out" ]] && echo -e "${RST}${_line_out}" || true
+  [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 true
