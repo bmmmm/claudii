@@ -7,6 +7,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Security
+- **Sessions cache injection (awk):** Prevented awk code injection via unescaped session names in `_parse_session_cache` and three other sites where glob results are passed to awk — all now quote glob results and bracket `$1` references
+- **Sessionline ANSI injection:** `echo -e` with user-controlled session names now uses `printf %s` — prevents embedded escape sequences from being interpreted
+- **Token-in-URL:** Anthropic API key no longer visible in cURL/log output during `scripts/release.sh` SHA256 validation — replaced curl with python3
+- **Config eval validation:** Agent names validated before `eval` to prevent code injection via crafted aliases
+
+### Fixed
+- **Session cost/timestamp arithmetic:** Float `$*_mtime` (milliseconds from `epoch_to_date`) now handled in bash arithmetic via explicit rounding — `reset_5h` and `reset_7d` no longer fail on non-integer timestamps
+- **Stat macOS-first:** `stat` invocation order corrected throughout (`-x` macOS flag before positional args); applied to `lib/statusline.zsh`, `lib/config.zsh`, and helper functions
+- **Atomic writes:** All config/cache updates now use `mktemp` + `mv` pattern (was inline jq writes) — config file can no longer be silently wiped on jq error; added to `install.sh`, `claudii-status`, and sessionline cache updates
+- **Sessionline GC file read:** Misplaced `2>/dev/null` removed from `if [[ ! -f ... ]]` condition — error suppression no longer hides permission errors
+- **Context percentage unclamped:** `ctx_pct` now capped at 100 to prevent display of `>100%` due to rounding edge cases
+- **Session age rendering:** `_render_age` now handles negative values from clock skew without crashing
+- **Session cache by mtime:** `latest_5h` now uses cache file `mtime` instead of glob order — ensures correct 5-hour window detection on slow filesystems
+- **`claudii update` exit code:** Now correctly exits 1 when brew/git commands fail (was returning 0 on syntax error in update check)
+- **Sessionline orphaned arrow:** `↑` indicator now hidden when `input_tok=0` (no pending input)
+- **`cc-statusline` usage to stderr:** Help text now printed to stderr, not stdout (consistent with other CLI tools)
+- **ClaudeStatus RSS parsing:** Title pattern widened to match Anthropic's incident wording variations; jq type guard added to prevent crashes when API response lacks expected fields
+- **Status test vacuous:** Removed exit-code test in `test_status.sh` that was silently passing when function didn't execute
+- **Performance:** Removed awk subprocess spawning in precmd hook (cost=0 history fallback for performance)
+
+### Changed
+- **Session lookup errors:** Error messages now show what was searched (ID, name, pattern) with hints on how to fix
+- **Config key validation:** Actionable error when setting non-existent keys — suggests valid alternatives and shows current config
+- **Atomic jq-write pattern:** Extracted into `_jq_update()` helper, replaces 14 inline instances across `system.sh` and `config.sh`
+
+### Tests
+- 20 new tests added for `claudii pin`, `claudii unpin`, `claudii resume` (test_pin_resume.sh)
+
 ---
 
 ## [v0.14.0] — 2026-04-07

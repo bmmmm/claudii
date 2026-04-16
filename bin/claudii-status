@@ -32,7 +32,7 @@ CACHE_TTL="${CACHE_TTL:-300}"
 RSS_URL="${CLAUDII_RSS_URL:-$(_cfg status.rss_url)}"
 RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
 
-_base_url="${RSS_URL%/history.rss}"
+_base_url="${RSS_URL%/history.rss}"; _base_url="${_base_url%/}"
 UNRESOLVED_URL="${CLAUDII_UNRESOLVED_URL:-$(_cfg status.unresolved_url)}"
 UNRESOLVED_URL="${UNRESOLVED_URL:-$(_def status.unresolved_url)}"
 UNRESOLVED_URL="${UNRESOLVED_URL:-${_base_url}/api/v2/incidents/unresolved.json}"
@@ -153,13 +153,14 @@ unresolved=$(curl -sf --max-time 5 --connect-timeout 3 "$UNRESOLVED_URL" 2>/dev/
 if [[ -n "$unresolved" ]]; then
   printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
   incident_count=$(echo "$unresolved" | jq -r '.incidents | length' 2>/dev/null || echo "")
+  [[ "$incident_count" =~ ^[0-9]+$ ]] || incident_count=""
 
   if [[ "$incident_count" == "0" ]]; then
     _claudii_log info "No active incidents"
     _write_all_ok
   fi
 
-  if [[ -n "$incident_count" && "$incident_count" != "0" ]]; then
+  if [[ -n "$incident_count" ]]; then
     _claudii_log info "$incident_count active incident(s)"
 
     # Impact → service level (most severe wins)
@@ -213,7 +214,7 @@ while IFS= read -r item; do
   rss_has_incident=true
   [[ -z "$incident_detail" ]] && incident_detail="$title"
   for m in "${MODELS[@]}"; do
-    echo "$title" | grep -qi "$m" && down_models="$down_models$m "
+    echo "$title" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
   done
   _claudii_log debug "RSS item: '$title' → down: [${down_models}]"
 done < <(

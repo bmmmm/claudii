@@ -95,12 +95,9 @@ if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]];
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if [[ -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]] && \
      (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    read -r _session_min_f _burn_eta <<< "$(awk "BEGIN {
-      m = $duration_ms / 60000
-      r = $rate_5h + 0
-      eta = (r > 0) ? int((100-r)/(r/m) + 0.5) : 0
-      printf \"%.4f %d\", m, eta
-    }")"
+    read -r _session_min_f _burn_eta <<< "$(awk \
+      -v dur="$duration_ms" -v rat="$rate_5h" \
+      'BEGIN { m=dur/60000; r=rat+0; eta=(r>0)?int((100-r)/(r/m)+0.5):0; printf "%.4f %d",m,eta }')"
   fi
 fi
 
