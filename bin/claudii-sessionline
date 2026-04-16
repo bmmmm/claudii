@@ -8,6 +8,8 @@ export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 # shellcheck source=lib/log.sh
 source "$CLAUDII_HOME/lib/log.sh"
 
+command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found — install jq\n' >&2; exit 1; }
+
 read -r json
 
 # Write session data to cache (key=value) — RPROMPT reads this without jq
@@ -508,7 +510,7 @@ while IFS= read -r _line_segs; do
           if (( _first )); then
             _used=0
           else
-            _vis=$(echo -e "$_line_out" | sed 's/\x1b\[[0-9;]*m//g')
+            _vis=$(printf '%s' "$_line_out" | sed $'s/\033\\[[0-9;]*m//g')
             _used=$(( ${#_vis} + 5 ))  # +5 for the "  │  " separator to be prepended
           fi
           _fill=$(( _term_cols - _used ))

@@ -285,9 +285,10 @@ END {
   avg_30d = cost_30d / 30   # fixed 30-day denominator (honest burn rate)
 
   if (avg_30d > 0) {
-    trend_pct = int((avg_7d - avg_30d) / avg_30d * 100 + 0.5)
+    trend_raw = (avg_7d - avg_30d) / avg_30d * 100
+    trend_pct = int(trend_raw + (trend_raw >= 0 ? 0.5 : -0.5))
     trend_arrow = (trend_pct > 0) ? "\342\206\221" : (trend_pct < 0 ? "\342\206\223" : "\342\206\222")
-    trend_sign  = (trend_pct >= 0) ? "+" : ""
+    trend_sign  = (trend_pct > 0) ? "+" : ""
     avg_7d_fmt  = sprintf("$%d", int(avg_7d + 0.5))
     avg_30d_fmt = sprintf("$%d", int(avg_30d + 0.5))
     printf "  Trend:         %s/day (7d) %svs %s/day (30d)%s %s%s%d%%\n", \

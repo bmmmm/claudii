@@ -45,9 +45,10 @@ case "${UNRESOLVED_URL}" in
   *) printf "error: UNRESOLVED_URL must use https:// (got: %s)\n" "$UNRESOLVED_URL" >&2; exit 1 ;;
 esac
 
-_mtime() { stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0; }
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 _tmp_status="${CACHE_STATUS}.tmp.$$"
 _tmp_incidents="${CACHE_INCIDENTS}.tmp.$$"
+trap 'rm -f "$_tmp_status" "$_tmp_incidents"' EXIT
 
 source "${CLAUDII_HOME}/lib/log.sh"
 
@@ -146,7 +147,7 @@ _write_incidents() {
 # ── Step 1: unresolved.json → active incidents ────────────────────────────────
 
 _claudii_log info "Fetching $UNRESOLVED_URL"
-unresolved=$(curl -sf --max-time 5 "$UNRESOLVED_URL" 2>/dev/null) || true
+unresolved=$(curl -sf --max-time 5 --connect-timeout 3 "$UNRESOLVED_URL" 2>/dev/null) || true
 
 if [[ -n "$unresolved" ]]; then
   printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
@@ -174,7 +175,7 @@ if [[ -n "$unresolved" ]]; then
 
     down_models=" "
     for m in "${MODELS[@]}"; do
-      echo "$incident_names" | grep -qi "$m" && down_models="$down_models$m "
+      echo "$incident_names" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
     done
 
     _claudii_log debug "Incidents: $incident_names → service=$service_level down=[${down_models}]"
@@ -190,7 +191,7 @@ fi
 _claudii_log warn "unresolved.json unavailable — trying RSS fallback"
 $quiet || echo -e "${YELLOW}claudii: Primary status API unreachable, trying RSS${NC}" >&2
 
-rss=$(curl -sf --max-time 5 "$RSS_URL" 2>/dev/null) || true
+rss=$(curl -sf --max-time 5 --connect-timeout 3 "$RSS_URL" 2>/dev/null) || true
 
 if [[ -z "$rss" ]]; then
   $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2

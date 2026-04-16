@@ -117,13 +117,13 @@ if [[ "$_dry_run" -eq 1 ]]; then
   _rel_ok "CHANGELOG.md [Unreleased] → [$_rel_version] (dry-run)"
 else
   # Bump VERSION in bin/claudii
-  sed -i '' "s/^VERSION=.*/VERSION=\"${_rel_version}\"/" "$_bin_file"
+  sed -i.bak "s/^VERSION=.*/VERSION=\"${_rel_version}\"/" "$_bin_file" && rm -f "${_bin_file}.bak"
   _new_bin=$(grep '^VERSION=' "$_bin_file" | tr -d '"' | cut -d= -f2)
   [[ "$_new_bin" == "$_rel_version" ]] || { _rel_fail "bin/claudii VERSION bump failed"; exit 1; }
   _rel_ok "bin/claudii VERSION → $_rel_version"
 
   # Bump version in man page
-  sed -i '' "s/\"claudii [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"claudii ${_rel_version}\"/" "$_man_file"
+  sed -i.bak "s/\"claudii [0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"claudii ${_rel_version}\"/" "$_man_file" && rm -f "${_man_file}.bak"
   _new_man=$(grep -oE 'claudii [0-9]+\.[0-9]+\.[0-9]+' "$_man_file" | head -1 | awk '{print $2}')
   [[ "$_new_man" == "$_rel_version" ]] || { _rel_fail "man page version bump failed"; exit 1; }
   _rel_ok "man/man1/claudii.1 → $_rel_version"

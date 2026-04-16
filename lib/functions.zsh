@@ -96,7 +96,7 @@ function _claudii_launch {
   fi
 
   # Rate-Limit-Intelligence — warn before launching into a near-full window
-  _claudii_rl_warn model effort || return 0
+  _claudii_rl_warn model effort || return 1
 
   _claudii_log info "starting claude: $model $effort"
   # Export effort for sessionline — workaround until Anthropic adds effort to statusLine JSON

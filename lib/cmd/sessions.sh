@@ -1037,11 +1037,15 @@ _cmd_gc() {
 
     # Extract ppid
     _ppid=""
-    [[ $'\n'"$_sc" == *$'\n'ppid=* ]] && _ppid="${${_sc#*$'\n'ppid=}%%$'\n'*}"
+    if [[ $'\n'"$_sc" == *$'\n'ppid=* ]]; then
+      _tmp="${_sc#*$'\n'ppid=}"; _ppid="${_tmp%%$'\n'*}"
+    fi
 
     # Extract pinned
     _pinned=""
-    [[ $'\n'"$_sc" == *$'\n'pinned=* ]] && _pinned="${${_sc#*$'\n'pinned=}%%$'\n'*}"
+    if [[ $'\n'"$_sc" == *$'\n'pinned=* ]]; then
+      _tmp="${_sc#*$'\n'pinned=}"; _pinned="${_tmp%%$'\n'*}"
+    fi
 
     # Never GC pinned sessions
     if [[ "$_pinned" == "1" ]]; then
