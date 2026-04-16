@@ -745,7 +745,7 @@ _cmd_sessions() {
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s)
   active=0 stale=0
-  latest_5h="" latest_7d="" latest_reset=""
+  latest_5h="" latest_7d="" latest_reset="" latest_5h_mt=0
 
   # Collect all session data into parallel arrays
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
@@ -766,9 +766,10 @@ _cmd_sessions() {
     [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
     _parse_session_cache "$sf"
 
-    # Track freshest rate limits
-    if [[ -n "$_PSC_rate_5h" ]] && [[ "$_PSC_is_active" -eq 1 ]]; then
+    # Track freshest rate limits — use mtime to pick the most recently updated session
+    if [[ -n "$_PSC_rate_5h" ]] && [[ "$_PSC_is_active" -eq 1 ]] && (( _PSC_mtime > latest_5h_mt )); then
       latest_5h="$_PSC_rate_5h"; latest_7d="$_PSC_rate_7d"; latest_reset="$_PSC_reset_5h"
+      latest_5h_mt=$_PSC_mtime
     fi
 
     _sf_model[$_sf_count]="$_PSC_model"
