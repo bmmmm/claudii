@@ -47,6 +47,7 @@ esac
 
 _mtime() { stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0; }
 _tmp_status="${CACHE_STATUS}.tmp.$$"
+_tmp_incidents="${CACHE_INCIDENTS}.tmp.$$"
 
 source "${CLAUDII_HOME}/lib/log.sh"
 
@@ -65,7 +66,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ -n "$_pid_file" ]] && echo $$ > "$_pid_file"
+[[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
 
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
 models_raw="${models_raw:-$(_def statusline.models)}"
@@ -99,7 +100,7 @@ fi
 
 _write_all_ok() {
   printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
-  echo '{"incidents":[]}' > "$CACHE_INCIDENTS"
+  printf '{"incidents":[]}\n' > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
   _claudii_log info "Status: all ok"
   exit 0
 }
@@ -148,7 +149,7 @@ _claudii_log info "Fetching $UNRESOLVED_URL"
 unresolved=$(curl -sf --max-time 5 "$UNRESOLVED_URL" 2>/dev/null) || true
 
 if [[ -n "$unresolved" ]]; then
-  echo "$unresolved" > "$CACHE_INCIDENTS"
+  printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
   incident_count=$(echo "$unresolved" | jq -r '.incidents | length' 2>/dev/null || echo "")
 
   if [[ "$incident_count" == "0" ]]; then

@@ -225,11 +225,11 @@ else
   else
     _tap_current=$(gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
       --jq '.content' | base64 -d)
-    _tap_new=$(printf '%s' "$_tap_current" \
+    _tap_new=$(printf '%s\n' "$_tap_current" \
       | sed "s|url \"https://.*\.tar\.gz\"|url \"${_tarball_url}\"|" \
       | sed "s|sha256 \"[a-f0-9]*\"|sha256 \"${_sha256}\"|" \
       | sed "s|version \"[0-9.]*\"|version \"${_rel_version}\"|")
-    _tap_encoded=$(printf '%s' "$_tap_new" | base64)
+    _tap_encoded=$(printf '%s\n' "$_tap_new" | base64)
     gh api "repos/${_tap_owner}/${_tap_repo}/contents/${_tap_formula}" \
       --method PUT \
       --field message="chore: update claudii to ${_rel_tag}" \
