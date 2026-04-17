@@ -141,12 +141,16 @@ _run_single_test() {
   ) > "$out_file" 2>&1
 }
 
-# Parse --for flag: only run test files that touch the given source file
+# Parse flags
 _for_file=""
-if [[ "${1:-}" == "--for" && -n "${2:-}" ]]; then
-  _for_file="$2"
-  shift 2
-fi
+_summary_only=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --for)     _for_file="${2:-}"; shift 2 ;;
+    --summary) _summary_only=1; shift ;;
+    *) break ;;
+  esac
+done
 
 # Run tests
 if [[ -n "${1:-}" ]]; then
@@ -189,8 +193,10 @@ else
   # Aggregate results — preserve file order
   for _out_file in "${_out_files[@]}"; do
     [[ -f "$_out_file" ]] || continue
-    echo ""
-    grep -v '^CLAUDII_TEST_RESULT:' "$_out_file" | grep -v '^CLAUDII_TEST_ERROR:' || true
+    if (( ! _summary_only )); then
+      echo ""
+      grep -v '^CLAUDII_TEST_RESULT:' "$_out_file" | grep -v '^CLAUDII_TEST_ERROR:' || true
+    fi
     _summary=$(grep '^CLAUDII_TEST_RESULT:' "$_out_file" || true)
     if [[ -n "$_summary" ]]; then
       _p=$(echo "$_summary" | cut -d: -f2)
@@ -207,16 +213,25 @@ else
 fi
 
 # Summary
-echo ""
-echo "───────────────────"
-echo -e "  ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
-if [[ ${#ERRORS[@]} -gt 0 ]]; then
+if (( _summary_only )); then
+  if (( FAIL > 0 )); then
+    echo -e "${RED}${FAIL} failed${NC} / ${PASS} passed"
+    for err in "${ERRORS[@]}"; do echo "  - $err"; done
+  else
+    echo -e "${GREEN}${PASS} passed${NC}"
+  fi
+else
   echo ""
-  echo -e "${RED}Failures:${NC}"
-  for err in "${ERRORS[@]}"; do
-    echo "  - $err"
-  done
+  echo "───────────────────"
+  echo -e "  ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
+  if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    echo ""
+    echo -e "${RED}Failures:${NC}"
+    for err in "${ERRORS[@]}"; do
+      echo "  - $err"
+    done
+  fi
+  echo ""
 fi
-echo ""
 
 exit $FAIL

@@ -62,8 +62,20 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - No network calls in precmd (cache only)
 - Background jobs: always `( cmd & )` subshell pattern (prevents [N] PID leak — anonymous functions with no_monitor still leak)
 - Compatible with oh-my-zsh, zinit, manual source
-- Tests in tests/, run with `bash tests/run.sh`
+- Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count)
 - **`(( ++var ))` not `(( var++ ))`** — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI), bash 3.2 (macOS) tolerates it silently. Use pre-increment for all standalone counters.
+
+## Token efficiency (for Claude-in-session)
+
+Session transcripts show recurring waste patterns. Follow these:
+
+- **Don't re-Read the same file within a session** unless it was just edited. Keep the content in working memory; scroll back if needed.
+- **Use `bash tests/run.sh --summary`** instead of `… | tail -5` — saves ~500 lines per run.
+- **Batch Edits per file** — 3+ sequential Edits to the same file means rewrite with Write instead.
+- **Never `cat`/`grep`/`find` via Bash** — use Read/Grep/Glob tools. Pre-tool hooks should block this; if they don't, fix the hook.
+- **Subagent prompts**: enforce "under 400 words" reply caps and "only report PROVEN bugs with reproducers" — Explore agents otherwise hallucinate verbose reports.
+- **Parallelize tool calls** when independent — one message with N Bash/Read/Grep calls, not N sequential messages.
+- **Agent reports are advisory, not authoritative** — always verify claims against current code before fixing (Explore agents hallucinate file paths, CI config, and variable semantics).
 
 ## When adding features
 
