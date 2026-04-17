@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.15.0] — 2026-04-17
+
 ### Security
 - **Sessions cache injection (awk):** Prevented awk code injection via unescaped session names in `_parse_session_cache` and three other sites where glob results are passed to awk — all now quote glob results and bracket `$1` references
 - **Sessionline ANSI injection:** `echo -e` with user-controlled session names now uses `printf %s` — prevents embedded escape sequences from being interpreted
