@@ -684,9 +684,7 @@ _cmd_sessions_inactive() {
 
 # Pin/unpin a session — pinned sessions are protected from GC.
 # Matches by session_id substring (first match wins).
-# NOTE: bin/claudii-sessionline does NOT preserve pinned=1 when rewriting the cache file.
-#       This is a known limitation. Future fix: sessionline should merge existing cache
-#       keys (like pinned=1) before rewriting to maintain pin state across updates.
+# (sessionline preserves pinned=1 across cache rewrites — see bin/claudii-sessionline.)
 _cmd_pin() {
   local needle="${2:-}"
   [[ -z "$needle" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }

@@ -173,7 +173,8 @@ if [[ -n "$unresolved" ]]; then
 
     # Collect all incident names for model matching
     incident_names=$(echo "$unresolved" | jq -r '.incidents[].name' 2>/dev/null || echo "")
-    incident_detail=$(echo "$unresolved" | jq -r '.incidents[0].name' 2>/dev/null || echo "")
+    # Strip newlines from detail — multi-line incident names would break RPROMPT/stderr layout
+    incident_detail=$(echo "$unresolved" | jq -r '.incidents[0].name' 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || echo "")
 
     down_models=" "
     for m in "${MODELS[@]}"; do
