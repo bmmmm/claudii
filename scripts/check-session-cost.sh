@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Diagnostic: show cost entries and resets for a session in history.tsv
 # Usage: bash scripts/check-session-cost.sh <session_id> [date YYYY-MM-DD]
 set -euo pipefail

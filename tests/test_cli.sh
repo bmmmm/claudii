@@ -42,6 +42,16 @@ doc_out=$(bash "$CLAUDII_HOME/bin/claudii" doctor 2>&1)
 assert_eq "doctor: produces output" "0" "$([ -z "$doc_out" ] && echo 1 || echo 0)"
 assert_matches "doctor: mentions claude" "claude|Claude" "$doc_out"
 
+# doctor exit code: must reflect pass/fail state (was always 0, breaking CI).
+# In a clean sandbox with valid tools, doctor should pass → exit 0.
+# With a bogus CLAUDII_HOME (no completions), it must return non-zero.
+DOCTOR_TMP="$(mktemp -d)"
+mkdir -p "$DOCTOR_TMP/fake-home"
+# completions dir absent → doctor reports "fail" for completions → exit 1
+doc_exit=$(CLAUDII_HOME="$DOCTOR_TMP/fake-home" bash "$CLAUDII_HOME/bin/claudii" doctor >/dev/null 2>&1; echo $?)
+assert_eq "doctor: exits non-zero when checks fail" "1" "$doc_exit"
+rm -rf "$DOCTOR_TMP"
+
 # layers: must not show obsolete 'show model' command
 layers_out=$(bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
 assert_eq "layers: no obsolete 'show model' reference" "0" "$(echo "$layers_out" | grep -c 'show model' || true)"

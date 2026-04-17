@@ -14,8 +14,10 @@ export CLAUDII_HOME="${0:A:h}"
 () {
   local other=${commands[claudii]:-}
   [[ -z "$other" || "$other" == "$CLAUDII_HOME/bin/claudii" ]] && return
-  print -P "%F{yellow}claudii: conflict — $other is not from $CLAUDII_HOME%f" >&2
-  print -P "%F{yellow}  → check ~/.zshrc for duplicate source lines%f" >&2
+  # Plain printf — never -P on strings containing expanded paths
+  # (a `%` in the path would be re-interpreted as a prompt escape).
+  printf '\e[33mclaudii: conflict — %s is not from %s\e[0m\n' "$other" "$CLAUDII_HOME" >&2
+  printf '\e[33m  → check ~/.zshrc for duplicate source lines\e[0m\n' >&2
 }
 
 # Register man pages

@@ -216,3 +216,46 @@ unset _new_today_line _new_first_wdline
 
 rm -rf "$_TRENDS_NEW_TMP"
 unset _TRENDS_NEW_TMP _now_ts trends_new_out
+
+# ── trends: CRLF history (cross-platform sync) + short rows → no crash ────────
+# Regression: awk used to leak \r into model names and choke on malformed rows.
+_TRENDS_CRLF_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+{
+  # CRLF-terminated row — common with Windows/Dropbox sync
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\r\n' \
+    "$_now_ts" "claude-opus-4-5" "0.30" "abc12345" "0.30" "1000" "500"
+  # Short row (< 6 fields) — must be skipped
+  printf '%s\t%s\n' "$_now_ts" "claude-sonnet-4-5"
+  # Normal row after short one — must still be processed
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.10" "def67890" "0.10" "800" "200"
+} > "$_TRENDS_CRLF_TMP/history.tsv"
+
+trends_crlf_out=$(CLAUDII_CACHE_DIR="$_TRENDS_CRLF_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
+trends_crlf_exit=$(CLAUDII_CACHE_DIR="$_TRENDS_CRLF_TMP" bash "$CLAUDII_HOME/bin/claudii" trends >/dev/null 2>&1; echo $?)
+assert_eq "trends (CRLF + short row): exit 0" "0" "$trends_crlf_exit"
+# No literal CR leaking into output (would appear as ^M if present)
+assert_eq "trends (CRLF): no CR in output" "0" "$(printf '%s' "$trends_crlf_out" | grep -c $'\r' || true)"
+
+rm -rf "$_TRENDS_CRLF_TMP"
+unset _TRENDS_CRLF_TMP _now_ts trends_crlf_out trends_crlf_exit
+
+# ── trends: model word-anchoring — substring-only must not match ─────────────
+# Regression: /[Oo]pus/ substring match would classify "myopusx" as Opus.
+# With the word-anchored pattern (^|[^a-z])opus([^a-z]|$), it must NOT match.
+# Real model names with hyphen boundaries ("claude-opus-4-5") still match.
+_TRENDS_WA_TMP="$(mktemp -d)"
+_now_ts=$(date +%s)
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"             "myopusx"          "9.00" "wa000001" "9.00" "1000" "500" \
+  "$(( _now_ts - 60 ))" "claude-opus-4-5"  "0.10" "wa000002" "0.10" "100"  "50" \
+  > "$_TRENDS_WA_TMP/history.tsv"
+trends_wa_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WA_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+# If "myopusx" were misclassified as Opus, Opus would dominate (9.00 vs 0.10).
+# With word-anchoring, only the real Opus row is counted → Opus has 1 session.
+_opus_sessions=$(printf '%s' "$trends_wa_json" | jq -r '.model_split_30d.Opus.sessions // 0' 2>/dev/null)
+assert_eq "trends: 'myopusx' substring not classified as Opus" "1" "${_opus_sessions:-0}"
+
+rm -rf "$_TRENDS_WA_TMP"
+unset _TRENDS_WA_TMP _now_ts trends_wa_json _opus_sessions

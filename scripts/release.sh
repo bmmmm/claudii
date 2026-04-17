@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # claudii release — bump version, run tests, tag, push, and create a GitHub release
 # Usage: scripts/release.sh <version> [--dry-run]
 
