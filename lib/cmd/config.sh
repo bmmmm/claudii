@@ -66,6 +66,10 @@ _cmd_config() {
       if jq -e '.agents | type == "object"' "$file" >/dev/null 2>&1; then
         _bad_agents=$(jq -r '.agents | to_entries[] | select(.key | test("^[a-zA-Z_][a-zA-Z0-9_-]*$") | not) | .key' "$file")
         [[ -z "$_bad_agents" ]] || { printf "config import: invalid agent name(s): %s\n" "$_bad_agents" >&2; exit 1; }
+        # Block reserved names — an agent named claudii/claude/clh would shadow the
+        # zsh wrapper at registration time and silently break all subcommands.
+        _reserved=$(jq -r '.agents | keys[] | select(. == "claudii" or . == "claude" or . == "clh")' "$file")
+        [[ -z "$_reserved" ]] || { printf "config import: reserved agent name(s): %s — would shadow built-in commands\n" "$_reserved" >&2; exit 1; }
       fi
       cp "$CONFIG" "${CONFIG}.bak"
       cp "$file" "$CONFIG"

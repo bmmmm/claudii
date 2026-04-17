@@ -34,14 +34,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Model word-anchoring in trends/sessions awk:** `/[Oo]pus/` substring match would misclassify fictional names like `sonnet-opus-hybrid` — replaced with word-anchored regex in both `sessions.sh` and `display.sh`
 - **`claudii doctor` exit code:** Always returned 0 even when checks failed, breaking CI/automation — now returns 1 if any check is `fail`, in both text and JSON modes
 - **history.tsv parse hardening:** awk now strips CR from fields (defense against CRLF-synced files) and guards `NF < 6` short rows in `trends` and `sessions` aggregations
+- **Incident name newline strip:** Multi-line incident names from `unresolved.json` flattened via `tr '\n' ' '` — prevents broken RPROMPT/stderr layout
+- **`config import` reserved names:** `claudii`, `claude`, `clh` now rejected at import time — previously slipped through to shell registration and broke subcommand dispatch silently
+- **Plugin bootstrap `print -P %` expansion:** `claudii.plugin.zsh` now uses `printf` instead of `print -P` — prevents prompt-escape expansion on paths containing `%`
+- **Portable shebangs:** `scripts/release.sh` and `scripts/check-session-cost.sh` switched to `#!/usr/bin/env bash`
 
 ### Changed
 - **Session lookup errors:** Error messages now show what was searched (ID, name, pattern) with hints on how to fix
 - **Config key validation:** Actionable error when setting non-existent keys — suggests valid alternatives and shows current config
 - **Atomic jq-write pattern:** Extracted into `_jq_update()` helper, replaces 14 inline instances across `system.sh` and `config.sh`
+- **Test runner `--summary` flag:** `bash tests/run.sh --summary` prints a single-line pass/fail total — cuts token usage in agent loops (582 passes → 1 line instead of ~800)
+- **CLAUDE.md token-efficiency guide:** New section documents re-Read avoidance, batched Edits, agent-prompt caps, verify-before-fix
 
 ### Tests
 - 20 new tests added for `claudii pin`, `claudii unpin`, `claudii resume` (test_pin_resume.sh)
+- Regression tests: `_tok` awk injection, `config import` reserved-name guard, incident-name newline flattening, `trends`/`sessions` CRLF + short-row guards, doctor non-zero exit on failure
 
 ---
 

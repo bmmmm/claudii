@@ -114,6 +114,14 @@ else
   assert_eq "claudii status: no literal \\033 in output" "true" "true"
 fi
 
+# Regression: multiline incident name must be flattened to single line
+# (bin/claudii-status does `jq -r .incidents[0].name | tr '\n' ' ' | sed 's/ *$//'`
+#  to prevent multi-line names from breaking RPROMPT/stderr layout)
+_mock_json='{"incidents":[{"name":"Line1\nLine2\nLine3","impact":"minor"}]}'
+_flat=$(echo "$_mock_json" | jq -r '.incidents[0].name' | tr '\n' ' ' | sed 's/ *$//')
+assert_eq "incident name: newlines stripped to spaces" "Line1 Line2 Line3" "$_flat"
+assert_eq "incident name: zero embedded newlines" "0" "$(printf '%s' "$_flat" | tr -cd '\n' | wc -c | tr -d ' ')"
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

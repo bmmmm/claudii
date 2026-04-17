@@ -103,6 +103,17 @@ assert_contains "config import rejects invalid agent name" "invalid agent name" 
 bash "$CLAUDII_HOME/bin/claudii" config import "$bad_agent_file" >/dev/null 2>&1 && _agent_exit=0 || _agent_exit=$?
 assert_eq "config import invalid agent exits non-zero" "1" "$_agent_exit"
 
+# config import — reserved agent name rejected (shadow guard)
+for _reserved in claudii claude clh; do
+  reserved_file="$XDG_CONFIG_HOME/claudii/reserved_${_reserved}.json"
+  jq --arg k "$_reserved" '.agents = {($k): {"model": "sonnet", "skill": "x"}}' \
+    "$CLAUDII_HOME/config/defaults.json" > "$reserved_file"
+  output=$(bash "$CLAUDII_HOME/bin/claudii" config import "$reserved_file" 2>&1 || true)
+  assert_contains "config import rejects reserved agent name ($_reserved)" "reserved" "$output"
+  bash "$CLAUDII_HOME/bin/claudii" config import "$reserved_file" >/dev/null 2>&1 && _re=0 || _re=$?
+  assert_eq "config import reserved ($_reserved) exits non-zero" "1" "$_re"
+done
+
 # ── Hyphenated key regression (jq interprets '-' as subtraction without quoting) ──
 bash "$CLAUDII_HOME/bin/claudii" config set session-dashboard.enabled on >/dev/null 2>&1
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)

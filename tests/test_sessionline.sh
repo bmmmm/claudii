@@ -311,4 +311,12 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "session-name segment shows name" "my-feature" "$strip"
+
+# _tok awk injection — malicious token string must not execute code
+# `awk -v n="$n"` with numeric coercion (n+0) should sanitize, but regression-test anyway
+_mal='1000; system("echo PWNED_TOK")'
+output=$(jq -n --arg t "$_mal" '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":$t,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | bash "$SL" 2>&1)
+assert_not_contains "_tok awk injection: no PWNED in output" "PWNED_TOK" "$output"
+assert_contains "_tok awk injection: model still renders" "Opus" "$output"
 rm -rf "$_test_cfg_dir"
