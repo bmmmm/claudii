@@ -366,7 +366,7 @@ fi
 _seg_agent=""
 _agent_display="${agent_name:-$session_name}"
 if [[ -n "$_agent_display" ]]; then
-  _seg_agent="${DIM}@${_agent_display}${RST}"
+  _seg_agent="${ACCENT}@${RST}${_agent_display}"
 fi
 
 # Session name: custom name set via /rename or --name (only when set)
@@ -427,7 +427,7 @@ _seg_dir=""
 _dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
 if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   _dir_name="${_dir_path##*/}"
-  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂ ${_dir_name}${RST}"
+  [[ -n "$_dir_name" ]] && _seg_dir="${ACCENT}⌂${RST} ${_dir_name}"
 fi
 
 # Terminal width — used by ruler segment to fill remaining space
