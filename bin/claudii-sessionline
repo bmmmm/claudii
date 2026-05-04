@@ -443,7 +443,8 @@ _term_cols=""
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,tokens,duration,worktree,dir
-claude-status,agent"
+claude-status,agent
+ruler"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
@@ -522,20 +523,19 @@ while IFS= read -r _line_segs; do
       claude-status)   _val="$_seg_claude_status"  ;;
       ruler)
         # Fill remaining terminal width with ─
-        # Skip entirely if width unknown — prevents overflow and wrapping in narrow terminals
+        # Falls back to 60 cols when COLUMNS/tput unavailable (CC piped context)
         _val=""
-        if (( _term_cols > 0 )); then
-          if (( _first )); then
-            _used=0
-          else
-            _vis=$(printf '%s' "$_line_out" | sed $'s/\033\\[[0-9;]*m//g')
-            _used=$(( ${#_vis} + 5 ))  # +5 for the "  │  " separator to be prepended
-          fi
-          _fill=$(( _term_cols - _used ))
-          if (( _fill > 1 )); then
-            printf -v _v "%${_fill}s" ""
-            _val="${DIM}${_v// /─}${RST}"
-          fi
+        _ruler_cols=$(( _term_cols > 0 ? _term_cols : 60 ))
+        if (( _first )); then
+          _used=0
+        else
+          _vis=$(printf '%s' "$_line_out" | sed $'s/\033\\[[0-9;]*m//g')
+          _used=$(( ${#_vis} + 5 ))  # +5 for the "  │  " separator to be prepended
+        fi
+        _fill=$(( _ruler_cols - _used ))
+        if (( _fill > 1 )); then
+          printf -v _v "%${_fill}s" ""
+          _val="${DIM}${_v// /─}${RST}"
         fi
         ;;
       *)             _val=""               ;;

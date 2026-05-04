@@ -340,8 +340,11 @@ Shown only when present in the session JSON.
 Fills the remaining terminal width with horizontal rule characters (\(em).
 Relies on
 .B $COLUMNS
-(exported by the parent shell) for width detection.
-Silently skipped when width cannot be determined.
+for width detection; falls back to
+.B tput cols
+and then to 60 columns when neither is available (e.g. CC piped context).
+Used as the default last line (line 5) to visually separate claudii output
+from Claude Code hint lines.
 .
 .SH COMMANDS
 .
