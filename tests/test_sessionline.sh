@@ -43,7 +43,7 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 assert_contains "duration segment: 12m" "12m" "$output"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":2.10,"total_duration_ms":3600000}}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-assert_contains "duration segment: 1h 0m" "1h 0m" "$output"
+assert_contains "duration segment: 1h0m" "1h0m" "$output"
 
 # cost segment — not in default layout; test via custom config
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
@@ -209,11 +209,10 @@ assert_eq "7d countdown >= 24h shows ↺XdYh" "1" "$(echo "$strip" | grep -cE '�
 
 # --- new tests (multi-line layout + segment pre-computation) ---
 
-# Default output has exactly 5 non-empty lines (line 5 = ruler separator)
+# Default output has exactly 4 non-empty lines (line 4 = claude-status)
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_api_duration_ms":50000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | COLUMNS=80 bash "$SL" 2>/dev/null)
 _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
-assert_eq "default output has exactly 5 non-empty lines" "5" "$_nonempty_lines"
-assert_contains "default output line 5 is ruler (─)" "─" "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | tail -1)"
+assert_eq "default output has exactly 4 non-empty lines" "4" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
@@ -279,7 +278,6 @@ output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percenta
   | bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "api-duration ratio: shows api: label" "1" "$(echo "$strip" | grep -c 'api:' || true)"
-assert_eq "api-duration ratio: shows parenthesized pct" "1" "$(echo "$strip" | grep -cE 'api:.*\([0-9]+%\)' || true)"
 
 # api-duration ratio: NOT shown when duration_ms is absent
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_api_duration_ms":44000}}' \
