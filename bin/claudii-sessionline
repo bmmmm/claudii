@@ -216,7 +216,7 @@ if [[ -n "$model" ]]; then
     esac
     _seg_model+=" ${_eff_clr}${effort_level}${RST}"
   fi
-  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${CYAN}▲${RST}"
+  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${ACCENT}▲${RST}"
 fi
 
 # Context bar (10 chars) + usable percentage + ⚡cache%
