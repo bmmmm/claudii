@@ -11,6 +11,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline `effort.level` from JSON**: Model segment now reads reasoning effort from `effort.level` in the CC statusLine stdin JSON (available since CC v2.1.119), replacing the `CLAUDII_EFFORT` environment-variable workaround.
 - **Sessionline thinking indicator**: When `thinking.enabled` is `true` in the statusLine JSON, a `▲` indicator is appended to the model segment.
 - **Sessionline `workspace.git_worktree` fallback**: The `worktree` segment now falls back to `workspace.git_worktree` so it fires inside any linked git worktree, not just `--worktree` sessions.
+- **Sessionline `dir` segment**: New segment showing the working-directory basename (dim text). Sources `worktree.original_cwd` in `--worktree` sessions, otherwise `workspace.project_dir`, with `workspace.current_dir` as last fallback. Added to default layout (line 3, after `worktree`).
 
 ### Fixed
 - **Overview: `model=` prefix in session dashboard** — the precmd session-dashboard extracted values from the session cache using `${sc#*$'\n'key=}`, which failed when `key=` was the first line (no leading newline). Fixed by prepending a newline before extraction (`_sc_nl=$'\n'"$sc"`), affecting model, ctx_pct, cost, rate_5h, and reset_5h display.

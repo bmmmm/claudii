@@ -333,6 +333,23 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "session-name segment shows name" "my-feature" "$strip"
 
+# dir segment — workspace.project_dir basename shown in default layout
+mkdir -p "$CLAUDII_HOME/tmp"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+mkdir -p "$_test_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["model","dir"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
+output=$(echo '{"model":{"display_name":"Sonnet"},"workspace":{"project_dir":"/Users/alice/projects/my-app","current_dir":"/Users/alice/projects/my-app/src"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "dir segment shows project basename" "my-app" "$strip"
+
+# dir segment — worktree.original_cwd takes precedence over project_dir
+output=$(echo '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/home/alice/work"},"worktree":{"original_cwd":"/home/alice/projects/feat-branch","name":"feat"},"context_window":{"used_percentage":5,"total_input_tokens":100,"total_output_tokens":20,"context_window_size":200000},"cost":{"total_cost_usd":0}}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "dir segment uses worktree.original_cwd when set" "feat-branch" "$strip"
+rm -rf "$_test_cfg_dir"
+
 # _tok awk injection — malicious token string must not execute code
 # `awk -v n="$n"` with numeric coercion (n+0) should sanitize, but regression-test anyway
 _mal='1000; system("echo PWNED_TOK")'

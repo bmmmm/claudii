@@ -46,7 +46,7 @@ api:23m (71%)  12.4k tok  wt:feature-branch
 Opus ✓  Sonnet ✓  Haiku ✓
 ```
 
-model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree · claude-status
+model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree + dir · claude-status
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:
