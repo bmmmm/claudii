@@ -25,7 +25,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   session_name worktree_branch api_duration_ms exceeds_200k \
   effort_level thinking_enabled workspace_git_worktree \
   workspace_project_dir worktree_original_cwd <<< "$(
-  echo "$json" | jq -r '[
+  jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
     (.cost.total_cost_usd // "" | tostring),
@@ -55,7 +55,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.git_worktree // ""),
     (.workspace.project_dir // ""),
     (.worktree.original_cwd // "")
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Cache hit percentage — computed from cache_read vs input tokens
@@ -68,31 +68,29 @@ if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$c
   fi
 fi
 
-# 7d-Delta: record rate_7d_start on FIRST update if not yet set
+# Read existing session cache once — used for 7d/5h start values
 _sid="${session_id:+${session_id:0:8}}"
 _session_file="$_cache_dir/session-${_sid:-unknown}"
+_existing_cache=""
+[[ -f "$_session_file" ]] && { _existing_cache=$(<"$_session_file"); } 2>/dev/null
+_ec_nl=$'\n'"$_existing_cache"
+
 _rate_7d_start=""
 if [[ -n "$rate_7d" && "$rate_7d" != "null" && "$rate_7d" != "" ]]; then
-  # Check if existing cache file has rate_7d_start already
-  if [[ -f "$_session_file" ]]; then
-    _existing_cache=""
-    { _existing_cache=$(<"$_session_file"); } 2>/dev/null
-    if [[ $'\n'"$_existing_cache" == *$'\n'rate_7d_start=* ]]; then
-      _rate_7d_start="${_existing_cache#*rate_7d_start=}"
-      _rate_7d_start="${_rate_7d_start%%$'\n'*}"
-    fi
+  if [[ "$_ec_nl" == *$'\n'rate_7d_start=* ]]; then
+    _rate_7d_start="${_existing_cache#*rate_7d_start=}"
+    _rate_7d_start="${_rate_7d_start%%$'\n'*}"
   fi
-  # If still empty, this is the first update — record current 7d as start
   [[ -z "$_rate_7d_start" ]] && _rate_7d_start="$rate_7d"
 fi
 
-# Track 5h rate-limit start value for delta display — set once, never overwritten
 _rate_5h_start=""
-if [[ -n "$rate_5h" && "$rate_5h" != "null" && -f "$_session_file" ]]; then
-  _rate_5h_start=$(grep '^rate_5h_start=' "$_session_file" 2>/dev/null | cut -d= -f2-)
-fi
-if [[ -z "$_rate_5h_start" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-  _rate_5h_start="$rate_5h"
+if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
+  if [[ "$_ec_nl" == *$'\n'rate_5h_start=* ]]; then
+    _rate_5h_start="${_existing_cache#*rate_5h_start=}"
+    _rate_5h_start="${_rate_5h_start%%$'\n'*}"
+  fi
+  [[ -z "$_rate_5h_start" ]] && _rate_5h_start="$rate_5h"
 fi
 
 # Burn-rate ETA — computed for dashboard cache, not rendered in sessionline
@@ -102,9 +100,8 @@ if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]];
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if [[ -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]] && \
      (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    read -r _session_min_f _burn_eta <<< "$(awk \
-      -v dur="$duration_ms" -v rat="$rate_5h" \
-      'BEGIN { m=dur/60000; r=rat+0; eta=(r>0)?int((100-r)/(r/m)+0.5):0; printf "%.4f %d",m,eta }')"
+    _burn_eta=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
+      'BEGIN { m=dur/60000; r=rat+0; print (r>0)?int((100-r)/(r/m)+0.5):0 }')
   fi
 fi
 
@@ -134,8 +131,8 @@ _tmp_session="${_session_file}.tmp.$$"
 # Append to persistent history (Flight Recorder) — one TSV line per update
 # Monthly rotation: history-YYYY-MM.tsv (legacy history.tsv stays, readers glob both)
 # Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok, api_duration_ms
-_now=$(date +%s)
-_history_file="$_cache_dir/history-$(date +%Y-%m).tsv"
+read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
+_history_file="$_cache_dir/history-${_date_ym}.tsv"
 [[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
@@ -147,48 +144,54 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 
 # --- helpers ---
 
-# Format token count: 999->999  1000->1.0K  1500->1.5K  1000000->1.0M
+# Token formatter — writes to _tok_result (no subshell, pure bash arithmetic)
+# 999→"999"  1000→"1.0K"  1500→"1.5K"  1000000→"1.0M"
+_tok_result=""
 _tok() {
-  local n=$1
-  [[ -z "$n" || "$n" == "null" ]] && return
-  awk -v n="$n" 'BEGIN{
-    n=n+0
-    if (n==0) exit
-    if (n>=1000000) printf "%.1fM",n/1000000
-    else if (n>=1000) printf "%.1fK",n/1000
-    else printf "%d",n
-  }'
+  local n=${1%.*}
+  [[ -z "$n" || "$n" == "null" ]] && _tok_result="" && return
+  (( n == 0 )) && _tok_result="" && return
+  local _m _d
+  if (( n >= 1000000 )); then
+    _m=$(( n / 1000000 )); _d=$(( (n % 1000000 + 50000) / 100000 ))
+    (( _d == 10 )) && { (( ++_m )); _d=0; }
+    printf -v _tok_result '%d.%dM' "$_m" "$_d"
+  elif (( n >= 1000 )); then
+    _m=$(( n / 1000 )); _d=$(( (n % 1000 + 50) / 100 ))
+    (( _d == 10 )) && { (( ++_m )); _d=0; }
+    printf -v _tok_result '%d.%dK' "$_m" "$_d"
+  else
+    _tok_result="$n"
+  fi
 }
 
-# Format duration: ms -> "<1m", "5m", "1h 23m"
+# Duration formatter — writes to _dur_result (no subshell)
+_dur_result=""
 _dur() {
   local ms=$1
-  [[ -z "$ms" || "$ms" == "null" ]] && return
+  [[ -z "$ms" || "$ms" == "null" ]] && _dur_result="" && return
   local sec=$(( ${ms%.*} / 1000 ))
-  if (( sec < 60 )); then printf "<1m"
-  elif (( sec < 3600 )); then printf "%dm" $(( sec / 60 ))
-  else printf "%dh%dm" $(( sec / 3600 )) $(( (sec % 3600) / 60 ))
+  if   (( sec < 60 ));   then _dur_result="<1m"
+  elif (( sec < 3600 )); then printf -v _dur_result '%dm' $(( sec / 60 ))
+  else                        printf -v _dur_result '%dh%dm' $(( sec / 3600 )) $(( (sec % 3600) / 60 ))
   fi
 }
 
-# Threshold color: green < 70, yellow 70-89, red 90+
+# Color helpers — write to _CLR to avoid command-substitution subshell overhead
+_CLR=""
+# Threshold: green <70, yellow 70-89, red 90+
 _thr() {
-  local pct=${1%.*}
-  [[ -z "$pct" ]] && pct=0
-  if (( pct >= 90 )); then printf "\033[31m"
-  elif (( pct >= 70 )); then printf "\033[33m"
-  else printf "\033[32m"
-  fi
+  local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
+  if   (( pct >= 90 )); then _CLR=$'\033[31m'
+  elif (( pct >= 70 )); then _CLR=$'\033[33m'
+  else                       _CLR=$'\033[32m'; fi
 }
-
-# Rate limit color: cyan < 50, yellow 50-79, red 80+
+# Rate-limit: cyan <50, yellow 50-79, red 80+
 _rlc() {
-  local pct=${1%.*}
-  [[ -z "$pct" ]] && pct=0
-  if (( pct >= 80 )); then printf "\033[31m"
-  elif (( pct >= 50 )); then printf "\033[33m"
-  else printf "\033[36m"
-  fi
+  local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
+  if   (( pct >= 80 )); then _CLR=$'\033[31m'
+  elif (( pct >= 50 )); then _CLR=$'\033[33m'
+  else                       _CLR=$'\033[36m'; fi
 }
 
 RST=$'\033[0m'
@@ -242,7 +245,7 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   elif [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
     win=" ${DIM}1M${RST}"
   fi
-  _seg_context="$(_thr "$_usable_pct")${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
+  _thr "$_usable_pct"; _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
   # Cache hit ratio — suffix to context segment
   if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
     if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
@@ -264,7 +267,7 @@ fi
 _seg_rate5h=""
 if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _rate_5h_pct=${rate_5h%.*}
-  _seg_rate5h="$(_rlc "$rate_5h")5h:${_rate_5h_pct}%${RST}"
+  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h:${_rate_5h_pct}%${RST}"
   # Reset countdown ↺Xm — color depends on rate level and time remaining
   if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
     reset_5h="${reset_5h%.*}"
@@ -290,7 +293,7 @@ fi
 _seg_rate7d=""
 if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _rate_7d_pct=${rate_7d%.*}
-  _seg_rate7d="$(_rlc "$rate_7d")7d:${_rate_7d_pct}%${RST}"
+  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d:${_rate_7d_pct}%${RST}"
   # 7d reset countdown — format depends on remaining time
   if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
     reset_7d="${reset_7d%.*}"
@@ -331,10 +334,8 @@ fi
 # Tokens: DIM Xk↑ Xk↓
 _seg_tokens=""
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
-  in_fmt=$(_tok "$input_tok")
-  out_fmt=$(_tok "$output_tok")
-  [[ -n "$in_fmt" ]] && _seg_tokens="${DIM}${in_fmt}↑${RST}"
-  [[ -n "$out_fmt" ]] && _seg_tokens+="${_seg_tokens:+ }${DIM}${out_fmt}↓${RST}"
+  _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${DIM}${_tok_result}↑${RST}"
+  _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${DIM}${_tok_result}↓${RST}"
 fi
 
 # Lines changed: green +X red -X (only when > 0)
@@ -348,8 +349,7 @@ fi
 # Duration: DIM Xm / Xh Xm
 _seg_dur=""
 if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
-  _dur_fmt=$(_dur "$duration_ms")
-  [[ -n "$_dur_fmt" ]] && _seg_dur="${DIM}${_dur_fmt}${RST}"
+  _dur "$duration_ms"; [[ -n "$_dur_result" ]] && _seg_dur="${DIM}${_dur_result}${RST}"
 fi
 
 # Burn-ETA: DIM ETA:Xm (only when _burn_eta set and > 0)
@@ -383,10 +383,7 @@ fi
 # API duration: time actually spent waiting for Claude (vs. total wall-clock)
 _seg_api_dur=""
 if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
-  _api_fmt=$(_dur "$api_duration_ms")
-  if [[ -n "$_api_fmt" ]]; then
-    _seg_api_dur="${DIM}api:${_api_fmt}${RST}"
-  fi
+  _dur "$api_duration_ms"; [[ -n "$_dur_result" ]] && _seg_api_dur="${DIM}api:${_dur_result}${RST}"
 fi
 
 # Session deltas: only the change since session start (current rate is already on line 1)
@@ -394,7 +391,7 @@ _seg_delta5h=""
 if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _d5=$(( ${rate_5h%.*} - ${_rate_5h_start%.*} ))
   if (( _d5 > 0 )); then
-    _seg_delta5h="${DIM}Δ5h:${RST}$(_rlc "$rate_5h")+${_d5}%${RST}"
+    _rlc "$rate_5h"; _seg_delta5h="${DIM}Δ5h:${RST}${_CLR}+${_d5}%${RST}"
   elif (( _d5 < 0 )); then
     _seg_delta5h="${DIM}Δ5h:${RST}${GREEN}${_d5}%${RST}"
   fi
@@ -404,7 +401,7 @@ _seg_delta7d=""
 if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" && -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _d7=$(( ${rate_7d%.*} - ${_rate_7d_start%.*} ))
   if (( _d7 > 0 )); then
-    _seg_delta7d="${DIM}Δ7d:${RST}$(_rlc "$rate_7d")+${_d7}%${RST}"
+    _rlc "$rate_7d"; _seg_delta7d="${DIM}Δ7d:${RST}${_CLR}+${_d7}%${RST}"
   elif (( _d7 < 0 )); then
     _seg_delta7d="${DIM}Δ7d:${RST}${GREEN}${_d7}%${RST}"
   fi
@@ -414,8 +411,7 @@ fi
 # Distinct from ⚡cache-pct (hit ratio) — this shows write volume
 _seg_cache_create=""
 if [[ -n "$cache_create" && "$cache_create" != "null" && "$cache_create" != "0" ]]; then
-  _cc_fmt=$(_tok "$cache_create")
-  [[ -n "$_cc_fmt" ]] && _seg_cache_create="${DIM}✎${_cc_fmt}${RST}"
+  _tok "$cache_create"; [[ -n "$_tok_result" ]] && _seg_cache_create="${DIM}✎${_tok_result}${RST}"
 fi
 
 # Working directory: basename of project_dir (with worktree.original_cwd as fallback for --worktree sessions)
@@ -505,15 +501,16 @@ if [[ -z "$_omlx_active_path" && -f "$_config_file" ]]; then
 fi
 [[ -z "$_omlx_active_path" ]] && _omlx_active_path="$HOME/offline_coding/gateii/data/agents/active.json"
 if [[ -f "$_omlx_active_path" ]]; then
-  _omlx_started=$(jq -r '.started_epoch // 0' "$_omlx_active_path" 2>/dev/null)
+  IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
+    jq -r '[
+      (.started_epoch // 0 | tostring),
+      (.task // "?"),
+      (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
+    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
+  )"
   if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
     _omlx_age=$(( _now - _omlx_started ))
     if (( _omlx_age >= 0 && _omlx_age < 300 )); then
-      _omlx_task=$(jq -r '.task // "?"' "$_omlx_active_path" 2>/dev/null)
-      _omlx_model=$(jq -r '.model // "?"' "$_omlx_active_path" 2>/dev/null)
-      # Compact model name (strip MLX/4bit suffixes shared with the console)
-      _omlx_model_short=$(printf '%s' "$_omlx_model" \
-        | sed -E 's/-MLX-4bit$//; s/-A3B-4bit$/-A3B/; s/-a4b-it-4bit$//; s/-it-4bit$//')
       _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
     fi
   fi

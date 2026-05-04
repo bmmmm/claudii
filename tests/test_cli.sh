@@ -231,45 +231,6 @@ assert_no_literal_ansi "si: no literal \\033 in output" "$si_ansi_out"
 rm -rf "$SI_ANSI_TMP"
 unset SI_ANSI_TMP SI_ANSI_XDG si_ansi_out
 
-# _session_name — returns real name, not source code patterns
-_SN_TMP="$(mktemp -d)"
-_SN_PROJ="$_SN_TMP/.claude/projects/test-project"
-mkdir -p "$_SN_PROJ"
-
-# Real rename entry (the name we expect back)
-printf '%s\n' \
-  '{"type":"message","role":"assistant","content":[{"type":"text","text":"Session renamed to: my-session"}]}' \
-  > "$_SN_PROJ/sntest01.jsonl"
-
-# Append a tool-result line that contains the old grep pattern (simulates source code in transcript)
-printf '%s\n' \
-  '{"type":"tool_result","content":"grep -o '\''Session renamed to: [^<]*'\'' \"$jsonl\""}' \
-  >> "$_SN_PROJ/sntest01.jsonl"
-
-# Helper: source only the _session_name function from bin/claudii and call it
-_sn_result=$(bash -c '
-  CLAUDII_HOME="$1" HOME="$2"
-  source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
-  _session_name sntest01
-' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
-
-assert_eq "_session_name: returns real name" "my-session" "$_sn_result"
-assert_eq "_session_name: does not leak grep pattern" "0" \
-  "$(echo "$_sn_result" | grep -cF '[^<]*' || true)"
-
-# Empty JSONL — must return empty, no crash
-printf '' > "$_SN_PROJ/sntest02.jsonl"
-_sn_empty=$(bash -c '
-  CLAUDII_HOME="$1" HOME="$2"
-  source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
-  _session_name sntest02
-' _ "$CLAUDII_HOME" "$_SN_TMP" 2>/dev/null)
-assert_eq "_session_name: empty JSONL → empty output" "" "$_sn_empty"
-
-rm -rf "$_SN_TMP"
-unset _SN_TMP _SN_PROJ _sn_result _sn_empty
 
 # ── claudii sessions regression: grep-no-match must not crash ────────────────
 # Scenario: session has a JSONL with "cwd" but no "Session renamed to:" line.
@@ -417,52 +378,6 @@ assert_matches "cost (no history): shows no-data message" "No session" "$_cost_n
 rm -rf "$_COST_NOHIST_TMP"
 unset _COST_NOHIST_TMP _cost_nohist_out
 
-# ── _session_fingerprint — with and without JSONL ──────────────────────────
-_FP_TMP="$(mktemp -d)"
-_FP_PROJ="$_FP_TMP/.claude/projects/fp-project"
-mkdir -p "$_FP_PROJ"
-
-# JSONL with tool_input.file_path entries
-printf '%s\n' \
-  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
-  '{"type":"tool_use","name":"Edit","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
-  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/sessions.sh"}}' \
-  '{"type":"tool_use","name":"Write","input":{"file_path":"/home/user/project/statusline.zsh"}}' \
-  '{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/project/bin/claudii"}}' \
-  > "$_FP_PROJ/fptest01.jsonl"
-
-_fp_result=$(bash -c '
-  CLAUDII_HOME="$1" HOME="$2"
-  source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
-  _session_fingerprint fptest01
-' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
-
-assert_contains "_session_fingerprint: top file present" "statusline.zsh" "$_fp_result"
-assert_contains "_session_fingerprint: count in parens" "(3)" "$_fp_result"
-assert_contains "_session_fingerprint: second file present" "sessions.sh" "$_fp_result"
-
-# Empty JSONL — must return empty, no crash
-printf '' > "$_FP_PROJ/fptest02.jsonl"
-_fp_empty=$(bash -c '
-  CLAUDII_HOME="$1" HOME="$2"
-  source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
-  _session_fingerprint fptest02
-' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
-assert_eq "_session_fingerprint: empty JSONL → empty output" "" "$_fp_empty"
-
-# No JSONL at all — must return empty, no crash
-_fp_none=$(bash -c '
-  CLAUDII_HOME="$1" HOME="$2"
-  source "$CLAUDII_HOME/lib/visual.sh"
-  '"$(awk '/^# ── Shared helpers/,/^# Config helper/{if(/^# Config helper/) next; print}' "$CLAUDII_HOME/bin/claudii")"'
-  _session_fingerprint nonexistent-session-id
-' _ "$CLAUDII_HOME" "$_FP_TMP" 2>/dev/null)
-assert_eq "_session_fingerprint: no JSONL → empty output" "" "$_fp_none"
-
-rm -rf "$_FP_TMP"
-unset _FP_TMP _FP_PROJ _fp_result _fp_empty _fp_none
 
 # ── claudii se --resume flag: recognized, no 'Unknown command' ────────────
 resume_out=$(bash "$CLAUDII_HOME/bin/claudii" se --resume fakeid123 2>&1 || true)

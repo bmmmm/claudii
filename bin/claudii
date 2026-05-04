@@ -233,19 +233,6 @@ _session_resolve() {
   ' "$jsonl" 2>/dev/null || printf '\n\n\n'
 }
 
-# Legacy wrappers (used individually in some code paths)
-_session_name() {
-  local sid="$1" result
-  result=$(_session_resolve "$sid")
-  echo "$result" | head -1
-}
-
-_session_fingerprint() {
-  local sid="$1" result
-  result=$(_session_resolve "$sid")
-  echo "$result" | sed -n '2p'
-}
-
 # Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
 # Usage: _jq_update <file> <jq-filter> [jq-args...]
 # Example: _jq_update "$CONFIG" '.debug.level = "info"'
