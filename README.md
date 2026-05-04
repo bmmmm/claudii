@@ -40,13 +40,13 @@ Three display layers, all read-only — claudii never modifies your sessions or 
 Dense metrics on every turn via the native `statusLine` hook. Four lines by default:
 
 ```
-claude-sonnet-4-6  ████████░░  ⚡73%
+Opus max ▲  ████████░░  ⚡73%
 5h:28%  7d:12%  eta:4h  +47/-12
 api:23m (71%)  12.4k tok  wt:feature-branch
 Opus ✓  Sonnet ✓  Haiku ✓
 ```
 
-model + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree · claude-status
+model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree · claude-status
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:

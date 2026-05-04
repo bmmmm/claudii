@@ -7,6 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Sessionline `effort.level` from JSON**: Model segment now reads reasoning effort from `effort.level` in the CC statusLine stdin JSON (available since CC v2.1.119), replacing the `CLAUDII_EFFORT` environment-variable workaround.
+- **Sessionline thinking indicator**: When `thinking.enabled` is `true` in the statusLine JSON, a `▲` indicator is appended to the model segment.
+- **Sessionline `workspace.git_worktree` fallback**: The `worktree` segment now falls back to `workspace.git_worktree` so it fires inside any linked git worktree, not just `--worktree` sessions.
+
 ---
 
 ## [v0.15.0] — 2026-04-17

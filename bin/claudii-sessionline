@@ -22,7 +22,8 @@ _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
   cache_read cache_create worktree_name agent_name model_id cwd \
-  session_name worktree_branch api_duration_ms exceeds_200k <<< "$(
+  session_name worktree_branch api_duration_ms exceeds_200k \
+  effort_level thinking_enabled workspace_git_worktree <<< "$(
   echo "$json" | jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -47,8 +48,11 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.session_name // ""),
     (.worktree.branch // ""),
     (.cost.total_api_duration_ms // "" | tostring),
-    (.exceeds_200k_tokens // false | tostring)
-  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.exceeds_200k_tokens // false | tostring),
+    (.effort.level // ""),
+    (.thinking.enabled // false | tostring),
+    (.workspace.git_worktree // "")
+  ] | join("\u001f")' 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Cache hit percentage — computed from cache_read vs input tokens
@@ -197,14 +201,14 @@ SEP="${DIM}  │  ${RST}"
 
 # --- segment pre-computation ---
 
-# Model (bold) + effort mode (dim, from env — workaround until API exposes it)
+# Model (bold) + effort level (dim, from JSON) + thinking indicator (▲)
 _seg_model=""
 if [[ -n "$model" ]]; then
   _seg_model="${BOLD}${model}${RST}"
-  _effort="${CLAUDII_EFFORT:-}"
-  if [[ -n "$_effort" && "$_effort" != "high" ]]; then
-    _seg_model+=" ${DIM}${_effort}${RST}"
+  if [[ -n "$effort_level" && "$effort_level" != "high" ]]; then
+    _seg_model+=" ${DIM}${effort_level}${RST}"
   fi
+  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${DIM}▲${RST}"
 fi
 
 # Context bar (10 chars) + usable percentage + ⚡cache%
@@ -346,11 +350,12 @@ if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] 2>/dev/null; then
   _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
 fi
 
-# Worktree: name + branch if available (only when in a worktree session)
+# Worktree: name + branch. Falls back to workspace.git_worktree for plain git worktrees.
 _seg_worktree=""
-if [[ -n "$worktree_name" ]]; then
-  _seg_worktree="${DIM}${worktree_name}${RST}"
-  [[ -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
+_wt_name="${worktree_name:-$workspace_git_worktree}"
+if [[ -n "$_wt_name" ]]; then
+  _seg_worktree="${DIM}${_wt_name}${RST}"
+  [[ -n "$worktree_name" && -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
 fi
 
 # Agent: DIM @agent_name (only when set)

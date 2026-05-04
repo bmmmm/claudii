@@ -99,8 +99,7 @@ function _claudii_launch {
   _claudii_rl_warn model effort || return 1
 
   _claudii_log info "starting claude: $model $effort"
-  # Export effort for sessionline — workaround until Anthropic adds effort to statusLine JSON
-  CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" "$@"
+  claude --model "$model" --effort "$effort" "$@"
 }
 
 # Register alias shell functions dynamically from config (aliases.*)
@@ -153,7 +152,7 @@ function _claudii_agent_launch {
   local prompt
   prompt=$(< "$agent_file")
   _claudii_log info "agent launch: $agent_name ($agent_file) model=$model effort=$effort"
-  CLAUDII_EFFORT="$effort" claude --model "$model" --effort "$effort" --append-system-prompt "$prompt" "$@"
+  claude --model "$model" --effort "$effort" --append-system-prompt "$prompt" "$@"
 }
 
 # Register agent aliases from config (agents.*.skill/model/effort)

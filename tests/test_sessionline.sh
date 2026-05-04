@@ -72,17 +72,26 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "no cache hit: no lightning bolt" "0" "$(echo "$strip" | grep -c '⚡')"
 
-# Effort mode — shown when CLAUDII_EFFORT is set to something other than "high"
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=max bash "$SL" 2>&1)
+# Effort mode — shown when effort.level in JSON is something other than "high"
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"max"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 assert_contains "effort mode max shown" "max" "$output"
 
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=medium bash "$SL" 2>&1)
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"medium"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 assert_contains "effort mode medium shown" "medium" "$output"
 
 # Effort mode "high" — NOT shown (it's the default)
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | CLAUDII_EFFORT=high bash "$SL" 2>&1)
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"high"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "effort mode high not shown" "0" "$(echo "$strip" | grep -c ' high')"
+
+# thinking.enabled — ▲ shown in model segment when true
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"max"},"thinking":{"enabled":true},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "thinking enabled shows ▲" "▲" "$strip"
+
+output=$(echo '{"model":{"display_name":"Opus"},"thinking":{"enabled":false},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "thinking disabled: no ▲" "0" "$(echo "$strip" | grep -c '▲')"
 
 # Worktree/Agent — written to session cache file
 mkdir -p "$CLAUDII_HOME/tmp"
@@ -106,6 +115,18 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "worktree segment shows name" "feat-login" "$strip"
 assert_contains "worktree segment shows branch" "⎇" "$strip"
 assert_contains "worktree segment shows branch name" "main" "$strip"
+rm -rf "$_test_cfg_dir"
+
+# workspace.git_worktree fallback — shown when worktree.name absent (plain git worktree)
+mkdir -p "$CLAUDII_HOME/tmp"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+mkdir -p "$_test_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["model","worktree"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
+output=$(echo '{"session_id":"testwsgwt1","model":{"display_name":"Sonnet"},"workspace":{"git_worktree":"feat-test"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "workspace.git_worktree fallback shown" "feat-test" "$strip"
+assert_eq "workspace.git_worktree fallback: no branch arrow" "0" "$(echo "$strip" | grep -c '⎇')"
 rm -rf "$_test_cfg_dir"
 
 # ppid — written to session cache file so RPROMPT can detect dead sessions
