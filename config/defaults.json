@@ -21,8 +21,9 @@
     "lines": [
       ["model", "context-bar", "cache-create"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
-      ["api-duration", "tokens", "duration", "worktree"],
-      ["claude-status"]
+      ["api-duration", "tokens", "duration", "worktree", "dir"],
+      ["claude-status", "agent"],
+      ["omlx"]
     ]
   },
   "search": {
