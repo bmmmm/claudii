@@ -37,16 +37,17 @@ bash ~/claudii/install.sh
 Three display layers, all read-only — claudii never modifies your sessions or makes API calls:
 
 ### 1. CC-Statusline — inside Claude Code
-Dense metrics on every turn via the native `statusLine` hook. Four lines by default:
+Dense metrics on every turn via the native `statusLine` hook. Five lines by default:
 
 ```
 Opus max ▲  ████████░░  ⚡73%
 5h:28%  7d:12%  eta:4h  +47/-12
-api:23m (71%)  12.4k tok  wt:feature-branch
-Opus ✓  Sonnet ✓  Haiku ✓
+api:23m  12.4k↑ 4.2k↓  23m  feature-branch  ⌂ gateii
+Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
+⚡ commit-msg Qwen3.5-9B 2s
 ```
 
-model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + worktree + dir · claude-status
+Lines: model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + duration + worktree + dir · claude-status + agent · omlx (only when an agent run is in flight via [gateii](https://github.com/bmmmm/gateii) — otherwise this line is silently skipped).
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:
@@ -79,6 +80,8 @@ claudii explain                  # explain claudii layers and architecture
 claudii doctor / d               # installation health check
 claudii config get/set <key>     # read/write config
 claudii agents                   # list configured agent aliases
+claudii omlx [status|connect|test|disconnect]
+                                 # local-LLM (oMLX/gateii) sessionline integration
 ```
 
 All commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
@@ -116,6 +119,8 @@ claudii config set agents.myagent.model opus
 | `fallback.enabled` | `true` | Auto-switch on outage |
 | `status.cache_ttl` | `300` | Health check interval (seconds) |
 | `statusline.models` | `opus,sonnet,haiku` | Models shown in RPROMPT |
+| `statusline.lines` | _see `config/defaults.json`_ | cc-statusline layout — array of arrays of segment names |
+| `statusline.omlx_active_path` | `~/offline_coding/gateii/data/agents/active.json` | Where to read the omlx-agent state from (override if gateii is at a non-standard path; or `claudii omlx connect` does it for you) |
 | `session-dashboard.enabled` | `off` | Dashboard mode (on/off) |
 
 ## License

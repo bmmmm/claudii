@@ -41,6 +41,7 @@ _claudii() {
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
+        'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'gc:Clean up stale session cache files'
         'resume:Resume a session by ID'
         'help:Show help'
@@ -106,6 +107,17 @@ _claudii() {
           _describe 'cc-statusline option' sl_opts
           ;;
 
+        omlx)
+          local -a omlx_opts
+          omlx_opts=(
+            'status:Show whether omlx integration is wired up (default)'
+            'connect:Walk through the setup — detect gateii path, verify omlx server'
+            'disconnect:Remove the omlx segment from custom statusline layouts'
+            'test:Render the statusline against a synthetic active.json'
+          )
+          _describe 'omlx command' omlx_opts
+          ;;
+
         config)
           case $words[3] in
             get|set)
@@ -127,6 +139,7 @@ _claudii() {
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
                 'statusline.lines:CC-Statusline layout (array of segment arrays)'
+                'statusline.omlx_active_path:Path to gateii data/agents/active.json for the omlx segment'
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'

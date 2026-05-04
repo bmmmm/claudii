@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Added
+- **`claudii omlx [status|connect|test|disconnect]`**: New top-level command for wiring up the [gateii](https://github.com/bmmmm/gateii) local-LLM agent layer to claudii's cc-statusline. `connect` detects the gateii data path (or stores a custom one via `statusline.omlx_active_path`), confirms the omlx segment is in the layout, and probes the oMLX server. `test` renders a synthetic `⚡ <task> <model> <Xs>` line for previewing. `disconnect` removes the segment from custom layouts.
+- **Sessionline `omlx` segment**: New segment that reads gateii's `data/agents/active.json` (or env override `CLAUDII_OMLX_ACTIVE` / config `.statusline.omlx_active_path`) and renders `⚡ <task> <model-short> <Xs>` while a local omlx-backed agent is running. Empty (and the line is silently dropped) when no agent is active or gateii is not installed — zero impact for users without gateii.
+- **Sessionline default layout: `omlx` line**: `_DEFAULT_LINES` (and `config/defaults.json`) now include `["omlx"]` as the 5th line. Users on the built-in default layout get the indicator automatically; users with a custom `.statusline.lines` need to add `["omlx"]` themselves or run `claudii omlx connect`.
 - **Sessionline `effort.level` from JSON**: Model segment now reads reasoning effort from `effort.level` in the CC statusLine stdin JSON (available since CC v2.1.119), replacing the `CLAUDII_EFFORT` environment-variable workaround.
 - **Sessionline thinking indicator**: When `thinking.enabled` is `true` in the statusLine JSON, a `▲` indicator is appended to the model segment.
 - **Sessionline `workspace.git_worktree` fallback**: The `worktree` segment now falls back to `workspace.git_worktree` so it fires inside any linked git worktree, not just `--worktree` sessions.
@@ -15,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline agent on status line**: Default layout line 4 is now `claude-status,agent` — active agent name appears alongside model-health indicators when an agent is set.
 
 ### Fixed
+- **`config/defaults.json` drift with `_DEFAULT_LINES`**: The defaults file was missing `dir` (line 3) and `agent` (line 4) segments that the script's `_DEFAULT_LINES` had been advertising for several releases. `claudii config get statusline.lines` returned the stale list. Fixed by syncing both sources.
 - **Overview: `model=` prefix in session dashboard** — the precmd session-dashboard extracted values from the session cache using `${sc#*$'\n'key=}`, which failed when `key=` was the first line (no leading newline). Fixed by prepending a newline before extraction (`_sc_nl=$'\n'"$sc"`), affecting model, ctx_pct, cost, rate_5h, and reset_5h display.
 - **Overview: `reset Xmin` → `↺Xm`** — Account section reset countdowns now use the same `↺Xm` / `↺XdXh` format as the sessionline instead of the verbose `reset Xmin` / `reset Xd Xh` text.
 - **Overview: agents trailing `/`** — Agents without a skill had their empty skill field eaten by `IFS=$'\t' read` (tab is bash whitespace — consecutive tabs collapse), causing columns to shift: `s=haiku m=high e=""` instead of `s="" m=haiku e=high`. Fixed by switching to `` (unit separator) as delimiter in jq/read, which is non-whitespace. Also fixed trailing `/` for agents without effort using conditional `model/effort` vs `model` formatting.

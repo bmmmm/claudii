@@ -770,6 +770,52 @@ claudii config set agents.clorch.effort high
 .fi
 .RE
 .
+.SS Local agents (oMLX / gateii)
+.
+.TP
+.B "omlx status"
+Show whether the omlx segment is wired into the cc-statusline, the
+configured / detected
+.I active.json
+path, oMLX server reachability, and oMLX CLI install state.
+.TP
+.B "omlx connect"
+Detect a gateii install at one of the well-known paths
+.RB ( "~/offline_coding/gateii" ", " ~/coding/gateii ", " "..." ),
+store a non-default path under
+.B statusline.omlx_active_path
+if needed, append
+.B ["omlx"]
+to a custom
+.B statusline.lines
+layout (no-op if you're on built-in defaults \(em those already
+include the segment), and probe the oMLX server.
+.TP
+.B "omlx test"
+Render the cc-statusline against a synthetic
+.I active.json
++ a temporary layout that includes the
+.B omlx
+segment. Useful to preview
+\(*ra commit-msg Qwen3.5-9B 3s
+without a real agent running.
+.TP
+.B "omlx disconnect"
+Surgically remove the
+.B \(dqomlx\(dq
+entry from any custom
+.B statusline.lines
+layout. Drops the line entirely if it had no other segments.
+.PP
+Override the
+.I active.json
+path via env
+.B CLAUDII_OMLX_ACTIVE
+or config key
+.BR statusline.omlx_active_path .
+The segment is silently empty (and its line dropped) when no agent is
+active or gateii is not installed \(em zero impact for users without gateii.
+.
 .SS System
 .
 .TP
