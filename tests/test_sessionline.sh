@@ -80,10 +80,10 @@ assert_contains "effort mode max shown" "max" "$output"
 output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"medium"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 assert_contains "effort mode medium shown" "medium" "$output"
 
-# Effort mode "high" — NOT shown (it's the default)
+# Effort mode "high" — always shown (all effort levels are displayed)
 output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"high"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_eq "effort mode high not shown" "0" "$(echo "$strip" | grep -c ' high')"
+assert_contains "effort mode high shown" "high" "$strip"
 
 # thinking.enabled — ▲ shown in model segment when true
 output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"max"},"thinking":{"enabled":true},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
@@ -230,17 +230,20 @@ output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percent
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "worktree absent when not in JSON" "0" "$(echo "$strip" | grep -c '@' || true)"
 
-# agent shown on line 4 (alongside claude-status) when agent.name set
+# agent segment: available via custom config — agent.name shown as @name
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+mkdir -p "$_test_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["agent"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Opus"},"agent":{"name":"orchestrate"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
-  | bash "$SL" 2>/dev/null)
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "agent.name shown on claude-status line" "@orchestrate" "$strip"
+assert_contains "agent.name shown as @name via custom config" "@orchestrate" "$strip"
 
 # agent segment falls back to session_name when agent.name absent (claudii agent launches use --name)
 output=$(echo '{"model":{"display_name":"Opus"},"session_name":"omlx","context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
-  | bash "$SL" 2>/dev/null)
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "session_name shown as @name fallback on status line" "@omlx" "$strip"
+assert_contains "session_name shown as @name fallback" "@omlx" "$strip"
 
 # burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \

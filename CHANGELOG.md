@@ -15,9 +15,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline thinking indicator**: When `thinking.enabled` is `true` in the statusLine JSON, a `▲` indicator is appended to the model segment.
 - **Sessionline `workspace.git_worktree` fallback**: The `worktree` segment now falls back to `workspace.git_worktree` so it fires inside any linked git worktree, not just `--worktree` sessions.
 - **Sessionline `dir` segment**: New segment showing `⌂ <dirname>` (dim text). Sources `worktree.original_cwd` in `--worktree` sessions, otherwise `workspace.project_dir`, with `workspace.current_dir` as last fallback. Added to default layout (line 3, after `worktree`).
-- **Sessionline agent on status line**: Default layout line 4 is now `claude-status,agent` — active agent name appears alongside model-health indicators when an agent is set.
+- **Sessionline effort level coloring**: `effort.level` is now always displayed next to the model name, colored by tier — `max` in accent (pink), `high` in yellow, `medium`/`low` dim. Previously hidden when `high`.
+- **Sessionline thinking indicator color**: The `▲` thinking indicator is now cyan instead of dim for better visibility.
+- **Sessionline dir segment**: Directory name now rendered in yellow; prefix symbol `⌂` stays dim.
 
 ### Fixed
+- **Sessionline default layout: `agent` removed from line 4**: CC already shows the session name natively; the `agent` segment is still available for custom layouts but no longer shown by default.
 - **`config/defaults.json` drift with `_DEFAULT_LINES`**: The defaults file was missing `dir` (line 3) and `agent` (line 4) segments that the script's `_DEFAULT_LINES` had been advertising for several releases. `claudii config get statusline.lines` returned the stale list. Fixed by syncing both sources.
 - **Overview: `model=` prefix in session dashboard** — the precmd session-dashboard extracted values from the session cache using `${sc#*$'\n'key=}`, which failed when `key=` was the first line (no leading newline). Fixed by prepending a newline before extraction (`_sc_nl=$'\n'"$sc"`), affecting model, ctx_pct, cost, rate_5h, and reset_5h display.
 - **Overview: `reset Xmin` → `↺Xm`** — Account section reset countdowns now use the same `↺Xm` / `↺XdXh` format as the sessionline instead of the verbose `reset Xmin` / `reset Xd Xh` text.

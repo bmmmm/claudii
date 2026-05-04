@@ -204,14 +204,19 @@ SEP="${DIM}  │  ${RST}"
 
 # --- segment pre-computation ---
 
-# Model (bold) + effort level (dim, from JSON) + thinking indicator (▲)
+# Model (bold) + effort level (colored by tier) + thinking indicator (▲)
 _seg_model=""
 if [[ -n "$model" ]]; then
   _seg_model="${BOLD}${model}${RST}"
-  if [[ -n "$effort_level" && "$effort_level" != "high" ]]; then
-    _seg_model+=" ${DIM}${effort_level}${RST}"
+  if [[ -n "$effort_level" && "$effort_level" != "null" ]]; then
+    case "$effort_level" in
+      max)  _eff_clr="$ACCENT" ;;
+      high) _eff_clr="$YELLOW" ;;
+      *)    _eff_clr="$DIM"    ;;
+    esac
+    _seg_model+=" ${_eff_clr}${effort_level}${RST}"
   fi
-  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${DIM}▲${RST}"
+  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${CYAN}▲${RST}"
 fi
 
 # Context bar (10 chars) + usable percentage + ⚡cache%
@@ -418,7 +423,7 @@ _seg_dir=""
 _dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
 if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   _dir_name="${_dir_path##*/}"
-  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂${RST} ${ACCENT}${_dir_name}${RST}"
+  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂${RST} ${YELLOW}${_dir_name}${RST}"
 fi
 
 # Terminal width — used by ruler segment to fill remaining space
@@ -434,7 +439,7 @@ _term_cols=""
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,tokens,duration,worktree,dir
-claude-status,agent
+claude-status
 omlx"
 
 _lines_raw="$_DEFAULT_LINES"
