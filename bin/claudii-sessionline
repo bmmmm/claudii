@@ -485,6 +485,34 @@ if [[ -f "$_status_cache" ]]; then
   fi
 fi
 
+# omlx local-agent indicator — read by gateii's scripts/agent (and agent-bench)
+# from data/agents/active.json. Empty when no agent active or file missing,
+# so users without gateii get no impact. Stale-guard: ignore entries older
+# than 300 s (crash leftovers).
+# Override the path via env CLAUDII_OMLX_ACTIVE or config:
+#   .statusline.omlx_active_path
+_seg_omlx=""
+_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-}"
+if [[ -z "$_omlx_active_path" && -f "$_config_file" ]]; then
+  _cfg_omlx=$(jq -r '.statusline.omlx_active_path // empty' "$_config_file" 2>/dev/null)
+  [[ -n "$_cfg_omlx" ]] && _omlx_active_path="$_cfg_omlx"
+fi
+[[ -z "$_omlx_active_path" ]] && _omlx_active_path="$HOME/offline_coding/gateii/data/agents/active.json"
+if [[ -f "$_omlx_active_path" ]]; then
+  _omlx_started=$(jq -r '.started_epoch // 0' "$_omlx_active_path" 2>/dev/null)
+  if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
+    _omlx_age=$(( _now - _omlx_started ))
+    if (( _omlx_age >= 0 && _omlx_age < 300 )); then
+      _omlx_task=$(jq -r '.task // "?"' "$_omlx_active_path" 2>/dev/null)
+      _omlx_model=$(jq -r '.model // "?"' "$_omlx_active_path" 2>/dev/null)
+      # Compact model name (strip MLX/4bit suffixes shared with the console)
+      _omlx_model_short=$(printf '%s' "$_omlx_model" \
+        | sed -E 's/-MLX-4bit$//; s/-A3B-4bit$/-A3B/; s/-a4b-it-4bit$//; s/-it-4bit$//')
+      _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
+    fi
+  fi
+fi
+
 # --- layout loop ---
 
 while IFS= read -r _line_segs; do
@@ -510,7 +538,8 @@ while IFS= read -r _line_segs; do
       delta-7d)      _val="$_seg_delta7d"       ;;
       cache-create)    _val="$_seg_cache_create"    ;;
       dir)             _val="$_seg_dir"             ;;
-      claude-status)   _val="$_seg_claude_status"  ;;
+      claude-status)   _val="$_seg_claude_status"   ;;
+      omlx)            _val="$_seg_omlx"            ;;
       ruler)
         # Fill remaining terminal width with ─
         # Falls back to 60 cols when COLUMNS/tput unavailable (CC piped context)

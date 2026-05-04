@@ -359,3 +359,39 @@ output=$(jq -n --arg t "$_mal" '{"model":{"display_name":"Opus"},"context_window
   | bash "$SL" 2>&1)
 assert_not_contains "_tok awk injection: no PWNED in output" "PWNED_TOK" "$output"
 assert_contains "_tok awk injection: model still renders" "Opus" "$output"
+
+# omlx segment — reads gateii's data/agents/active.json (or env override)
+# Empty when path missing or stale (>5 min old). Fresh entries render
+# ⚡ task model age. Bench-prefixed task names are passed through verbatim.
+_omlx_dir="$(mktemp -d "$CLAUDII_HOME/tmp/omlx-XXXXXX")"; _SL_TMPDIRS+=("$_omlx_dir")
+_omlx_cfg="$_omlx_dir/cfg"; mkdir -p "$_omlx_cfg/claudii"
+printf '{"statusline":{"lines":[["model","omlx"]],"omlx_active_path":"%s/active.json"}}\n' "$_omlx_dir" > "$_omlx_cfg/claudii/config.json"
+_min_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
+
+# Missing file → no segment
+CLAUDII_OMLX_ACTIVE=/nonexistent/x.json output=$(echo "$_min_json" | bash "$SL" 2>&1)
+assert_not_contains "omlx: no file → no ⚡" "⚡" "$output"
+
+# Stale file (>5 min) → no segment
+_old=$(( $(date +%s) - 1000 ))
+printf '{"task":"commit-msg","model":"Qwen3.5-9B-MLX-4bit","started_epoch":%s}\n' "$_old" > "$_omlx_dir/active.json"
+output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
+assert_not_contains "omlx: stale file → no ⚡" "⚡" "$output"
+
+# Fresh file → ⚡ + task + short model + age
+_now_ts=$(date +%s)
+printf '{"task":"commit-msg","model":"Qwen3.5-9B-MLX-4bit","started_epoch":%s}\n' "$_now_ts" > "$_omlx_dir/active.json"
+output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "omlx: fresh → ⚡"           "⚡"          "$strip"
+assert_contains "omlx: task name shown"      "commit-msg" "$strip"
+assert_contains "omlx: model name compacted" "Qwen3.5-9B" "$strip"
+assert_not_contains "omlx: MLX-4bit suffix stripped" "MLX-4bit" "$strip"
+
+# Bench-prefixed task → passed through
+printf '{"task":"bench:summarize-file (3/3)","model":"gemma-4-e2b-it-4bit","started_epoch":%s}\n' "$_now_ts" > "$_omlx_dir/active.json"
+output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "omlx: bench prefix passes through" "bench:summarize-file" "$strip"
+assert_contains "omlx: gemma-it-4bit suffix stripped" "gemma-4-e2b" "$strip"
+assert_not_contains "omlx: gemma -it-4bit removed"   "-it-4bit"     "$strip"
