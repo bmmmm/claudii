@@ -152,7 +152,7 @@ function _claudii_agent_launch {
   local prompt
   prompt=$(< "$agent_file")
   _claudii_log info "agent launch: $agent_name ($agent_file) model=$model effort=$effort"
-  claude --model "$model" --effort "$effort" --append-system-prompt "$prompt" "$@"
+  claude --model "$model" --effort "$effort" --name "$agent_name" --append-system-prompt "$prompt" "$@"
 }
 
 # Register agent aliases from config (agents.*.skill/model/effort)

@@ -361,10 +361,12 @@ if [[ -n "$_wt_name" ]]; then
   [[ -n "$worktree_name" && -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
 fi
 
-# Agent: DIM @agent_name (only when set)
+# Agent: DIM @name — uses agent.name (CC sub-agents) with session_name as fallback
+# (claudii_agent_launch passes --name <alias> so session_name carries the alias)
 _seg_agent=""
-if [[ -n "$agent_name" ]]; then
-  _seg_agent="${DIM}@${agent_name}${RST}"
+_agent_display="${agent_name:-$session_name}"
+if [[ -n "$_agent_display" ]]; then
+  _seg_agent="${DIM}@${_agent_display}${RST}"
 fi
 
 # Session name: custom name set via /rename or --name (only when set)

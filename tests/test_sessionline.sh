@@ -234,7 +234,13 @@ assert_eq "worktree absent when not in JSON" "0" "$(echo "$strip" | grep -c '@' 
 output=$(echo '{"model":{"display_name":"Opus"},"agent":{"name":"orchestrate"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
   | bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "agent shown on claude-status line when set" "@orchestrate" "$strip"
+assert_contains "agent.name shown on claude-status line" "@orchestrate" "$strip"
+
+# agent segment falls back to session_name when agent.name absent (claudii agent launches use --name)
+output=$(echo '{"model":{"display_name":"Opus"},"session_name":"omlx","context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "session_name shown as @name fallback on status line" "@omlx" "$strip"
 
 # burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \
