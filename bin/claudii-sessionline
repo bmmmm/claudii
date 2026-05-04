@@ -425,7 +425,7 @@ _seg_dir=""
 _dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
 if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   _dir_name="${_dir_path##*/}"
-  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}${_dir_name}${RST}"
+  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂ ${_dir_name}${RST}"
 fi
 
 # Terminal width — used by ruler segment to fill remaining space
@@ -441,7 +441,7 @@ _term_cols=""
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,tokens,duration,worktree,dir
-claude-status"
+claude-status,agent"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"

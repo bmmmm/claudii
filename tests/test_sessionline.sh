@@ -230,6 +230,12 @@ output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percent
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "worktree absent when not in JSON" "0" "$(echo "$strip" | grep -c '@' || true)"
 
+# agent shown on line 4 (alongside claude-status) when agent.name set
+output=$(echo '{"model":{"display_name":"Opus"},"agent":{"name":"orchestrate"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
+  | bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "agent shown on claude-status line when set" "@orchestrate" "$strip"
+
 # burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \
   | bash "$SL" 2>/dev/null)
@@ -333,6 +339,7 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"workspace":{"project_dir":"/U
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "dir segment shows project basename" "my-app" "$strip"
+assert_contains "dir segment shows ⌂ symbol" "⌂" "$strip"
 
 # dir segment — worktree.original_cwd takes precedence over project_dir
 output=$(echo '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/home/alice/work"},"worktree":{"original_cwd":"/home/alice/projects/feat-branch","name":"feat"},"context_window":{"used_percentage":5,"total_input_tokens":100,"total_output_tokens":20,"context_window_size":200000},"cost":{"total_cost_usd":0}}' \
