@@ -1184,7 +1184,7 @@ _cmd_default() {
         else
           _ov_reset_clr="${CLAUDII_CLR_DIM}"
         fi
-        _ov_acct_line+=" ${_ov_reset_clr}reset ${_ov_rem_min}min${CLAUDII_CLR_RESET}"
+        _ov_acct_line+=" ${_ov_reset_clr}↺${_ov_rem_min}m${CLAUDII_CLR_RESET}"
       fi
     fi
     if [[ -n "$_ov_acct_7d" ]]; then
@@ -1210,12 +1210,12 @@ _cmd_default() {
           if (( _ov_r7d_rem >= 86400 )); then
             _ov_r7d_d=$(( _ov_r7d_rem / 86400 ))
             _ov_r7d_h=$(( (_ov_r7d_rem % 86400) / 3600 ))
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset ${_ov_r7d_d}d${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
+            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_ov_r7d_d}d${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
           elif (( _ov_r7d_rem >= 3600 )); then
             _ov_r7d_h=$(( _ov_r7d_rem / 3600 ))
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset ${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
+            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
           else
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}reset $(( _ov_r7d_rem / 60 ))min${CLAUDII_CLR_RESET}"
+            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺$(( _ov_r7d_rem / 60 ))m${CLAUDII_CLR_RESET}"
           fi
         fi
       fi
@@ -1238,9 +1238,12 @@ _cmd_default() {
 
   if [[ -n "$_ov_agents_json" ]]; then
     printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Agents${CLAUDII_CLR_RESET}\n"
-    while IFS=$'\t' read -r _a_alias _a_skill _a_model _a_effort; do
-      printf "    %-8s  %-12s  %s/%s\n" "$_a_alias" "$_a_skill" "$_a_model" "$_a_effort"
-    done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
+    local _a_D=$'\x1f'
+    while IFS="$_a_D" read -r _a_alias _a_skill _a_model _a_effort; do
+      local _a_spec="${_a_model}"
+      [[ -n "$_a_effort" ]] && _a_spec="${_a_model}/${_a_effort}"
+      printf "    %-8s  %-12s  %s\n" "$_a_alias" "$_a_skill" "$_a_spec"
+    done < <(echo "$_ov_agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | join("\u001f")')
   else
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Agents                          claudii agents to configure${CLAUDII_CLR_RESET}\n"
   fi

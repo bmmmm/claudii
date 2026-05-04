@@ -192,11 +192,12 @@ function _claudii_collect_sessions {
     fi
 
     s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
-    [[ $'\n'"$sc" == *$'\n'model=* ]]    && s_model="${${sc#*$'\n'model=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'ctx_pct=* ]]  && s_ctx="${${sc#*$'\n'ctx_pct=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'cost=* ]]     && s_cost="${${sc#*$'\n'cost=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'rate_5h=* ]]  && s_5h="${${sc#*$'\n'rate_5h=}%%$'\n'*}"
-    [[ $'\n'"$sc" == *$'\n'reset_5h=* ]] && s_r5h="${${sc#*$'\n'reset_5h=}%%$'\n'*}"
+    local _sc_nl=$'\n'"$sc"
+    [[ "$_sc_nl" == *$'\n'model=* ]]    && s_model="${${_sc_nl#*$'\n'model=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'ctx_pct=* ]]  && s_ctx="${${_sc_nl#*$'\n'ctx_pct=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'cost=* ]]     && s_cost="${${_sc_nl#*$'\n'cost=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'rate_5h=* ]]  && s_5h="${${_sc_nl#*$'\n'rate_5h=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'reset_5h=* ]] && s_r5h="${${_sc_nl#*$'\n'reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
     _CLAUDII_SDASH_MODELS+=("$s_model")

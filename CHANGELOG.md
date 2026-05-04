@@ -12,6 +12,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline thinking indicator**: When `thinking.enabled` is `true` in the statusLine JSON, a `▲` indicator is appended to the model segment.
 - **Sessionline `workspace.git_worktree` fallback**: The `worktree` segment now falls back to `workspace.git_worktree` so it fires inside any linked git worktree, not just `--worktree` sessions.
 
+### Fixed
+- **Overview: `model=` prefix in session dashboard** — the precmd session-dashboard extracted values from the session cache using `${sc#*$'\n'key=}`, which failed when `key=` was the first line (no leading newline). Fixed by prepending a newline before extraction (`_sc_nl=$'\n'"$sc"`), affecting model, ctx_pct, cost, rate_5h, and reset_5h display.
+- **Overview: `reset Xmin` → `↺Xm`** — Account section reset countdowns now use the same `↺Xm` / `↺XdXh` format as the sessionline instead of the verbose `reset Xmin` / `reset Xd Xh` text.
+- **Overview: agents trailing `/`** — Agents without a skill had their empty skill field eaten by `IFS=$'\t' read` (tab is bash whitespace — consecutive tabs collapse), causing columns to shift: `s=haiku m=high e=""` instead of `s="" m=haiku e=high`. Fixed by switching to `` (unit separator) as delimiter in jq/read, which is non-whitespace. Also fixed trailing `/` for agents without effort using conditional `model/effort` vs `model` formatting.
+
 ---
 
 ## [v0.15.0] — 2026-04-17
