@@ -662,7 +662,8 @@ _cmd_sessions_inactive() {
   _is_stale=0 _is_pinned=0
   for _is_gc_f in "${_is_files[@]}"; do
     [[ -f "$_is_gc_f" ]] || continue
-    _is_gc_ppid=$(grep '^ppid=' "$_is_gc_f" 2>/dev/null | cut -d= -f2 || true)
+    local _is_gc_line; _is_gc_ppid=""
+    while IFS= read -r _is_gc_line; do _is_gc_ppid="${_is_gc_line#*=}"; break; done < <(grep '^ppid=' "$_is_gc_f" 2>/dev/null)
     [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
     _is_gc_mtime=$(stat -f%m "$_is_gc_f" 2>/dev/null || stat -c%Y "$_is_gc_f" 2>/dev/null || echo 0)
     if grep -q '^pinned=1$' "$_is_gc_f" 2>/dev/null; then
@@ -685,23 +686,30 @@ _cmd_sessions_inactive() {
 # Pin/unpin a session — pinned sessions are protected from GC.
 # Matches by session_id substring (first match wins).
 # (sessionline preserves pinned=1 across cache rewrites — see bin/claudii-sessionline.)
-_cmd_pin() {
-  local needle="${2:-}"
-  [[ -z "$needle" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }
+_session_toggle_pin() {
+  local action="$1" needle="$2"
   local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local found=0
   for f in "$cache_dir"/session-*; do
     [[ -f "$f" ]] || continue
-    local sid
-    sid=$(grep '^session_id=' "$f" 2>/dev/null | cut -d= -f2)
+    local sid line
+    while IFS= read -r line; do sid="${line#*=}"; break; done < <(grep '^session_id=' "$f" 2>/dev/null)
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
-      if grep -q '^pinned=1$' "$f" 2>/dev/null; then
-        echo "Already pinned: $sid"
+      local _tmp="${f}.pin.$$"
+      if [[ "$action" == "pin" ]]; then
+        if grep -q '^pinned=1$' "$f" 2>/dev/null; then
+          echo "Already pinned: $sid"
+        else
+          { grep -v '^pinned=' "$f" 2>/dev/null; echo "pinned=1"; } > "$_tmp" && mv -f "$_tmp" "$f"
+          echo "Pinned: $sid"
+        fi
       else
-        # Atomic pin write: tmp+mv prevents race between pin and sessionline rewrites
-        local _tmp="${f}.pin.$$"
-        { grep -v '^pinned=' "$f" 2>/dev/null; echo "pinned=1"; } > "$_tmp" && mv -f "$_tmp" "$f"
-        echo "Pinned: $sid"
+        if grep -q '^pinned=1$' "$f" 2>/dev/null; then
+          grep -v '^pinned=' "$f" 2>/dev/null > "$_tmp" && mv -f "$_tmp" "$f"
+          echo "Unpinned: $sid"
+        else
+          echo "Not pinned: $sid"
+        fi
       fi
       found=1; break
     fi
@@ -709,28 +717,14 @@ _cmd_pin() {
   (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; exit 1; }
 }
 
+_cmd_pin() {
+  [[ -z "${2:-}" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }
+  _session_toggle_pin pin "$2"
+}
+
 _cmd_unpin() {
-  local needle="${2:-}"
-  [[ -z "$needle" ]] && { echo "Usage: claudii unpin <session-id>" >&2; exit 1; }
-  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local found=0
-  for f in "$cache_dir"/session-*; do
-    [[ -f "$f" ]] || continue
-    local sid
-    sid=$(grep '^session_id=' "$f" 2>/dev/null | cut -d= -f2)
-    if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
-      if grep -q '^pinned=1$' "$f" 2>/dev/null; then
-        # Atomic unpin write: tmp+mv prevents race with sessionline rewrites
-        local _tmp="${f}.unpin.$$"
-        grep -v '^pinned=' "$f" 2>/dev/null > "$_tmp" && mv -f "$_tmp" "$f"
-        echo "Unpinned: $sid"
-      else
-        echo "Not pinned: $sid"
-      fi
-      found=1; break
-    fi
-  done
-  (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; exit 1; }
+  [[ -z "${2:-}" ]] && { echo "Usage: claudii unpin <session-id>" >&2; exit 1; }
+  _session_toggle_pin unpin "$2"
 }
 
 _strip_model_name() {

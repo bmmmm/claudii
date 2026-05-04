@@ -3,6 +3,9 @@
 
 SL="$CLAUDII_HOME/bin/claudii-sessionline"
 
+_SL_TMPDIRS=()
+trap 'rm -rf "${_SL_TMPDIRS[@]}" 2>/dev/null' EXIT
+
 # Full data (all fields)
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000,"current_usage":{"cache_creation_input_tokens":8000,"cache_read_input_tokens":0}},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | bash "$SL" 2>&1)
 assert_contains "shows model name" "Opus" "$output"
@@ -32,7 +35,7 @@ output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percent
 assert_contains "minimal data shows model" "Haiku" "$output"
 
 # duration segment — not in default layout; test via custom config
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["duration"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":732000}}' \
@@ -41,16 +44,14 @@ assert_contains "duration segment: 12m" "12m" "$output"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":2.10,"total_duration_ms":3600000}}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "duration segment: 1h 0m" "1h 0m" "$output"
-rm -rf "$_test_cfg_dir"
 
 # cost segment — not in default layout; test via custom config
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["cost"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.55}}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "cost segment shows value" "0.55" "$output"
-rm -rf "$_test_cfg_dir"
 
 # No rate limits — should not leak other fields into rate display
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":50,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.10,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
@@ -95,18 +96,17 @@ assert_eq "thinking disabled: no ▲" "0" "$(echo "$strip" | grep -c '▲')"
 
 # Worktree/Agent — written to session cache file
 mkdir -p "$CLAUDII_HOME/tmp"
-_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cache_dir")
 output=$(echo '{"session_id":"testworktreeagent","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"worktree":{"name":"my-feature-branch","branch":"main"},"agent":{"name":"agent-42"}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
 _test_session_file="$_test_cache_dir/session-testwork"
 assert_file_exists "worktree/agent: session cache file created" "$_test_session_file"
 _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
 assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_cache_contents"
 assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
-rm -rf "$_test_cache_dir"
 
 # Worktree segment rendered: name + ⎇ branch in output (via custom config with worktree segment)
 mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","worktree","agent"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"session_id":"testwt99","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"worktree":{"name":"feat-login","branch":"main"}}' \
@@ -115,11 +115,10 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "worktree segment shows name" "feat-login" "$strip"
 assert_contains "worktree segment shows branch" "⎇" "$strip"
 assert_contains "worktree segment shows branch name" "main" "$strip"
-rm -rf "$_test_cfg_dir"
 
 # workspace.git_worktree fallback — shown when worktree.name absent (plain git worktree)
 mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","worktree"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"session_id":"testwsgwt1","model":{"display_name":"Sonnet"},"workspace":{"git_worktree":"feat-test"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' \
@@ -127,10 +126,9 @@ output=$(echo '{"session_id":"testwsgwt1","model":{"display_name":"Sonnet"},"wor
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "workspace.git_worktree fallback shown" "feat-test" "$strip"
 assert_eq "workspace.git_worktree fallback: no branch arrow" "0" "$(echo "$strip" | grep -c '⎇')"
-rm -rf "$_test_cfg_dir"
 
 # ppid — written to session cache file so RPROMPT can detect dead sessions
-_test_cache_dir="$(mktemp -d)"
+_test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
 echo '{"session_id":"testppid123456","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1 >/dev/null
 _test_session_file="$_test_cache_dir/session-testppid"
 _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
@@ -140,7 +138,6 @@ _ppid_val="$(echo "$_cache_contents" | grep '^ppid=' | cut -d= -f2)"
 [[ "$_ppid_val" =~ ^[0-9]+$ ]] \
   && assert_eq "session cache ppid is a valid PID integer" "true" "true" \
   || assert_eq "session cache ppid is a valid PID integer" "true" "false (got: $_ppid_val)"
-rm -rf "$_test_cache_dir"
 
 # Token order: input↑ must appear before output↓ in the rendered line
 # (values from real session: 64.9K input, 121.1K output — order matters regardless of magnitude)
@@ -169,7 +166,7 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "burn-ETA ~Xmin not shown" "0" "$(echo "$strip" | grep -cE '~[0-9]+min' || true)"
 
 # 7d-Delta tracking — rate_7d_start persisted in cache; delta NOT rendered in sessionline output
-_test_cache_dir="$(mktemp -d)"
+_test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
 # First call: establishes rate_7d_start=60
 echo '{"session_id":"test7ddelta12","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":60}}}' \
   | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
@@ -180,10 +177,9 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "7d delta not shown in sessionline output" "0" "$(echo "$strip" | grep -cE '\(\+[0-9]+%\)' || true)"
 _cache_7d="$(cat "$_test_cache_dir/session-test7dde" 2>/dev/null)"
 assert_contains "7d_start cached from first call" "rate_7d_start=60" "$_cache_7d"
-rm -rf "$_test_cache_dir"
 
 # burn_eta written to session cache (non-empty when rate > 0 and duration > 0)
-_test_cache_dir="$(mktemp -d)"
+_test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
 echo '{"session_id":"testburneta1","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":70},"seven_day":{"used_percentage":65}}}' \
   | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
 _cache_be="$(cat "$_test_cache_dir/session-testburn" 2>/dev/null)"
@@ -192,7 +188,6 @@ _burn_val="$(echo "$_cache_be" | grep '^burn_eta=' | cut -d= -f2)"
 [[ "$_burn_val" =~ ^[0-9]+$ ]] \
   && assert_eq "burn_eta is a non-empty integer" "true" "true" \
   || assert_eq "burn_eta is a non-empty integer" "true" "false (got: $_burn_val)"
-rm -rf "$_test_cache_dir"
 
 # 7d-Countdown — shown when reset_7d is set (< 1h → Xm format)
 _reset_7d_soon=$(( $(date +%s) + 2700 ))
@@ -220,7 +215,7 @@ _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' ||
 assert_eq "default output has exactly 4 non-empty lines" "4" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","context-bar","cost","rate-5h","rate-7d","tokens","lines-changed","duration"]]}}\n' \
   > "$_test_cfg_dir/claudii/config.json"
@@ -228,7 +223,6 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 _single_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
 assert_eq "single-line config produces 1 output line" "1" "$_single_lines"
-rm -rf "$_test_cfg_dir"
 
 # Empty segments skipped: worktree and agent absent when not in JSON input
 output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
@@ -294,7 +288,7 @@ assert_eq "api-duration ratio guard: api > total → no ratio shown" "0" "$(echo
 
 # cache-create segment: ✎N shown when cache_creation_input_tokens > 0
 mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","cache-create"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":1200}},"cost":{"total_cost_usd":0.10}}' \
@@ -302,30 +296,27 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "cache-create segment shows ✎" "✎" "$strip"
 assert_contains "cache-create segment shows formatted tokens" "1.2K" "$strip"
-rm -rf "$_test_cfg_dir"
 
 # cache-create segment: NOT shown when cache_creation_input_tokens = 0
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","cache-create"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"cost":{"total_cost_usd":0.10}}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cache-create absent when zero" "0" "$(echo "$strip" | grep -c '✎' || true)"
-rm -rf "$_test_cfg_dir"
 
 # exceeds_200k: >200k indicator shown when exceeds_200k_tokens = true
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":80,"total_input_tokens":180000,"total_output_tokens":30000,"context_window_size":200000},"cost":{"total_cost_usd":1.00},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "exceeds_200k shows >200k" ">200k" "$strip"
-rm -rf "$_test_cfg_dir"
 
 # session-name segment: shown when session_name set
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","session-name"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01},"session_name":"my-feature"}' \
@@ -335,7 +326,7 @@ assert_contains "session-name segment shows name" "my-feature" "$strip"
 
 # dir segment — workspace.project_dir basename shown in default layout
 mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","dir"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"workspace":{"project_dir":"/Users/alice/projects/my-app","current_dir":"/Users/alice/projects/my-app/src"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
@@ -348,7 +339,6 @@ output=$(echo '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/hom
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "dir segment uses worktree.original_cwd when set" "feat-branch" "$strip"
-rm -rf "$_test_cfg_dir"
 
 # _tok awk injection — malicious token string must not execute code
 # `awk -v n="$n"` with numeric coercion (n+0) should sanitize, but regression-test anyway
@@ -357,4 +347,3 @@ output=$(jq -n --arg t "$_mal" '{"model":{"display_name":"Opus"},"context_window
   | bash "$SL" 2>&1)
 assert_not_contains "_tok awk injection: no PWNED in output" "PWNED_TOK" "$output"
 assert_contains "_tok awk injection: model still renders" "Opus" "$output"
-rm -rf "$_test_cfg_dir"
