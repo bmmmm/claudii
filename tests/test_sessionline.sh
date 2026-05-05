@@ -209,10 +209,10 @@ assert_eq "7d countdown >= 24h shows ↺XdYh" "1" "$(echo "$strip" | grep -cE '�
 
 # --- new tests (multi-line layout + segment pre-computation) ---
 
-# Default output has exactly 4 non-empty lines (line 4 = claude-status)
+# Default output has exactly 5 non-empty lines (line 5 = omlx,proxy — proxy always shows "→ api")
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_api_duration_ms":50000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | COLUMNS=80 bash "$SL" 2>/dev/null)
 _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
-assert_eq "default output has exactly 4 non-empty lines" "4" "$_nonempty_lines"
+assert_eq "default output has exactly 5 non-empty lines" "5" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")

@@ -349,7 +349,7 @@ fi
 # Duration: DIM Xm / Xh Xm
 _seg_dur=""
 if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
-  _dur "$duration_ms"; [[ -n "$_dur_result" ]] && _seg_dur="${DIM}${_dur_result}${RST}"
+  _dur "$duration_ms"; [[ -n "$_dur_result" ]] && _seg_dur="${DIM}⏱ ${_dur_result}${RST}"
 fi
 
 # Burn-ETA: DIM ETA:Xm (only when _burn_eta set and > 0)
@@ -434,9 +434,9 @@ _term_cols=""
 
 _DEFAULT_LINES="model,context-bar,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,tokens,duration,worktree,dir
+api-duration,duration,worktree,dir
 claude-status
-omlx"
+omlx,proxy,cost,tokens"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
@@ -516,6 +516,26 @@ if [[ -f "$_omlx_active_path" ]]; then
   fi
 fi
 
+# Proxy indicator — shows when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
+# Empty when routing direct to Anthropic (the default — no noise needed).
+_seg_proxy=""
+_proxy_settings="${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}"
+[[ -z "$_proxy_settings" || ! -f "$_proxy_settings" ]] && _proxy_settings="${cwd:+${cwd}/.claude/settings.local.json}"
+[[ -z "$_proxy_settings" || ! -f "$_proxy_settings" ]] && _proxy_settings=".claude/settings.local.json"
+if [[ -f "$_proxy_settings" ]]; then
+  _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
+  if [[ -n "$_proxy_url" ]]; then
+    if [[ "$_proxy_url" == "http://localhost:8888" ]]; then
+      _proxy_label="gateii"
+    else
+      _proxy_label="${_proxy_url#http://}"; _proxy_label="${_proxy_label#https://}"; _proxy_label="${_proxy_label%%/*}"
+    fi
+    _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
+  else
+    _seg_proxy="${DIM}→ api${RST}"
+  fi
+fi
+
 # --- layout loop ---
 
 while IFS= read -r _line_segs; do
@@ -543,6 +563,7 @@ while IFS= read -r _line_segs; do
       dir)             _val="$_seg_dir"             ;;
       claude-status)   _val="$_seg_claude_status"   ;;
       omlx)            _val="$_seg_omlx"            ;;
+      proxy)           _val="$_seg_proxy"           ;;
       ruler)
         # Fill remaining terminal width with ─
         # Falls back to 60 cols when COLUMNS/tput unavailable (CC piped context)
