@@ -202,8 +202,8 @@ else
     exit 1
   fi
   _rel_ok "Tag $_rel_tag pushed"
-  # Capture tagged commit BEFORE the local Formula sync commit shifts HEAD —
-  # the Release workflow runs on this sha, not on whatever HEAD is at poll time.
+  # Capture tagged commit SHA — used by the polling block below to match the
+  # Release workflow run by head_sha.
   _tag_sha=$(git -C "$CLAUDII_HOME" rev-list -n1 "$_rel_tag")
 fi
 
@@ -245,23 +245,13 @@ EOF
       --field sha="$_tap_file_sha" \
       --jq '.commit.sha' >/dev/null
     _rel_ok "bmmmm/homebrew-tap → ${_rel_version} (sha256: ${_sha256:0:12}…)"
-
-    # Keep local Formula/claudii.rb in sync (used for brew audit in CI)
-    sed -i.bak \
-      -e "s|url \"https://.*\.tar\.gz\"|url \"${_tarball_url}\"|" \
-      -e "s|sha256 \"[a-f0-9]*\"|sha256 \"${_sha256}\"|" \
-      -e "s|version \"[0-9.]*\"|version \"${_rel_version}\"|" \
-      "${CLAUDII_HOME}/${_tap_formula}" && rm -f "${CLAUDII_HOME}/${_tap_formula}.bak"
-    git -C "${CLAUDII_HOME}" add "${_tap_formula}"
-    git -C "${CLAUDII_HOME}" commit -m "chore(formula): sync local Formula to ${_rel_tag}" --no-verify || true
-    _rel_ok "Local Formula/claudii.rb synced"
   fi
 fi
 
 # ── Poll GitHub Actions (non-blocking) ──
 # Only purpose: (1) catch explicit workflow failures + rollback tag,
 # (2) append SHA256 to GitHub Release notes once the Release exists.
-# Timeout is non-fatal — tap + Formula are already updated above.
+# Timeout is non-fatal — tap is already updated above.
 _rel_box_sep "GitHub Actions"
 _release_url="https://github.com/${_gh_owner:-bmmmm}/${_gh_repo:-claudii}/releases/tag/${_rel_tag}"
 
@@ -279,8 +269,7 @@ else
   _spin_idx=0
 
   while (( _poll_elapsed < _poll_timeout )); do
-    # Match by tagged commit SHA (set after tag push) — HEAD has since moved
-    # because the local Formula sync added a commit on top of the tag.
+    # Match by tagged commit SHA — the Release workflow runs on this sha.
     _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
       --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_tag_sha}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion}" \
       2>/dev/null || echo "")

@@ -91,11 +91,11 @@ Session transcripts show recurring waste patterns. Follow these:
 
 ## When removing or renaming a command
 
-1. `Formula/claudii.rb` — check caveats
-2. `CHANGELOG.md` — update unreleased block
-3. `tests/test_<command>.sh` — delete if exists
-4. `.gitignore` — clean up stale rules if files were removed
-5. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry (local only — never commit, never `git add .claude/`)
+1. `CHANGELOG.md` — update unreleased block
+2. `tests/test_<command>.sh` — delete if exists
+3. `.gitignore` — clean up stale rules if files were removed
+4. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry (local only — never commit, never `git add .claude/`)
+5. Formula caveats live only in `bmmmm/homebrew-tap` (single source of truth) — `scripts/release.sh` syncs URL/SHA at release time. Edit there directly if caveats change.
 
 ## Project skills
 
