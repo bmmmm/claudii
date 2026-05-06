@@ -432,11 +432,11 @@ _term_cols=""
 
 # --- layout config ---
 
-_DEFAULT_LINES="model,context-bar,cache-create
+_DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,dir
-claude-status
-omlx,proxy,cost,tokens"
+omlx,proxy,cost,context-bar
+claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
