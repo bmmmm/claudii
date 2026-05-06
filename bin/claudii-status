@@ -152,7 +152,21 @@ unresolved=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$
 
 if [[ -n "$unresolved" ]]; then
   printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
-  incident_count=$(echo "$unresolved" | jq -r '.incidents | length' 2>/dev/null || echo "")
+
+  # One jq call extracts all four fields:
+  #   count, service_level, names (RS-joined), first_name (newlines→space, trimmed)
+  # Field separator: US (0x1F). Inside the names list: RS (0x1E), restored to \n in shell.
+  _jq_combined=$(echo "$unresolved" | jq -r '
+    .incidents as $i |
+    [
+      ($i | length | tostring),
+      ($i | map(.impact) | if any(. == "critical" or . == "major") then "down" else "degraded" end),
+      ($i | map(.name | gsub("\n"; " ")) | join("\u001e")),
+      (($i[0].name // "") | gsub("\n"; " ") | sub(" +$"; ""))
+    ] | join("\u001f")' 2>/dev/null) || _jq_combined=""
+
+  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail <<< "$_jq_combined"
+  incident_names="${incident_names_block//$'\x1e'/$'\n'}"
   [[ "$incident_count" =~ ^[0-9]+$ ]] || incident_count=""
 
   if [[ "$incident_count" == "0" ]]; then
@@ -162,19 +176,7 @@ if [[ -n "$unresolved" ]]; then
 
   if [[ -n "$incident_count" ]]; then
     _claudii_log info "$incident_count active incident(s)"
-
-    # Impact → service level (most severe wins)
-    service_level=$(echo "$unresolved" | jq -r '
-      .incidents | map(.impact) |
-      if any(. == "critical" or . == "major") then "down"
-      else "degraded"
-      end
-    ' 2>/dev/null || echo "degraded")
-
-    # Collect all incident names for model matching
-    incident_names=$(echo "$unresolved" | jq -r '.incidents[].name' 2>/dev/null || echo "")
-    # Strip newlines from detail — multi-line incident names would break RPROMPT/stderr layout
-    incident_detail=$(echo "$unresolved" | jq -r '.incidents[0].name' 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || echo "")
+    [[ -z "$service_level" ]] && service_level="degraded"
 
     down_models=" "
     for m in "${MODELS[@]}"; do

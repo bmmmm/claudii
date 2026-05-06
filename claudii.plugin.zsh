@@ -38,6 +38,7 @@ RPROMPT=""
 typeset -g _CLAUDII_USER_PROMPT="${PROMPT}"
 
 source "$CLAUDII_HOME/lib/visual.sh"
+source "$CLAUDII_HOME/lib/log.sh"
 source "$CLAUDII_HOME/lib/config.zsh"
 source "$CLAUDII_HOME/lib/functions.zsh"
 source "$CLAUDII_HOME/lib/statusline.zsh"

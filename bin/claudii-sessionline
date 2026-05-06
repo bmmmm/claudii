@@ -440,9 +440,19 @@ claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+# Read all three statusline keys in one jq call — separated by US (0x1F),
+# rows inside .statusline.lines joined by RS (0x1E) and re-split below.
+_sc_models_cfg=""
+_cfg_omlx=""
 if [[ -f "$_config_file" ]]; then
-  _from_cfg=$(jq -r 'if .statusline.lines then (.statusline.lines | .[] | join(",")) else empty end' \
-    "$_config_file" 2>/dev/null)
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx < <(
+    jq -r '[
+      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
+      (.statusline.models // ""),
+      (.statusline.omlx_active_path // "")
+    ] | join("")' "$_config_file" 2>/dev/null
+  )
+  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
   [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
 fi
 
@@ -454,11 +464,8 @@ if [[ -f "$_status_cache" ]]; then
   { _sc=$(<"$_status_cache"); } 2>/dev/null
   if [[ -n "$_sc" ]]; then
     _sc_models=("opus" "sonnet" "haiku")
-    if [[ -f "$_config_file" ]]; then
-      _sc_models_cfg=$(jq -r '.statusline.models // empty' "$_config_file" 2>/dev/null)
-      if [[ -n "$_sc_models_cfg" ]]; then
-        IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
-      fi
+    if [[ -n "$_sc_models_cfg" ]]; then
+      IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
     fi
     for _scm in "${_sc_models[@]}"; do
       _scm="${_scm// /}"
@@ -495,10 +502,7 @@ fi
 #   .statusline.omlx_active_path
 _seg_omlx=""
 _omlx_active_path="${CLAUDII_OMLX_ACTIVE:-}"
-if [[ -z "$_omlx_active_path" && -f "$_config_file" ]]; then
-  _cfg_omlx=$(jq -r '.statusline.omlx_active_path // empty' "$_config_file" 2>/dev/null)
-  [[ -n "$_cfg_omlx" ]] && _omlx_active_path="$_cfg_omlx"
-fi
+[[ -z "$_omlx_active_path" && -n "$_cfg_omlx" ]] && _omlx_active_path="$_cfg_omlx"
 [[ -z "$_omlx_active_path" ]] && _omlx_active_path="$HOME/offline_coding/gateii/data/agents/active.json"
 if [[ -f "$_omlx_active_path" ]]; then
   IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
