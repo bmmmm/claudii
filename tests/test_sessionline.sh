@@ -214,13 +214,6 @@ _test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$_test_cache_dir/status-models"
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_api_duration_ms":50000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | COLUMNS=80 CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null)
 _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' || true)
-if [[ "$_nonempty_lines" != "5" ]]; then
-  echo "=== DIAGNOSTIC: sessionline output ===" >&2
-  echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | nl >&2
-  echo "=== status-models content ===" >&2
-  cat "$_test_cache_dir/status-models" >&2
-  echo "=== end diagnostic ===" >&2
-fi
 assert_eq "default output has exactly 5 non-empty lines" "5" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
