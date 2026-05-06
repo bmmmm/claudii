@@ -100,6 +100,12 @@ _spinner_start() {
   chmod 0600 "$_lf"
   export CLAUDII_SPINNER_LABEL_FILE="$_lf"
   [[ -n "$_label" ]] && printf '%s' "$_label" > "$_lf"
+  # Resolve mode once (env > config > "random") — passed via env to avoid jq in spinner loop
+  if [[ -z "${CLAUDII_SPINNER_MODE:-}" ]]; then
+    local _m; _m=$(_cfgget ui.spinner 2>/dev/null)
+    [[ -z "$_m" || "$_m" == "null" ]] && _m="random"
+    export CLAUDII_SPINNER_MODE="$_m"
+  fi
   _claudii_spinner &
   _SPINNER_PID=$!
 }
