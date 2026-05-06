@@ -143,6 +143,7 @@ _claudii() {
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
+                'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
               )
               _describe 'config key' keys
               ;;

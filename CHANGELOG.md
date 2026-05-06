@@ -18,13 +18,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Sessionline effort level coloring**: `effort.level` is now always displayed next to the model name, colored by tier — `max` in accent (pink), `high` in yellow, `medium`/`low` dim. Previously hidden when `high`.
 - **Sessionline thinking indicator color**: The `▲` thinking indicator is now cyan instead of dim for better visibility.
 - **Sessionline dir segment**: Directory name now rendered in yellow; prefix symbol `⌂` stays dim.
+- **Spinner mode dispatch + 5 new modes**: `_spinner_start` resolves the mode once from env `CLAUDII_SPINNER_MODE` or config `ui.spinner` (default `random`) and exports it, so the spinner loop never spawns jq. New modes: `dots` (cyan braille rotation), `pulse` (gray brightness sweep), `bounce` (green dot in a track), `arc` (pink quarter-circles), `orbit` (purple braille pairs). The previously dormant `wave` mode is now wired into the random rotation. Set `claudii config set ui.spinner <mode>` to pin one, or leave it on `random` for variety.
 
 ### Fixed
+- **`lib/log.sh` not sourced by plugin**: `lib/functions.zsh` calls `_claudii_log` at seven sites but `claudii.plugin.zsh` only sourced `visual.sh`, `config.zsh`, `functions.zsh`, `statusline.zsh` — never `log.sh`. Calls failed silently in interactive zsh sessions. Fixed by adding `source lib/log.sh` to the plugin entry.
 - **Sessionline default layout: `agent` removed from line 4**: CC already shows the session name natively; the `agent` segment is still available for custom layouts but no longer shown by default.
 - **`config/defaults.json` drift with `_DEFAULT_LINES`**: The defaults file was missing `dir` (line 3) and `agent` (line 4) segments that the script's `_DEFAULT_LINES` had been advertising for several releases. `claudii config get statusline.lines` returned the stale list. Fixed by syncing both sources.
 - **Overview: `model=` prefix in session dashboard** — the precmd session-dashboard extracted values from the session cache using `${sc#*$'\n'key=}`, which failed when `key=` was the first line (no leading newline). Fixed by prepending a newline before extraction (`_sc_nl=$'\n'"$sc"`), affecting model, ctx_pct, cost, rate_5h, and reset_5h display.
 - **Overview: `reset Xmin` → `↺Xm`** — Account section reset countdowns now use the same `↺Xm` / `↺XdXh` format as the sessionline instead of the verbose `reset Xmin` / `reset Xd Xh` text.
 - **Overview: agents trailing `/`** — Agents without a skill had their empty skill field eaten by `IFS=$'\t' read` (tab is bash whitespace — consecutive tabs collapse), causing columns to shift: `s=haiku m=high e=""` instead of `s="" m=haiku e=high`. Fixed by switching to `` (unit separator) as delimiter in jq/read, which is non-whitespace. Also fixed trailing `/` for agents without effort using conditional `model/effort` vs `model` formatting.
+
+### Refactored
+- **Sessionline jq calls on `config.json`**: Three separate `jq` invocations on the same config file (`statusline.lines`, `statusline.models`, `statusline.omlx_active_path`) collapsed into one. US (0x1F) separates the three values; RS (0x1E) separates rows inside `lines`, restored to `\n` in the shell. Saves two `jq` forks per cc-statusline render.
+- **`claudii-status` jq calls on `$unresolved`**: Four separate `jq` invocations on the same incidents JSON (count, service level, names list, first-incident name) collapsed into one. Same US/RS scheme; embedded newlines in incident names are stripped to spaces inside `jq` so `read -r` does not truncate.
+
+### Removed
+- **`CLAUDII_SYM_CACHE` constant**: Defined in `lib/visual.sh` but never referenced (the sessionline used the literal `⚡` directly). Removed.
 
 ---
 

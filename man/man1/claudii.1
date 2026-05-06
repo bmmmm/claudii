@@ -927,6 +927,7 @@ statusline.lines        CC-Statusline layout: array of arrays, each inner array 
 session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)
+ui.spinner              spinner mode for long-running commands (default: random; values: random, beam, wave, dots, pulse, bounce, arc, orbit, ascii)
 .fi
 .RE
 .
@@ -961,6 +962,11 @@ Override the cache directory (default:
 .TP
 .B CLAUDII_LOG_LEVEL
 Override the debug log level (off, error, warn, info, debug).
+.TP
+.B CLAUDII_SPINNER_MODE
+Override the spinner animation for long-running commands (random, beam, wave, dots, pulse, bounce, arc, orbit, ascii). Takes precedence over the
+.B ui.spinner
+config key. Useful for one-off invocations.
 .TP
 .B XDG_CONFIG_HOME
 Overrides the config directory (default:
