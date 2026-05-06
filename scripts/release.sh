@@ -202,6 +202,9 @@ else
     exit 1
   fi
   _rel_ok "Tag $_rel_tag pushed"
+  # Capture tagged commit BEFORE the local Formula sync commit shifts HEAD —
+  # the Release workflow runs on this sha, not on whatever HEAD is at poll time.
+  _tag_sha=$(git -C "$CLAUDII_HOME" rev-list -n1 "$_rel_tag")
 fi
 
 # ── Homebrew Tap ──
@@ -276,9 +279,10 @@ else
   _spin_idx=0
 
   while (( _poll_elapsed < _poll_timeout )); do
-    _head=$(git -C "$CLAUDII_HOME" rev-parse HEAD)
+    # Match by tagged commit SHA (set after tag push) — HEAD has since moved
+    # because the local Formula sync added a commit on top of the tag.
     _runs=$(gh api "repos/${_gh_owner}/${_gh_repo}/actions/runs" \
-      --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_head}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion}" \
+      --jq ".workflow_runs[] | select(.event == \"push\" and .head_sha == \"${_tag_sha}\" and (.name | test(\"[Rr]elease\"))) | {id: .id, status: .status, conclusion: .conclusion}" \
       2>/dev/null || echo "")
 
     if [[ -n "$_runs" ]]; then

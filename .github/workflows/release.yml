@@ -25,9 +25,13 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           VERSION="${TAG#v}"
-          # Extract the curated section for this version from CHANGELOG.md
-          awk "/^## \[${VERSION}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md \
-            | sed '/^[[:space:]]*$/d' > /tmp/changelog-section.md
+          # CHANGELOG headers carry the v-prefix (## [v0.16.0] — DATE) — match either
+          # form for forward-compatibility.
+          awk -v t="$TAG" -v v="$VERSION" '
+            $0 ~ "^## \\[" t "\\]" || $0 ~ "^## \\[" v "\\]" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md | sed '/^[[:space:]]*$/d' > /tmp/changelog-section.md
           {
             echo "## Install"
             echo '```bash'
