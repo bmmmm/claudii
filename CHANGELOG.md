@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.16.0] — 2026-05-06
+
 ### Added
 - **`claudii omlx [status|connect|test|disconnect]`**: New top-level command for wiring up the [gateii](https://github.com/bmmmm/gateii) local-LLM agent layer to claudii's cc-statusline. `connect` detects the gateii data path (or stores a custom one via `statusline.omlx_active_path`), confirms the omlx segment is in the layout, and probes the oMLX server. `test` renders a synthetic `⚡ <task> <model> <Xs>` line for previewing. `disconnect` removes the segment from custom layouts.
 - **Sessionline `omlx` segment**: New segment that reads gateii's `data/agents/active.json` (or env override `CLAUDII_OMLX_ACTIVE` / config `.statusline.omlx_active_path`) and renders `⚡ <task> <model-short> <Xs>` while a local omlx-backed agent is running. Empty (and the line is silently dropped) when no agent is active or gateii is not installed — zero impact for users without gateii.
