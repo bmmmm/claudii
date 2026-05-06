@@ -8,7 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Added
-- **Inverted rate display (`statusline.rate_display`)**: New config key — set to `remaining` to flip rate-5h / rate-7d from "used %" to "remaining %" (e.g. `5h:62%` becomes `5h:38%`). Session deltas flip sign too: `Δ5h:+12%` (used grew) becomes `Δ5h:−12%` (remaining shrank). Default `used`. Colors and reset-countdown thresholds key off the underlying usage in both modes — "close to limit" still renders red whether shown as 86% used or 14% remaining.
+- **Inverted rate display (`statusline.rate_display`)**: New config key — set to `remaining` to flip rate-5h / rate-7d from "used %" to "remaining %" (e.g. `5h:62%` becomes `5h↓:38%`). Session deltas flip sign too: `Δ5h:+12%` (used grew) becomes `Δ5h:−12%` (remaining shrank). The `↓` marker on the label distinguishes the modes at a glance (default `used` stays unmarked). The flip applies across cc-statusline, the precmd session dashboard, the `claudii` overview Account block, and `claudii se` rows. Colors and reset-countdown thresholds key off the underlying usage in both modes — "close to limit" still renders red whether shown as 86% used or 14% remaining.
+- **Rate-limit color: green at low usage**: `_rlc` now uses green (`\033[32m`) instead of cyan (`\033[36m`) for the < 50% bucket. In remaining mode "97% remaining" reads as cyan was unintuitive — green matches the "lots of headroom" semantics cleanly. Also affects used mode, where low usage now reads green.
 
 ### Fixed
 - **Rate-limit reset countdown format consistency**: The 5h reset always rendered in minutes (`↺79m`, `↺240m`) while 7d switched to hours (`↺1h`, `↺2d4h`). Both now use the same formatter: `Xm` < 60 minutes, `XhYm` (or `Xh` when minutes are zero) for 1–24 h, `XdYh` (or `Xd`) for 24 h+. So 79 minutes shows as `↺1h19m` for both windows instead of differing per limit.
