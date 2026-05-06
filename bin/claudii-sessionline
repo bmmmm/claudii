@@ -36,6 +36,10 @@ if [[ -f "$_config_file" ]]; then
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
 fi
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
+# Tiny mode marker — empty in default "used", ↓ in "remaining" (the number counts down).
+# Appended to the rate-segment label so it's obvious at a glance which side is shown.
+_rate_mark=""
+[[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 
 # Parse all fields in one jq call — single process, max efficiency
 # Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
@@ -207,12 +211,15 @@ _thr() {
   elif (( pct >= 70 )); then _CLR=$'\033[33m'
   else                       _CLR=$'\033[32m'; fi
 }
-# Rate-limit: cyan <50, yellow 50-79, red 80+
+# Rate-limit color (always keyed on the *used* %): green < 50, yellow 50-79, red 80+.
+# Green chosen over cyan so "lots of headroom" reads consistently across modes — in
+# `remaining` display the number itself is high (e.g. 97%), and green matches the
+# vibe of "plenty left".
 _rlc() {
   local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
   if   (( pct >= 80 )); then _CLR=$'\033[31m'
   elif (( pct >= 50 )); then _CLR=$'\033[33m'
-  else                       _CLR=$'\033[36m'; fi
+  else                       _CLR=$'\033[32m'; fi
 }
 
 RST=$'\033[0m'
@@ -329,7 +336,7 @@ if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _rate_5h_pct=${rate_5h%.*}
   _disp_5h=$_rate_5h_pct
   [[ "$_rate_display" == "remaining" ]] && _disp_5h=$(( 100 - _rate_5h_pct ))
-  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h:${_disp_5h}%${RST}"
+  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h${_rate_mark}:${_disp_5h}%${RST}"
   if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
     reset_5h="${reset_5h%.*}"
     _fmt_reset $(( reset_5h - _now )) "$_rate_5h_pct"
@@ -342,7 +349,7 @@ if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _rate_7d_pct=${rate_7d%.*}
   _disp_7d=$_rate_7d_pct
   [[ "$_rate_display" == "remaining" ]] && _disp_7d=$(( 100 - _rate_7d_pct ))
-  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d:${_disp_7d}%${RST}"
+  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d${_rate_mark}:${_disp_7d}%${RST}"
   if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
     reset_7d="${reset_7d%.*}"
     _fmt_reset $(( reset_7d - _now )) "$_rate_7d_pct"

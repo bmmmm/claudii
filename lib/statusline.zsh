@@ -245,8 +245,11 @@ function _claudii_session_dashboard {
   fi
 
   # Read rate_display once — color thresholds key off raw used%, only the
-  # displayed number flips when set to "remaining".
+  # displayed number flips when set to "remaining". _rate_mark distinguishes
+  # the modes visually (no marker for "used", ↓ for "remaining").
   local _rate_disp="${_CLAUDII_CFG_CACHE[statusline.rate_display]:-${_CLAUDII_DEF_CACHE[statusline.rate_display]:-used}}"
+  local _rate_mark=""
+  [[ "$_rate_disp" == "remaining" ]] && _rate_mark="↓"
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
@@ -268,7 +271,7 @@ function _claudii_session_dashboard {
       elif (( _r5h_int >= 50 )); then _r5h_clr="%F{yellow}"
       else _r5h_clr="%F{green}"
       fi
-      _line+="%f  ${_r5h_clr}5h:${_r5h_disp}%%"
+      _line+="%f  ${_r5h_clr}5h${_rate_mark}:${_r5h_disp}%%"
       _rst="${_CLAUDII_SDASH_R5HS[$_di]}"
       if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
         _rem=$(( _rst - _now ))

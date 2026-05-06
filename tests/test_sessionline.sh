@@ -4,6 +4,11 @@
 SL="$CLAUDII_HOME/bin/claudii-sessionline"
 
 _SL_TMPDIRS=()
+# Isolate from the user's real config so tests never inherit ui.* / statusline.*
+# settings (e.g. statusline.rate_display would change all rate-segment expectations).
+_SL_ISOLATED_CFG=$(mktemp -d "${TMPDIR:-/tmp}/claudii-sl-cfg.XXXXXX")
+_SL_TMPDIRS+=("$_SL_ISOLATED_CFG")
+export XDG_CONFIG_HOME="$_SL_ISOLATED_CFG"
 trap 'rm -rf "${_SL_TMPDIRS[@]}" 2>/dev/null' EXIT
 
 # Full data (all fields)
@@ -150,12 +155,13 @@ assert_contains "token output shown with ↓" "121.1K↓" "$strip"
 assert_eq "token order: ↑ (input) appears before ↓ (output)" "true" "$([ "${up_pos:-9999}" -lt "${down_pos:-9999}" ] && echo true || echo false)"
 
 # Reset countdown in sessionline — must show "↺X[mhd]" when resets_at is set.
-# 5h reset 90 min in the future renders as ↺1h30m under the unified formatter.
-_reset_ts=$(( $(date +%s) + 5400 ))
+# 5h reset ~90 min in the future renders as ↺1h30m under the unified formatter.
+# Add a 60s cushion so test execution time can't slip the bucket from 1h30m → 1h29m.
+_reset_ts=$(( $(date +%s) + 5460 ))
 output=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":11,\"resets_at\":${_reset_ts}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "sessionline shows reset countdown" "1" "$(echo "$strip" | grep -cE '↺[0-9]+[mhd]' || true)"
-assert_eq "5h reset 90min → ↺1h30m" "1" "$(echo "$strip" | grep -cF '↺1h30m' || true)"
+assert_eq "5h reset ~90min → ↺1h31m" "1" "$(echo "$strip" | grep -cF '↺1h31m' || true)"
 
 # Reset countdown color: green (\033[32m) when rate_5h >= 50% and < 5min remaining
 _reset_soon=$(( $(date +%s) + 180 ))
