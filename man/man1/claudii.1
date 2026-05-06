@@ -220,21 +220,40 @@ When cache read tokens are present, a cache hit ratio is appended as
 5-hour usage shown as
 .B 5h:XX%
 with optional reset countdown
-.BR \[u21BA]Xm .
-Color: cyan < 50%, yellow 50\(en79%, red >= 80%.
+.RB ( \[u21BA]Xm ", " \[u21BA]XhYm ", or " \[u21BA]Xh
+when minutes are zero).
+Color: cyan < 50%, yellow 50\(en79%, red >= 80% \(em
+based on the underlying usage, not the displayed value.
 Only shown when the API returns rate limit data (Pro/Max plans).
 .TP
 .B rate-7d
 7-day usage shown as
 .B 7d:XX%
-with optional reset countdown in
-.BR Xm ,
-.BR Xh ,
-or
-.B XdYh
-format.
+with optional reset countdown:
+.BR Xm ", " XhYm ", " Xh ", " XdYh ", or " Xd
+depending on remaining time.
 Color: same thresholds as
 .BR rate-5h .
+.TP
+.B Inverted display
+Set
+.B statusline.rate_display
+to
+.B remaining
+to flip the
+.B rate-5h
+and
+.B rate-7d
+percentages from "used" to "what's left" \(em e.g.\&
+.B 5h:62%
+becomes
+.BR 5h:38% ,
+and the delta
+.B Δ5h:+12%
+becomes
+.BR Δ5h:\(mi12% .
+Colors and reset-countdown thresholds are unchanged: "close to limit" still
+renders red whether you read it as 86% used or 14% remaining.
 .TP
 .B cost
 Session cost formatted as
@@ -924,6 +943,7 @@ status.cache_ttl        cache TTL in seconds (default: 900)
 statusline.enabled      ClaudeStatus in RPROMPT (default: true)
 statusline.models       models to monitor (default: opus,sonnet,haiku)
 statusline.lines        CC-Statusline layout: array of arrays, each inner array is one output line listing segment IDs in order (default: 3 lines — see SESSIONLINE SEGMENTS for all valid IDs). A single inner array produces a 1-line statusline.
+statusline.rate_display rate-5h/rate-7d display mode: \fBused\fR (default — \fB5h:62%\fR shows consumed budget) or \fBremaining\fR (\fB5h:38%\fR counts down what's left). Color thresholds key off the underlying usage in both modes, so "close to limit" stays red regardless of which side is shown.
 session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
 debug.level             log level (default: off)
 search.dir              search directory (default: ~/claude-search)

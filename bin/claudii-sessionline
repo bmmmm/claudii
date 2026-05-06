@@ -16,6 +16,27 @@ read -r json
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 [[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
 
+# ── User config (statusline.* keys) — single jq call, available everywhere ──
+# Field separator: US (0x1F). Inside .statusline.lines: RS (0x1E), restored to
+# \n after split. Reading early so _rate_display (used by rate segments) is set.
+_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+_from_cfg=""
+_sc_models_cfg=""
+_cfg_omlx=""
+_rate_display=""
+if [[ -f "$_config_file" ]]; then
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display < <(
+    jq -r '[
+      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
+      (.statusline.models // ""),
+      (.statusline.omlx_active_path // ""),
+      (.statusline.rate_display // "")
+    ] | join("")' "$_config_file" 2>/dev/null
+  )
+  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
+fi
+[[ "$_rate_display" != "remaining" ]] && _rate_display="used"
+
 # Parse all fields in one jq call — single process, max efficiency
 # Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
 _D=$'\x1f'
@@ -264,70 +285,68 @@ if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
 fi
 
 # Rate limits — 5h and 7d
+# _fmt_reset(secs, pct) — sets _reset_fmt (text) and _reset_color based on
+# remaining seconds and the rate-limit percentage. Format:
+#   < 60m: Xm     (e.g. 45m)
+#   < 24h: XhYm   (e.g. 1h19m, or 3h when minutes are zero)
+#   ≥ 24h: XdYh   (e.g. 2d5h, or 2d when hours are zero)
+# Color thresholds match the previous per-segment logic.
+_fmt_reset() {
+  local _secs="$1" _pct="$2" _m _h _d _rh
+  _reset_fmt=""; _reset_color=""
+  (( _secs <= 0 )) && return
+  if (( _secs < 3600 )); then
+    # Round to nearest minute; suppress < 30s (would render as ↺0m).
+    _m=$(( (_secs + 30) / 60 ))
+    (( _m <= 0 )) && return
+    _reset_fmt="${_m}m"
+  elif (( _secs < 86400 )); then
+    _m=$(( _secs / 60 ))
+    _h=$(( _secs / 3600 ))
+    _rh=$(( (_secs % 3600) / 60 ))
+    if (( _rh > 0 )); then _reset_fmt="${_h}h${_rh}m"
+    else _reset_fmt="${_h}h"; fi
+  else
+    _d=$(( _secs / 86400 ))
+    _h=$(( (_secs % 86400) / 3600 ))
+    if (( _h > 0 )); then _reset_fmt="${_d}d${_h}h"
+    else _reset_fmt="${_d}d"; fi
+  fi
+  if   (( _pct < 50 ));  then _reset_color="${DIM}"
+  elif (( _m < 5 ));     then _reset_color="${GREEN}"
+  elif (( _m < 60 ));    then _reset_color="${WHITE}"
+  elif (( _m < 120 ));   then _reset_color=""
+  else                        _reset_color="${DIM}"
+  fi
+}
+
+# Rate display: "used" (default, e.g. 5h:62%) shows consumed budget; "remaining"
+# (5h:38%) shows what's left. Coloring of segment + reset countdown is driven by
+# the *used* percentage in both modes — semantics ("close to limit" → red) stay
+# stable, only the displayed number flips.
 _seg_rate5h=""
 if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _rate_5h_pct=${rate_5h%.*}
-  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h:${_rate_5h_pct}%${RST}"
-  # Reset countdown ↺Xm — color depends on rate level and time remaining
+  _disp_5h=$_rate_5h_pct
+  [[ "$_rate_display" == "remaining" ]] && _disp_5h=$(( 100 - _rate_5h_pct ))
+  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h:${_disp_5h}%${RST}"
   if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
     reset_5h="${reset_5h%.*}"
-    (( _reset_min = reset_5h - _now ))
-    (( _reset_min > 0 )) && (( _reset_min = (_reset_min + 30) / 60 )) || _reset_min=0
-    if (( _reset_min > 0 )); then
-      if (( _rate_5h_pct < 50 )); then
-        _reset_color="${DIM}"         # dim — not relevant
-      elif (( _reset_min < 5 )); then
-        _reset_color="${GREEN}"       # green — refresh imminent!
-      elif (( _reset_min < 60 )); then
-        _reset_color="${WHITE}"       # bright white — getting close
-      elif (( _reset_min < 120 )); then
-        _reset_color=""              # default — light at end of tunnel
-      else
-        _reset_color="${DIM}"        # dim — plenty of time
-      fi
-      _seg_rate5h+=" ${_reset_color}↺${_reset_min}m${RST}"
-    fi
+    _fmt_reset $(( reset_5h - _now )) "$_rate_5h_pct"
+    [[ -n "$_reset_fmt" ]] && _seg_rate5h+=" ${_reset_color}↺${_reset_fmt}${RST}"
   fi
 fi
 
 _seg_rate7d=""
 if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _rate_7d_pct=${rate_7d%.*}
-  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d:${_rate_7d_pct}%${RST}"
-  # 7d reset countdown — format depends on remaining time
+  _disp_7d=$_rate_7d_pct
+  [[ "$_rate_display" == "remaining" ]] && _disp_7d=$(( 100 - _rate_7d_pct ))
+  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d:${_disp_7d}%${RST}"
   if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
     reset_7d="${reset_7d%.*}"
-    (( _reset_7d_sec = reset_7d - _now ))
-    (( _reset_7d_sec < 0 )) && _reset_7d_sec=0
-    if (( _reset_7d_sec > 0 )); then
-      _reset_7d_min=$(( _reset_7d_sec / 60 ))
-      _reset_7d_hr=$(( _reset_7d_sec / 3600 ))
-      if (( _reset_7d_sec < 3600 )); then
-        _reset_7d_fmt="${_reset_7d_min}m"
-      elif (( _reset_7d_sec < 86400 )); then
-        _reset_7d_fmt="${_reset_7d_hr}h"
-      else
-        _r7d_days=$(( _reset_7d_sec / 86400 ))
-        _r7d_hours=$(( (_reset_7d_sec % 86400) / 3600 ))
-        if (( _r7d_hours > 0 )); then
-          _reset_7d_fmt="${_r7d_days}d${_r7d_hours}h"
-        else
-          _reset_7d_fmt="${_r7d_days}d"
-        fi
-      fi
-      if (( _rate_7d_pct < 50 )); then
-        _reset_7d_color="${DIM}"         # dim — not relevant
-      elif (( _reset_7d_min < 5 )); then
-        _reset_7d_color="${GREEN}"        # green — refresh imminent!
-      elif (( _reset_7d_min < 60 )); then
-        _reset_7d_color="${WHITE}"        # bright white — getting close
-      elif (( _reset_7d_min < 120 )); then
-        _reset_7d_color=""              # default — light at end of tunnel
-      else
-        _reset_7d_color="${DIM}"        # dim — plenty of time
-      fi
-      _seg_rate7d+=" ${_reset_7d_color}↺${_reset_7d_fmt}${RST}"
-    fi
+    _fmt_reset $(( reset_7d - _now )) "$_rate_7d_pct"
+    [[ -n "$_reset_fmt" ]] && _seg_rate7d+=" ${_reset_color}↺${_reset_fmt}${RST}"
   fi
 fi
 
@@ -386,24 +405,30 @@ if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
   _dur "$api_duration_ms"; [[ -n "$_dur_result" ]] && _seg_api_dur="${DIM}api:${_dur_result}${RST}"
 fi
 
-# Session deltas: only the change since session start (current rate is already on line 1)
+# Session deltas: only the change since session start (current rate is already on line 1).
+# In "remaining" mode the sign flips: usage +12% becomes remaining −12% (same magnitude,
+# opposite direction). Color logic still keys off the underlying usage delta.
 _seg_delta5h=""
 if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   _d5=$(( ${rate_5h%.*} - ${_rate_5h_start%.*} ))
+  _d5_disp=$_d5
+  [[ "$_rate_display" == "remaining" ]] && _d5_disp=$(( -_d5 ))
   if (( _d5 > 0 )); then
-    _rlc "$rate_5h"; _seg_delta5h="${DIM}Δ5h:${RST}${_CLR}+${_d5}%${RST}"
+    _rlc "$rate_5h"; _seg_delta5h="${DIM}Δ5h:${RST}${_CLR}$( (( _d5_disp > 0 )) && echo "+")${_d5_disp}%${RST}"
   elif (( _d5 < 0 )); then
-    _seg_delta5h="${DIM}Δ5h:${RST}${GREEN}${_d5}%${RST}"
+    _seg_delta5h="${DIM}Δ5h:${RST}${GREEN}$( (( _d5_disp > 0 )) && echo "+")${_d5_disp}%${RST}"
   fi
 fi
 
 _seg_delta7d=""
 if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" && -n "$rate_7d" && "$rate_7d" != "null" ]]; then
   _d7=$(( ${rate_7d%.*} - ${_rate_7d_start%.*} ))
+  _d7_disp=$_d7
+  [[ "$_rate_display" == "remaining" ]] && _d7_disp=$(( -_d7 ))
   if (( _d7 > 0 )); then
-    _rlc "$rate_7d"; _seg_delta7d="${DIM}Δ7d:${RST}${_CLR}+${_d7}%${RST}"
+    _rlc "$rate_7d"; _seg_delta7d="${DIM}Δ7d:${RST}${_CLR}$( (( _d7_disp > 0 )) && echo "+")${_d7_disp}%${RST}"
   elif (( _d7 < 0 )); then
-    _seg_delta7d="${DIM}Δ7d:${RST}${GREEN}${_d7}%${RST}"
+    _seg_delta7d="${DIM}Δ7d:${RST}${GREEN}$( (( _d7_disp > 0 )) && echo "+")${_d7_disp}%${RST}"
   fi
 fi
 
@@ -439,22 +464,7 @@ omlx,proxy,cost,context-bar
 claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
-_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
-# Read all three statusline keys in one jq call — separated by US (0x1F),
-# rows inside .statusline.lines joined by RS (0x1E) and re-split below.
-_sc_models_cfg=""
-_cfg_omlx=""
-if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx < <(
-    jq -r '[
-      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
-      (.statusline.models // ""),
-      (.statusline.omlx_active_path // "")
-    ] | join("")' "$_config_file" 2>/dev/null
-  )
-  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
-  [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
-fi
+[[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
 
 # ClaudeStatus — model health indicators from status-models cache
 _seg_claude_status=""

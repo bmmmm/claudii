@@ -144,6 +144,7 @@ _claudii() {
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'
                 'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
+                'statusline.rate_display:Rate-limit display mode (used/remaining)'
               )
               _describe 'config key' keys
               ;;

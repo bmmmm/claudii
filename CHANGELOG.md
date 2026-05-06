@@ -7,6 +7,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Inverted rate display (`statusline.rate_display`)**: New config key — set to `remaining` to flip rate-5h / rate-7d from "used %" to "remaining %" (e.g. `5h:62%` becomes `5h:38%`). Session deltas flip sign too: `Δ5h:+12%` (used grew) becomes `Δ5h:−12%` (remaining shrank). Default `used`. Colors and reset-countdown thresholds key off the underlying usage in both modes — "close to limit" still renders red whether shown as 86% used or 14% remaining.
+
+### Fixed
+- **Rate-limit reset countdown format consistency**: The 5h reset always rendered in minutes (`↺79m`, `↺240m`) while 7d switched to hours (`↺1h`, `↺2d4h`). Both now use the same formatter: `Xm` < 60 minutes, `XhYm` (or `Xh` when minutes are zero) for 1–24 h, `XdYh` (or `Xd`) for 24 h+. So 79 minutes shows as `↺1h19m` for both windows instead of differing per limit.
+
+### Refactored
+- **Sessionline config read moved to top of script**: The four `statusline.*` keys (`lines`, `models`, `omlx_active_path`, `rate_display`) are now read in one `jq` call right after the cache-dir setup, before any segment processing. Lets later code (e.g. rate inversion) consume the config without forking a second `jq`.
+
+### Removed
+- **Local `Formula/claudii.rb`**: The local Formula was a duplicate of the one in `bmmmm/homebrew-tap`, kept solely so CI could run `brew audit --formula Formula/claudii.rb`. After the v0.16.0 drift incident the costs of that duplication outweighed the audit. The tap is now the single source of truth; `scripts/release.sh` updates it via the GitHub contents API at release time. The CI `brew audit` step is gone.
+
+### Release pipeline
+- **`scripts/release.sh` polling**: `_head=$(git rev-parse HEAD)` was captured AFTER the local Formula sync commit, so the workflow `head_sha` filter never matched. Replaced with `_tag_sha`, captured immediately after `git push origin <tag>`. The post-tag local commit no longer exists (Formula gone) but the fix stays for robustness.
+- **Release notes extraction**: `release.yml` matched `## [${VERSION}]` (no v) but CHANGELOG headers carry the v-prefix (`## [v0.16.0]`). Awk now matches both forms.
+
 ---
 
 ## [v0.16.0] — 2026-05-06
