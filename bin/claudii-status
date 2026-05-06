@@ -108,7 +108,7 @@ _write_all_ok() {
 }
 
 _write_incidents() {
-  local service_level="$1" down_models="$2" incident_detail="$3"
+  local service_level="$1" down_models="$2" incident_detail="$3" incident_status="${4:-}"
 
   # If no specific model named in incident → all models affected
   local no_model_named=true
@@ -124,6 +124,7 @@ _write_incidents() {
         printf '%s=ok\n' "$model"
       fi
     done
+    [[ -n "$incident_status" ]] && printf '_incident=%s\n' "$incident_status"
   } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
 
   local summary="" any_issue=false
@@ -162,10 +163,11 @@ if [[ -n "$unresolved" ]]; then
       ($i | length | tostring),
       ($i | map(.impact) | if any(. == "critical" or . == "major") then "down" else "degraded" end),
       ($i | map(.name | gsub("\n"; " ")) | join("\u001e")),
-      (($i[0].name // "") | gsub("\n"; " ") | sub(" +$"; ""))
+      (($i[0].name // "") | gsub("\n"; " ") | sub(" +$"; "")),
+      ($i[0].status // "")
     ] | join("\u001f")' 2>/dev/null) || _jq_combined=""
 
-  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail <<< "$_jq_combined"
+  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail incident_status <<< "$_jq_combined"
   incident_names="${incident_names_block//$'\x1e'/$'\n'}"
   [[ "$incident_count" =~ ^[0-9]+$ ]] || incident_count=""
 
@@ -184,7 +186,7 @@ if [[ -n "$unresolved" ]]; then
     done
 
     _claudii_log debug "Incidents: $incident_names → service=$service_level down=[${down_models}]"
-    _write_incidents "$service_level" "$down_models" "$incident_detail"
+    _write_incidents "$service_level" "$down_models" "$incident_detail" "$incident_status"
   fi
 
   # jq parse failed — fall through to RSS

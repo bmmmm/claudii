@@ -239,8 +239,8 @@ _omlx_disconnect() {
 }
 
 _omlx_test() {
-  if ! command -v claudii-sessionline >/dev/null 2>&1; then
-    echo -e "  ${CLAUDII_CLR_RED}claudii-sessionline not on PATH${CLAUDII_CLR_RESET}"
+  if ! command -v claudii-cc-statusline >/dev/null 2>&1; then
+    echo -e "  ${CLAUDII_CLR_RED}claudii-cc-statusline not on PATH${CLAUDII_CLR_RESET}"
     return 1
   fi
   local tmp
@@ -257,7 +257,7 @@ EOF
   echo -e "${CLAUDII_CLR_BOLD}claudii omlx test${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(simulated active.json + temporary layout)${CLAUDII_CLR_RESET}"
   echo
   echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":15,"context_window_size":200000}}' \
-    | XDG_CONFIG_HOME="$tmp/cfg" claudii-sessionline 2>/dev/null
+    | XDG_CONFIG_HOME="$tmp/cfg" claudii-cc-statusline 2>/dev/null
   echo
   echo -e "  ${CLAUDII_CLR_DIM}(this is what your statusline will show while a real omlx agent is running)${CLAUDII_CLR_RESET}"
   rm -rf "$tmp"

@@ -33,7 +33,7 @@ assert_contains "sessionline on: reports enabled" "enabled" "$output"
 
 # Verify settings.json now contains statusLine
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
-assert_eq "sessionline on: settings.json has command" "claudii-sessionline" "$val"
+assert_eq "sessionline on: settings.json has command" "claudii-cc-statusline" "$val"
 
 # ── sessionline on: idempotent ──
 
@@ -68,7 +68,7 @@ assert_contains "sessionline: not configured after off" "not configured" "$outpu
 output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
 assert_contains "sessionline shim: routes to cc-statusline on → enabled" "enabled" "$output"
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
-assert_eq "sessionline shim: sets command" "claudii-sessionline" "$val"
+assert_eq "sessionline shim: sets command" "claudii-cc-statusline" "$val"
 
 # Cleanup
 rm -rf "$TEST_TMP"

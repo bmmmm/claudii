@@ -30,6 +30,7 @@ export CLAUDII_HOME="${0:A:h}"
 autoload -Uz add-zsh-hook
 add-zsh-hook -d precmd   _claudii_rprompt    2>/dev/null
 add-zsh-hook -d precmd   _claudii_statusline 2>/dev/null
+add-zsh-hook -d precmd   _vpnii_precmd       2>/dev/null
 add-zsh-hook -d preexec  _claudii_preexec    2>/dev/null
 RPROMPT=""
 
@@ -42,6 +43,7 @@ source "$CLAUDII_HOME/lib/log.sh"
 source "$CLAUDII_HOME/lib/config.zsh"
 source "$CLAUDII_HOME/lib/functions.zsh"
 source "$CLAUDII_HOME/lib/statusline.zsh"
+source "$CLAUDII_HOME/lib/vpnii.zsh"
 
 _CLAUDII_METRICS[plugin.load_us]=$(( int(($EPOCHREALTIME - _claudii_t0) * 1000000) ))
 unset _claudii_t0

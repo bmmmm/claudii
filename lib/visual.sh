@@ -15,7 +15,10 @@ CLAUDII_SYM_SEP="│"        # separator
 CLAUDII_SYM_BAR_FULL="█"   # progress bar — filled block
 CLAUDII_SYM_BAR_EMPTY="░"  # progress bar — empty block
 CLAUDII_SYM_FINGERPRINT="✦" # session fingerprint / file access marker
-CLAUDII_SYM_MONITORING="◎"  # incident monitoring / investigating
+CLAUDII_SYM_MONITORING="◎"      # incident: fix deployed, watching results
+CLAUDII_SYM_IDENTIFIED="⚐"     # incident: root cause found, fix in progress
+CLAUDII_SYM_INVESTIGATING="‼"  # incident: actively investigating, cause unknown
+CLAUDII_SYM_VPN="⬡"         # VPN tunnel active
 
 # ── Fingerprint palette (muted 256-color, cycles for cross-session file coloring) ──
 CLAUDII_FP_PALETTE=(

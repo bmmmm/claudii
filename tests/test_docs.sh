@@ -37,7 +37,7 @@ assert_eq "toggle removed from bin/claudii" "" \
 
 # ── Sessionline segments documented in man page ─────────────────────────────
 # Every segment in the layout loop must have a row in the man page segments table.
-# Update this list whenever a new segment is added to bin/claudii-sessionline.
+# Update this list whenever a new segment is added to bin/claudii-cc-statusline.
 SL_SEGMENTS=(
   model context-bar rate-5h rate-7d cost tokens lines-changed duration
   api-duration burn-eta delta-5h delta-7d cache-create session-name

@@ -79,7 +79,7 @@ assert_contains "new model in config appears in cache" "testmodel=" "$cached"
 _stub_home="$CLAUDII_HOME/tmp/test_status_stub_home"
 mkdir -p "$_stub_home/bin" "$_stub_home/lib/cmd" "$_stub_home/config"
 # Symlink all real files except claudii-status (which we stub)
-for _f in claudii claudii-sessionline; do
+for _f in claudii claudii-cc-statusline; do
   ln -sf "$CLAUDII_HOME/bin/$_f" "$_stub_home/bin/$_f" 2>/dev/null || true
 done
 cp -r "$CLAUDII_HOME/lib" "$_stub_home/"

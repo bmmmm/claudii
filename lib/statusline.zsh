@@ -144,7 +144,16 @@ function _claudii_statusline_render {
   (( age > effective_ttl )) && refreshing=" %F{8}⟳%f"
   [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
-  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}"
+  local incident_sym=""
+  if [[ $'\n'"$cache_content" == *$'\n'"_incident=investigating"* ]]; then
+    incident_sym=" %F{red}${CLAUDII_SYM_INVESTIGATING}%f"
+  elif [[ $'\n'"$cache_content" == *$'\n'"_incident=identified"* ]]; then
+    incident_sym=" %F{yellow}${CLAUDII_SYM_IDENTIFIED}%f"
+  elif [[ $'\n'"$cache_content" == *$'\n'"_incident=monitoring"* ]]; then
+    incident_sym=" %F{cyan}${CLAUDII_SYM_MONITORING}%f"
+  fi
+
+  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}${incident_sym}"
 
   # Session dashboard — session lines prepended to PROMPT (conditional: only after real commands)
   _claudii_session_dashboard

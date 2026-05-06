@@ -1,7 +1,7 @@
-# touches: bin/claudii-sessionline
+# touches: bin/claudii-cc-statusline
 # test_sessionline.sh — in-session statusline rendering
 
-SL="$CLAUDII_HOME/bin/claudii-sessionline"
+SL="$CLAUDII_HOME/bin/claudii-cc-statusline"
 
 _SL_TMPDIRS=()
 # Isolate from the user's real config so tests never inherit ui.* / statusline.*
@@ -138,7 +138,7 @@ echo '{"session_id":"testppid123456","model":{"display_name":"Sonnet"},"context_
 _test_session_file="$_test_cache_dir/session-testppid"
 _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
 assert_contains "session cache has ppid=" "ppid=" "$_cache_contents"
-# ppid value must be a non-zero integer (the bash process that ran claudii-sessionline)
+# ppid value must be a non-zero integer (the bash process that ran claudii-cc-statusline)
 _ppid_val="$(echo "$_cache_contents" | grep '^ppid=' | cut -d= -f2)"
 [[ "$_ppid_val" =~ ^[0-9]+$ ]] \
   && assert_eq "session cache ppid is a valid PID integer" "true" "true" \
@@ -284,7 +284,7 @@ strip_1M=$(echo "$output_1M" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 
 # No bc in the script
-assert_eq "no bc subprocess in claudii-sessionline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-sessionline" || true)"
+assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-cc-statusline" || true)"
 
 # api-duration ratio: shown when both api_duration_ms and duration_ms are present
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":60000,"total_api_duration_ms":44000}}' \

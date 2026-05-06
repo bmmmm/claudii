@@ -138,16 +138,16 @@ _cssl_exit=$(HOME="$_cssl_base/home" XDG_CONFIG_HOME="$_cssl_xdg" \
   bash "$CLAUDII_HOME/bin/claudii" cc-statusline on >/dev/null 2>&1; echo $?)
 assert_eq "cc-statusline on: exit 0" "0" "$_cssl_exit"
 
-# cc-statusline on → output mentioning claudii-sessionline or settings
+# cc-statusline on → output mentioning claudii-cc-statusline or settings
 _cssl_out=$(HOME="$_cssl_base/home" XDG_CONFIG_HOME="$_cssl_xdg" \
   bash "$CLAUDII_HOME/bin/claudii" cc-statusline on 2>&1)
-assert_matches "cc-statusline on: mentions claudii-sessionline or CC-Statusline" \
-  "claudii-sessionline|CC-Statusline|aktiviert|enabled|aktiv" "$_cssl_out"
+assert_matches "cc-statusline on: mentions claudii-cc-statusline or CC-Statusline" \
+  "claudii-cc-statusline|CC-Statusline|aktiviert|enabled|aktiv" "$_cssl_out"
 assert_no_literal_ansi "cc-statusline on: no literal \\033 in output" "$_cssl_out"
 
-# cc-statusline on → settings.json now has statusLine.command = claudii-sessionline
+# cc-statusline on → settings.json now has statusLine.command = claudii-cc-statusline
 _cssl_cmd=$(jq -r '.statusLine.command // empty' "$_cssl_base/home/.claude/settings.json" 2>/dev/null)
-assert_eq "cc-statusline on: settings.json has claudii-sessionline" "claudii-sessionline" "$_cssl_cmd"
+assert_eq "cc-statusline on: settings.json has claudii-cc-statusline" "claudii-cc-statusline" "$_cssl_cmd"
 
 # cc-statusline on (idempotent — already configured) → exit 0
 _cssl_idem_exit=$(HOME="$_cssl_base/home" XDG_CONFIG_HOME="$_cssl_xdg" \

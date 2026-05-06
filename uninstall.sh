@@ -19,7 +19,7 @@ echo "Uninstalling claudii..."
 echo ""
 
 # 1. Remove symlinks that point into this repo
-for bin in claudii claudii-status claudii-sessionline; do
+for bin in claudii claudii-status claudii-cc-statusline; do
   target="$BIN_DIR/$bin"
   if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$CLAUDII_HOME/bin/$bin" ]]; then
     rm "$target"

@@ -689,7 +689,7 @@ _cmd_sessions_inactive() {
 
 # Pin/unpin a session — pinned sessions are protected from GC.
 # Matches by session_id substring (first match wins).
-# (sessionline preserves pinned=1 across cache rewrites — see bin/claudii-sessionline.)
+# (sessionline preserves pinned=1 across cache rewrites — see bin/claudii-cc-statusline.)
 _session_toggle_pin() {
   local action="$1" needle="$2"
   local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
@@ -1284,7 +1284,7 @@ _cmd_default() {
   [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
-  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-sessionline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
+  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-cc-statusline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
   _ov_svc_any=0
   [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
   [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1

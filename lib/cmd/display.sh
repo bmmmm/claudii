@@ -228,7 +228,7 @@ _cmd_explain() {
   printf '\n'
   printf '  Status:   %b\n' "$sl_state"
   printf '  API:      Claude Code statusLine (stdin JSON)\n'
-  printf '  Handler:  bin/claudii-sessionline (bash+jq)\n'
+  printf '  Handler:  bin/claudii-cc-statusline (bash+jq)\n'
   printf '  Commands: claudii cc-statusline on/off\n'
   printf '\n'
 

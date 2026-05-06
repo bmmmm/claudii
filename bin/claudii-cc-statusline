@@ -468,7 +468,7 @@ _DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,dir
 omlx,proxy,cost,context-bar
-claude-status"
+claude-status,vpn"
 
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
@@ -503,10 +503,16 @@ if [[ -f "$_status_cache" ]]; then
       [[ -n "$_seg_claude_status" ]] && _seg_claude_status+="  "
       _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
     done
-    if [[ "${_sc_worst:-}" == "down" ]]; then
-      _seg_claude_status+="  ${RED}⚠ claudii status${RST}"
+    if [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then
+      _seg_claude_status+="  ${RED}‼ Investigating${RST}"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]]; then
+      _seg_claude_status+="  ${YELLOW}⚐ Identified${RST}"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]]; then
+      _seg_claude_status+="  ${CYAN}◎ Monitoring${RST}"
+    elif [[ "${_sc_worst:-}" == "down" ]]; then
+      _seg_claude_status+="  ${RED}⚠ incident${RST}"
     elif [[ "${_sc_worst:-}" == "degraded" ]]; then
-      _seg_claude_status+="  ${YELLOW}⚠ claudii status${RST}"
+      _seg_claude_status+="  ${YELLOW}⚠ degraded${RST}"
     fi
   fi
 fi
@@ -535,6 +541,14 @@ if [[ -f "$_omlx_active_path" ]]; then
       _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
     fi
   fi
+fi
+
+# VPN indicator — reads vpnii state file written by wg-quick PostUp/PreDown
+_seg_vpn=""
+_vpn_state="${_cache_dir}/vpnii"
+if [[ -f "$_vpn_state" ]]; then
+  _vpn_tunnel=$(<"$_vpn_state")
+  [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
 fi
 
 # Proxy indicator — shows when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
@@ -583,6 +597,7 @@ while IFS= read -r _line_segs; do
       cache-create)    _val="$_seg_cache_create"    ;;
       dir)             _val="$_seg_dir"             ;;
       claude-status)   _val="$_seg_claude_status"   ;;
+      vpn)             _val="$_seg_vpn"             ;;
       omlx)            _val="$_seg_omlx"            ;;
       proxy)           _val="$_seg_proxy"           ;;
       ruler)

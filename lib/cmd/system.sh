@@ -8,8 +8,8 @@ _cmd_on() {
   _jq_update "$CONFIG" '.statusline.enabled = true | ."session-dashboard".enabled = "on"'
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
-    if ! jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
-      _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}'
+    if ! jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
+      _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
     fi
   fi
   echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
@@ -168,10 +168,11 @@ _cmd_status() {
             while IFS=$'\t' read -r _name _status _upd_status _upd_body _upd_time; do
               _status_lc=$(echo "$_status" | tr '[:upper:]' '[:lower:]')
               case "$_status_lc" in
-                resolved)                 _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"    ;;
-                monitoring)               _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} Monitoring"    ;;
-                investigating|identified) _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_MONITORING} ${_status}"   ;;
-                *)                        _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"     ;;
+                resolved)      _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                       ;;
+                monitoring)    _ic="${CLAUDII_CLR_CYAN}"   ; _is="${CLAUDII_SYM_MONITORING} Monitoring"              ;;
+                identified)    _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_IDENTIFIED} Identified"              ;;
+                investigating) _ic="${CLAUDII_CLR_RED}"    ; _is="${CLAUDII_SYM_INVESTIGATING} Investigating"        ;;
+                *)             _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"               ;;
               esac
               printf '\n'
               printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
@@ -201,10 +202,10 @@ _cmd_cc_statusline() {
       if [[ ! -f "$SETTINGS" ]]; then
         echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
-      if jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
+      if jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
         echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}"
       else
-        _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-sessionline"}}'
+        _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
         echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  → restart Claude Code to activate"
       fi
       ;;
@@ -222,7 +223,7 @@ _cmd_cc_statusline() {
     "")
       if [[ ! -f "$SETTINGS" ]]; then
         echo "CC-Statusline: not configured  ($SETTINGS missing)"
-      elif jq -e '.statusLine.command == "claudii-sessionline"' "$SETTINGS" >/dev/null 2>&1; then
+      elif jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
         echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ($SETTINGS)"
       elif jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
         other=$(jq -r '.statusLine.command // .statusLine' "$SETTINGS")
@@ -281,7 +282,7 @@ _cmd_doctor() {
   settings="${HOME}/.claude/settings.json"
   if [[ ! -f "$settings" ]]; then
     _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
-  elif jq -e '.statusLine.command == "claudii-sessionline"' "$settings" >/dev/null 2>&1; then
+  elif jq -e '.statusLine.command == "claudii-cc-statusline"' "$settings" >/dev/null 2>&1; then
     _dc_add "cc_statusline" "ok" "CC-Statusline configured"
   elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
     other=$(jq -r '.statusLine.command // "unknown"' "$settings")
