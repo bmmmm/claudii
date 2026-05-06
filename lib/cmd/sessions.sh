@@ -578,6 +578,8 @@ _cmd_sessions_inactive() {
   # "claudii sessions-inactive" — shows only inactive (stale/dead) sessions
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
+  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
 
   printf '\n'
   printf "  ${CLAUDII_CLR_BOLD}Inactive Sessions${CLAUDII_CLR_RESET}\n"
@@ -635,7 +637,7 @@ _cmd_sessions_inactive() {
         _is_detail+="${_CTX_BAR} ${_is_pct}%"
       fi
       if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]]; then
-        _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_PSC_rate_5h%.*}%"
+        _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} $(_rate_pct_disp "$_PSC_rate_5h")%"
       fi
       _render_age "$_PSC_age"
       _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}${_is_tag}"
@@ -734,12 +736,23 @@ _strip_model_name() {
   printf '%s' "$_m"
 }
 
+# Rate display flip — returns the integer to render given a raw "used" value.
+# Caller must set $_RATE_DISP to "used" or "remaining" once per command (via _cfgget).
+# Color thresholds always key off the raw used%, so callers keep using the input int.
+_rate_pct_disp() {
+  local _u=${1%.*}
+  if [[ "${_RATE_DISP:-used}" == "remaining" ]]; then printf '%s' "$(( 100 - _u ))"
+  else printf '%s' "$_u"; fi
+}
+
 _cmd_sessions() {
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s)
   active=0 stale=0
   latest_5h="" latest_7d="" latest_reset="" latest_5h_mt=0
+  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
+  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
 
   # Collect all session data into parallel arrays
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
@@ -981,7 +994,7 @@ _cmd_sessions() {
       detail+="${_CTX_BAR} ${_ctx_display}%"
     fi
     if [[ -n "${_sf_rate5h[$_i]}" && "${_sf_rate5h[$_i]}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-      detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} ${_sf_rate5h[$_i]%.*}%"
+      detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${CLAUDII_CLR_RESET} $(_rate_pct_disp "${_sf_rate5h[$_i]}")%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then
         _rem=$(( ${_sf_reset5h[$_i]} - now ))
         (( _rem > 0 )) && detail+=" ${CLAUDII_CLR_DIM}↺$(( _rem / 60 ))m${CLAUDII_CLR_RESET}"
@@ -1011,7 +1024,7 @@ _cmd_sessions() {
       remaining=$(( latest_reset - now ))
       (( remaining > 0 )) && reset_str=" (resets in $(( remaining / 60 ))min)"
     fi
-    printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "${latest_5h%.*}" "${latest_7d%.*}" "$reset_str"
+    printf "  ${CLAUDII_CLR_DIM}5h:%s%% 7d:%s%%%s${CLAUDII_CLR_RESET}" "$(_rate_pct_disp "$latest_5h")" "$(_rate_pct_disp "$latest_7d")" "$reset_str"
   fi
   printf '\n'
   printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_ACTIVE} active  ${CLAUDII_SYM_INACTIVE} ended  ${CLAUDII_SYM_FINGERPRINT} file(N) = most-touched files  ·  claude -r = resume session${CLAUDII_CLR_RESET}\n"
@@ -1156,7 +1169,13 @@ _cmd_default() {
   if [[ -n "$_ov_acct_5h" ]]; then
     printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Account${CLAUDII_CLR_RESET}\n"
 
+    # rate_display: "remaining" flips % to 100-X; color thresholds stay on used%.
+    local _RATE_DISP; _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
+    [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
+
     _ov_5h_int=${_ov_acct_5h%.*}
+    _ov_5h_disp=$_ov_5h_int
+    [[ "$_RATE_DISP" == "remaining" ]] && _ov_5h_disp=$(( 100 - _ov_5h_int ))
     # 5h urgency color: < 50% green, 50-79% yellow, >= 80% red
     if (( _ov_5h_int >= 80 )); then
       _ov_5h_clr="${CLAUDII_CLR_RED}"
@@ -1165,7 +1184,7 @@ _cmd_default() {
     else
       _ov_5h_clr="${CLAUDII_CLR_GREEN}"
     fi
-    _ov_acct_line="    5h: ${_ov_5h_clr}${_ov_5h_int}%${CLAUDII_CLR_RESET}"
+    _ov_acct_line="    5h: ${_ov_5h_clr}${_ov_5h_disp}%${CLAUDII_CLR_RESET}"
     # Reset countdown with urgency color
     if [[ -n "$_ov_acct_reset" && "$_ov_acct_reset" != "0" ]]; then
       _ov_remaining=$(( _ov_acct_reset - now ))
@@ -1183,7 +1202,9 @@ _cmd_default() {
     fi
     if [[ -n "$_ov_acct_7d" ]]; then
       _ov_7d_int=${_ov_acct_7d%.*}
-      # 7d urgency color: < 50% green, 50-79% yellow, >= 80% red
+      _ov_7d_disp=$_ov_7d_int
+      [[ "$_RATE_DISP" == "remaining" ]] && _ov_7d_disp=$(( 100 - _ov_7d_int ))
+      # 7d urgency color: < 50% green, 50-79% yellow, >= 80% red (based on used %)
       if (( _ov_7d_int >= 80 )); then
         _ov_7d_clr="${CLAUDII_CLR_RED}"
       elif (( _ov_7d_int >= 50 )); then
@@ -1191,11 +1212,15 @@ _cmd_default() {
       else
         _ov_7d_clr="${CLAUDII_CLR_GREEN}"
       fi
-      _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} 7d: ${_ov_7d_clr}${_ov_7d_int}%${CLAUDII_CLR_RESET}"
-      # 7d delta
+      _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} 7d: ${_ov_7d_clr}${_ov_7d_disp}%${CLAUDII_CLR_RESET}"
+      # 7d delta — sign flips in remaining mode (usage +12% = remaining −12%)
       if [[ -n "$_ov_acct_7d_start" ]]; then
         _ov_delta=$(( _ov_7d_int - ${_ov_acct_7d_start%.*} ))
-        (( _ov_delta > 0 )) && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(+${_ov_delta}%)${CLAUDII_CLR_RESET}"
+        _ov_delta_disp=$_ov_delta
+        [[ "$_RATE_DISP" == "remaining" ]] && _ov_delta_disp=$(( -_ov_delta ))
+        if (( _ov_delta > 0 )); then
+          _ov_acct_line+=" ${CLAUDII_CLR_DIM}($( (( _ov_delta_disp > 0 )) && echo "+")${_ov_delta_disp}%)${CLAUDII_CLR_RESET}"
+        fi
       fi
       # 7d reset countdown
       if [[ -n "$_ov_acct_reset_7d" && "$_ov_acct_reset_7d" != "0" ]]; then
