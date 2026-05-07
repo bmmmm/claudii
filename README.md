@@ -1,6 +1,6 @@
 # claudii
 
-**See your Claude Code session costs, context usage, and rate limits directly in your shell prompt.**
+**Claude Code session metrics in your shell — costs, rate limits, model health, and a bedtime nudge that escalates into a synthwave shame display past 1am.**
 
 Pure bash + jq. No Python, no Node, no daemons. Compatible with oh-my-zsh, zinit, and manual source.
 
@@ -37,7 +37,7 @@ bash ~/claudii/install.sh
 Three display layers, all read-only — claudii never modifies your sessions or makes API calls:
 
 ### 1. CC-Statusline — inside Claude Code
-Dense metrics on every turn via the native `statusLine` hook. Five lines by default:
+Dense metrics on every turn via the native `statusLine` hook:
 
 ```
 Opus max ▲  ████████░░  ⚡73%
@@ -47,11 +47,7 @@ Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
 ⚡ commit-msg Qwen3.5-9B 2s
 ```
 
-Lines: model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · tokens + duration + worktree + dir · claude-status + vpn + omlx + proxy · clock with bedtime nudge.
-
-Conditionals render only when relevant: `omlx` only during an active gateii agent run, `vpn` (`⬡ <wg-tunnel>` and/or `⬢ ts` for Tailscale) only when a tunnel is up, `proxy` only when `ANTHROPIC_BASE_URL` is set, `worktree` only inside a git worktree.
-
-The `clock` segment is a local-time anchor with a bedtime escalator: dim `☾ HH:MM` early evening → cyan/yellow as bedtime approaches → blinking red `☾ 23:30 +30m` once past → vibe-coma (per-character rainbow + rotating glyph + rotating shame string) after the 1-hour overdue mark. Configurable via `statusline.bedtime`.
+Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only render when relevant) are documented in `man claudii`. The `clock` segment escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string if you push past 1h overdue — try it after 23:00.
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:
@@ -123,18 +119,14 @@ claudii config set agents.myagent.model opus
 
 | Key | Default | What it does |
 |-----|---------|--------------|
-| `aliases.cl.model` | `sonnet` | Model for `cl` |
-| `aliases.clo.model` | `opus` | Model for `clo` |
-| `fallback.enabled` | `true` | Auto-switch on outage |
-| `status.cache_ttl` | `300` | Health check interval (seconds) |
-| `statusline.models` | `opus,sonnet,haiku` | Models shown in RPROMPT |
-| `statusline.lines` | _see `config/defaults.json`_ | cc-statusline layout — array of arrays of segment names |
-| `statusline.omlx_active_path` | `~/offline_coding/gateii/data/agents/active.json` | Where to read the omlx-agent state from (override if gateii is at a non-standard path; or `claudii omlx connect` does it for you) |
 | `statusline.bedtime` | `23:00` | Bedtime threshold for the `clock` segment (HH:MM, local time) |
-| `vibemap.enabled` | `false` | Opt-in: log each cc-statusline render to `~/.cache/claudii/vibemap.tsv` for `claudii vibemap` heatmaps. Local-only, never transmitted, no prompt content stored. |
-| `vibemap.path` | `""` | Override the vibemap file path (empty = `~/.cache/claudii/vibemap.tsv`) |
-| `statusline.rate_display` | `used` | Rate-limit mode: `used` (default) or `remaining` (counts down) |
-| `session-dashboard.enabled` | `off` | Dashboard mode (on/off) |
+| `statusline.rate_display` | `used` | Rate-limit mode: `used` or `remaining` (counts down) |
+| `statusline.lines` | _see `config/defaults.json`_ | cc-statusline layout — array of arrays of segment names |
+| `vibemap.enabled` | `false` | Opt-in: log each render to `~/.cache/claudii/vibemap.tsv`. Local-only, no prompt content. |
+| `fallback.enabled` | `true` | Auto-switch alias to a healthy model on outage |
+| `session-dashboard.enabled` | `off` | Show session dashboard above the prompt after `claudii` commands |
+
+All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 
 ## License
 
