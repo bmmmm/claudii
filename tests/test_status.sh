@@ -114,6 +114,85 @@ else
   assert_eq "claudii status: no literal \\033 in output" "true" "true"
 fi
 
+# Regression: incident with no model in name/body and components ≠ API
+# must NOT mark all models as down. Real example: "Connection failures
+# for organizations restricting GitHub access by IP address" (May 2026)
+# — affected only orgs with GitHub IP allowlists, but the old heuristic
+# flagged Opus/Sonnet/Haiku as down because no model name was matched.
+_github_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_gh.XXXXXX")
+mkdir -p "$_github_inc_dir/cache" "$_github_inc_dir/srv"
+cat > "$_github_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Connection failures for organizations restricting GitHub access by IP address",
+  "status":"identified","impact":"major",
+  "incident_updates":[{"body":"We have identified an issue affecting organizations that restrict GitHub access by source IP address. A recent infrastructure change altered the IP addresses Anthropic uses for outbound connections to GitHub, which may cause Claude Code remote sessions to fail."}],
+  "components":[{"name":"claude.ai"},{"name":"Claude Code"}]
+}]}
+JSON
+# Serve the canned JSON from a `file://` URL — claudii-status uses curl,
+# which supports file:// transparently. Skips network.
+_github_url="file://$_github_inc_dir/srv/unresolved.json"
+# claudii-status hard-checks https:// — bypass by writing cache directly via
+# a stub-binary path: invoke the parser logic by faking `curl` via PATH.
+# Simpler: spin a tiny bash wrapper that exports a CURL override.
+cat > "$_github_inc_dir/curl" <<EOF
+#!/bin/bash
+# Mock curl: when fetching the unresolved URL, return the canned JSON.
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_github_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_github_inc_dir/curl"
+# Reset cache, run with mocked curl
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_github_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_gh_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "github-IP incident: opus stays ok" "opus=ok" "$_gh_cache"
+assert_contains "github-IP incident: sonnet stays ok" "sonnet=ok" "$_gh_cache"
+assert_contains "github-IP incident: haiku stays ok" "haiku=ok" "$_gh_cache"
+assert_contains "github-IP incident: indicator preserved" "_incident=identified" "$_gh_cache"
+rm -rf "$_github_inc_dir"
+
+# Regression: incident whose components list includes "API" (broad inference
+# outage) must still flag all models as degraded/down — this is the one case
+# where "no model named, but everything affected" is real.
+_api_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_api.XXXXXX")
+mkdir -p "$_api_inc_dir/srv"
+cat > "$_api_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Elevated error rates","status":"investigating","impact":"major",
+  "incident_updates":[{"body":"We are investigating elevated error rates."}],
+  "components":[{"name":"API"}]
+}]}
+JSON
+cat > "$_api_inc_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_api_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_api_inc_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_api_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_api_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+if echo "$_api_cache" | grep -qE '^opus=(down|degraded)$'; then
+  assert_eq "API-component incident: opus flagged" "true" "true"
+else
+  assert_eq "API-component incident: opus flagged" "down|degraded" "$_api_cache"
+fi
+if echo "$_api_cache" | grep -qE '^sonnet=(down|degraded)$'; then
+  assert_eq "API-component incident: sonnet flagged" "true" "true"
+else
+  assert_eq "API-component incident: sonnet flagged" "down|degraded" "$_api_cache"
+fi
+rm -rf "$_api_inc_dir"
+
 # Regression: multiline incident name must be flattened to single line
 # (bin/claudii-status does `jq -r .incidents[0].name | tr '\n' ' ' | sed 's/ *$//'`
 #  to prevent multi-line names from breaking RPROMPT/stderr layout)

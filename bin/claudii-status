@@ -3,7 +3,9 @@
 #
 # Strategy:
 #   1. unresolved.json → active incidents (authoritative, structured, no HTML parsing)
-#      Empty incidents[] = all OK. Non-empty = parse name + impact for affected models.
+#      Empty incidents[] = all OK. Non-empty = search name + body + component
+#      names for explicit model mentions; only flag models found there. Catch
+#      broad outages by checking whether the API component is affected.
 #   2. RSS fallback → only when unresolved.json is unreachable
 #      Parses HTML-encoded <strong> status tags to skip resolved items.
 #
@@ -47,8 +49,8 @@ case "${UNRESOLVED_URL}" in
 esac
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
-_tmp_status="${CACHE_STATUS}.tmp.$$"
-_tmp_incidents="${CACHE_INCIDENTS}.tmp.$$"
+_tmp_status=$(mktemp "${CACHE_STATUS}.XXXXXX") || { printf 'claudii-status: mktemp failed\n' >&2; exit 1; }
+_tmp_incidents=$(mktemp "${CACHE_INCIDENTS}.XXXXXX") || { printf 'claudii-status: mktemp failed\n' >&2; exit 1; }
 trap 'rm -f "$_tmp_status" "$_tmp_incidents"' EXIT
 
 source "${CLAUDII_HOME}/lib/log.sh"
@@ -110,15 +112,15 @@ _write_all_ok() {
 _write_incidents() {
   local service_level="$1" down_models="$2" incident_detail="$3" incident_status="${4:-}"
 
-  # If no specific model named in incident → all models affected
-  local no_model_named=true
-  for m in "${MODELS[@]}"; do
-    echo "$down_models" | grep -q " $m " && no_model_named=false && break
-  done
-
+  # Caller is responsible for filling down_models. Empty = no model affected,
+  # but the incident indicator (_incident=<status>) still gets persisted so
+  # the cc-statusline can surface it. Older versions defaulted to "all down"
+  # when no model was named — that flagged every non-model incident (e.g.
+  # GitHub IP routing) as a triple outage. Caller now explicitly opts in to
+  # broad flags by populating down_models.
   {
     for model in "${MODELS[@]}"; do
-      if $no_model_named || echo "$down_models" | grep -q " $model "; then
+      if echo "$down_models" | grep -q " $model "; then
         printf '%s=%s\n' "$model" "$service_level"
       else
         printf '%s=ok\n' "$model"
@@ -131,7 +133,7 @@ _write_incidents() {
   for m in "${MODELS[@]}"; do
     ms=$(grep "^${m}=" "$CACHE_STATUS" | cut -d= -f2 || true)
     summary+=" ${m}=${ms}"
-    local label; label="$(echo "${m:0:1}" | tr '[:lower:]' '[:upper:]')${m:1}"
+    local label; label="$(tr '[:lower:]' '[:upper:]' <<< "${m:0:1}")${m:1}"
     case "$ms" in
       down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2;     any_issue=true ;;
       degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2; any_issue=true ;;
@@ -154,20 +156,24 @@ unresolved=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$
 if [[ -n "$unresolved" ]]; then
   printf '%s\n' "$unresolved" > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
 
-  # One jq call extracts all four fields:
-  #   count, service_level, names (RS-joined), first_name (newlines→space, trimmed)
+  # One jq call extracts all seven fields:
+  #   count, service_level, names (RS-joined), first_name, status, bodies, components
   # Field separator: US (0x1F). Inside the names list: RS (0x1E), restored to \n in shell.
-  _jq_combined=$(echo "$unresolved" | jq -r '
+  # bodies     = concatenated incident_updates[].body across all incidents
+  # components = concatenated component .name values (e.g. "claude.ai Claude Code API")
+  _jq_combined=$(jq -r '
     .incidents as $i |
     [
       ($i | length | tostring),
       ($i | map(.impact) | if any(. == "critical" or . == "major") then "down" else "degraded" end),
       ($i | map(.name | gsub("\n"; " ")) | join("\u001e")),
       (($i[0].name // "") | gsub("\n"; " ") | sub(" +$"; "")),
-      ($i[0].status // "")
-    ] | join("\u001f")' 2>/dev/null) || _jq_combined=""
+      ($i[0].status // "" | gsub("\n"; " ")),
+      ([$i[].incident_updates[]?.body // ""] | join(" ") | gsub("\n"; " ")),
+      ([$i[].components[]?.name // ""] | join(" ") | gsub("\n"; " "))
+    ] | join("\u001f")' <<< "$unresolved" 2>/dev/null) || _jq_combined=""
 
-  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail incident_status <<< "$_jq_combined"
+  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail incident_status incident_bodies incident_components <<< "$_jq_combined"
   incident_names="${incident_names_block//$'\x1e'/$'\n'}"
   [[ "$incident_count" =~ ^[0-9]+$ ]] || incident_count=""
 
@@ -180,12 +186,30 @@ if [[ -n "$unresolved" ]]; then
     _claudii_log info "$incident_count active incident(s)"
     [[ -z "$service_level" ]] && service_level="degraded"
 
+    # Search name + body + component names for explicit model mentions.
+    # Components are the most reliable signal (Anthropic flips e.g. "Claude
+    # Sonnet" or "API" on the status page); name + body are belt-and-braces
+    # for incidents whose component list lags the title.
+    _search_text="$incident_names $incident_bodies $incident_components"
     down_models=" "
     for m in "${MODELS[@]}"; do
-      echo "$incident_names" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
+      echo "$_search_text" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
     done
 
-    _claudii_log debug "Incidents: $incident_names → service=$service_level down=[${down_models}]"
+    # No specific model mentioned: broad-API outage check. If components
+    # list contains the bare "API" entry, treat as affecting all models
+    # (the inference plane itself is degraded). Otherwise leave models as
+    # ok — _incident=<status> still gets persisted so cc-statusline shows
+    # the indicator without the false "Opus ↓ Sonnet ↓ Haiku ↓" cascade.
+    if [[ "$down_models" == " " ]] && \
+       echo "$incident_components" | grep -qiE '(^|[^a-zA-Z])API([^a-zA-Z]|$)'; then
+      for m in "${MODELS[@]}"; do
+        down_models="$down_models$m "
+      done
+      _claudii_log debug "Components include API → flagging all models"
+    fi
+
+    _claudii_log debug "Incidents: name='$incident_names' components='$incident_components' → service=$service_level down=[${down_models}]"
     _write_incidents "$service_level" "$down_models" "$incident_detail" "$incident_status"
   fi
 
