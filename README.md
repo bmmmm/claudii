@@ -47,7 +47,11 @@ Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
 ⚡ commit-msg Qwen3.5-9B 2s
 ```
 
-Lines: model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · api-duration + tokens + duration + worktree + dir · claude-status + agent · omlx (only when an agent run is in flight via [gateii](https://github.com/bmmmm/gateii) — otherwise this line is silently skipped).
+Lines: model (+ effort + `▲` thinking) + context bar + cache-create · rate-5h + rate-7d + burn-eta + lines-changed · tokens + duration + worktree + dir · claude-status + vpn + omlx + proxy · clock with bedtime nudge.
+
+Conditionals render only when relevant: `omlx` only during an active gateii agent run, `vpn` (`⬡ <wg-tunnel>` and/or `⬢ ts` for Tailscale) only when a tunnel is up, `proxy` only when `ANTHROPIC_BASE_URL` is set, `worktree` only inside a git worktree.
+
+The `clock` segment is a local-time anchor with a bedtime escalator: dim `☾ HH:MM` early evening → cyan/yellow as bedtime approaches → blinking red `☾ 23:30 +30m` once past → vibe-coma (per-character rainbow + rotating glyph + rotating shame string) after the 1-hour overdue mark. Configurable via `statusline.bedtime`.
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:
@@ -82,6 +86,9 @@ claudii config get/set <key>     # read/write config
 claudii agents                   # list configured agent aliases
 claudii omlx [status|connect|test|disconnect]
                                  # local-LLM (oMLX/gateii) sessionline integration
+claudii vpnii [set <name>|clear|show]
+                                 # WireGuard tunnel marker for the VPN segment
+                                 # (call from wg-quick PostUp/PreDown)
 ```
 
 All commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
@@ -121,6 +128,8 @@ claudii config set agents.myagent.model opus
 | `statusline.models` | `opus,sonnet,haiku` | Models shown in RPROMPT |
 | `statusline.lines` | _see `config/defaults.json`_ | cc-statusline layout — array of arrays of segment names |
 | `statusline.omlx_active_path` | `~/offline_coding/gateii/data/agents/active.json` | Where to read the omlx-agent state from (override if gateii is at a non-standard path; or `claudii omlx connect` does it for you) |
+| `statusline.bedtime` | `23:00` | Bedtime threshold for the `clock` segment (HH:MM, local time) |
+| `statusline.rate_display` | `used` | Rate-limit mode: `used` (default) or `remaining` (counts down) |
 | `session-dashboard.enabled` | `off` | Dashboard mode (on/off) |
 
 ## License
