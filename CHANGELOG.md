@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **Release flow: tap sync moves from `scripts/release.sh` into `.github/workflows/release.yml`**. The script now does just pre-flight + tests + version bump + tag push, then exits — CI runs tests on a clean Ubuntu env, builds release notes, computes the tarball SHA256, creates the GitHub Release, and PUTs the new Formula into `bmmmm/homebrew-tap`. Previously the script did all of this inline, which meant a single sandbox/TLS hiccup on the local box would silently abort the tap sync with a misleading "Formula not found" error. Tap update now needs a fine-grained PAT with `contents:write` on the tap repo, stored as `secrets.TAP_TOKEN` on the claudii repo — if missing, the workflow logs a warning and skips that step (Formula stays at the previous version, human updates manually).
+- **Tests run BEFORE the version bump**, not after — eliminates the `git checkout --` rollback path. If tests fail, no files were ever mutated.
+- **`scripts/release.sh --watch`** new flag: blocks on `gh run watch <id>` and exits non-zero if the workflow fails. Default (no flag) returns immediately after tag push so you can keep working.
+- **Polling logic gone**: the old "wait up to 300s for the workflow run, match by `head_sha`" loop is replaced by `gh run watch`. Native, exits the moment the run completes, no false-positive timeouts.
+
 ---
 
 ## [v0.17.0] — 2026-05-08
