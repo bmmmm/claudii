@@ -1229,7 +1229,16 @@ _cmd_default() {
         _ov_delta_disp=$_ov_delta
         [[ "$_RATE_DISP" == "remaining" ]] && _ov_delta_disp=$(( -_ov_delta ))
         if (( _ov_delta > 0 )); then
-          _ov_acct_line+=" ${CLAUDII_CLR_DIM}($( (( _ov_delta_disp > 0 )) && echo "+")${_ov_delta_disp}%)${CLAUDII_CLR_RESET}"
+          # Sign computed as a separate conditional statement: the inline
+          # form `$( (( _ov_delta_disp > 0 )) && echo "+" )` propagates the
+          # arithmetic exit code (1 when the test is false) into the `+=`
+          # assignment, which `set -e` in bin/claudii then aborts on. That
+          # killed the overview right after the Account header in
+          # `rate_display=remaining` mode whenever the 7d delta was positive
+          # (negation makes _ov_delta_disp negative → test fails → exit 1).
+          _ov_sign=""
+          (( _ov_delta_disp > 0 )) && _ov_sign="+"
+          _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ov_sign}${_ov_delta_disp}%)${CLAUDII_CLR_RESET}"
         fi
       fi
       # 7d reset countdown

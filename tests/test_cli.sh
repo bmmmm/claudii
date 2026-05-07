@@ -135,6 +135,34 @@ assert_eq "bare claudii: no shell source leak" "0" \
 rm -rf "$_inj_tmp"
 unset bare_out _inj_tmp inj_out
 
+# ── Regression: overview must not abort under set -e in remaining-rate mode ──
+# When statusline.rate_display="remaining" AND the 7d rate has grown since the
+# session started (positive delta), `_ov_delta_disp` is negated to become
+# negative. The old inline form `$( (( _ov_delta_disp > 0 )) && echo "+" )`
+# propagated the arithmetic-test failure (-N is not > 0) into the enclosing
+# `_ov_acct_line+=$(...)` assignment; bin/claudii's `set -euo pipefail` then
+# aborted right after the "● Account" header, dropping Agents / Services /
+# Sessions blocks. This test reproduces the exact data shape and asserts that
+# the full overview still renders.
+_rd_tmp="$(mktemp -d)"
+_rd_xdg="$_rd_tmp/xdg"
+mkdir -p "$_rd_xdg/claudii"
+jq '.statusline.rate_display = "remaining"' "$CLAUDII_HOME/config/defaults.json" \
+  > "$_rd_xdg/claudii/config.json"
+# 7d started at 5%, currently at 8% → delta=+3 → in remaining mode displayed
+# as -3%. Live PPID + recent mtime → counts as active session.
+printf 'model=Sonnet 4.6\nctx_pct=50\ncost=1.20\nrate_5h=15\nrate_7d=8\nreset_5h=%d\nreset_7d=%d\nrate_5h_start=10\nrate_7d_start=5\nsession_id=rdtest00\nworktree=\nagent=\nppid=%s\n' \
+  "$(( $(date +%s) + 3600 ))" "$(( $(date +%s) + 86400 ))" "$$" \
+  > "$_rd_tmp/session-rdtest00"
+_rd_out=$(CLAUDII_CACHE_DIR="$_rd_tmp" XDG_CONFIG_HOME="$_rd_xdg" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
+assert_contains "remaining-mode + positive 7d delta: Account block renders" "Account" "$_rd_out"
+assert_contains "remaining-mode + positive 7d delta: Agents block renders"  "Agents"  "$_rd_out"
+assert_contains "remaining-mode + positive 7d delta: Services block renders" "Services" "$_rd_out"
+# The negated delta itself must appear (the segment that used to abort)
+assert_contains "remaining-mode + positive 7d delta: -3% delta rendered" "(-3%)" "$_rd_out"
+rm -rf "$_rd_tmp"
+unset _rd_tmp _rd_xdg _rd_out
+
 # ── Session active detection: live PID + old file (>300s) → shown as active ──
 # Regression for long-running tasks that don't update the session file for >5min.
 _act_tmp="$(mktemp -d)"
