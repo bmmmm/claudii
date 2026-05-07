@@ -100,10 +100,10 @@ ${_epoch_awk}
 
   # Pre-compute daily API duration totals from augmented data (field 7 = api_dur_ms)
   # Use | as record separator — BSD awk (macOS) rejects literal newlines in -v values
-  _daily_api=$(echo "$_trends_augmented" | awk -F'\t' '
+  _daily_api=$(awk -F'\t' '
     NF >= 7 && $7 > 0 { daily[$1] += $7 }
-    END { for (d in daily) print d "\t" daily[d] }
-  ' | sort | tr '\n' '|')
+    END { for (d in daily) printf "%s\t%s|", d, daily[d] }
+  ' <<< "$_trends_augmented")
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   echo "$_trends_augmented" | awk -F'\t' \

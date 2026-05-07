@@ -126,7 +126,7 @@ _cmd_status() {
           for _sm in "${_status_models[@]}"; do
             _sm="${_sm// /}"
             _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
-            _sm_label="$(echo "${_sm:0:1}" | tr '[:lower:]' '[:upper:]')${_sm:1}"
+            _sm_label="$(tr '[:lower:]' '[:upper:]' <<< "${_sm:0:1}")${_sm:1}"
             case "${_sm_state:-unknown}" in
               ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
               degraded) _sm_icon="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
@@ -180,7 +180,7 @@ _cmd_status() {
             jq -r '.incidents[] | .incident_updates[0:3][] | [.status, .created_at, .body] | @tsv' \
               "$_inc_cache" 2>/dev/null | \
             while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
-              _ts=$(echo "$_upd_time" | sed 's/T/ /; s/\..*//' 2>/dev/null || echo "$_upd_time")
+              _ts="${_upd_time%%.*}"; _ts="${_ts/T/ }"; [[ -z "$_ts" ]] && _ts="$_upd_time"
               printf "    ${CLAUDII_CLR_DIM}%-20s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
                 "$_ts" "$_upd_status" "$_upd_body"
             done
@@ -294,7 +294,7 @@ _cmd_doctor() {
   # 4. Cache directory
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   if [[ -d "$cache_dir" ]]; then
-    cache_count=$(ls -1 "$cache_dir" 2>/dev/null | wc -l | tr -d ' ')
+    local _dc_files=("$cache_dir"/*); [[ -e "${_dc_files[0]}" ]] && cache_count=${#_dc_files[@]} || cache_count=0
     _dc_add "cache" "ok" "Cache directory exists ($cache_count files)"
   else
     _dc_add "cache" "warn" "Cache directory missing — will be created on first status check"

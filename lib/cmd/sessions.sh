@@ -800,11 +800,12 @@ _cmd_sessions() {
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
       # Single awk pass for name + fingerprint + last_message (was 3 separate greps)
-      local _resolved
+      local _resolved _res_name _res_fp _res_msg
       _resolved=$(_session_resolve "$_PSC_session_id")
-      _sf_sesname[$_sf_count]=$(echo "$_resolved" | head -1)
-      _sf_fingerprint[$_sf_count]=$(echo "$_resolved" | sed -n '2p')
-      _sf_last_msg[$_sf_count]=$(echo "$_resolved" | sed -n '3p')
+      { IFS= read -r _res_name; IFS= read -r _res_fp; IFS= read -r _res_msg; } <<< "$_resolved" || true
+      _sf_sesname[$_sf_count]="$_res_name"
+      _sf_fingerprint[$_sf_count]="$_res_fp"
+      _sf_last_msg[$_sf_count]="$_res_msg"
       # Fallback: project_path written directly by sessionline (agents without session_id)
       if [[ -z "${_sf_projpath[$_sf_count]}" && -n "$_PSC_project_path" ]]; then
         _ppath="${_PSC_project_path/#$HOME/\~}"
@@ -848,7 +849,8 @@ _cmd_sessions() {
       _lsof_pids_map=()
       _lsof_cwd_map=()
       _lsof_cur_pid=""
-      _lsof_pid_list="$(IFS=,; echo "${_lsof_ppids[*]}")"
+      printf -v _lsof_pid_list '%s,' "${_lsof_ppids[@]}"
+      _lsof_pid_list="${_lsof_pid_list%,}"
       while IFS= read -r _lsof_line; do
         case "$_lsof_line" in
           p*) _lsof_cur_pid="${_lsof_line#p}" ;;

@@ -158,7 +158,7 @@ _claudii_spinner_pulse() {
   local i=0 _label _prev_label="" cn cv
   while true; do
     _claudii_spinner_read_label
-    cn="${cycle[$((i % 10))]}"; eval "cv=\$$cn"
+    cn="${cycle[$((i % 10))]}"; cv="${!cn}"
     printf '\r%s●%s %s' "$cv" "$reset" "$_label" >&2
     sleep 0.1
     (( ++i ))

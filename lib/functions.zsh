@@ -53,8 +53,9 @@ function _claudii_rl_warn {
       case "$_choice" in
         s|S)
           _fb_effort=$(claudii_config_get "fallback.opus.effort")
-          eval "$_model_var=\"\$_fb_model\""
-          [[ -n "$_fb_effort" ]] && eval "$_effort_var=\"\$_fb_effort\""
+          local -n _rl_model_ref_="$_model_var"
+          _rl_model_ref_="$_fb_model"
+          [[ -n "$_fb_effort" ]] && { local -n _rl_effort_ref_="$_effort_var"; _rl_effort_ref_="$_fb_effort"; }
           printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${_fb_effort:-$(claudii_config_get aliases.$_model_var.effort)}${CLAUDII_CLR_RESET}\n"
           ;;
         w|W)
@@ -113,7 +114,7 @@ function _claudii_register_aliases {
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     [[ "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || { echo "claudii: invalid alias name: $name" >&2; continue; }
-    eval "function $name { _claudii_launch $name \"\$@\"; }"
+    functions[$name]="_claudii_launch $name \"\$@\""
     _claudii_log debug "registered alias: $name"
   done <<< "$aliases_json"
 }
@@ -174,8 +175,7 @@ function _claudii_register_agents {
     [[ "$skill"  =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo "claudii: invalid agent skill: $skill" >&2; continue; }
     [[ "$model"  =~ ^[a-zA-Z][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent model: $model" >&2; continue; }
     [[ "$effort" =~ ^[a-zA-Z]+$               ]] || { echo "claudii: invalid agent effort: $effort" >&2; continue; }
-    # Create a shell function with this name
-    eval "function $name { _claudii_agent_launch \"$skill\" \"$model\" \"$effort\" \"\$@\"; }"
+    functions[$name]="_claudii_agent_launch \"$skill\" \"$model\" \"$effort\" \"\$@\""
     _claudii_log debug "registered agent alias: $name → $skill ($model/$effort)"
   done <<< "$agents_json"
 }

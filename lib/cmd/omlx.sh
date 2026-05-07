@@ -44,9 +44,9 @@ _omlx_probe_server() {
   local resp
   resp=$(curl -s -m 2 "$url/v1/models/status" 2>/dev/null) || return 1
   [[ -z "$resp" ]] && return 1
-  local n gb
-  n=$(echo "$resp" | jq -r '.loaded_count // 0' 2>/dev/null) || return 1
-  gb=$(echo "$resp" | jq -r '((.current_model_memory // 0) / 1073741824)' 2>/dev/null) || return 1
+  local n gb _omlx_jq
+  _omlx_jq=$(jq -r '[.loaded_count // 0, ((.current_model_memory // 0) / 1073741824)] | join("\t")' <<< "$resp" 2>/dev/null) || return 1
+  IFS=$'\t' read -r n gb <<< "$_omlx_jq"
   printf '%s loaded models, %.1f GB' "$n" "$gb"
   return 0
 }
