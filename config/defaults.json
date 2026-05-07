@@ -38,6 +38,10 @@
   "session-dashboard": {
     "enabled": "off"
   },
+  "vibemap": {
+    "enabled": false,
+    "path": ""
+  },
   "debug": {
     "level": "off"
   },

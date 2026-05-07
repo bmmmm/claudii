@@ -58,7 +58,7 @@ _cmd_config() {
       [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; exit 1; }
       jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
       # Validate only known top-level keys
-      _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard"]'
+      _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap"]'
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
       [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
 

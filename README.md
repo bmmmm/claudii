@@ -89,6 +89,8 @@ claudii omlx [status|connect|test|disconnect]
 claudii vpnii [set <name>|clear|show]
                                  # WireGuard tunnel marker for the VPN segment
                                  # (call from wg-quick PostUp/PreDown)
+claudii vibemap [grid|strip|status|clear|path]
+                                 # opt-in activity heatmap (default off)
 ```
 
 All commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
@@ -129,6 +131,8 @@ claudii config set agents.myagent.model opus
 | `statusline.lines` | _see `config/defaults.json`_ | cc-statusline layout — array of arrays of segment names |
 | `statusline.omlx_active_path` | `~/offline_coding/gateii/data/agents/active.json` | Where to read the omlx-agent state from (override if gateii is at a non-standard path; or `claudii omlx connect` does it for you) |
 | `statusline.bedtime` | `23:00` | Bedtime threshold for the `clock` segment (HH:MM, local time) |
+| `vibemap.enabled` | `false` | Opt-in: log each cc-statusline render to `~/.cache/claudii/vibemap.tsv` for `claudii vibemap` heatmaps. Local-only, never transmitted, no prompt content stored. |
+| `vibemap.path` | `""` | Override the vibemap file path (empty = `~/.cache/claudii/vibemap.tsv`) |
 | `statusline.rate_display` | `used` | Rate-limit mode: `used` (default) or `remaining` (counts down) |
 | `session-dashboard.enabled` | `off` | Dashboard mode (on/off) |
 

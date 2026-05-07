@@ -921,6 +921,71 @@ for an IPv4 in 100.64.0.0/10) and needs no state file. Renders as
 .B "⬢ ts"
 next to any active WireGuard tunnel.
 .
+.SS Vibemap (activity heatmap)
+.
+Opt-in tracking of when you prompt, rendered as an ASCII heatmap.
+Default
+.BR off .
+When enabled
+.RB ( vibemap.enabled
+in config), the cc-statusline appends one TSV line per render to
+.IR ~/.cache/claudii/vibemap.tsv .
+The file is local-only, never transmitted, and stores no prompt content.
+Schema:
+.BR "epoch \\\\t weekday \\\\t hour \\\\t minute \\\\t model \\\\t sid8 \\\\t delta_ms" .
+.PP
+.B Subcommands:
+.PP
+.TP
+.B "vibemap"
+Default view: weekday \[mu] 3-hour-bin grid (Mon\(enSun on the X axis,
+00\(en03 / 03\(en06 / \... / 21\(en00 on the Y axis). Cells normalized
+to the max-cell count; bins overlapping the bedtime window render in
+red so peak overdue-vibing is obvious at a glance.
+.TP
+.BI "vibemap strip" " [--days N]"
+Last
+.I N
+days \[mu] 24 hours strip (default 14, range 1\(en90). One row per
+calendar day, today marked with
+.BR * .
+Hours within the bedtime window render in red.
+.TP
+.B "vibemap status"
+Show whether tracking is on, the file path, the entry count, file
+size, and the timestamp of the oldest entry.
+.TP
+.B "vibemap path"
+Print the vibemap file path \(em useful for piping into custom tools
+.RB ( "awk -F'\\\\t' \... \"$(claudii vibemap path)\"" ).
+.TP
+.B "vibemap clear"
+Remove the vibemap file. No confirmation \(em the file is reproducible
+the moment you submit your next prompt with tracking enabled.
+.PP
+.B Enable:
+.PP
+.RS
+.EX
+claudii config set vibemap.enabled true
+.EE
+.RE
+.PP
+.B Privacy notes:
+.PP
+The vibemap file is plain TSV in your local cache directory. It records
+when you prompted (epoch + weekday + hour + minute), which model you
+were on (first word, e.g.\&
+.IR Opus ),
+the first 8 chars of the session ID, and the duration delta vs the
+previous render. It does NOT record prompt content, file paths, or
+model output \(em the cc-statusline JSON doesn\(aqt include those in
+the first place.
+.B claudii vibemap clear
+removes the file completely;
+.B claudii config set vibemap.enabled false
+stops further writes without deleting existing data.
+.
 .SS System
 .
 .TP

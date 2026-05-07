@@ -43,6 +43,7 @@ _claudii() {
         'agents:List configured agents (alias → skill mapping) or show onboarding'
         'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
+        'vibemap:Activity heatmap (opt-in) — grid / strip / status / clear / path'
         'gc:Clean up stale session cache files'
         'resume:Resume a session by ID'
         'help:Show help'
@@ -129,6 +130,19 @@ _claudii() {
           _describe 'vpnii command' vpnii_opts
           ;;
 
+        vibemap)
+          local -a vibemap_opts
+          vibemap_opts=(
+            'grid:Weekday × 3-hour-bin heatmap (default)'
+            'strip:Last N days × 24-hour heatmap (use --days N)'
+            'status:Show enabled/path/entries/oldest entry'
+            'path:Print the vibemap file path'
+            'clear:Delete the vibemap file'
+            '--days:Number of days for strip view (1..90, default 14)'
+          )
+          _describe 'vibemap command' vibemap_opts
+          ;;
+
         config)
           case $words[3] in
             get|set)
@@ -157,6 +171,8 @@ _claudii() {
                 'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
                 'statusline.rate_display:Rate-limit display mode (used/remaining)'
                 'statusline.bedtime:Bedtime threshold for the clock segment (HH:MM, default 23:00)'
+                'vibemap.enabled:Opt-in activity heatmap logging (true/false, default false)'
+                'vibemap.path:Custom path for vibemap.tsv (default: ~/.cache/claudii/vibemap.tsv)'
               )
               _describe 'config key' keys
               ;;

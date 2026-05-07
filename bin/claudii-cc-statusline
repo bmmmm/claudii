@@ -7,6 +7,8 @@
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 # shellcheck source=lib/log.sh
 source "$CLAUDII_HOME/lib/log.sh"
+# shellcheck source=lib/vibemap.sh
+source "$CLAUDII_HOME/lib/vibemap.sh"
 
 command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found — install jq\n' >&2; exit 1; }
 
@@ -25,14 +27,18 @@ _sc_models_cfg=""
 _cfg_omlx=""
 _rate_display=""
 _cfg_bedtime=""
+_cfg_vibemap_enabled=""
+_cfg_vibemap_path=""
 if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime < <(
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime _cfg_vibemap_enabled _cfg_vibemap_path < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
       (.statusline.models // ""),
       (.statusline.omlx_active_path // ""),
       (.statusline.rate_display // ""),
-      (.statusline.bedtime // "")
+      (.statusline.bedtime // ""),
+      (.vibemap.enabled // false | tostring),
+      (.vibemap.path // "")
     ] | join("")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
@@ -120,6 +126,14 @@ if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
   [[ -z "$_rate_5h_start" ]] && _rate_5h_start="$rate_5h"
 fi
 
+# Vibemap delta: previous render's duration_ms, used to compute delta_ms.
+# Stored back in session cache as last_duration_ms below.
+_last_duration_ms=""
+if [[ "$_ec_nl" == *$'\n'last_duration_ms=* ]]; then
+  _last_duration_ms="${_existing_cache#*last_duration_ms=}"
+  _last_duration_ms="${_last_duration_ms%%$'\n'*}"
+fi
+
 # Burn-rate ETA — computed for dashboard cache, not rendered in sessionline
 _burn_eta=""
 if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
@@ -152,6 +166,7 @@ _tmp_session="${_session_file}.tmp.$$"
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
+  "last_duration_ms=$duration_ms" \
   "project_path=$cwd" \
   > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
@@ -737,4 +752,18 @@ while IFS= read -r _line_segs; do
   done
   [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
+
+# Vibemap append — opt-in, single fire-and-forget. Errors are silent: the
+# logger never gates the statusline render. Compute delta_ms vs the previous
+# render's stored duration_ms (zero on first render of a session).
+if [[ "$_cfg_vibemap_enabled" == "true" ]]; then
+  _vm_delta=0
+  if [[ "$_last_duration_ms" =~ ^[0-9]+$ && "$duration_ms" =~ ^[0-9]+$ ]]; then
+    _vm_delta=$(( duration_ms - _last_duration_ms ))
+    (( _vm_delta < 0 )) && _vm_delta=0
+  fi
+  _vm_path=$(_vibemap_resolve_path "$_cfg_vibemap_path")
+  _vibemap_append "$_vm_path" "$model" "$session_id" "$_vm_delta" 2>/dev/null || true
+fi
+
 true
