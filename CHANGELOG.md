@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.17.0] — 2026-05-08
+
 ### Added
 - **`claudii vibemap`** (opt-in activity heatmap): logs one TSV line per cc-statusline render to `~/.cache/claudii/vibemap.tsv` (default off — set `vibemap.enabled=true` to start tracking), then renders ASCII heatmaps over the data. Two views: `claudii vibemap` shows a weekday × 3-hour-bin grid (Mon–Sun × 00-03..21-00), `claudii vibemap strip [--days N]` shows the last N days × 24 hours per row. Both color the bedtime window in red so overdue vibing patterns surface visually. Plus `vibemap status` (enabled/path/entry-count/oldest-entry), `vibemap path`, and `vibemap clear` for full lifecycle control. Schema: `epoch \t weekday \t hour \t minute \t model \t sid8 \t delta_ms` — local-only, never transmitted, no prompt content stored. Aggregation done in pure awk (`lib/vibemap-{grid,strip}.awk`), presentation in `lib/cmd/vibemap.sh`, logging hook in `lib/vibemap.sh` (used by both the CLI and the cc-statusline append path).
 - **`clock` segment with bedtime nudge**: Renders local wall-clock time + a glyph that escalates as bedtime approaches and passes — `☾ 22:14` dim, → cyan 30 min out, → yellow at 10 min out, → blinking red `☾ 23:30 +30m` once past, → vibe-coma (per-character synthwave rainbow + rotating glyph from `💤 🌙 🦉 ✨ 🌌` + blink + a randomly-rotating shame string like `GO TO BED` / `TOUCH GRASS` / `FUTURE YOU SAYS NO`, all reshuffled every render) after the 1-hour overdue mark. Wrap-aware across midnight. Configurable via `statusline.bedtime` (HH:MM, default `23:00`). Add it to your `statusline.lines` layout to show.
