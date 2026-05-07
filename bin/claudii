@@ -416,6 +416,7 @@ source "$CLAUDII_HOME/lib/cmd/sessions.sh"
 source "$CLAUDII_HOME/lib/cmd/display.sh"
 source "$CLAUDII_HOME/lib/cmd/config.sh"
 source "$CLAUDII_HOME/lib/cmd/omlx.sh"
+source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
 
 # ── Shorthand aliases — expand before main case statement ───────────────────
 case "${1:-}" in
@@ -473,6 +474,7 @@ case "${1:-}" in
   agents)              _cmd_agents            ;;
   search)              _cmd_search "$@"       ;;
   omlx)                _cmd_omlx "$@"         ;;
+  vpnii)               _cmd_vpnii "$@"        ;;
 
   # Help
   help|--help|-h)      usage                  ;;

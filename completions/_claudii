@@ -42,6 +42,7 @@ _claudii() {
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
         'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
+        'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'gc:Clean up stale session cache files'
         'resume:Resume a session by ID'
         'help:Show help'
@@ -118,6 +119,16 @@ _claudii() {
           _describe 'omlx command' omlx_opts
           ;;
 
+        vpnii)
+          local -a vpnii_opts
+          vpnii_opts=(
+            'set:Mark VPN tunnel active — claudii vpnii set <name>'
+            'clear:Mark VPN as down (alias: down/off)'
+            'show:Print current tunnel name (alias: status)'
+          )
+          _describe 'vpnii command' vpnii_opts
+          ;;
+
         config)
           case $words[3] in
             get|set)
@@ -145,6 +156,7 @@ _claudii() {
                 'search.dir:Directory for claudii search mode'
                 'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
                 'statusline.rate_display:Rate-limit display mode (used/remaining)'
+                'statusline.bedtime:Bedtime threshold for the clock segment (HH:MM, default 23:00)'
               )
               _describe 'config key' keys
               ;;

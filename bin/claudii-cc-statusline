@@ -24,13 +24,15 @@ _from_cfg=""
 _sc_models_cfg=""
 _cfg_omlx=""
 _rate_display=""
+_cfg_bedtime=""
 if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display < <(
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
       (.statusline.models // ""),
       (.statusline.omlx_active_path // ""),
-      (.statusline.rate_display // "")
+      (.statusline.rate_display // ""),
+      (.statusline.bedtime // "")
     ] | join("")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
@@ -225,6 +227,7 @@ _rlc() {
 RST=$'\033[0m'
 DIM=$'\033[2m'
 BOLD=$'\033[1m'
+BLINK=$'\033[5m'
 CYAN=$'\033[0;36m'
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[0;33m'
@@ -384,6 +387,83 @@ if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] 2>/dev/null; then
   _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
 fi
 
+# Clock with bedtime nudge — escalates color/glyph as bedtime approaches and
+# passes. Configurable via statusline.bedtime (default "23:00", local time).
+# Phases: dim ☾ → cyan ☾ → yellow ☾ → red ☾ +Xm → red bold 💤 +XhYm.
+# Wrap-aware: if it's past midnight and bedtime is in the evening, the
+# overdue counter rolls over correctly.
+_seg_clock=""
+_bedtime="${_cfg_bedtime:-23:00}"
+if [[ "$_bedtime" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
+  _bt_h="${BASH_REMATCH[1]#0}"; _bt_m="${BASH_REMATCH[2]#0}"
+  _now_h=$(date +%H); _now_m=$(date +%M)
+  _now_h="${_now_h#0}"; _now_m="${_now_m#0}"
+  _now_min=$(( ${_now_h:-0} * 60 + ${_now_m:-0} ))
+  _bt_min=$(( ${_bt_h:-0} * 60 + ${_bt_m:-0} ))
+  _delta_min=$(( _now_min - _bt_min ))
+  # Wrap: before 6am + bedtime in evening (>=18:00) → past midnight, still overdue
+  if (( _now_min < 360 && _bt_min >= 1080 )); then
+    _delta_min=$(( _delta_min + 1440 ))
+  fi
+  _hhmm=$(date +%H:%M)
+  _ck_glyph="☾"; _ck_color="$DIM"; _ck_suffix=""
+  _ck_vibe=0
+  if   (( _delta_min < -30 )); then : # default: dim
+  elif (( _delta_min < -10 )); then _ck_color="$CYAN"
+  elif (( _delta_min <   0 )); then _ck_color="$YELLOW"
+  elif (( _delta_min <  60 )); then
+    # Bedtime: blink red — terminal handles the animation natively
+    _ck_color="${RED}${BLINK}"
+    _ck_suffix=" +${_delta_min}m"
+  else
+    # Vibe-coma: rainbow per char + random glyph + blink — re-rolls every render
+    _ck_vibe=1
+    _ck_h=$(( _delta_min / 60 )); _ck_m=$(( _delta_min % 60 ))
+    if (( _ck_m == 0 )); then _ck_suffix=" +${_ck_h}h"
+    else _ck_suffix=" +${_ck_h}h${_ck_m}m"; fi
+  fi
+  if (( _ck_vibe )); then
+    # Synthwave palette + sleepy/sparkle glyph rotation. Each render picks
+    # fresh: glyph from set, then rainbows the digits per character with a
+    # rotating offset so consecutive renders never look identical.
+    _vibe_glyphs=("💤" "🌙" "🦉" "✨" "🌌")
+    _vibe_palette=($'\033[38;5;213m' $'\033[38;5;201m' $'\033[38;5;165m' $'\033[38;5;129m' $'\033[38;5;51m' $'\033[38;5;87m' $'\033[38;5;226m')
+    _vg_idx=$(( RANDOM % ${#_vibe_glyphs[@]} ))
+    _ck_glyph="${_vibe_glyphs[$_vg_idx]}"
+    _vibe_text="${_hhmm}${_ck_suffix}"
+    _vibe_offset=$(( RANDOM % ${#_vibe_palette[@]} ))
+    _vibe_rainbow=""
+    for (( _vi=0; _vi<${#_vibe_text}; _vi++ )); do
+      _vc_idx=$(( (_vibe_offset + _vi) % ${#_vibe_palette[@]} ))
+      _vibe_rainbow+="${_vibe_palette[$_vc_idx]}${_vibe_text:$_vi:1}"
+    done
+    # Rotating shame string — solid bright color so it stays legible next
+    # to the rainbow time. Reshuffles per render like glyph + palette.
+    _vibe_msgs=(
+      "GO TO BED"
+      "SERIOUSLY?"
+      "BED. NOW."
+      "TOMORROW HURTS"
+      "VIBE COMA"
+      "TOUCH GRASS"
+      "SAVE YOURSELF"
+      "EYES = TIRED"
+      "REST DEBT++"
+      "PLEASE SLEEP"
+      "CODE CAN WAIT"
+      "FUTURE YOU SAYS NO"
+      "BRAIN = MUSH"
+      "PROD IS FINE"
+      "SLEEP > VIBE"
+    )
+    _vm_color="${_vibe_palette[$(( RANDOM % ${#_vibe_palette[@]} ))]}"
+    _vm_text="${_vibe_msgs[$(( RANDOM % ${#_vibe_msgs[@]} ))]}"
+    _seg_clock="${BLINK}${_ck_glyph}${RST} ${BLINK}${_vibe_rainbow}${RST} ${BLINK}${BOLD}${_vm_color}${_vm_text}${RST}"
+  else
+    _seg_clock="${_ck_color}${_ck_glyph} ${_hhmm}${_ck_suffix}${RST}"
+  fi
+fi
+
 # Worktree: name + branch. Falls back to workspace.git_worktree for plain git worktrees.
 _seg_worktree=""
 _wt_name="${worktree_name:-$workspace_git_worktree}"
@@ -500,19 +580,40 @@ if [[ -f "$_status_cache" ]]; then
       else
         _scm_icon="${GREEN}✓${RST}"
       fi
-      [[ -n "$_seg_claude_status" ]] && _seg_claude_status+="  "
+      [[ -n "$_seg_claude_status" ]] && _seg_claude_status+=" "
       _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
     done
+
+    # Wrap the model glyphs in brackets — matches the zsh RPROMPT format
+    # `[Opus ✓ Sonnet ✓ Haiku ✓] <age> <flag>`. Age + incident sym live
+    # OUTSIDE the brackets; that way the flag visually trails the models
+    # segment without being mistaken for a VPN/proxy indicator on its right.
+    _seg_claude_status="${DIM}[${RST}${_seg_claude_status}${DIM}]${RST}"
+
+    # Cache age — mtime of status-models (how stale the freshness check is)
+    _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
+    if [[ "$_sc_mtime" =~ ^[0-9]+$ ]] && (( _sc_mtime > 0 )); then
+      _sc_age_sec=$(( _now - _sc_mtime ))
+      (( _sc_age_sec < 0 )) && _sc_age_sec=0
+      if   (( _sc_age_sec < 60 ));    then _sc_age_str="${_sc_age_sec}s"
+      elif (( _sc_age_sec < 3600 ));  then printf -v _sc_age_str '%dm' $(( _sc_age_sec / 60 ))
+      elif (( _sc_age_sec < 86400 )); then printf -v _sc_age_str '%dh' $(( _sc_age_sec / 3600 ))
+      else                                 printf -v _sc_age_str '%dd' $(( _sc_age_sec / 86400 ))
+      fi
+      _seg_claude_status+=" ${DIM}${_sc_age_str}${RST}"
+    fi
+
+    # Incident sym — same precedence as RPROMPT (lib/statusline.zsh)
     if [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then
-      _seg_claude_status+="  ${RED}‼ Investigating${RST}"
+      _seg_claude_status+=" ${RED}‼${RST}"
     elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]]; then
-      _seg_claude_status+="  ${YELLOW}⚐ Identified${RST}"
+      _seg_claude_status+=" ${YELLOW}⚐${RST}"
     elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]]; then
-      _seg_claude_status+="  ${CYAN}◎ Monitoring${RST}"
+      _seg_claude_status+=" ${CYAN}◎${RST}"
     elif [[ "${_sc_worst:-}" == "down" ]]; then
-      _seg_claude_status+="  ${RED}⚠ incident${RST}"
+      _seg_claude_status+=" ${RED}⚠${RST}"
     elif [[ "${_sc_worst:-}" == "degraded" ]]; then
-      _seg_claude_status+="  ${YELLOW}⚠ degraded${RST}"
+      _seg_claude_status+=" ${YELLOW}⚠${RST}"
     fi
   fi
 fi
@@ -543,12 +644,21 @@ if [[ -f "$_omlx_active_path" ]]; then
   fi
 fi
 
-# VPN indicator — reads vpnii state file written by wg-quick PostUp/PreDown
+# VPN indicators — WireGuard via vpnii state file (wg-quick PostUp/PreDown),
+# Tailscale via interface scan for CGNAT range 100.64.0.0/10. Both can be
+# active at once (split-routing) — render side by side with two-space gap.
 _seg_vpn=""
 _vpn_state="${_cache_dir}/vpnii"
 if [[ -f "$_vpn_state" ]]; then
   _vpn_tunnel=$(<"$_vpn_state")
   [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
+fi
+# Tailscale: any utun with an IPv4 in 100.64.0.0/10 (RFC 6598 CGNAT, what
+# Tailscale assigns). Single ifconfig call, no daemon dependency, no name
+# lookup (would need `tailscale status` — too slow per render).
+if ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.'; then
+  [[ -n "$_seg_vpn" ]] && _seg_vpn+="  "
+  _seg_vpn+="${GREEN}⬢${RST} ${DIM}ts${RST}"
 fi
 
 # Proxy indicator — shows when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
@@ -600,6 +710,7 @@ while IFS= read -r _line_segs; do
       vpn)             _val="$_seg_vpn"             ;;
       omlx)            _val="$_seg_omlx"            ;;
       proxy)           _val="$_seg_proxy"           ;;
+      clock)           _val="$_seg_clock"           ;;
       ruler)
         # Fill remaining terminal width with ─
         # Falls back to 60 cols when COLUMNS/tput unavailable (CC piped context)

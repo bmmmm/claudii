@@ -178,6 +178,7 @@ dir	\[u2302] my-app	Working directory: ⌂ symbol + basename of workspace.projec
 agent	@orc	Agent name (dim, prefixed @)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache; \[u26A0] hint (colored) when degraded/down
+clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; color escalates as bedtime approaches/passes (configurable via \fBstatusline.bedtime\fR, default 23:00)
 .TE
 .PP
 Segment details:
@@ -354,6 +355,37 @@ Agent name prefixed with
 .B @
 in dim text.
 Shown only when present in the session JSON.
+.TP
+.B clock
+Local wall-clock time with a bedtime nudge that escalates as bedtime
+approaches and passes. The bedtime threshold is configurable via
+.B statusline.bedtime
+(default
+.IR 23:00 ,
+24-hour HH:MM, local time).
+Phases:
+.RS
+.IP \(bu 2
+\[u263E] HH:MM (dim) \(em more than 30 min before bedtime
+.IP \(bu 2
+\[u263E] HH:MM (cyan) \(em 10\(en30 min before bedtime
+.IP \(bu 2
+\[u263E] HH:MM (yellow) \(em 0\(en10 min before bedtime
+.IP \(bu 2
+\[u263E] HH:MM +Xm (red, blink) \(em 0\(en60 min past bedtime
+.IP \(bu 2
+vibe-coma (random glyph + per-character rainbow + blink + rotating shame
+string like
+.IR "GO TO BED" ,
+.IR "TOUCH GRASS" ,
+.IR "FUTURE YOU SAYS NO" )
+\(em 1 h+ past bedtime; reshuffled every render so consecutive prompts
+never look the same
+.RE
+.IP
+The overdue counter wraps over midnight, so a 02:14 reading with a 23:00
+bedtime renders as
+.IR "+3h14m" .
 .TP
 .B ruler
 Fills the remaining terminal width with horizontal rule characters (\(em).
@@ -834,6 +866,60 @@ or config key
 .BR statusline.omlx_active_path .
 The segment is silently empty (and its line dropped) when no agent is
 active or gateii is not installed \(em zero impact for users without gateii.
+.
+.SS VPN tunnel state (vpnii)
+.
+The VPN segment in cc-statusline and RPROMPT shows the active tunnel name
+from
+.IR ~/.cache/claudii/vpnii .
+That file is normally written by wg-quick PostUp/PreDown hooks; because
+wg-quick runs as root, those hooks would otherwise create a root-owned
+file that can't be cleaned up without sudo.
+.B claudii vpnii
+wraps the write/clear and drops privilege to the real user, so the cache
+file is always owned by you.
+.PP
+.B Recommended wg conf:
+.PP
+.RS
+.EX
+[Interface]
+\&...
+PostUp  = claudii vpnii set HomeLab
+PreDown = claudii vpnii clear
+.EE
+.RE
+.TP
+.BI "vpnii set " "<name>"
+Mark tunnel
+.I name
+as active. Resolves the target user via
+.B SUDO_USER
+\(rA
+.I /dev/console
+owner (macOS GUI session) \(rA
+.B $USER
+\(rA
+.B CLAUDII_USER
+override. Pass
+.B "\-\-user " <name>
+to override explicitly.
+.TP
+.B "vpnii clear"
+Remove the state file. Aliases:
+.BR "vpnii down" ", " "vpnii off" .
+.TP
+.B "vpnii show"
+Print the current tunnel name, or
+.I "no tunnel"
+when none is set. Alias:
+.BR "vpnii status" .
+.PP
+Tailscale is detected separately via interface scan
+.RB ( "ifconfig"
+for an IPv4 in 100.64.0.0/10) and needs no state file. Renders as
+.B "⬢ ts"
+next to any active WireGuard tunnel.
 .
 .SS System
 .

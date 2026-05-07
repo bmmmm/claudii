@@ -110,7 +110,7 @@ _write_all_ok() {
 }
 
 _write_incidents() {
-  local service_level="$1" down_models="$2" incident_detail="$3" incident_status="${4:-}"
+  local service_level="$1" down_models="$2" incident_detail="$3" incident_status="${4:-}" incident_started="${5:-}"
 
   # Caller is responsible for filling down_models. Empty = no model affected,
   # but the incident indicator (_incident=<status>) still gets persisted so
@@ -127,6 +127,8 @@ _write_incidents() {
       fi
     done
     [[ -n "$incident_status" ]] && printf '_incident=%s\n' "$incident_status"
+    [[ -n "$incident_started" && "$incident_started" =~ ^[0-9]+$ ]] && printf '_incident_started=%s\n' "$incident_started"
+    : # ensure block exits 0 — trailing optional printfs above must not gate the mv
   } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
 
   local summary="" any_issue=false
@@ -170,10 +172,11 @@ if [[ -n "$unresolved" ]]; then
       (($i[0].name // "") | gsub("\n"; " ") | sub(" +$"; "")),
       ($i[0].status // "" | gsub("\n"; " ")),
       ([$i[].incident_updates[]?.body // ""] | join(" ") | gsub("\n"; " ")),
-      ([$i[].components[]?.name // ""] | join(" ") | gsub("\n"; " "))
+      ([$i[].components[]?.name // ""] | join(" ") | gsub("\n"; " ")),
+      ($i[0].started_at // "" | if . == "" then "" else (sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring) end)
     ] | join("\u001f")' <<< "$unresolved" 2>/dev/null) || _jq_combined=""
 
-  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail incident_status incident_bodies incident_components <<< "$_jq_combined"
+  IFS=$'\x1f' read -r incident_count service_level incident_names_block incident_detail incident_status incident_bodies incident_components incident_started <<< "$_jq_combined"
   incident_names="${incident_names_block//$'\x1e'/$'\n'}"
   [[ "$incident_count" =~ ^[0-9]+$ ]] || incident_count=""
 
@@ -210,7 +213,7 @@ if [[ -n "$unresolved" ]]; then
     fi
 
     _claudii_log debug "Incidents: name='$incident_names' components='$incident_components' → service=$service_level down=[${down_models}]"
-    _write_incidents "$service_level" "$down_models" "$incident_detail" "$incident_status"
+    _write_incidents "$service_level" "$down_models" "$incident_detail" "$incident_status" "$incident_started"
   fi
 
   # jq parse failed — fall through to RSS
