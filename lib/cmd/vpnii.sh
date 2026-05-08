@@ -22,9 +22,15 @@ _vpnii_resolve_user() {
   if [[ -n "${CLAUDII_USER:-}" ]]; then
     printf '%s' "$CLAUDII_USER"; return
   fi
-  # macOS GUI session — /dev/console is owned by the logged-in user
+  # macOS GUI session — /dev/console is owned by the logged-in user.
+  # stat -f is macOS-only; on Linux -f means filesystem status and exits 0
+  # with multi-line output, so the || fallback to -c '%U' never triggers.
   local console_user
-  console_user=$(stat -f '%Su' /dev/console 2>/dev/null || stat -c '%U' /dev/console 2>/dev/null || true)
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    console_user=$(stat -f '%Su' /dev/console 2>/dev/null || true)
+  else
+    console_user=$(stat -c '%U' /dev/console 2>/dev/null || true)
+  fi
   if [[ -n "$console_user" && "$console_user" != "root" ]]; then
     printf '%s' "$console_user"; return
   fi
