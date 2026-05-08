@@ -24,7 +24,11 @@ _content=$(cat "$_state" 2>/dev/null)
 assert_eq "vpnii set: tunnel name persisted" "HomeLab" "$_content"
 
 # Ownership: must be the invoking user (not root, not changed)
-_owner=$(stat -f '%Su' "$_state" 2>/dev/null || stat -c '%U' "$_state" 2>/dev/null)
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  _owner=$(stat -f '%Su' "$_state" 2>/dev/null || true)
+else
+  _owner=$(stat -c '%U' "$_state" 2>/dev/null || true)
+fi
 assert_eq "vpnii set: file owned by current user" "$(id -un)" "$_owner"
 
 _out=$(_vt_run "$_vt_home" show 2>&1)
