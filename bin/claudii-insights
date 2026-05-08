@@ -1,0 +1,235 @@
+#!/bin/bash
+# claudii-insights — aggregates Claude Code JSONL transcripts to per-session JSON cache
+#
+# Each session JSONL gets a corresponding cache file at:
+#   $CACHE_DIR/insights/<session-id>.json
+#
+# Cache is mtime-invalidated against the source JSONL. First run for a fresh
+# cache iterates all sessions (~5-30s for typical histories); subsequent runs
+# only reprocess sessions whose JSONL has been touched since the last cache.
+#
+# Usage:
+#   claudii-insights aggregate         # refresh all stale caches (default)
+#   claudii-insights aggregate --force # rebuild every cache
+#   claudii-insights aggregate <jsonl> # refresh one specific file
+#   claudii-insights cache-dir         # print insights cache directory
+#   claudii-insights merge [--days N] [--project PATH]
+#                                      # stream merged stats to stdout (jq-able)
+
+set -uo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-insights: jq not found — install jq\n' >&2; exit 1; }
+
+PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+CACHE_DIR="$CACHE_BASE/insights"
+JQ_PROGRAM="$CLAUDII_HOME/lib/insights.jq"
+
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
+
+[[ -f "$JQ_PROGRAM" ]] || { printf 'claudii-insights: missing %s\n' "$JQ_PROGRAM" >&2; exit 1; }
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
+# Aggregate one JSONL into its cache file. Returns 0 on success.
+_aggregate_one() {
+  local jsonl="$1"
+  local sid; sid="$(basename "$jsonl" .jsonl)"
+  local out="$CACHE_DIR/$sid.json"
+  local tmp; tmp=$(mktemp "$out.XXXXXX") || return 1
+  if jq -R -n --arg sid "$sid" -f "$JQ_PROGRAM" "$jsonl" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$out"
+    return 0
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# Decide whether a JSONL needs reaggregation.
+_is_stale() {
+  local jsonl="$1" force="$2"
+  local sid; sid="$(basename "$jsonl" .jsonl)"
+  local cache="$CACHE_DIR/$sid.json"
+  [[ "$force" == "1" ]] && return 0
+  [[ ! -s "$cache" ]] && return 0
+  local jm cm
+  jm=$(_mtime "$jsonl"); cm=$(_mtime "$cache")
+  (( jm > cm ))
+}
+
+SCHEMA_VERSION=2
+
+# Spot-check one cache file's schema_version. Returns 0 if matches current,
+# 1 if any sample shows an older/missing version.
+_schema_ok() {
+  shopt -s nullglob
+  local samples=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  (( ${#samples[@]} == 0 )) && return 0   # empty cache is not a mismatch
+  local v; v=$(jq -r '.schema_version // 1' "${samples[0]}" 2>/dev/null)
+  [[ "$v" == "$SCHEMA_VERSION" ]]
+}
+
+_cmd_aggregate() {
+  local force=0 target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force|-f) force=1 ;;
+      *) target="$1" ;;
+    esac
+    shift
+  done
+
+  if [[ -n "$target" ]]; then
+    [[ -f "$target" ]] || { printf 'not found: %s\n' "$target" >&2; exit 1; }
+    _aggregate_one "$target"
+    return $?
+  fi
+
+  # Schema bump → force a full rebuild so commands never read stale shapes.
+  if (( ! force )) && ! _schema_ok; then
+    printf 'insights: schema bump → rebuilding all caches\n' >&2
+    force=1
+  fi
+
+  # Use a marker file to skip the per-file stat loop. find -newer is O(1) for
+  # the unchanged majority. On --force or first run, scan all files.
+  local marker="$CACHE_DIR/.last-scan"
+  local find_args=("$PROJECTS_DIR" -maxdepth 3 -name "*.jsonl" -type f)
+  if [[ "$force" != "1" && -f "$marker" ]]; then
+    find_args+=(-newer "$marker")
+  fi
+
+  # Touch marker BEFORE scan so any writes during scan get picked up next time.
+  : > "$marker.next"
+
+  local processed=0 failed=0
+  while IFS= read -r jsonl; do
+    [[ -z "$jsonl" ]] && continue
+    # When using -newer the file is by definition stale — still check cache
+    # absence for the first-run case (no marker yet, every file is "new").
+    local sid; sid="$(basename "$jsonl" .jsonl)"
+    if [[ "$force" == "1" || ! -s "$CACHE_DIR/$sid.json" ]] || _is_stale "$jsonl" "$force"; then
+      if _aggregate_one "$jsonl"; then
+        (( ++processed ))
+      else
+        (( ++failed ))
+      fi
+    fi
+  done < <(find "${find_args[@]}" 2>/dev/null)
+
+  mv -f "$marker.next" "$marker"
+
+  shopt -s nullglob
+  local cached_total=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  printf 'insights: %d processed · %d cached · %d failed\n' "$processed" "$((${#cached_total[@]} - processed))" "$failed" >&2
+}
+
+# Merge all (or filtered) cache files into one aggregated JSON on stdout.
+# Filters:
+#   --days N         only include sessions whose last_seen is within N days
+#   --project PATH   only include sessions for that project working dir
+_cmd_merge() {
+  local days="" project=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days)    shift; days="${1:-}" ;;
+      --project) shift; project="${1:-}" ;;
+    esac
+    shift
+  done
+
+  shopt -s nullglob
+  local files=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    printf '{}\n'
+    return 0
+  fi
+
+  local cutoff_iso=""
+  if [[ -n "$days" ]]; then
+    # ISO 8601 cutoff in UTC. Use python-free date math.
+    if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+      cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+    else
+      cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
+    fi
+  fi
+
+  jq -n \
+    --arg cutoff "$cutoff_iso" \
+    --arg project "$project" \
+    '
+      def add_obj(a; b): reduce (b // {} | to_entries[]) as $e (a; .[$e.key] = ((.[$e.key] // 0) + $e.value));
+      def add_obj_nested(a; b):
+        reduce (b // {} | to_entries[]) as $e (a;
+          .[$e.key] = (
+            reduce ($e.value | to_entries[]) as $f ((.[$e.key] // {}); .[$f.key] = ((.[$f.key] // 0) + $f.value))
+          )
+        );
+
+      [inputs
+        | select(($cutoff == "") or ((.last_seen // "") >= $cutoff))
+      ] as $all
+      | reduce $all[] as $s (
+          {
+            sessions: 0,
+            messages: 0,
+            assistant_messages: 0,
+            sidechain_msgs: 0,
+            thinking_blocks: 0,
+            limit_hits: [],
+            snapshots: 0,
+            first_seen: null,
+            last_seen: null,
+            days: {},
+            models: {},
+            tools: {},
+            tool_errors: {},
+            stop_reasons: {},
+            subagent_types: {},
+            permission_modes: {},
+            service_tier: {}
+          };
+          .sessions += 1
+          | .messages += ($s.messages // 0)
+          | .assistant_messages += ($s.assistant_messages // 0)
+          | .sidechain_msgs += ($s.sidechain_msgs // 0)
+          | .thinking_blocks += ($s.thinking_blocks // 0)
+          | .limit_hits += [ ($s.limit_hits // [])[] | . + {sessionId: $s.sessionId} ]
+          | .snapshots += ($s.snapshots // 0)
+          | (if $s.first_seen and (.first_seen == null or $s.first_seen < .first_seen) then .first_seen = $s.first_seen else . end)
+          | (if $s.last_seen  and (.last_seen  == null or $s.last_seen  > .last_seen)  then .last_seen  = $s.last_seen  else . end)
+          | .days = add_obj_nested(.days; $s.days)
+          | .models = add_obj_nested(.models; $s.models)
+          | .tools = add_obj(.tools; $s.tools)
+          | .tool_errors = add_obj(.tool_errors; $s.tool_errors)
+          | .stop_reasons = add_obj(.stop_reasons; $s.stop_reasons)
+          | .subagent_types = add_obj(.subagent_types; $s.subagent_types)
+          | .permission_modes = add_obj(.permission_modes; $s.permission_modes)
+          | .service_tier = add_obj(.service_tier; $s.service_tier)
+        )
+    ' "${files[@]}"
+}
+
+cmd="${1:-aggregate}"; shift || true
+case "$cmd" in
+  aggregate) _cmd_aggregate "$@" ;;
+  merge)     _cmd_merge "$@" ;;
+  cache-dir) printf '%s\n' "$CACHE_DIR" ;;
+  -h|--help|help)
+    cat <<'EOF'
+claudii-insights — aggregate JSONL transcripts to JSON cache
+
+Usage:
+  claudii-insights aggregate [--force | <jsonl>]
+  claudii-insights merge [--days N] [--project PATH]
+  claudii-insights cache-dir
+EOF
+    ;;
+  *) printf 'claudii-insights: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
+esac

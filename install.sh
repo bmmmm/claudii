@@ -27,7 +27,7 @@ fi
 
 # 1. Symlink binaries — fallback to PATH entry if BIN_DIR is not writable
 bin_ok=true
-for bin in claudii claudii-status claudii-cc-statusline; do
+for bin in claudii claudii-status claudii-cc-statusline claudii-insights; do
   src="$CLAUDII_HOME/bin/$bin"
   target="$BIN_DIR/$bin"
   if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$src" ]]; then

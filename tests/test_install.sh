@@ -15,7 +15,7 @@ export CLAUDII_INSTALL_CONFIG_DIR="$TEST_TMP/config/claudii"
 bash "$CLAUDII_HOME/install.sh" >/dev/null 2>&1
 
 # binaries linked
-for bin in claudii claudii-status claudii-cc-statusline; do
+for bin in claudii claudii-status claudii-cc-statusline claudii-insights; do
   if [[ -L "$TEST_TMP/bin/$bin" ]]; then
     assert_eq "install: $bin symlinked" "true" "true"
   else
@@ -24,7 +24,7 @@ for bin in claudii claudii-status claudii-cc-statusline; do
 done
 
 # symlinks point to correct source
-for bin in claudii claudii-status claudii-cc-statusline; do
+for bin in claudii claudii-status claudii-cc-statusline claudii-insights; do
   target=$(readlink "$TEST_TMP/bin/$bin" 2>/dev/null || true)
   assert_eq "install: $bin → $CLAUDII_HOME/bin/$bin" "$CLAUDII_HOME/bin/$bin" "$target"
 done
@@ -51,7 +51,7 @@ assert_eq "install: idempotent — no duplicate source lines" "1" "$count"
 bash "$CLAUDII_HOME/uninstall.sh" >/dev/null 2>&1
 
 # symlinks removed
-for bin in claudii claudii-status claudii-cc-statusline; do
+for bin in claudii claudii-status claudii-cc-statusline claudii-insights; do
   if [[ ! -e "$TEST_TMP/bin/$bin" ]]; then
     assert_eq "uninstall: $bin removed" "true" "true"
   else
