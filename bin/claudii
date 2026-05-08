@@ -419,6 +419,7 @@ source "$CLAUDII_HOME/lib/cmd/omlx.sh"
 source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
 source "$CLAUDII_HOME/lib/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
+source "$CLAUDII_HOME/lib/cmd/insights.sh"
 
 # ── Shorthand aliases — expand before main case statement ───────────────────
 case "${1:-}" in
@@ -465,6 +466,7 @@ case "${1:-}" in
 
   # Display commands
   trends)              _cmd_trends            ;;
+  cache)               _cmd_cache "$@"        ;;
   explain)             _cmd_explain           ;;
   layers|components)   exec "$0" explain "${@:2}" ;;
   version)             _cmd_version           ;;

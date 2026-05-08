@@ -32,6 +32,7 @@ _claudii() {
         'config:Read or write config values'
         'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
+        'cache:Prompt-cache hit rate per day and per model (7d default)'
         'explain:Components, symbols & data flow'
         'layers:Alias for explain'
         'version:Show version number'

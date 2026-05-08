@@ -725,6 +725,23 @@ files are also read for backward compatibility.
 Supports
 .BR \-\-json .
 .
+.TP
+.B cache
+Prompt-cache view: per-day hit rate (rolling N-day window, default 7),
+per-model hit rate, and total tokens served from cache.
+Reads from a per-session JSON cache aggregated by
+.B claudii-insights
+from the JSONL transcripts under
+.IR ~/.claude/projects .
+The first invocation is slower (5\(en30 s) while the cache is built;
+subsequent runs only re-aggregate sessions whose JSONL has been
+touched since the last scan.
+.RS
+.TP
+.BI "\-\-days " N
+Override the rolling window (default 7).
+.RE
+.
 .SS Config
 .
 .TP
