@@ -20,8 +20,7 @@ _vibemap_resolve_path() {
   fi
 }
 
-# Append one render to the vibemap file. All-bash time formatting via the
-# printf %(…)T builtin — no fork, sub-millisecond. Callers must check
+# Append one render to the vibemap file. Callers must check
 # vibemap.enabled themselves; this function does no policy.
 #
 # Args:
@@ -36,13 +35,9 @@ _vibemap_append() {
   [[ -d "$dir" ]] || mkdir -p "$dir" 2>/dev/null || return 1
   local model_short="${model%% *}"
   local sid8="${sid:0:8}"
-  # printf's %(…)T treats \t as literal — so we extract each component
-  # separately, then interleave with real tabs in the final printf.
+  # date is used instead of printf's %(…)T (bash 4.2+) for bash 3.x compat.
   local _t _wd _hh _mm
-  printf -v _t  '%(%s)T' -1
-  printf -v _wd '%(%w)T' -1
-  printf -v _hh '%(%H)T' -1
-  printf -v _mm '%(%M)T' -1
+  read -r _t _wd _hh _mm <<< "$(date '+%s %w %H %M')"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$_t" "$_wd" "$_hh" "$_mm" "$model_short" "$sid8" "$delta_ms" \
     >> "$path" 2>/dev/null
