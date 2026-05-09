@@ -303,6 +303,9 @@ usage() {
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
+  printf "    %-33s $d %s\n" "shame on/off"                    "bedtime shame escalation"
+  printf "    %-33s $d %s\n" "motivation on/off"               "morning motivation tagline"
+  printf "    %-33s $d %s\n" "rainbow on/off"                  "per-char clock rainbow"
   printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
@@ -477,6 +480,9 @@ case "${1:-}" in
   config)              _cmd_config "$@"       ;;
   agents)              _cmd_agents            ;;
   search)              _cmd_search "$@"       ;;
+  shame)               _cmd_shame "$@"        ;;
+  motivation)          _cmd_motivation "$@"   ;;
+  rainbow)             _cmd_rainbow "$@"      ;;
   omlx)                _cmd_omlx "$@"         ;;
   vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;

@@ -47,6 +47,9 @@ _claudii() {
         'vibemap:Activity heatmap (opt-in) — grid / strip / status / clear / path'
         'gc:Clean up stale session cache files'
         'resume:Resume a session by ID'
+        'shame:Toggle bedtime shame escalation (on/off)'
+        'motivation:Toggle morning motivation tagline (on/off)'
+        'rainbow:Toggle per-character clock rainbow coloring (on/off)'
         'help:Show help'
       )
       _describe 'command' commands
@@ -142,6 +145,15 @@ _claudii() {
             '--days:Number of days for strip view (1..90, default 14)'
           )
           _describe 'vibemap command' vibemap_opts
+          ;;
+
+        shame|motivation|rainbow)
+          local -a toggle_opts
+          toggle_opts=(
+            'on:Enable'
+            'off:Disable'
+          )
+          _describe 'toggle option' toggle_opts
           ;;
 
         config)

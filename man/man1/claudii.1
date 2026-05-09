@@ -498,6 +498,28 @@ Modifies
 Without subcommand: show current state.
 .
 .TP
+.BR "shame " [on|off]
+Enable or disable the bedtime shame escalation display. Default: on.
+Controls the vibe-coma mode that activates more than 1 hour past bedtime
+(rainbow clock, rotating shame messages, escalating glyph chaos).
+Config key:
+.BR statusline.shame .
+.
+.TP
+.BR "motivation " [on|off]
+Enable or disable the morning motivation tagline (07:00-15:59). Default: on.
+Controls the tagline shown next to the clock during morning hours.
+Config key:
+.BR statusline.motivation .
+.
+.TP
+.BR "rainbow " [on|off]
+Enable or disable per-character rainbow coloring of the clock digits. Default: on.
+When disabled, the clock digits render in plain bold text during vibe-coma mode.
+Config key:
+.BR statusline.rainbow .
+.
+.TP
 .B explain
 Show component overview: ClaudeStatus (RPROMPT), Session Dashboard (above prompt),
 CC-Statusline (inside Claude Code). Includes current status, config, data flow,

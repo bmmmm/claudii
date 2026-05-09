@@ -51,6 +51,66 @@ _cmd_claudestatus() {
   esac
 }
 
+_cmd_shame() {
+  _cfg_init
+  case "${2:-}" in
+    on)
+      _jq_update "$CONFIG" '.statusline.shame = true'
+      echo -e "${CLAUDII_CLR_GREEN}Shame mode enabled${CLAUDII_CLR_RESET}  (bedtime escalation active)"
+      ;;
+    off)
+      _jq_update "$CONFIG" '.statusline.shame = false'
+      echo -e "${CLAUDII_CLR_YELLOW}Shame mode disabled${CLAUDII_CLR_RESET}  (bedtime clock shows normally)"
+      ;;
+    *)
+      _shame_val=$(_cfgget statusline.shame)
+      [[ "$_shame_val" == "false" ]] \
+        && echo -e "Shame mode: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
+        || echo -e "Shame mode: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      ;;
+  esac
+}
+
+_cmd_motivation() {
+  _cfg_init
+  case "${2:-}" in
+    on)
+      _jq_update "$CONFIG" '.statusline.motivation = true'
+      echo -e "${CLAUDII_CLR_GREEN}Motivation enabled${CLAUDII_CLR_RESET}  (morning tagline active)"
+      ;;
+    off)
+      _jq_update "$CONFIG" '.statusline.motivation = false'
+      echo -e "${CLAUDII_CLR_YELLOW}Motivation disabled${CLAUDII_CLR_RESET}  (morning tagline hidden)"
+      ;;
+    *)
+      _mot_val=$(_cfgget statusline.motivation)
+      [[ "$_mot_val" == "false" ]] \
+        && echo -e "Motivation: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
+        || echo -e "Motivation: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      ;;
+  esac
+}
+
+_cmd_rainbow() {
+  _cfg_init
+  case "${2:-}" in
+    on)
+      _jq_update "$CONFIG" '.statusline.rainbow = true'
+      echo -e "${CLAUDII_CLR_GREEN}Rainbow enabled${CLAUDII_CLR_RESET}  (per-char clock coloring active)"
+      ;;
+    off)
+      _jq_update "$CONFIG" '.statusline.rainbow = false'
+      echo -e "${CLAUDII_CLR_YELLOW}Rainbow disabled${CLAUDII_CLR_RESET}  (clock shows plain bold)"
+      ;;
+    *)
+      _rbow_val=$(_cfgget statusline.rainbow)
+      [[ "$_rbow_val" == "false" ]] \
+        && echo -e "Rainbow: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
+        || echo -e "Rainbow: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      ;;
+  esac
+}
+
 _cmd_session_dashboard() {
   _cfg_init
   case "${2:-}" in

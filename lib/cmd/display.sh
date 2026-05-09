@@ -232,6 +232,24 @@ _cmd_explain() {
   printf '  Commands: claudii cc-statusline on/off\n'
   printf '\n'
 
+  # Vibe / Bedtime features
+  _shame_val=$(_cfgget statusline.shame)
+  _mot_val=$(_cfgget statusline.motivation)
+  _rbow_val=$(_cfgget statusline.rainbow)
+  _bt_val=$(_cfgget statusline.bedtime)
+  [[ "$_shame_val" == "false" ]] && _shame_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" || _shame_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+  [[ "$_mot_val"   == "false" ]] && _mot_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"   || _mot_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+  [[ "$_rbow_val"  == "false" ]] && _rbow_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"  || _rbow_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Vibe / Bedtime${CLAUDII_CLR_RESET}                             CC-Statusline clock\n"
+  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf '  Escalating shame display and morning motivation in the clock segment\n'
+  printf '\n'
+  printf '  Bedtime:    %s\n' "$_bt_val"
+  printf '  Shame:      %b   claudii shame on/off\n'      "$_shame_s"
+  printf '  Motivation: %b   claudii motivation on/off\n' "$_mot_s"
+  printf '  Rainbow:    %b   claudii rainbow on/off\n'    "$_rbow_s"
+  printf '\n'
+
   # Data flow
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
