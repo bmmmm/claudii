@@ -243,6 +243,9 @@ RST=$'\033[0m'
 DIM=$'\033[2m'
 BOLD=$'\033[1m'
 BLINK=$'\033[5m'
+BLINK2=$'\033[6m'
+REVERSE=$'\033[7m'
+UNDERLINE=$'\033[4m'
 CYAN=$'\033[0;36m'
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[0;33m'
@@ -438,23 +441,57 @@ if [[ "$_bedtime" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
     else _ck_suffix=" +${_ck_h}h${_ck_m}m"; fi
   fi
   if (( _ck_vibe )); then
-    # Synthwave palette + sleepy/sparkle glyph rotation. Each render picks
-    # fresh: glyph from set, then rainbows the digits per character with a
-    # rotating offset so consecutive renders never look identical.
-    _vibe_glyphs=("💤" "🌙" "🦉" "✨" "🌌")
-    _vibe_palette=($'\033[38;5;213m' $'\033[38;5;201m' $'\033[38;5;165m' $'\033[38;5;129m' $'\033[38;5;51m' $'\033[38;5;87m' $'\033[38;5;226m')
-    _vg_idx=$(( RANDOM % ${#_vibe_glyphs[@]} ))
+    # Escalating shame display. Four modes based on how far past bedtime:
+    #   mode 1: +1h  — rainbow clock + blink + 1 glyph + shame message
+    #   mode 2: +2h  — double glyph bookends + underline rainbow + louder
+    #   mode 3: +3h  — triple glyph storm + reverse shame + panic
+    #   mode 4: +4h  — full chaos: emoji swarm, reverse+blink, reality leaves chat
+    if   (( _delta_min < 120 )); then _vibe_mode=1
+    elif (( _delta_min < 180 )); then _vibe_mode=2
+    elif (( _delta_min < 240 )); then _vibe_mode=3
+    else _vibe_mode=4; fi
+
+    _ts=$(date +%s)
+    _vibe_glyphs=("💤" "🌙" "🦉" "✨" "🌌" "😵" "🔥" "💀" "🫠" "👻" "🧠" "🛑" "⚠️" "🚨" "🌀")
+
+    # Hue families — shades within one hue so adjacent chars blend instead of clash.
+    # Active family rotates every 90s so the color mood shifts without per-render chaos.
+    _vibe_fam_pink=($'\033[38;5;219m' $'\033[38;5;213m' $'\033[38;5;207m' $'\033[38;5;201m' $'\033[38;5;165m' $'\033[38;5;129m')
+    _vibe_fam_cyan=($'\033[38;5;195m' $'\033[38;5;159m' $'\033[38;5;123m' $'\033[38;5;87m' $'\033[38;5;51m' $'\033[38;5;45m')
+    _vibe_fam_fire=($'\033[38;5;226m' $'\033[38;5;220m' $'\033[38;5;214m' $'\033[38;5;208m' $'\033[38;5;202m' $'\033[38;5;196m')
+    _vibe_fam_purp=($'\033[38;5;183m' $'\033[38;5;147m' $'\033[38;5;111m' $'\033[38;5;105m' $'\033[38;5;99m' $'\033[38;5;93m')
+    case $(( (_ts / 90) % 4 )) in
+      0) _vibe_palette=("${_vibe_fam_pink[@]}") ;;
+      1) _vibe_palette=("${_vibe_fam_cyan[@]}") ;;
+      2) _vibe_palette=("${_vibe_fam_fire[@]}") ;;
+      3) _vibe_palette=("${_vibe_fam_purp[@]}") ;;
+    esac
+
+    # Frame counter — one increment per render, drives animation independently of time
+    _vf="${_cache_dir}/vibe-frame"
+    _frame=0
+    { read -r _frame < "$_vf"; } 2>/dev/null || _frame=0
+    (( ++_frame ))
+    printf '%d\n' "$_frame" > "$_vf"
+
+    # Glyph advances every 3 renders; gradient offset rolls 1 step per render
+    _vg_idx=$(( (_frame / 3) % ${#_vibe_glyphs[@]} ))
     _ck_glyph="${_vibe_glyphs[$_vg_idx]}"
     _vibe_text="${_hhmm}${_ck_suffix}"
-    _vibe_offset=$(( RANDOM % ${#_vibe_palette[@]} ))
+    _vibe_offset=$(( _frame % ${#_vibe_palette[@]} ))
+
+    # Rainbow the clock text; modes 2+ add UNDERLINE per char
     _vibe_rainbow=""
+    _vibe_char_prefix="${BLINK}"
+    (( _vibe_mode >= 2 )) && _vibe_char_prefix="${BLINK}${UNDERLINE}"
+    (( _vibe_mode >= 3 )) && _vibe_char_prefix="${BLINK}${UNDERLINE}${BOLD}"
     for (( _vi=0; _vi<${#_vibe_text}; _vi++ )); do
       _vc_idx=$(( (_vibe_offset + _vi) % ${#_vibe_palette[@]} ))
-      _vibe_rainbow+="${_vibe_palette[$_vc_idx]}${_vibe_text:$_vi:1}"
+      _vibe_rainbow+="${_vibe_char_prefix}${_vibe_palette[$_vc_idx]}${_vibe_text:$_vi:1}${RST}"
     done
-    # Rotating shame string — solid bright color so it stays legible next
-    # to the rainbow time. Reshuffles per render like glyph + palette.
-    _vibe_msgs=(
+
+    # Shame messages — tiered. Higher modes include all lower-tier messages.
+    _vibe_msgs_1=(
       "GO TO BED"
       "SERIOUSLY?"
       "BED. NOW."
@@ -470,12 +507,203 @@ if [[ "$_bedtime" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
       "BRAIN = MUSH"
       "PROD IS FINE"
       "SLEEP > VIBE"
+      "NOT ANOTHER COMMIT"
+      "PUT THE KEYBOARD DOWN"
+      "THE BUG CAN WAIT"
+      "YOU NEED SLEEP"
+      "SCREEN = BAD"
+      "JUST. STOP."
+      "LOG OFF ALREADY"
+      "CLOSE THE LAPTOP"
+      "COMMIT AND SLEEP"
+      "SHUTDOWN -h now"
+      "TESTS CAN FAIL TOMORROW"
+      "ONE MORE = MISTAKE"
+      "ENOUGH FOR TODAY"
+      "NOT YOUR BEST HOUR"
+      "PLEASE. FOR YOURSELF."
     )
-    _vm_color="${_vibe_palette[$(( RANDOM % ${#_vibe_palette[@]} ))]}"
-    _vm_text="${_vibe_msgs[$(( RANDOM % ${#_vibe_msgs[@]} ))]}"
-    _seg_clock="${BLINK}${_ck_glyph}${RST} ${BLINK}${_vibe_rainbow}${RST} ${BLINK}${BOLD}${_vm_color}${_vm_text}${RST}"
+    _vibe_msgs_2=(
+      "WHERE IS YOUR PILLOW"
+      "YOUR BRAIN IS SOUP"
+      "CTRL+ALT+SLEEP"
+      "THE DIFF WILL STILL BE THERE"
+      "ERROR: HUMAN_OVERHEATING"
+      "YAWNING IS CONSENT"
+      "SLEEP.EXE NOT FOUND"
+      "WHO ARE YOU EVEN"
+      "THE CURSOR IS MOCKING YOU"
+      "MERGE THIS: BED INTO YOU"
+      "LAST COMMIT: 3AM_MISTAKE"
+      "REBASE YOUR SLEEP SCHEDULE"
+      "DEPENDENCY: CONSCIOUSNESS"
+      "NULL POINTER: YOUR PILLOW"
+      "SEGFAULT IN YOUR EYES"
+      "GIT PUSH YOURSELF TO BED"
+      "THIS IS TECH DEBT"
+      "STACK OVERFLOW: IN YOUR HEAD"
+      "UNDEFINED BEHAVIOR AHEAD"
+      "YOUR CIRCADIAN RHYTHM DIED"
+      "YOUR GIT BLAME IS TIRED"
+      "THE LINTER WEEPS"
+      "RUBBER DUCK HAS LEFT"
+      "// TODO: sleep"
+      "try { sleep() } finally {}"
+      "HOTFIX: YOUR SCHEDULE"
+      "ASYNC AWAIT YOUR SLEEP"
+      "STANDUPS WILL HURT TOMORROW"
+      "MERGE CONFLICT: YOU VS. BED"
+      "WHO APPROVED THIS PR HOUR"
+      "THE CLOCK IS NOT LYING"
+      "DARK MODE IS NOT ENOUGH"
+    )
+    _vibe_msgs_3=(
+      "WHAT YEAR IS IT"
+      "BUGS AREN'T REAL AT 3AM"
+      "THE CODE IS ALIVE"
+      "I CAN'T FEEL MY FACE"
+      "WHO WROTE THIS? (YOU. AT 3AM.)"
+      "THE FUNCTION RETURNS NOTHING"
+      "LIKE YOUR SLEEP SCHEDULE"
+      "HALLUCINATING: YOU OR THE AI?"
+      "SYS: HUMAN_CORE_DUMP"
+      "429: TOO MANY KEYSTROKES"
+      "MEMORY LEAK: YOUR BRAIN"
+      "FATAL: SLEEP_NOT_FOUND"
+      "KERNEL PANIC — YOU"
+      "THE SEMICOLON WAS FINE"
+      "IT WAS NEVER THE SEMICOLON"
+      "CONSCIOUSNESS DEPRECATED"
+      "REBOOT REQUIRED: YOUR FACE"
+      "sudo sleep --force"
+      "YOUR UPTIME IS A CRIME"
+      "EXIT CODE 1: STUBBORNNESS"
+      "IS THE KEYBOARD REAL"
+      "WHAT IS MAIN() EVEN"
+      "YOU HAVE BECOME THE SPAGHETTI"
+      "BUG: USER IS ZOMBIE"
+      "WARNING: LOW HUMAN BATTERY"
+      "COMPILER ERROR: NO SLEEP"
+      "THE CPU IS MORE RESTED THAN YOU"
+      "YOUR HANDS ARE TYPING ALONE"
+      "DOCS SAY: SLEEP REQUIRED"
+      "THE VARIABLE IS YOU"
+      "INFINITE LOOP: THIS NIGHT"
+      "RETURN TYPE: NOTHING GOOD"
+    )
+    _vibe_msgs_4=(
+      "ARE YOU OK???"
+      "I AM CALLING YOUR MOM"
+      "THIS IS NOT A TEST"
+      "REALITY HAS LEFT THE CHAT"
+      "YOU ARE THE BUG"
+      "THE LIGHT IS FAKE"
+      "WHAT IS A COMPUTER"
+      "SEND HELP. ALSO SLEEP."
+      "YOUR EYES HAVE FILED A COMPLAINT"
+      "DEPLOYING: YOU TO BED"
+      "CRITICAL: HUMAN DOWN"
+      "404: SLEEP NOT FOUND (SINCE WHEN)"
+      "INCIDENT REPORT: THIS MOMENT"
+      "WHO IS RUNNING PRODUCTION"
+      "IT'S TOO LATE FOR REGRETS"
+      "THE PR CAN WAIT FOREVER"
+      "SHUT DOWN. NOW. PLEASE."
+      "LOG OFF OR WE CALL SOMEONE"
+      "BIOS UPDATE: YOUR BODY"
+      "CORE HOURS: 9AM. SLEEP FIRST."
+      "WE FOUND YOUR REGRESSION"
+      "IT WAS YOU. IT WAS ALWAYS YOU."
+      "THE ALGORITHM CANNOT SAVE YOU"
+      "SOS FROM YOUR PILLOW"
+      "PRODUCTION INCIDENT: YOUR BODY"
+      "NO MORE FEATURES TONIGHT"
+      "YOU ARE NOT REQUIRED TO SOLVE THIS"
+      "THE INTERNET WILL STILL BE HERE"
+      "NOTHING SHIPS TONIGHT"
+      "YOUR COMMIT MESSAGE WILL BE GIBBERISH"
+      "ROLLBACK: YOUR ENTIRE EVENING"
+      "THIS IS AN OUTAGE. YOU ARE THE OUTAGE."
+    )
+
+    # Build combined pool based on mode
+    _vibe_msgs=("${_vibe_msgs_1[@]}")
+    if (( _vibe_mode >= 2 )); then _vibe_msgs+=("${_vibe_msgs_2[@]}"); fi
+    if (( _vibe_mode >= 3 )); then _vibe_msgs+=("${_vibe_msgs_3[@]}"); fi
+    if (( _vibe_mode >= 4 )); then _vibe_msgs+=("${_vibe_msgs_4[@]}"); fi
+
+    # Message stable for 25s (time-based); color rolls with frame
+    _vm_color="${_vibe_palette[$(( _frame % ${#_vibe_palette[@]} ))]}"
+    _vm_text="${_vibe_msgs[$(( (_ts / 25) % ${#_vibe_msgs[@]} ))]}"
+
+    # Bookend glyphs — deterministic frame offsets, no jumps
+    _vg_idx2=$(( (_vg_idx + 1) % ${#_vibe_glyphs[@]} ))
+    _ck_glyph2="${_vibe_glyphs[$_vg_idx2]}"
+    _vg_idx3=$(( (_vg_idx + 2) % ${#_vibe_glyphs[@]} ))
+    _ck_glyph3="${_vibe_glyphs[$_vg_idx3]}"
+
+    # Per-render effects — alternate each frame for pulse/strobe
+    # Mode 3: shame text flips REVERSE on/off each render (inverted ↔ normal)
+    # Mode 4: blink alternates slow↔rapid for strobe effect
+    _seg_rev=""
+    (( _vibe_mode >= 3 && _frame % 2 == 1 )) && _seg_rev="${REVERSE}"
+    _seg_fb="${BLINK}"
+    (( _vibe_mode >= 4 && _frame % 2 == 1 )) && _seg_fb="${BLINK2}"
+
+    case $_vibe_mode in
+      1)
+        _seg_clock="${BLINK}${_ck_glyph}${RST} ${_vibe_rainbow} ${BLINK}${BOLD}${_vm_color}${_vm_text}${RST}"
+        ;;
+      2)
+        _seg_clock="${BLINK}${_ck_glyph}${RST} ${_vibe_rainbow} ${BLINK}${_ck_glyph2}${RST} ${BLINK}${BOLD}${UNDERLINE}${_vm_color}${_vm_text}${RST}"
+        ;;
+      3)
+        _seg_clock="${BLINK}${_ck_glyph}${RST}${BLINK}${_ck_glyph2}${RST} ${_vibe_rainbow} ${BLINK}${_ck_glyph3}${RST}${BLINK}${_ck_glyph}${RST} ${BLINK}${BOLD}${_seg_rev}${_vm_color}${_vm_text}${RST}"
+        ;;
+      4)
+        _seg_clock="${_seg_fb}${_ck_glyph}${_ck_glyph2}${_ck_glyph3}${RST} ${_vibe_rainbow} ${_seg_fb}${_ck_glyph3}${_ck_glyph2}${_ck_glyph}${RST} ${_seg_fb}${BOLD}${REVERSE}${UNDERLINE}${_vm_color}${_vm_text}${RST}"
+        ;;
+    esac
   else
-    _seg_clock="${_ck_color}${_ck_glyph} ${_hhmm}${_ck_suffix}${RST}"
+    # Morning motivation: 07:00-15:59 — plain, no blink, no rainbow
+    if (( _now_min >= 420 && _now_min < 960 )); then
+      _mot_msgs=(
+        "let's go"
+        "you've got this"
+        "make it count"
+        "clean slate"
+        "ship something"
+        "build cool things"
+        "new day, fresh diff"
+        "focus time"
+        "the bugs fear you"
+        "ideas into code"
+        "start strong"
+        "make it happen"
+        "one thing at a time"
+        "stay sharp"
+        "coffee → code"
+        "fresh eyes"
+        "do the thing"
+        "ready"
+        "in the zone"
+        "solve something hard"
+        "today's the day"
+        "good energy"
+        "build it"
+        "clear head, clean code"
+        "momentum"
+        "deep work time"
+        "ship it"
+        "keep moving"
+        "make today count"
+        "you know what to do"
+      )
+      _mot_text="${_mot_msgs[$(( RANDOM % ${#_mot_msgs[@]} ))]}"
+      _seg_clock="${DIM}✦ ${_hhmm}${RST}  ${CYAN}${_mot_text}${RST}"
+    else
+      _seg_clock="${_ck_color}${_ck_glyph} ${_hhmm}${_ck_suffix}${RST}"
+    fi
   fi
 fi
 

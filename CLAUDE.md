@@ -122,3 +122,15 @@ Only check what the commit actually touches — skip checks that don't apply:
 - Touched `bin/claudii` or `lib/cmd/*.sh`? → `bash tests/run.sh` + verify man page, completions, CHANGELOG in sync
 - Removed a command? → orphaned `tests/test_<command>.sh` deleted?
 - Docs/config only? → no checks needed
+
+## Memory Types
+
+This project overrides the default memory type set. Use these instead of the harness defaults:
+
+- **`rule`** — evergreen discipline / how-to-apply pattern. Reads like "always do X" or "never do Y." No incident story needed. Example: "jq logic > 3 lines belongs in a `.jq` file."
+- **`lesson`** — incident-based learning. Reads like "we got burned when Y, here's the rule that falls out." The story is load-bearing — if you strip it, the rule loses force. Example: "schema bumps require a Consumer-Sweep — we shipped v2 with `merge` still treating `limit_hits` as a counter, debug took bash -x."
+- **`project`** — initiative/state info that decays fast (deadlines, who's doing what, why a rewrite is happening). Convert relative dates to absolute when saving.
+- **`reference`** — pointers to external systems (URLs, repos, dashboards).
+- **`user`** — language profile and collaboration preferences for bmmmm.
+
+`feedback` is retired in this project — it conflated rules and lessons. Migration: every existing `feedback_*.md` should be re-typed to `rule` or `lesson` on next touch.
