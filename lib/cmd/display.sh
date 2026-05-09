@@ -242,7 +242,12 @@ _cmd_explain() {
   [[ "$_rbow_val"  == "false" ]] && _rbow_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"  || _rbow_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Vibe / Bedtime${CLAUDII_CLR_RESET}                             CC-Statusline clock\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
-  printf '  Escalating shame display and morning motivation in the clock segment\n'
+  printf '  Three independent toggles, one clock segment — priority order:\n'
+  printf '    1. shame     active >1h past bedtime — escalating rainbow/blink chaos\n'
+  printf '    2. motivation  active 07:00–15:59 — plain tagline below clock\n'
+  printf '    3. (plain clock) always-on fallback\n'
+  printf '  shame and motivation are time-gated and never overlap.\n'
+  printf '  rainbow is a sub-feature of shame (no effect when shame is off).\n'
   printf '\n'
   printf '  Bedtime:    %s\n' "$_bt_val"
   printf '  Shame:      %b   claudii shame on/off\n'      "$_shame_s"
