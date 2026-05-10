@@ -19,9 +19,7 @@
     "enabled": true,
     "models": "opus,sonnet,haiku",
     "bedtime": "23:00",
-    "shame": true,
-    "motivation": true,
-    "rainbow": true,
+    "insomnii": "auto",
     "lines": [
       ["model", "tokens", "cache-create"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],

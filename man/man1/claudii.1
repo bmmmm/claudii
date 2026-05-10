@@ -178,7 +178,7 @@ dir	\[u2302] my-app	Working directory: ⌂ symbol + basename of workspace.projec
 agent	@orc	Agent name (dim, prefixed @)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache; \[u26A0] hint (colored) when degraded/down
-clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; color escalates as bedtime approaches/passes (configurable via \fBstatusline.bedtime\fR, default 23:00)
+clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; rendering delegated to \fBcc-insomnii\fR(1) when installed (configurable via \fBstatusline.bedtime\fR, default 23:00; \fBstatusline.insomnii\fR auto/on/off)
 .TE
 .PP
 Segment details:
@@ -357,35 +357,42 @@ in dim text.
 Shown only when present in the session JSON.
 .TP
 .B clock
-Local wall-clock time with a bedtime nudge that escalates as bedtime
-approaches and passes. The bedtime threshold is configurable via
-.B statusline.bedtime
+Local wall-clock time with bedtime nudge / shame escalation. Rendering is
+fully delegated to the standalone
+.BR cc-insomnii (1)
+plugin: when its binary is on
+.B PATH
+and
+.B statusline.insomnii
+is
+.B auto
+(default) or
+.BR on ,
+claudii pipes the upstream JSON to cc-insomnii and uses its single-line
+output verbatim. When cc-insomnii is not installed, the segment is empty and
+the layout silently skips it. Set
+.B statusline.insomnii
+to
+.B off
+to suppress delegation entirely.
+.IP
+Bedtime is forwarded as
+.B CC_INSOMNII_BEDTIME
+from
+.BR statusline.bedtime
 (default
 .IR 23:00 ,
-24-hour HH:MM, local time).
-Phases:
-.RS
-.IP \(bu 2
-\[u263E] HH:MM (dim) \(em more than 30 min before bedtime
-.IP \(bu 2
-\[u263E] HH:MM (cyan) \(em 10\(en30 min before bedtime
-.IP \(bu 2
-\[u263E] HH:MM (yellow) \(em 0\(en10 min before bedtime
-.IP \(bu 2
-\[u263E] HH:MM +Xm (red, blink) \(em 0\(en60 min past bedtime
-.IP \(bu 2
-vibe-coma (random glyph + per-character rainbow + blink + rotating shame
-string like
-.IR "GO TO BED" ,
-.IR "TOUCH GRASS" ,
-.IR "FUTURE YOU SAYS NO" )
-\(em 1 h+ past bedtime; reshuffled every render so consecutive prompts
-never look the same
-.RE
-.IP
-The overdue counter wraps over midnight, so a 02:14 reading with a 23:00
-bedtime renders as
-.IR "+3h14m" .
+24-hour HH:MM, local time), and the legacy
+.BR statusline.shame ,
+.BR statusline.motivation ,
+.B statusline.rainbow
+keys (if present) are forwarded as the matching
+.B CC_INSOMNII_*
+env vars so a single config drives both. See
+.BR cc-insomnii (1)
+for the full set of escalation modes, animations, and message catalog.
+.B claudii doctor
+reports detection status and active mode.
 .TP
 .B ruler
 Fills the remaining terminal width with horizontal rule characters (\(em).
@@ -498,26 +505,48 @@ Modifies
 Without subcommand: show current state.
 .
 .TP
-.BR "shame " [on|off]
-Enable or disable the bedtime shame escalation display. Default: on.
-Controls the vibe-coma mode that activates more than 1 hour past bedtime
-(rainbow clock, rotating shame messages, escalating glyph chaos).
-Config key:
-.BR statusline.shame .
-.
-.TP
-.BR "motivation " [on|off]
-Enable or disable the morning motivation tagline (07:00-15:59). Default: on.
-Controls the tagline shown next to the clock during morning hours.
-Config key:
-.BR statusline.motivation .
-.
-.TP
-.BR "rainbow " [on|off]
-Enable or disable per-character rainbow coloring of the clock digits. Default: on.
-When disabled, the clock digits render in plain bold text during vibe-coma mode.
-Config key:
-.BR statusline.rainbow .
+.BR "insomnii " [on|off|auto|status|install]
+Manage the
+.BR cc-insomnii (1)
+delegation for the
+.B clock
+segment without leaving claudii. Subcommands:
+.RS
+.IP \(bu 2
+.B on
+\(em set
+.B statusline.insomnii=on
+(require delegation; doctor warns if the binary is missing).
+.IP \(bu 2
+.B off
+\(em set
+.B statusline.insomnii=off
+(suppress delegation; the clock segment renders nothing).
+.IP \(bu 2
+.B auto
+\(em set
+.B statusline.insomnii=auto
+(default; delegate when installed, skip when not).
+.IP \(bu 2
+.B status
+(or no argument) \(em show binary path, current delegation mode, and the
+forwarded
+.B statusline.bedtime
+value.
+.IP \(bu 2
+.B install
+\(em clone
+.B $CC_INSOMNII_REPO
+(default
+.IR https://github.com/bmmmm/cc-insomnii )
+into
+.B $CC_INSOMNII_CLONE_DIR
+(default
+.IR ~/.local/share/cc-insomnii-src )
+and run its
+.BR install.sh .
+Idempotent \(em re-running upgrades from the latest checkout.
+.RE
 .
 .TP
 .B explain
@@ -1283,6 +1312,7 @@ Constants are prefixed
 .
 .SH SEE ALSO
 .BR claude (1),
+.BR cc-insomnii (1),
 .BR jq (1),
 .BR zsh (1)
 .

@@ -303,9 +303,7 @@ usage() {
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
-  printf "    %-33s $d %s\n" "shame [on|off]"                  "clock shame (>1h past bedtime, escalating)"
-  printf "    %-33s $d %s\n" "motivation [on|off]"             "clock tagline (07:00–15:59, plain)"
-  printf "    %-33s $d %s\n" "rainbow [on|off]"                "per-char rainbow in shame mode"
+  printf "    %-33s $d %s\n" "insomnii [on|off|auto|install]"  "bedtime statusline plugin (delegates clock segment)"
   printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
@@ -447,6 +445,7 @@ case "${1:-}" in
   dashboard)           _cmd_session_dashboard "$@"   ;; # deprecated alias
   status)              _cmd_status "$@"       ;;
   cc-statusline)       _cmd_cc_statusline "$@" ;;
+  insomnii)            _cmd_insomnii "$@"      ;;
   sessionline)         exec "$0" cc-statusline "${@:2}" ;;
   install-sessionline) exec "$0" cc-statusline on ;;
   update)              _cmd_update            ;;
@@ -480,9 +479,6 @@ case "${1:-}" in
   config)              _cmd_config "$@"       ;;
   agents)              _cmd_agents            ;;
   search)              _cmd_search "$@"       ;;
-  shame)               _cmd_shame "$@"        ;;
-  motivation)          _cmd_motivation "$@"   ;;
-  rainbow)             _cmd_rainbow "$@"      ;;
   omlx)                _cmd_omlx "$@"         ;;
   vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;

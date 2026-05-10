@@ -232,27 +232,25 @@ _cmd_explain() {
   printf '  Commands: claudii cc-statusline on/off\n'
   printf '\n'
 
-  # Vibe / Bedtime features
-  _shame_val=$(_cfgget statusline.shame)
-  _mot_val=$(_cfgget statusline.motivation)
-  _rbow_val=$(_cfgget statusline.rainbow)
+  # Clock segment — delegated to insomnii(1).
   _bt_val=$(_cfgget statusline.bedtime)
-  [[ "$_shame_val" == "false" ]] && _shame_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" || _shame_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
-  [[ "$_mot_val"   == "false" ]] && _mot_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"   || _mot_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
-  [[ "$_rbow_val"  == "false" ]] && _rbow_s="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"  || _rbow_s="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
-  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Vibe / Bedtime${CLAUDII_CLR_RESET}                             CC-Statusline clock\n"
+  _ins_mode=$(_cfgget statusline.insomnii)
+  [[ "$_ins_mode" != "off" && "$_ins_mode" != "on" ]] && _ins_mode="auto"
+  if command -v cc-insomnii >/dev/null 2>&1; then
+    _ins_path=$(command -v cc-insomnii)
+    _ins_state="${CLAUDII_CLR_GREEN}detected${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}($_ins_path)${CLAUDII_CLR_RESET}"
+  else
+    _ins_state="${CLAUDII_CLR_DIM}not installed${CLAUDII_CLR_RESET}"
+  fi
+  printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Clock${CLAUDII_CLR_RESET}                                      CC-Statusline clock segment\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
-  printf '  Three independent toggles, one clock segment — priority order:\n'
-  printf '    1. shame     active >1h past bedtime — escalating rainbow/blink chaos\n'
-  printf '    2. motivation  active 07:00–15:59 — plain tagline below clock\n'
-  printf '    3. (plain clock) always-on fallback\n'
-  printf '  shame and motivation are time-gated and never overlap.\n'
-  printf '  rainbow is a sub-feature of shame (no effect when shame is off).\n'
+  printf '  Bedtime nudge / shame / motivation rendering is delegated to the\n'
+  printf '  standalone cc-insomnii(1) plugin. claudii pipes the upstream JSON to it\n'
+  printf '  and forwards statusline.bedtime as CC_INSOMNII_BEDTIME.\n'
   printf '\n'
-  printf '  Bedtime:    %s\n' "$_bt_val"
-  printf '  Shame:      %b   claudii shame on/off\n'      "$_shame_s"
-  printf '  Motivation: %b   claudii motivation on/off\n' "$_mot_s"
-  printf '  Rainbow:    %b   claudii rainbow on/off\n'    "$_rbow_s"
+  printf '  Bedtime:   %s\n' "$_bt_val"
+  printf '  Mode:      %s\n' "$_ins_mode"
+  printf '  cc-insomnii:  %b\n' "$_ins_state"
   printf '\n'
 
   # Data flow

@@ -47,9 +47,7 @@ _claudii() {
         'vibemap:Activity heatmap (opt-in) — grid / strip / status / clear / path'
         'gc:Clean up stale session cache files'
         'resume:Resume a session by ID'
-        'shame:Toggle bedtime shame escalation (on/off)'
-        'motivation:Toggle morning motivation tagline (on/off)'
-        'rainbow:Toggle per-character clock rainbow coloring (on/off)'
+        'insomnii:Bedtime statusline plugin (on/off/auto/status/install)'
         'help:Show help'
       )
       _describe 'command' commands
@@ -75,6 +73,18 @@ _claudii() {
             'off:Disable'
           )
           _describe 'toggle option' toggle_opts
+          ;;
+
+        insomnii)
+          local -a ins_subs
+          ins_subs=(
+            'on:Require delegation (warn via doctor if missing)'
+            'off:Suppress delegation, leave clock segment empty'
+            'auto:Delegate when installed (default)'
+            'status:Show cc-insomnii detection + active mode'
+            'install:Clone + install the cc-insomnii binary'
+          )
+          _describe 'insomnii subcommand' ins_subs
           ;;
 
         session-dashboard|dashboard)
@@ -147,15 +157,6 @@ _claudii() {
           _describe 'vibemap command' vibemap_opts
           ;;
 
-        shame|motivation|rainbow)
-          local -a toggle_opts
-          toggle_opts=(
-            'on:Enable'
-            'off:Disable'
-          )
-          _describe 'toggle option' toggle_opts
-          ;;
-
         config)
           case $words[3] in
             get|set)
@@ -183,7 +184,8 @@ _claudii() {
                 'search.dir:Directory for claudii search mode'
                 'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
                 'statusline.rate_display:Rate-limit display mode (used/remaining)'
-                'statusline.bedtime:Bedtime threshold for the clock segment (HH:MM, default 23:00)'
+                'statusline.bedtime:Bedtime threshold forwarded to cc-insomnii(1) and used by vibemap (HH:MM, default 23:00)'
+                'statusline.insomnii:cc-insomnii(1) clock delegation (auto/on/off, default auto)'
                 'vibemap.enabled:Opt-in activity heatmap logging (true/false, default false)'
                 'vibemap.path:Custom path for vibemap.tsv (default: ~/.cache/claudii/vibemap.tsv)'
               )

@@ -1,6 +1,6 @@
 # claudii
 
-**Claude Code session metrics in your shell — costs, rate limits, model health, and a bedtime nudge that escalates into a synthwave shame display past 1am.**
+**Claude Code session metrics in your shell — costs, rate limits, model health, and (with the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin installed) a bedtime nudge that escalates into a synthwave shame display past 1am.**
 
 Pure bash + jq. No Python, no Node, no daemons. Compatible with oh-my-zsh, zinit, and manual source.
 
@@ -21,6 +21,16 @@ Enable the in-session status line (writes one key to `~/.claude/settings.json`):
 ```bash
 claudii on
 # restart Claude Code
+```
+
+Optional: install [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) for the
+animated bedtime-shaming `clock` segment (5+ escalation modes, 460+ shame
+messages, char-decay, matrix-rain-drip). claudii auto-detects it and
+delegates the clock rendering — no settings.json change needed:
+```bash
+git clone https://github.com/bmmmm/cc-insomnii ~/cc-insomnii && bash ~/cc-insomnii/install.sh
+claudii doctor | grep insomnii   # confirms detection
+# add 'clock' to your layout if it isn't already
 ```
 
 <details>
@@ -47,7 +57,7 @@ Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
 ⚡ commit-msg Qwen3.5-9B 2s
 ```
 
-Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only render when relevant) are documented in `man claudii`. The `clock` segment escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string if you push past 1h overdue — try it after 23:00.
+Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only render when relevant) are documented in `man claudii`. The `clock` segment is provided by the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin (when installed) — it escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string past 1h overdue, with `breathing-pulse`, `char-decay`, `matrix-rain-drip`, and `glyph-swarm` modes once you cross +3h. Without cc-insomnii the `clock` segment renders nothing — pure CC-Statusline still works fine for everything else.
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:

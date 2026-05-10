@@ -51,62 +51,63 @@ _cmd_claudestatus() {
   esac
 }
 
-_cmd_shame() {
+_cmd_insomnii() {
   _cfg_init
+  _ins_set_mode() {
+    _jq_update "$CONFIG" ".statusline.insomnii = \"$1\""
+  }
   case "${2:-}" in
-    on)
-      _jq_update "$CONFIG" '.statusline.shame = true'
-      echo -e "${CLAUDII_CLR_GREEN}Shame mode enabled${CLAUDII_CLR_RESET}  (bedtime escalation active)"
+    on|off|auto)
+      _ins_set_mode "$2"
+      echo -e "${CLAUDII_CLR_GREEN}insomnii delegation: $2${CLAUDII_CLR_RESET}"
+      [[ "$2" != "off" ]] && ! command -v cc-insomnii >/dev/null 2>&1 && \
+        echo -e "${CLAUDII_CLR_YELLOW}note:${CLAUDII_CLR_RESET} cc-insomnii binary not on PATH yet — install: ${CLAUDII_CLR_DIM}claudii insomnii install${CLAUDII_CLR_RESET}"
       ;;
-    off)
-      _jq_update "$CONFIG" '.statusline.shame = false'
-      echo -e "${CLAUDII_CLR_YELLOW}Shame mode disabled${CLAUDII_CLR_RESET}  (bedtime clock shows normally)"
+    install)
+      # Bootstrap helper: clone the sibling repo and run its installer.
+      # Idempotent — re-running just re-installs from the latest checkout.
+      _ins_repo="${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
+      _ins_clone="${CC_INSOMNII_CLONE_DIR:-$HOME/.local/share/cc-insomnii-src}"
+      if command -v cc-insomnii >/dev/null 2>&1; then
+        echo -e "${CLAUDII_CLR_GREEN}cc-insomnii already installed:${CLAUDII_CLR_RESET} $(command -v cc-insomnii)"
+        echo "  re-run installer to upgrade: bash $_ins_clone/install.sh"
+        return 0
+      fi
+      if [[ ! -d "$_ins_clone/.git" ]]; then
+        echo "Cloning $_ins_repo → $_ins_clone ..."
+        git clone --depth=1 "$_ins_repo" "$_ins_clone" || {
+          echo -e "${CLAUDII_CLR_RED}clone failed${CLAUDII_CLR_RESET} — clone manually: git clone $_ins_repo" >&2
+          return 1
+        }
+      else
+        echo "Updating $_ins_clone ..."
+        ( cd "$_ins_clone" && git pull --ff-only ) || true
+      fi
+      bash "$_ins_clone/install.sh"
+      ;;
+    status|"")
+      _ins_mode=$(_cfgget statusline.insomnii)
+      [[ "$_ins_mode" != "on" && "$_ins_mode" != "off" ]] && _ins_mode="auto"
+      _ins_bedtime=$(_cfgget statusline.bedtime)
+      [[ -z "$_ins_bedtime" || "$_ins_bedtime" == "null" ]] && _ins_bedtime="23:00"
+      printf "  ${CLAUDII_CLR_BOLD}cc-insomnii${CLAUDII_CLR_RESET}\n"
+      if command -v cc-insomnii >/dev/null 2>&1; then
+        _ins_path=$(command -v cc-insomnii)
+        printf "  binary:    ${CLAUDII_CLR_GREEN}%s${CLAUDII_CLR_RESET}\n" "$_ins_path"
+      else
+        printf "  binary:    ${CLAUDII_CLR_DIM}not installed${CLAUDII_CLR_RESET}  (${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET})\n"
+      fi
+      printf "  delegation: %s\n" "$_ins_mode"
+      printf "  bedtime:   %s ${CLAUDII_CLR_DIM}(forwarded as CC_INSOMNII_BEDTIME)${CLAUDII_CLR_RESET}\n" "$_ins_bedtime"
+      printf "\n"
+      printf "  Subcommands:\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii on${CLAUDII_CLR_RESET}      require delegation (warn via doctor if missing)\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii off${CLAUDII_CLR_RESET}     suppress delegation, leave clock segment empty\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii auto${CLAUDII_CLR_RESET}    delegate when installed (default)\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET} clone + install the binary from %s\n" "${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
       ;;
     *)
-      _shame_val=$(_cfgget statusline.shame)
-      [[ "$_shame_val" == "false" ]] \
-        && echo -e "Shame mode: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
-        || echo -e "Shame mode: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
-      ;;
-  esac
-}
-
-_cmd_motivation() {
-  _cfg_init
-  case "${2:-}" in
-    on)
-      _jq_update "$CONFIG" '.statusline.motivation = true'
-      echo -e "${CLAUDII_CLR_GREEN}Motivation enabled${CLAUDII_CLR_RESET}  (morning tagline active)"
-      ;;
-    off)
-      _jq_update "$CONFIG" '.statusline.motivation = false'
-      echo -e "${CLAUDII_CLR_YELLOW}Motivation disabled${CLAUDII_CLR_RESET}  (morning tagline hidden)"
-      ;;
-    *)
-      _mot_val=$(_cfgget statusline.motivation)
-      [[ "$_mot_val" == "false" ]] \
-        && echo -e "Motivation: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
-        || echo -e "Motivation: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
-      ;;
-  esac
-}
-
-_cmd_rainbow() {
-  _cfg_init
-  case "${2:-}" in
-    on)
-      _jq_update "$CONFIG" '.statusline.rainbow = true'
-      echo -e "${CLAUDII_CLR_GREEN}Rainbow enabled${CLAUDII_CLR_RESET}  (per-char clock coloring active)"
-      ;;
-    off)
-      _jq_update "$CONFIG" '.statusline.rainbow = false'
-      echo -e "${CLAUDII_CLR_YELLOW}Rainbow disabled${CLAUDII_CLR_RESET}  (clock shows plain bold)"
-      ;;
-    *)
-      _rbow_val=$(_cfgget statusline.rainbow)
-      [[ "$_rbow_val" == "false" ]] \
-        && echo -e "Rainbow: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}" \
-        || echo -e "Rainbow: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      echo "Usage: claudii insomnii [on|off|auto|status|install]" >&2; exit 1
       ;;
   esac
 }
@@ -391,7 +392,26 @@ _cmd_doctor() {
     _dc_add "plugin" "warn" "CLAUDII_HOME not set — source claudii.plugin.zsh in .zshrc"
   fi
 
-  # 7. Version
+  # 7. insomnii — optional standalone bedtime statusline. When detected,
+  # claudii's clock segment delegates to it (see statusline.insomnii config).
+  _ins_mode=$(jq -r '.statusline.insomnii // "auto"' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null || echo "auto")
+  [[ "$_ins_mode" != "off" && "$_ins_mode" != "on" ]] && _ins_mode="auto"
+  if command -v cc-insomnii >/dev/null 2>&1; then
+    _ins_path=$(command -v cc-insomnii)
+    if [[ "$_ins_mode" == "off" ]]; then
+      _dc_add "insomnii" "info" "cc-insomnii detected ($_ins_path) — clock segment disabled (statusline.insomnii=off)"
+    else
+      _dc_add "insomnii" "ok" "cc-insomnii detected ($_ins_path) — clock segment active (mode=$_ins_mode)"
+    fi
+  else
+    if [[ "$_ins_mode" == "on" ]]; then
+      _dc_add "insomnii" "warn" "cc-insomnii required (statusline.insomnii=on) but not on PATH — clock segment will be empty"
+    else
+      _dc_add "insomnii" "info" "cc-insomnii not installed — clock segment is empty (optional: install from github.com/bmmmm/cc-insomnii)"
+    fi
+  fi
+
+  # 8. Version
   _dc_add "version" "ok" "claudii v$VERSION"
 
   if [[ "$_FORMAT" == "json" ]]; then
