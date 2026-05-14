@@ -36,11 +36,7 @@ command -v jq >/dev/null 2>&1 || {
   echo "claudii: jq not found. Install: brew install jq" >&2; exit 1
 }
 
-# ── Shared helpers (used by lib/cmd/*.sh) ──────────────────────────────────
-
-# Collect history TSV files from a cache directory into global array _HIST_FILES.
-# Usage: _collect_history_files <dir>
-# Populates _HIST_FILES with non-empty history.tsv and history-*.tsv files found.
+# Collect history TSV files into _HIST_FILES (history.tsv + monthly history-*.tsv).
 _HIST_FILES=()
 _collect_history_files() {
   local _dir="$1"
@@ -53,43 +49,29 @@ _collect_history_files() {
   return 0
 }
 
-# Date/timezone initialization — sets shared variables used by cost and trends commands.
-# Sets: _DATE_CMD ("macos" or "gnu"), _TZ_OFFSET (seconds), _WS_DOW (1=Mon..7=Sun)
+# Date init — sets _DATE_CMD ("macos"|"gnu"), _TZ_OFFSET (seconds), _WS_DOW (1=Mon..7=Sun).
 _DATE_CMD="" _TZ_OFFSET="" _WS_DOW=""
 _date_init() {
-  # Detect macOS vs GNU date
-  if date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1; then
-    _DATE_CMD="macos"
-  else
-    _DATE_CMD="gnu"
-  fi
+  if date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1; then _DATE_CMD="macos"; else _DATE_CMD="gnu"; fi
 
-  # Timezone offset in seconds (maps UTC epoch → local day in epoch_to_date)
   _TZ_OFFSET=$(date +%z | awk '{
     s = (substr($0,1,1) == "-") ? -1 : 1
     print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
   }')
 
-  # Read configurable week_start (default: monday)
+  # Read configurable week_start (default: monday).
   local _ws_name
   _ws_name=$(_cfgget cost.week_start)
-  _ws_name="${_ws_name:-monday}"
-  case "$_ws_name" in
-    monday)    _WS_DOW=1 ;;
-    tuesday)   _WS_DOW=2 ;;
-    wednesday) _WS_DOW=3 ;;
-    thursday)  _WS_DOW=4 ;;
-    friday)    _WS_DOW=5 ;;
-    saturday)  _WS_DOW=6 ;;
-    sunday)    _WS_DOW=7 ;;
-    *)         _WS_DOW=1 ;;
+  case "${_ws_name:-monday}" in
+    monday)    _WS_DOW=1 ;; tuesday)   _WS_DOW=2 ;;
+    wednesday) _WS_DOW=3 ;; thursday)  _WS_DOW=4 ;;
+    friday)    _WS_DOW=5 ;; saturday)  _WS_DOW=6 ;;
+    sunday)    _WS_DOW=7 ;; *)         _WS_DOW=1 ;;
   esac
 }
 
-# Spinner start/stop — wraps the _claudii_spinner background job with label file management.
-# _spinner_start [label]  — starts spinner, writes optional initial label, sets _SPINNER_PID
-# _spinner_stop           — kills spinner, clears line, removes label file
-# Callers can update the displayed label at any time by writing to $CLAUDII_SPINNER_LABEL_FILE.
+# Spinner — wraps _claudii_spinner BG job with label-file management.
+# Callers can update the live label by writing to $CLAUDII_SPINNER_LABEL_FILE.
 _SPINNER_PID=""
 _spinner_start() {
   local _label="${1:-}"
@@ -100,7 +82,6 @@ _spinner_start() {
   chmod 0600 "$_lf"
   export CLAUDII_SPINNER_LABEL_FILE="$_lf"
   [[ -n "$_label" ]] && printf '%s' "$_label" > "$_lf"
-  # Resolve mode once (env > config > "random") — passed via env to avoid jq in spinner loop
   if [[ -z "${CLAUDII_SPINNER_MODE:-}" ]]; then
     local _m; _m=$(_cfgget ui.spinner 2>/dev/null)
     [[ -z "$_m" || "$_m" == "null" ]] && _m="random"
@@ -331,7 +312,7 @@ usage() {
   printf '\n'
 }
 
-# ── Parse session cache file into _PSC_* variables ──────────────────────────
+# Parse session cache file (key=value lines) into _PSC_* variables.
 _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
@@ -373,7 +354,7 @@ _parse_session_cache() {
   fi
 }
 
-# ── Render context bar (8 blocks) into _CTX_BAR ─────────────────────────────
+# Render 8-block context bar into _CTX_BAR.
 _render_ctx_bar() {
   local _pct=${1:-0}
   local _filled=$(( _pct * 8 / 100 ))
@@ -390,7 +371,7 @@ _render_ctx_bar() {
   _CTX_BAR="${_clr}${_bar}${CLAUDII_CLR_RESET}"
 }
 
-# ── Render age into _AGE_STR ─────────────────────────────────────────────────
+# Render age (seconds) into _AGE_STR.
 _render_age() {
   local _s=${1:-0}
   (( _s < 0 )) && _s=0
@@ -411,7 +392,6 @@ _cmd_resume() {
   exec claude --resume "$_id"
 }
 
-# ── Source command modules ──────────────────────────────────────────────────
 source "$CLAUDII_HOME/lib/cmd/system.sh"
 source "$CLAUDII_HOME/lib/cmd/sessions.sh"
 source "$CLAUDII_HOME/lib/cmd/display.sh"
@@ -422,7 +402,7 @@ source "$CLAUDII_HOME/lib/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/insights.sh"
 
-# ── Shorthand aliases — expand before main case statement ───────────────────
+# Shorthand aliases — expand before main dispatcher.
 case "${1:-}" in
   s)     set -- status             "${@:2}" ;;
   se)    set -- sessions           "${@:2}" ;;
@@ -435,7 +415,6 @@ case "${1:-}" in
   g)     set -- gc                 "${@:2}" ;;
 esac
 
-# ── Main dispatcher ─────────────────────────────────────────────────────────
 case "${1:-}" in
   # System commands
   on)                  _cmd_on                ;;

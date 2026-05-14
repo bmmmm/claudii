@@ -144,23 +144,11 @@ _cmd_status() {
   case "${2:-}" in
     *m|*[0-9])
       interval="${2:-}"
-      # Strip trailing 'm' first, then validate numeric before any arithmetic (prevents injection)
-      if [[ "$interval" == *m ]]; then
-        _int_num="${interval%m}"
-      else
-        _int_num="$interval"
-      fi
-      if ! [[ "$_int_num" =~ ^[0-9]+$ ]]; then
-        echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1
-      fi
-      if [[ "$interval" == *m ]]; then
-        seconds=$(( _int_num * 60 ))
-      else
-        seconds="$_int_num"
-      fi
-      if (( seconds < 30 )); then
-        echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1
-      fi
+      # Strip trailing 'm' for numeric validation (prevents injection in arithmetic).
+      _int_num="${interval%m}"
+      [[ "$_int_num" =~ ^[0-9]+$ ]] || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1; }
+      [[ "$interval" == *m ]] && seconds=$(( _int_num * 60 )) || seconds="$_int_num"
+      (( seconds >= 30 )) || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1; }
       _jq_update "$CONFIG" --argjson v "$seconds" '.status.cache_ttl = $v'
       echo "Refresh interval: ${interval} (${seconds}s)"
       ;;
@@ -217,7 +205,7 @@ _cmd_status() {
           printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
         fi
 
-        # ── Current incidents from unresolved.json (cached by claudii-status) ──
+        # Current incidents from unresolved.json (cached by claudii-status).
         _inc_cache="${cache_file%/*}/status-unresolved.json"
         if [[ -f "$_inc_cache" ]]; then
           _inc_count=$(jq -r '.incidents | length' "$_inc_cache" 2>/dev/null || echo "0")
@@ -484,6 +472,14 @@ _cmd_doctor() {
   # 8. Version
   _dc_add "version" "ok" "claudii v$VERSION"
 
+  _doctor_failed() {
+    local i
+    for (( i=0; i<_dc_count; i++ )); do
+      [[ "${_dc_status[$i]}" == "fail" ]] && return 0
+    done
+    return 1
+  }
+
   if [[ "$_FORMAT" == "json" ]]; then
     _json_arr="["
     _first=1
@@ -495,10 +491,7 @@ _cmd_doctor() {
     done
     _json_arr+="]"
     echo "$_json_arr" | jq .
-    for (( i=0; i<_dc_count; i++ )); do
-      [[ "${_dc_status[$i]}" == "fail" ]] && exit 1
-    done
-    exit 0
+    _doctor_failed && exit 1 || exit 0
   fi
 
   ok="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}"
@@ -518,9 +511,5 @@ _cmd_doctor() {
   done
   printf '\n'
 
-  # Exit non-zero if any check failed — allows CI/automation to detect problems
-  for (( i=0; i<_dc_count; i++ )); do
-    [[ "${_dc_status[$i]}" == "fail" ]] && return 1
-  done
-  return 0
+  _doctor_failed && return 1 || return 0
 }
