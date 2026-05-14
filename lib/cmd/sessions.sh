@@ -1,6 +1,15 @@
 # lib/cmd/sessions.sh — session data commands (cost, sessions, sessions-inactive, smart default)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
-# _claudii_spinner is defined in lib/spinner.sh (sourced by bin/claudii)
+
+# Normalize model identifier to canonical short form (Opus/Sonnet/Haiku); echoes input on no match.
+_norm_model_short() {
+  case "$1" in
+    *[Oo]pus*)   echo "Opus"   ;;
+    *[Ss]onnet*) echo "Sonnet" ;;
+    *[Hh]aiku*)  echo "Haiku"  ;;
+    *)           echo "$1"     ;;
+  esac
+}
 
 # _cmd_cost_from_history — cost breakdown with correct daily deltas from history.tsv
 # Each session's cost on a given day = last_cost_that_day - last_cost_previous_day.
@@ -474,13 +483,7 @@ _cmd_cost() {
     [[ -z "$model" ]] && continue
     [[ -z "$cost" ]]  && cost="0"
 
-    # Normalize model name to short form
-    case "$model" in
-      *[Oo]pus*)   short="Opus"   ;;
-      *[Ss]onnet*) short="Sonnet" ;;
-      *[Hh]aiku*)  short="Haiku"  ;;
-      *)           short="$model" ;;
-    esac
+    short=$(_norm_model_short "$model")
 
     # Get mtime
     if stat -f%m "$f" >/dev/null 2>&1; then
@@ -1315,12 +1318,7 @@ _cmd_default() {
       _ov_health_str=""
       while IFS='=' read -r _om _os; do
         [[ -z "$_om" || "$_om" == _* ]] && continue
-        case "$_om" in
-          opus)   _om_cap="Opus"   ;;
-          sonnet) _om_cap="Sonnet" ;;
-          haiku)  _om_cap="Haiku"  ;;
-          *)      _om_cap="$_om"   ;;
-        esac
+        _om_cap=$(_norm_model_short "$_om")
         case "$_os" in
           ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} " ;;
           degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
