@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.18.0] — 2026-05-14
+
 ### Added
 - **`claudii cc-statusline on` now picks the wrapper command when cc-insomnii is present.** Detects `cc-insomnii` on PATH and `statusline.insomnii != "off"`, then writes `cc-insomnii --after=claudii-cc-statusline` into `~/.claude/settings.json` instead of plain `claudii-cc-statusline`. Result: cc-insomnii always owns the first line of the in-session statusline (its own visual identity — glyph + bedtime phrase), with the claudii layout rendered directly below. `claudii cc-statusline` (status) labels the active mode (`cc-insomnii wrapper` vs `plain — no insomnii wrapper`). `bin/claudii-cc-statusline` adds a parent-process guard (`PPID` → `ps -o comm=`): when invoked via the wrapper, the `clock` segment in custom layouts becomes a no-op so users with `clock` in their hand-edited `statusline.lines` don't get the insomnii line rendered twice.
 - **`claudii cc-statusline preset [focused|calm|default]`**: named layout presets for the in-session statusline. `focused` is a dense 3-line layout (model + dir / context-bar + rate-5h + rate-7d / claude-status + vpn) — cc-insomnii (when installed) prepends its own line via the wrapper, so the layout is intentionally insomnii-free for users who want everything important without scrolling past noise. `calm` is the opposite extreme — a bare 2-line layout with just the model name (effort + thinking arrow included) on top and the context-bar below, nothing else, pure calmness. `default` restores the shipped 5-line layout. `claudii cc-statusline preset` (no args) lists what's available. Writes directly to `.statusline.lines` in `~/.config/claudii/config.json`, so hand-edits afterwards are preserved.
