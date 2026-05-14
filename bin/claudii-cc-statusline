@@ -1,8 +1,6 @@
 #!/bin/bash
-# claudii-sessionline — Claude Code statusLine handler
-# Reads JSON session metrics from stdin, outputs a configurable multi-line status.
-# Configure in settings.json:
-#   "statusLine": { "type": "command", "command": "claudii-sessionline" }
+# claudii-sessionline — Claude Code statusLine handler.
+# Reads session JSON from stdin, prints a configurable multi-line status.
 
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 # shellcheck source=lib/log.sh
@@ -14,23 +12,18 @@ command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found —
 
 read -r json
 
-# Write session data to cache (key=value) — RPROMPT reads this without jq
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 [[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
 
-# ── User config (statusline.* keys) — single jq call, available everywhere ──
-# Field separator: US (0x1F). Inside .statusline.lines: RS (0x1E), restored to
-# \n after split. Reading early so _rate_display (used by rate segments) is set.
+# Config (statusline.* + vibemap.*) — single jq call.
+# Separators: US (0x1F) between fields, RS (0x1E) between layout lines.
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
-_from_cfg=""
-_sc_models_cfg=""
-_cfg_omlx=""
-_rate_display=""
-_cfg_bedtime=""
-_cfg_vibemap_enabled=""
-_cfg_vibemap_path=""
+_from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
+_cfg_vibemap_enabled=""; _cfg_vibemap_path=""
+_cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
 if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime _cfg_vibemap_enabled _cfg_vibemap_path < <(
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
+    _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
       (.statusline.models // ""),
@@ -38,51 +31,29 @@ if [[ -f "$_config_file" ]]; then
       (.statusline.rate_display // ""),
       (.statusline.bedtime // ""),
       (.vibemap.enabled // false | tostring),
-      (.vibemap.path // "")
-    ] | join("")' "$_config_file" 2>/dev/null
-  )
-  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
-fi
-[[ "$_rate_display" != "remaining" ]] && _rate_display="used"
-# Tiny mode marker — empty in default "used", ↓ in "remaining" (the number counts down).
-# Appended to the rate-segment label so it's obvious at a glance which side is shown.
-_rate_mark=""
-[[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
-
-# Vibe feature toggles — separate call to avoid join("") issue in main config read
-_cfg_shame="true"
-_cfg_motivation="true"
-_cfg_rainbow="true"
-_cfg_insomnii="auto"
-if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii < <(
-    jq -r '[
+      (.vibemap.path // ""),
       (.statusline.shame // true | tostring),
       (.statusline.motivation // true | tostring),
       (.statusline.rainbow // true | tostring),
       (.statusline.insomnii // "auto")
-    ] | join("")' "$_config_file" 2>/dev/null
+    ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
+  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
 fi
+[[ "$_rate_display" != "remaining" ]] && _rate_display="used"
+_rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 [[ "$_cfg_insomnii" != "off" && "$_cfg_insomnii" != "on" ]] && _cfg_insomnii="auto"
 
-# insomnii detection — delegate clock segment to the standalone insomnii(1)
-# plugin when installed (and not explicitly off). Bedtime/shame/motivation/
-# rainbow keys are passed through as env so users configure once, here.
+# Clock segment delegation
 _use_insomnii=0
-if [[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1; then
-  _use_insomnii=1
-fi
+[[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1 && _use_insomnii=1
 
-# Double-render guard: when invoked via `cc-insomnii --after=claudii-cc-statusline`,
-# cc-insomnii has already rendered its line at the top. Any `clock` segment in
-# the user's layout would duplicate it — detect that case and skip the segment.
+# Skip clock when wrapped by cc-insomnii (it already rendered its line).
 _wrapped_by_insomnii=0
 _parent_cmd=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d ' ')
 [[ "$_parent_cmd" == *cc-insomnii* ]] && _wrapped_by_insomnii=1
 
-# Parse all fields in one jq call — single process, max efficiency
-# Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
+# Session JSON → variables. One jq call, US (0x1F) delimited.
 _D=$'\x1f'
 IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
@@ -120,68 +91,52 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.git_worktree // ""),
     (.workspace.project_dir // ""),
     (.worktree.original_cwd // "")
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+  ] | join("")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
-# Cache hit percentage — computed from cache_read vs input tokens
+# Helper: non-empty, non-"null", non-"0".
+_isset() { [[ -n "$1" && "$1" != "null" && "$1" != "0" ]]; }
+
 _cache_pct=""
-if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
+if _isset "$cache_read"; then
   _cr=${cache_read%.*}
   _ci=${input_tok%.*}
-  if (( _ci + _cr > 0 )); then
-    _cache_pct=$(( _cr * 100 / (_cr + _ci) ))
-  fi
+  if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
 fi
 
-# Read existing session cache once — used for 7d/5h start values
+# Existing per-session cache → 7d/5h baselines + previous duration.
 _sid="${session_id:+${session_id:0:8}}"
 _session_file="$_cache_dir/session-${_sid:-unknown}"
 _existing_cache=""
 [[ -f "$_session_file" ]] && { _existing_cache=$(<"$_session_file"); } 2>/dev/null
 _ec_nl=$'\n'"$_existing_cache"
 
-_rate_7d_start=""
-if [[ -n "$rate_7d" && "$rate_7d" != "null" && "$rate_7d" != "" ]]; then
-  if [[ "$_ec_nl" == *$'\n'rate_7d_start=* ]]; then
-    _rate_7d_start="${_existing_cache#*rate_7d_start=}"
-    _rate_7d_start="${_rate_7d_start%%$'\n'*}"
+# Read cached value or fall back to live current.
+_cache_get() {
+  local key=$1 fallback=$2 v
+  if [[ "$_ec_nl" == *$'\n'"$key"=* ]]; then
+    v="${_existing_cache#*$key=}"
+    v="${v%%$'\n'*}"
+    [[ -n "$v" ]] && { printf '%s' "$v"; return; }
   fi
-  [[ -z "$_rate_7d_start" ]] && _rate_7d_start="$rate_7d"
-fi
+  printf '%s' "$fallback"
+}
+_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && _rate_7d_start=$(_cache_get rate_7d_start "$rate_7d")
+_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && _rate_5h_start=$(_cache_get rate_5h_start "$rate_5h")
+_last_duration_ms=$(_cache_get last_duration_ms "")
 
-_rate_5h_start=""
-if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-  if [[ "$_ec_nl" == *$'\n'rate_5h_start=* ]]; then
-    _rate_5h_start="${_existing_cache#*rate_5h_start=}"
-    _rate_5h_start="${_rate_5h_start%%$'\n'*}"
-  fi
-  [[ -z "$_rate_5h_start" ]] && _rate_5h_start="$rate_5h"
-fi
-
-# Vibemap delta: previous render's duration_ms, used to compute delta_ms.
-# Stored back in session cache as last_duration_ms below.
-_last_duration_ms=""
-if [[ "$_ec_nl" == *$'\n'last_duration_ms=* ]]; then
-  _last_duration_ms="${_existing_cache#*last_duration_ms=}"
-  _last_duration_ms="${_last_duration_ms%%$'\n'*}"
-fi
-
-# Burn-rate ETA — computed for dashboard cache, not rendered in sessionline
+# Burn-rate ETA (cached for dashboard, not rendered here).
 _burn_eta=""
-if [[ -n "$duration_ms" && "$duration_ms" != "null" && "$duration_ms" != "0" ]]; then
+if _isset "$duration_ms"; then
   _rate_5h_int=${rate_5h%.*}
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
-  if [[ -n "$rate_5h" && "$rate_5h" != "null" && "$rate_5h" != "0" ]] && \
-     (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
+  if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
     _burn_eta=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
       'BEGIN { m=dur/60000; r=rat+0; print (r>0)?int((100-r)/(r/m)+0.5):0 }')
   fi
 fi
 
-# Write per-session cache (key=value) — RPROMPT + aliases read without jq
-# Include ppid so dashboard can check if Claude process is still alive
-# Atomic write: write to tmp then rename — prevents RPROMPT from reading partial data
-# Preserve pinned= flag from existing cache file if present
+# Per-session cache (atomic write). Preserves pinned= flag.
 _ppid="${PPID:-}"
 _tmp_session="${_session_file}.tmp.$$"
 { [[ -f "$_session_file" ]] && grep '^pinned=' "$_session_file" 2>/dev/null || true
@@ -202,9 +157,7 @@ _tmp_session="${_session_file}.tmp.$$"
   "project_path=$cwd" \
   > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
 
-# Append to persistent history (Flight Recorder) — one TSV line per update
-# Monthly rotation: history-YYYY-MM.tsv (legacy history.tsv stays, readers glob both)
-# Fields: timestamp, model, cost, ctx_pct, rate_5h, session_id, input_tok, output_tok, api_duration_ms
+# Flight Recorder — append one TSV row, monthly rotation.
 read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
 _history_file="$_cache_dir/history-${_date_ym}.tsv"
 [[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
@@ -216,10 +169,7 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 _claudii_log debug "input: ${json:0:200}"
 _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name} model_id=${model_id}"
 
-# --- helpers ---
-
-# Token formatter — writes to _tok_result (no subshell, pure bash arithmetic)
-# 999→"999"  1000→"1.0K"  1500→"1.5K"  1000000→"1.0M"
+# Formatters — write to _tok_result / _dur_result (no subshell).
 _tok_result=""
 _tok() {
   local n=${1%.*}
@@ -239,7 +189,6 @@ _tok() {
   fi
 }
 
-# Duration formatter — writes to _dur_result (no subshell)
 _dur_result=""
 _dur() {
   local ms=$1
@@ -251,19 +200,15 @@ _dur() {
   fi
 }
 
-# Color helpers — write to _CLR to avoid command-substitution subshell overhead
+# Context threshold color: green <70, yellow 70-89, red 90+.
 _CLR=""
-# Threshold: green <70, yellow 70-89, red 90+
 _thr() {
   local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
   if   (( pct >= 90 )); then _CLR=$'\033[31m'
   elif (( pct >= 70 )); then _CLR=$'\033[33m'
   else                       _CLR=$'\033[32m'; fi
 }
-# Rate-limit color (always keyed on the *used* %): green < 50, yellow 50-79, red 80+.
-# Green chosen over cyan so "lots of headroom" reads consistently across modes — in
-# `remaining` display the number itself is high (e.g. 97%), and green matches the
-# vibe of "plenty left".
+# Rate-limit color, keyed on *used* %: green <50, yellow 50-79, red 80+.
 _rlc() {
   local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
   if   (( pct >= 80 )); then _CLR=$'\033[31m'
@@ -282,9 +227,7 @@ WHITE=$'\033[0;97m'
 ACCENT=$'\033[38;5;213m'
 SEP="${DIM}  │  ${RST}"
 
-# --- segment pre-computation ---
-
-# Model (bold) + effort level (colored by tier) + thinking indicator (▲)
+# Model + effort + thinking indicator.
 _seg_model=""
 if [[ -n "$model" ]]; then
   _seg_model="${BOLD}${model}${RST}"
@@ -299,14 +242,12 @@ if [[ -n "$model" ]]; then
   [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${ACCENT}▲${RST}"
 fi
 
-# Context bar (10 chars) + usable percentage + ⚡cache%
+# Context bar: usable % = raw / 0.8 (80% practical window). >200k flag, 1M label, cache hit %.
 _seg_context=""
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
   (( local_pct > 100 )) && local_pct=100
-  # Usable context %: raw_pct / 0.8 — scales to the 80% practical usable window
-  # Example: 76% raw → 76/0.8 = 95% usable. Bar and number both reflect usable %.
   (( _usable_pct = local_pct * 100 / 80 ))
   (( _usable_pct > 100 )) && _usable_pct=100
   filled=$(( _usable_pct / 10 ))
@@ -314,8 +255,6 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
-  # Context size indicator: >200k flag (current API call exceeded 200k tokens)
-  # or 1M label when extended context window active
   win=""
   if [[ "$exceeds_200k" == "true" ]]; then
     win=" ${RED}>200k${RST}"
@@ -323,36 +262,27 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
     win=" ${DIM}1M${RST}"
   fi
   _thr "$_usable_pct"; _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
-  # Cache hit ratio — suffix to context segment
-  if [[ -n "$cache_read" && "$cache_read" != "null" && "$cache_read" != "0" && "$cache_read" != "" ]]; then
-    if [[ -n "$_cache_pct" && "$_cache_pct" != "0" ]]; then
-      if (( _cache_pct >= 60 )); then _cc="${GREEN}"
-      elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
-      else _cc="${DIM}"; fi
-      _seg_context+=" ${_cc}⚡${_cache_pct}%${RST}"
+  if _isset "$cache_read" && _isset "$_cache_pct"; then
+    if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
+    elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
+    else                              _cc="${DIM}"
     fi
+    _seg_context+=" ${_cc}⚡${_cache_pct}%${RST}"
   fi
 fi
 
-# Cost — cyan $X.XX
 _seg_cost=""
-if [[ -n "$cost" && "$cost" != "null" && "$cost" != "0" ]]; then
+if _isset "$cost"; then
   _seg_cost="${CYAN}\$$(printf '%.2f' "$cost")${RST}"
 fi
 
-# Rate limits — 5h and 7d
-# _fmt_reset(secs, pct) — sets _reset_fmt (text) and _reset_color based on
-# remaining seconds and the rate-limit percentage. Format:
-#   < 60m: Xm     (e.g. 45m)
-#   < 24h: XhYm   (e.g. 1h19m, or 3h when minutes are zero)
-#   ≥ 24h: XdYh   (e.g. 2d5h, or 2d when hours are zero)
-# Color thresholds match the previous per-segment logic.
+# Reset countdown formatter — sets _reset_fmt + _reset_color.
+# < 60m → Xm, < 24h → XhYm (Yh suppressed if 0), ≥ 24h → XdYh (Yh suppressed if 0).
 _fmt_reset() {
   local _secs="$1" _pct="$2" _m _h _d _rh
   _reset_fmt=""; _reset_color=""
   (( _secs <= 0 )) && return
   if (( _secs < 3600 )); then
-    # Round to nearest minute; suppress < 30s (would render as ↺0m).
     _m=$(( (_secs + 30) / 60 ))
     (( _m <= 0 )) && return
     _reset_fmt="${_m}m"
@@ -376,70 +306,46 @@ _fmt_reset() {
   fi
 }
 
-# Rate display: "used" (default, e.g. 5h:62%) shows consumed budget; "remaining"
-# (5h:38%) shows what's left. Coloring of segment + reset countdown is driven by
-# the *used* percentage in both modes — semantics ("close to limit" → red) stay
-# stable, only the displayed number flips.
-_seg_rate5h=""
-if [[ -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-  _rate_5h_pct=${rate_5h%.*}
-  _disp_5h=$_rate_5h_pct
-  [[ "$_rate_display" == "remaining" ]] && _disp_5h=$(( 100 - _rate_5h_pct ))
-  _rlc "$rate_5h"; _seg_rate5h="${_CLR}5h${_rate_mark}:${_disp_5h}%${RST}"
-  if [[ -n "$reset_5h" && "$reset_5h" != "null" && "$reset_5h" != "" ]]; then
-    reset_5h="${reset_5h%.*}"
-    _fmt_reset $(( reset_5h - _now )) "$_rate_5h_pct"
-    [[ -n "$_reset_fmt" ]] && _seg_rate5h+=" ${_reset_color}↺${_reset_fmt}${RST}"
+# Rate segment builder. Args: label, rate, reset_at → echoes segment to stdout.
+# Coloring keyed on used %; in remaining mode the displayed number flips.
+_mk_rate_seg() {
+  local label=$1 rate=$2 reset_at=$3
+  [[ -z "$rate" || "$rate" == "null" ]] && return
+  local pct=${rate%.*}
+  local disp=$pct out
+  [[ "$_rate_display" == "remaining" ]] && disp=$(( 100 - pct ))
+  _rlc "$rate"; out="${_CLR}${label}${_rate_mark}:${disp}%${RST}"
+  if [[ -n "$reset_at" && "$reset_at" != "null" ]]; then
+    reset_at="${reset_at%.*}"
+    _fmt_reset $(( reset_at - _now )) "$pct"
+    [[ -n "$_reset_fmt" ]] && out+=" ${_reset_color}↺${_reset_fmt}${RST}"
   fi
-fi
+  printf '%s' "$out"
+}
+_seg_rate5h=$(_mk_rate_seg 5h "$rate_5h" "$reset_5h")
+_seg_rate7d=$(_mk_rate_seg 7d "$rate_7d" "$reset_7d")
 
-_seg_rate7d=""
-if [[ -n "$rate_7d" && "$rate_7d" != "null" ]]; then
-  _rate_7d_pct=${rate_7d%.*}
-  _disp_7d=$_rate_7d_pct
-  [[ "$_rate_display" == "remaining" ]] && _disp_7d=$(( 100 - _rate_7d_pct ))
-  _rlc "$rate_7d"; _seg_rate7d="${_CLR}7d${_rate_mark}:${_disp_7d}%${RST}"
-  if [[ -n "$reset_7d" && "$reset_7d" != "null" && "$reset_7d" != "" ]]; then
-    reset_7d="${reset_7d%.*}"
-    _fmt_reset $(( reset_7d - _now )) "$_rate_7d_pct"
-    [[ -n "$_reset_fmt" ]] && _seg_rate7d+=" ${_reset_color}↺${_reset_fmt}${RST}"
-  fi
-fi
-
-# Tokens: DIM Xk↑ Xk↓
 _seg_tokens=""
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
   _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${DIM}${_tok_result}↑${RST}"
   _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${DIM}${_tok_result}↓${RST}"
 fi
 
-# Lines changed: green +X red -X (only when > 0)
 _seg_lines=""
-if [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] || \
-   [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]]; then
-  [[ -n "$lines_add" && "$lines_add" != "null" && "$lines_add" != "0" ]] && _seg_lines+="${GREEN}+${lines_add}${RST}"
-  [[ -n "$lines_rm" && "$lines_rm" != "null" && "$lines_rm" != "0" ]] && _seg_lines+=" ${RED}-${lines_rm}${RST}"
+if _isset "$lines_add" || _isset "$lines_rm"; then
+  _isset "$lines_add" && _seg_lines+="${GREEN}+${lines_add}${RST}"
+  _isset "$lines_rm"  && _seg_lines+="${_seg_lines:+ }${RED}-${lines_rm}${RST}"
 fi
 
-# Duration: DIM Xm / Xh Xm
 _seg_dur=""
 if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
   _dur "$duration_ms"; [[ -n "$_dur_result" ]] && _seg_dur="${DIM}⏱ ${_dur_result}${RST}"
 fi
 
-# Burn-ETA: DIM ETA:Xm (only when _burn_eta set and > 0)
 _seg_eta=""
-if [[ -n "$_burn_eta" && "$_burn_eta" != "0" ]] 2>/dev/null; then
-  _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
-fi
+_isset "$_burn_eta" 2>/dev/null && _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
 
-# Clock segment — fully delegated to insomnii(1). When the binary is on
-# PATH and `statusline.insomnii` is not "off", claudii pipes the upstream
-# JSON to insomnii and uses its single-line output. When absent, the
-# segment is empty and the layout silently skips it.
-# Bedtime/shame/motivation/rainbow are forwarded as INSOMNII_* env so users
-# configure once in `~/.config/claudii/config.json` (or directly in
-# `~/.config/insomnii/config.json` — both work).
+# Clock — delegated to cc-insomnii(1) when present and not double-wrapped.
 _seg_clock=""
 if (( _use_insomnii && ! _wrapped_by_insomnii )); then
   _seg_clock=$(
@@ -451,7 +357,6 @@ if (( _use_insomnii && ! _wrapped_by_insomnii )); then
   )
 fi
 
-# Worktree: name + branch. Falls back to workspace.git_worktree for plain git worktrees.
 _seg_worktree=""
 _wt_name="${worktree_name:-$workspace_git_worktree}"
 if [[ -n "$_wt_name" ]]; then
@@ -459,61 +364,46 @@ if [[ -n "$_wt_name" ]]; then
   [[ -n "$worktree_name" && -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
 fi
 
-# Agent: DIM @name — uses agent.name (CC sub-agents) with session_name as fallback
-# (claudii_agent_launch passes --name <alias> so session_name carries the alias)
 _seg_agent=""
 _agent_display="${agent_name:-$session_name}"
-if [[ -n "$_agent_display" ]]; then
-  _seg_agent="${DIM}@${RST}${ACCENT}${_agent_display}${RST}"
-fi
+[[ -n "$_agent_display" ]] && _seg_agent="${DIM}@${RST}${ACCENT}${_agent_display}${RST}"
 
-# Session name: custom name set via /rename or --name (only when set)
 _seg_session_name=""
-if [[ -n "$session_name" ]]; then
-  _seg_session_name="${DIM}${session_name}${RST}"
-fi
+[[ -n "$session_name" ]] && _seg_session_name="${DIM}${session_name}${RST}"
 
-# API duration: time actually spent waiting for Claude (vs. total wall-clock)
 _seg_api_dur=""
 if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
   _dur "$api_duration_ms"; [[ -n "$_dur_result" ]] && _seg_api_dur="${DIM}api:${_dur_result}${RST}"
 fi
 
-# Session deltas: only the change since session start (current rate is already on line 1).
-# In "remaining" mode the sign flips: usage +12% becomes remaining −12% (same magnitude,
-# opposite direction). Color logic still keys off the underlying usage delta.
-_seg_delta5h=""
-if [[ -n "$_rate_5h_start" && "$_rate_5h_start" != "null" && -n "$rate_5h" && "$rate_5h" != "null" ]]; then
-  _d5=$(( ${rate_5h%.*} - ${_rate_5h_start%.*} ))
-  _d5_disp=$_d5
-  [[ "$_rate_display" == "remaining" ]] && _d5_disp=$(( -_d5 ))
-  if (( _d5 > 0 )); then
-    _rlc "$rate_5h"; _seg_delta5h="${DIM}Δ5h:${RST}${_CLR}$( (( _d5_disp > 0 )) && echo "+")${_d5_disp}%${RST}"
-  elif (( _d5 < 0 )); then
-    _seg_delta5h="${DIM}Δ5h:${RST}${GREEN}$( (( _d5_disp > 0 )) && echo "+")${_d5_disp}%${RST}"
+# Delta segment builder. Args: label, current_rate, start_rate → echoes segment.
+# Sign flips in remaining mode (magnitude unchanged). Color keyed on usage delta.
+_mk_delta_seg() {
+  local label=$1 cur=$2 start=$3
+  [[ -z "$start" || "$start" == "null" || -z "$cur" || "$cur" == "null" ]] && return
+  local d disp sign clr
+  d=$(( ${cur%.*} - ${start%.*} ))
+  disp=$d
+  [[ "$_rate_display" == "remaining" ]] && disp=$(( -d ))
+  if (( d > 0 )); then
+    _rlc "$cur"; clr=$_CLR
+  elif (( d < 0 )); then
+    clr=$GREEN
+  else
+    return
   fi
-fi
+  sign=""; (( disp > 0 )) && sign="+"
+  printf '%s' "${DIM}Δ${label}:${RST}${clr}${sign}${disp}%${RST}"
+}
+_seg_delta5h=$(_mk_delta_seg 5h "$rate_5h" "$_rate_5h_start")
+_seg_delta7d=$(_mk_delta_seg 7d "$rate_7d" "$_rate_7d_start")
 
-_seg_delta7d=""
-if [[ -n "$_rate_7d_start" && "$_rate_7d_start" != "null" && -n "$rate_7d" && "$rate_7d" != "null" ]]; then
-  _d7=$(( ${rate_7d%.*} - ${_rate_7d_start%.*} ))
-  _d7_disp=$_d7
-  [[ "$_rate_display" == "remaining" ]] && _d7_disp=$(( -_d7 ))
-  if (( _d7 > 0 )); then
-    _rlc "$rate_7d"; _seg_delta7d="${DIM}Δ7d:${RST}${_CLR}$( (( _d7_disp > 0 )) && echo "+")${_d7_disp}%${RST}"
-  elif (( _d7 < 0 )); then
-    _seg_delta7d="${DIM}Δ7d:${RST}${GREEN}$( (( _d7_disp > 0 )) && echo "+")${_d7_disp}%${RST}"
-  fi
-fi
-
-# Cache writes: tokens written INTO cache this session (costs extra vs cache reads)
-# Distinct from ⚡cache-pct (hit ratio) — this shows write volume
+# Cache writes — distinct from ⚡ hit ratio.
 _seg_cache_create=""
-if [[ -n "$cache_create" && "$cache_create" != "null" && "$cache_create" != "0" ]]; then
+if _isset "$cache_create"; then
   _tok "$cache_create"; [[ -n "$_tok_result" ]] && _seg_cache_create="${DIM}✎${_tok_result}${RST}"
 fi
 
-# Working directory: basename of project_dir (with worktree.original_cwd as fallback for --worktree sessions)
 _seg_dir=""
 _dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
 if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
@@ -521,15 +411,11 @@ if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂${RST} ${YELLOW}${_dir_name}${RST}"
 fi
 
-# Terminal width — used by ruler segment to fill remaining space
-# COLUMNS (exported by parent shell) is more reliable than tput cols in piped context
+# Terminal width for ruler segment.
 _term_cols=""
 [[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
 [[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
-# If width unknown or implausible: set to 0 — ruler will silently skip
 (( _term_cols > 20 )) || _term_cols=0
-
-# --- layout config ---
 
 _DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
@@ -540,7 +426,7 @@ claude-status,vpn"
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
 
-# ClaudeStatus — model health indicators from status-models cache
+# ClaudeStatus — read status-models cache, render [Model glyph ...] + age + incident.
 _seg_claude_status=""
 _status_cache="${_cache_dir}/status-models"
 if [[ -f "$_status_cache" ]]; then
@@ -548,18 +434,12 @@ if [[ -f "$_status_cache" ]]; then
   { _sc=$(<"$_status_cache"); } 2>/dev/null
   if [[ -n "$_sc" ]]; then
     _sc_models=("opus" "sonnet" "haiku")
-    if [[ -n "$_sc_models_cfg" ]]; then
-      IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
-    fi
+    [[ -n "$_sc_models_cfg" ]] && IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
+    declare -A _sc_lbls=([opus]=Opus [sonnet]=Sonnet [haiku]=Haiku)
     for _scm in "${_sc_models[@]}"; do
       _scm="${_scm// /}"
       [[ -z "$_scm" ]] && continue
-      case "$_scm" in
-        opus)   _scm_lbl="Opus"   ;;
-        sonnet) _scm_lbl="Sonnet" ;;
-        haiku)  _scm_lbl="Haiku"  ;;
-        *)      _scm_lbl="$_scm"  ;;
-      esac
+      _scm_lbl="${_sc_lbls[$_scm]:-$_scm}"
       if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
         _scm_icon="${RED}↓${RST}"; _sc_worst="down"
       elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then
@@ -570,14 +450,8 @@ if [[ -f "$_status_cache" ]]; then
       [[ -n "$_seg_claude_status" ]] && _seg_claude_status+=" "
       _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
     done
-
-    # Wrap the model glyphs in brackets — matches the zsh RPROMPT format
-    # `[Opus ✓ Sonnet ✓ Haiku ✓] <age> <flag>`. Age + incident sym live
-    # OUTSIDE the brackets; that way the flag visually trails the models
-    # segment without being mistaken for a VPN/proxy indicator on its right.
     _seg_claude_status="${DIM}[${RST}${_seg_claude_status}${DIM}]${RST}"
 
-    # Cache age — mtime of status-models (how stale the freshness check is)
     _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
     if [[ "$_sc_mtime" =~ ^[0-9]+$ ]] && (( _sc_mtime > 0 )); then
       _sc_age_sec=$(( _now - _sc_mtime ))
@@ -590,38 +464,25 @@ if [[ -f "$_status_cache" ]]; then
       _seg_claude_status+=" ${DIM}${_sc_age_str}${RST}"
     fi
 
-    # Incident sym — same precedence as RPROMPT (lib/statusline.zsh)
-    if [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then
-      _seg_claude_status+=" ${RED}‼${RST}"
-    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]]; then
-      _seg_claude_status+=" ${YELLOW}⚐${RST}"
-    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]]; then
-      _seg_claude_status+=" ${CYAN}◎${RST}"
-    elif [[ "${_sc_worst:-}" == "down" ]]; then
-      _seg_claude_status+=" ${RED}⚠${RST}"
-    elif [[ "${_sc_worst:-}" == "degraded" ]]; then
-      _seg_claude_status+=" ${YELLOW}⚠${RST}"
+    if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _seg_claude_status+=" ${RED}‼${RST}"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]];    then _seg_claude_status+=" ${YELLOW}⚐${RST}"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]];    then _seg_claude_status+=" ${CYAN}◎${RST}"
+    elif [[ "${_sc_worst:-}" == "down" ]];                           then _seg_claude_status+=" ${RED}⚠${RST}"
+    elif [[ "${_sc_worst:-}" == "degraded" ]];                       then _seg_claude_status+=" ${YELLOW}⚠${RST}"
     fi
   fi
 fi
 
-# omlx local-agent indicator — read by gateii's scripts/agent (and agent-bench)
-# from data/agents/active.json. Empty when no agent active or file missing,
-# so users without gateii get no impact. Stale-guard: ignore entries older
-# than 300 s (crash leftovers).
-# Override the path via env CLAUDII_OMLX_ACTIVE or config:
-#   .statusline.omlx_active_path
+# omlx local-agent indicator — gateii's active.json, 300s stale-guard.
 _seg_omlx=""
-_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-}"
-[[ -z "$_omlx_active_path" && -n "$_cfg_omlx" ]] && _omlx_active_path="$_cfg_omlx"
-[[ -z "$_omlx_active_path" ]] && _omlx_active_path="$HOME/offline_coding/gateii/data/agents/active.json"
+_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-$HOME/offline_coding/gateii/data/agents/active.json}}"
 if [[ -f "$_omlx_active_path" ]]; then
   IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
     jq -r '[
       (.started_epoch // 0 | tostring),
       (.task // "?"),
       (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
-    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
+    ] | join("")' "$_omlx_active_path" 2>/dev/null
   )"
   if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
     _omlx_age=$(( _now - _omlx_started ))
@@ -631,30 +492,27 @@ if [[ -f "$_omlx_active_path" ]]; then
   fi
 fi
 
-# VPN indicators — WireGuard via vpnii state file (wg-quick PostUp/PreDown),
-# Tailscale via interface scan for CGNAT range 100.64.0.0/10. Both can be
-# active at once (split-routing) — render side by side with two-space gap.
+# VPN — WireGuard (state file) + Tailscale (CGNAT 100.64.0.0/10).
 _seg_vpn=""
 _vpn_state="${_cache_dir}/vpnii"
 if [[ -f "$_vpn_state" ]]; then
   _vpn_tunnel=$(<"$_vpn_state")
   [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
 fi
-# Tailscale: any utun with an IPv4 in 100.64.0.0/10 (RFC 6598 CGNAT, what
-# Tailscale assigns). Single ifconfig call, no daemon dependency, no name
-# lookup (would need `tailscale status` — too slow per render).
 if ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.'; then
   [[ -n "$_seg_vpn" ]] && _seg_vpn+="  "
   _seg_vpn+="${GREEN}⬢${RST} ${DIM}ts${RST}"
 fi
 
-# Proxy indicator — shows when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
-# Empty when routing direct to Anthropic (the default — no noise needed).
+# Proxy — non-empty only when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
 _seg_proxy=""
-_proxy_settings="${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}"
-[[ -z "$_proxy_settings" || ! -f "$_proxy_settings" ]] && _proxy_settings="${cwd:+${cwd}/.claude/settings.local.json}"
-[[ -z "$_proxy_settings" || ! -f "$_proxy_settings" ]] && _proxy_settings=".claude/settings.local.json"
-if [[ -f "$_proxy_settings" ]]; then
+for _p in \
+  "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
+  "${cwd:+${cwd}/.claude/settings.local.json}" \
+  ".claude/settings.local.json"; do
+  [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
+done
+if [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
   _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
   if [[ -n "$_proxy_url" ]]; then
     if [[ "$_proxy_url" == "http://localhost:8888" ]]; then
@@ -667,8 +525,6 @@ if [[ -f "$_proxy_settings" ]]; then
     _seg_proxy="${DIM}→ api${RST}"
   fi
 fi
-
-# --- layout loop ---
 
 while IFS= read -r _line_segs; do
   [[ -z "$_line_segs" ]] && continue
@@ -685,29 +541,28 @@ while IFS= read -r _line_segs; do
       lines-changed) _val="$_seg_lines"    ;;
       duration)      _val="$_seg_dur"      ;;
       burn-eta)      _val="$_seg_eta"      ;;
-      worktree)      _val="$_seg_worktree"       ;;
-      agent)         _val="$_seg_agent"         ;;
-      session-name)  _val="$_seg_session_name"  ;;
-      api-duration)  _val="$_seg_api_dur"       ;;
-      delta-5h)      _val="$_seg_delta5h"       ;;
-      delta-7d)      _val="$_seg_delta7d"       ;;
-      cache-create)    _val="$_seg_cache_create"    ;;
-      dir)             _val="$_seg_dir"             ;;
-      claude-status)   _val="$_seg_claude_status"   ;;
-      vpn)             _val="$_seg_vpn"             ;;
-      omlx)            _val="$_seg_omlx"            ;;
-      proxy)           _val="$_seg_proxy"           ;;
-      clock)           _val="$_seg_clock"           ;;
+      worktree)      _val="$_seg_worktree" ;;
+      agent)         _val="$_seg_agent"    ;;
+      session-name)  _val="$_seg_session_name" ;;
+      api-duration)  _val="$_seg_api_dur"  ;;
+      delta-5h)      _val="$_seg_delta5h"  ;;
+      delta-7d)      _val="$_seg_delta7d"  ;;
+      cache-create)  _val="$_seg_cache_create" ;;
+      dir)           _val="$_seg_dir"      ;;
+      claude-status) _val="$_seg_claude_status" ;;
+      vpn)           _val="$_seg_vpn"      ;;
+      omlx)          _val="$_seg_omlx"     ;;
+      proxy)         _val="$_seg_proxy"    ;;
+      clock)         _val="$_seg_clock"    ;;
       ruler)
-        # Fill remaining terminal width with ─
-        # Falls back to 60 cols when COLUMNS/tput unavailable (CC piped context)
+        # Fill remaining terminal width with ─. Falls back to 60 cols.
         _val=""
         _ruler_cols=$(( _term_cols > 0 ? _term_cols : 60 ))
         if (( _first )); then
           _used=0
         else
           _vis=$(printf '%s' "$_line_out" | sed $'s/\033\\[[0-9;]*m//g')
-          _used=$(( ${#_vis} + 5 ))  # +5 for the "  │  " separator to be prepended
+          _used=$(( ${#_vis} + 5 ))
         fi
         _fill=$(( _ruler_cols - _used ))
         if (( _fill > 1 )); then
@@ -725,9 +580,7 @@ while IFS= read -r _line_segs; do
   [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 
-# Vibemap append — opt-in, single fire-and-forget. Errors are silent: the
-# logger never gates the statusline render. Compute delta_ms vs the previous
-# render's stored duration_ms (zero on first render of a session).
+# Vibemap append — opt-in, fire-and-forget, errors silent.
 if [[ "$_cfg_vibemap_enabled" == "true" ]]; then
   _vm_delta=0
   if [[ "$_last_duration_ms" =~ ^[0-9]+$ && "$duration_ms" =~ ^[0-9]+$ ]]; then
