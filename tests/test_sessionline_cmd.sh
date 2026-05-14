@@ -7,6 +7,11 @@ mkdir -p "$TEST_TMP"
 export XDG_CONFIG_HOME="$TEST_TMP/config"
 mkdir -p "$XDG_CONFIG_HOME/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
+# Force insomnii=off so this test always exercises the plain (non-wrapper)
+# branch of `cc-statusline on`, regardless of whether cc-insomnii is installed
+# on the host running tests. Wrapper-mode coverage lives in test_cc_statusline_preset.sh.
+jq '.statusline.insomnii = "off"' "$XDG_CONFIG_HOME/claudii/config.json" > "$XDG_CONFIG_HOME/claudii/config.json.tmp" \
+  && mv "$XDG_CONFIG_HOME/claudii/config.json.tmp" "$XDG_CONFIG_HOME/claudii/config.json"
 
 CLI="$CLAUDII_HOME/bin/claudii"
 FAKE_SETTINGS="$TEST_TMP/claude_settings.json"

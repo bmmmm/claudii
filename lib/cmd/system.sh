@@ -256,18 +256,79 @@ _cmd_status() {
   esac
 }
 
+_cc_statusline_preset_json() {
+  # Bake known presets here. Writes the JSON array for `.statusline.lines`.
+  case "$1" in
+    focused)
+      # 3 lines, dense. Line 1: model+dir (identity).
+      # Line 2: context-bar+rates (metrics). Line 3: claude-status+vpn (env).
+      # cc-insomnii (if installed) prepends its own line via --after wrapper,
+      # so the clock segment is intentionally absent here.
+      printf '%s' '[["model","dir"],["context-bar","rate-5h","rate-7d"],["claude-status","vpn"]]'
+      ;;
+    calm)
+      # 2 lines, bare. Model on top, context bar below. Nothing else.
+      printf '%s' '[["model"],["context-bar"]]'
+      ;;
+    default)
+      # Restore the shipped default layout (mirrors config/defaults.json).
+      printf '%s' '[["model","tokens","cache-create"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","dir"],["omlx","proxy","cost","context-bar"],["claude-status"]]'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 _cmd_cc_statusline() {
   SETTINGS="${HOME}/.claude/settings.json"
   case "${2:-}" in
+    preset)
+      _preset_name="${3:-}"
+      if [[ -z "$_preset_name" ]]; then
+        printf "  ${CLAUDII_CLR_BOLD}cc-statusline presets${CLAUDII_CLR_RESET}\n"
+        printf "    ${CLAUDII_CLR_CYAN}focused${CLAUDII_CLR_RESET}   dense 3-line layout: model+dir / ctx-bar+rates / clock+health+vpn\n"
+        printf "    ${CLAUDII_CLR_CYAN}calm${CLAUDII_CLR_RESET}      bare 2-line layout: model / context-bar\n"
+        printf "    ${CLAUDII_CLR_CYAN}default${CLAUDII_CLR_RESET}   shipped 5-line layout (everything)\n"
+        printf "\n  Usage: ${CLAUDII_CLR_CYAN}claudii cc-statusline preset <name>${CLAUDII_CLR_RESET}\n"
+        return 0
+      fi
+      _preset_lines=$(_cc_statusline_preset_json "$_preset_name") || {
+        echo "Unknown preset: $_preset_name" >&2
+        echo "  → claudii cc-statusline preset   (list available)" >&2
+        exit 1
+      }
+      _cfg_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+      if [[ ! -f "$_cfg_file" ]]; then
+        mkdir -p "$(dirname "$_cfg_file")"
+        cp "$CLAUDII_HOME/config/defaults.json" "$_cfg_file"
+      fi
+      _jq_update "$_cfg_file" ".statusline.lines = $_preset_lines"
+      echo -e "${CLAUDII_CLR_GREEN}cc-statusline preset:${CLAUDII_CLR_RESET} $_preset_name"
+      echo -e "  ${CLAUDII_CLR_DIM}written to .statusline.lines in $_cfg_file${CLAUDII_CLR_RESET}"
+      ;;
     on)
       if [[ ! -f "$SETTINGS" ]]; then
         echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
       fi
-      if jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
-        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}"
+      # Pick the right statusLine command. When cc-insomnii is installed AND
+      # delegation isn't explicitly off, use the wrapper so insomnii always
+      # owns the first line. Otherwise plain claudii-cc-statusline.
+      _ins_mode=$(jq -r '.statusline.insomnii // "auto"' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null || echo "auto")
+      if [[ "$_ins_mode" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1; then
+        _sl_cmd="cc-insomnii --after=claudii-cc-statusline"
+        _sl_label="cc-insomnii wrapper (insomnii line on top + claudii layout)"
       else
-        _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
-        echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  → restart Claude Code to activate"
+        _sl_cmd="claudii-cc-statusline"
+        _sl_label="claudii-cc-statusline (no insomnii wrapper)"
+      fi
+      _current=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+      if [[ "$_current" == "$_sl_cmd" ]]; then
+        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
+      else
+        _jq_update "$SETTINGS" ". + {\"statusLine\": {\"type\": \"command\", \"command\": \"$_sl_cmd\"}}"
+        echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
+        echo -e "  → restart Claude Code to activate"
       fi
       ;;
     off)
@@ -284,18 +345,27 @@ _cmd_cc_statusline() {
     "")
       if [[ ! -f "$SETTINGS" ]]; then
         echo "CC-Statusline: not configured  ($SETTINGS missing)"
-      elif jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
-        echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ($SETTINGS)"
-      elif jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
-        other=$(jq -r '.statusLine.command // .statusLine' "$SETTINGS")
-        echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($other)"
       else
-        echo "CC-Statusline: not configured"
-        echo "  → claudii cc-statusline on  to enable"
+        _cur_cmd=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+        case "$_cur_cmd" in
+          "")
+            echo "CC-Statusline: not configured"
+            echo "  → claudii cc-statusline on  to enable"
+            ;;
+          claudii-cc-statusline)
+            echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(plain — no insomnii wrapper)${CLAUDII_CLR_RESET}"
+            ;;
+          *cc-insomnii*--after=claudii-cc-statusline*|*cc-insomnii*--after\ claudii-cc-statusline*)
+            echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(cc-insomnii wrapper)${CLAUDII_CLR_RESET}"
+            ;;
+          *)
+            echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
+            ;;
+        esac
       fi
       ;;
     *)
-      echo "Usage: claudii cc-statusline [on|off]" >&2; exit 1
+      echo "Usage: claudii cc-statusline [on|off|preset <name>]" >&2; exit 1
       ;;
   esac
 }

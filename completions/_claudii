@@ -115,12 +115,26 @@ _claudii() {
           ;;
 
         cc-statusline|sessionline)
-          local -a sl_opts
-          sl_opts=(
-            'on:Activate in-session statusline in ~/.claude/settings.json'
-            'off:Deactivate in-session statusline'
-          )
-          _describe 'cc-statusline option' sl_opts
+          case $words[3] in
+            preset)
+              local -a sl_presets
+              sl_presets=(
+                'focused:Dense 2-line layout (model+dir+ctx+rates / clock+health+vpn)'
+                'calm:Bare 2-line layout (model / context-bar)'
+                'default:Restore shipped 5-line layout (all segments)'
+              )
+              _describe 'cc-statusline preset' sl_presets
+              ;;
+            *)
+              local -a sl_opts
+              sl_opts=(
+                'on:Activate in-session statusline in ~/.claude/settings.json'
+                'off:Deactivate in-session statusline'
+                'preset:Switch to a named layout (focused/calm/default)'
+              )
+              _describe 'cc-statusline option' sl_opts
+              ;;
+          esac
           ;;
 
         omlx)

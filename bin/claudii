@@ -302,7 +302,7 @@ usage() {
   printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
   printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
   printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
-  printf "    %-33s $d %s\n" "cc-statusline [on|off]"          "CC-Statusline inside Claude toggle"
+  printf "    %-33s $d %s\n" "cc-statusline [on|off|preset]"   "CC-Statusline inside Claude (on/off, preset focused|calm|default)"
   printf "    %-33s $d %s\n" "insomnii [on|off|auto|install]"  "bedtime statusline plugin (delegates clock segment)"
   printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf '\n'

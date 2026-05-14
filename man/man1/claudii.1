@@ -671,6 +671,44 @@ Restart Claude Code to activate.
 Remove the CC-Statusline from
 .IR ~/.claude/settings.json .
 .
+.TP
+.B "cc-statusline preset " [name]
+Switch the CC-Statusline layout to a named preset by writing
+.B .statusline.lines
+in
+.IR ~/.config/claudii/config.json .
+Without a name, lists the available presets.
+Available presets:
+.RS
+.IP \(bu 2
+.B focused
+\(em dense 3-line layout. Line 1: model + dir (identity).
+Line 2: context-bar + rate-5h + rate-7d (metrics).
+Line 3: claude-status + vpn (env).
+For users who want everything important on screen without scrolling past noise,
+split so no single line overflows on narrow terminals.
+When
+.B cc-insomnii
+is installed,
+.B claudii cc-statusline on
+wires it up as a wrapper (cc-insomnii --after=claudii-cc-statusline), so
+the insomnii line appears on top of the focused layout automatically \(em
+no clock segment needed inside the preset.
+.IP \(bu 2
+.B calm
+\(em bare 2-line layout. Line 1: model (with effort + thinking arrow).
+Line 2: context-bar. Nothing else. Pure calmness.
+.IP \(bu 2
+.B default
+\(em restore the shipped 5-line layout with every segment.
+Use this to revert after experimenting with another preset.
+.RE
+.IP
+After switching, restart Claude Code (or wait for the next render) to see the new layout.
+The preset writes
+.B .statusline.lines
+directly, so you can hand-edit afterwards without losing the change.
+.
 .SS Sessions and Cost
 .
 .TP

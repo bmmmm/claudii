@@ -74,6 +74,13 @@ if [[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1; th
   _use_insomnii=1
 fi
 
+# Double-render guard: when invoked via `cc-insomnii --after=claudii-cc-statusline`,
+# cc-insomnii has already rendered its line at the top. Any `clock` segment in
+# the user's layout would duplicate it — detect that case and skip the segment.
+_wrapped_by_insomnii=0
+_parent_cmd=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d ' ')
+[[ "$_parent_cmd" == *cc-insomnii* ]] && _wrapped_by_insomnii=1
+
 # Parse all fields in one jq call — single process, max efficiency
 # Delimiter: Unit Separator (0x1F) — non-whitespace, so read won't collapse empty fields
 _D=$'\x1f'
@@ -434,7 +441,7 @@ fi
 # configure once in `~/.config/claudii/config.json` (or directly in
 # `~/.config/insomnii/config.json` — both work).
 _seg_clock=""
-if (( _use_insomnii )); then
+if (( _use_insomnii && ! _wrapped_by_insomnii )); then
   _seg_clock=$(
     CC_INSOMNII_BEDTIME="${_cfg_bedtime:-23:00}" \
     CC_INSOMNII_SHAME="$_cfg_shame" \

@@ -133,6 +133,12 @@ _cssl_base="$_CSSL_BASE"
 mkdir -p "$_cssl_base/home/.claude"
 printf '{}' > "$_cssl_base/home/.claude/settings.json"
 
+# Force insomnii=off so this block exercises the plain (non-wrapper) branch
+# regardless of whether cc-insomnii is installed on the host. Wrapper-mode
+# coverage is in test_cc_statusline_preset.sh (which fakes cc-insomnii on PATH).
+jq '.statusline.insomnii = "off"' "$_cssl_xdg/claudii/config.json" > "$_cssl_xdg/claudii/config.json.tmp" \
+  && mv "$_cssl_xdg/claudii/config.json.tmp" "$_cssl_xdg/claudii/config.json"
+
 # cc-statusline on → exit 0
 _cssl_exit=$(HOME="$_cssl_base/home" XDG_CONFIG_HOME="$_cssl_xdg" \
   bash "$CLAUDII_HOME/bin/claudii" cc-statusline on >/dev/null 2>&1; echo $?)
