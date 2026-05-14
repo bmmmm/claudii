@@ -64,9 +64,10 @@ _insights_model_label() {
 }
 
 # Map ISO date (YYYY-MM-DD) to a 3-letter weekday or "Today".
+# UTC because the aggregator buckets on timestamp[:10] (Z-suffixed ISO).
 _insights_day_label() {
   local day="$1"
-  local today; today=$(date +%Y-%m-%d)
+  local today; today=$(date -u +%Y-%m-%d)
   if [[ "$day" == "$today" ]]; then
     printf 'Today'
   elif date -j -f %Y-%m-%d "$day" +%a >/dev/null 2>&1; then

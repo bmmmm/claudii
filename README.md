@@ -149,6 +149,6 @@ All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 
 **Shell prompt (ClaudeStatus):** A background subshell fetches `status.claude.com` — components API first, then RSS feed — once every 5 minutes, writes a plain-text cache file, then exits. No persistent process, no network calls in `precmd`.
 
-**Inside Claude Code (CC-Statusline):** The native `statusLine` hook calls `claudii-sessionline` on each turn and passes session JSON via stdin. Nothing runs between turns.
+**Inside Claude Code (CC-Statusline):** The native `statusLine` hook calls `claudii-cc-statusline` on each turn and passes session JSON via stdin. Nothing runs between turns.
 
 </details>

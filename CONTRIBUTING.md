@@ -35,8 +35,9 @@ Tests are plain bash — no framework needed. Each `test_*.sh` file in `tests/` 
 ```
 claudii.plugin.zsh      # entry point (sources lib/)
 bin/claudii              # CLI commands
-bin/claudii-status       # ClaudeStatus health checker
-bin/claudii-sessionline  # Claude Code sessionline handler
+bin/claudii-status         # ClaudeStatus health checker
+bin/claudii-cc-statusline  # in-session statusline handler
+bin/claudii-insights       # JSONL aggregator for prompt-cache insights
 lib/config.zsh           # config loader (jq + zsh cache)
 lib/functions.zsh        # shell aliases + metrics
 lib/statusline.zsh       # RPROMPT precmd hook
