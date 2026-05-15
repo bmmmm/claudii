@@ -435,11 +435,17 @@ if [[ -f "$_status_cache" ]]; then
   if [[ -n "$_sc" ]]; then
     _sc_models=("opus" "sonnet" "haiku")
     [[ -n "$_sc_models_cfg" ]] && IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
-    declare -A _sc_lbls=([opus]=Opus [sonnet]=Sonnet [haiku]=Haiku)
+    # No declare -A: bash 3.2 (macOS /bin/bash) maps every key to arr[0] and
+    # last-write-wins, so all three slots would render the same label.
     for _scm in "${_sc_models[@]}"; do
       _scm="${_scm// /}"
       [[ -z "$_scm" ]] && continue
-      _scm_lbl="${_sc_lbls[$_scm]:-$_scm}"
+      case "$_scm" in
+        opus)   _scm_lbl="Opus"   ;;
+        sonnet) _scm_lbl="Sonnet" ;;
+        haiku)  _scm_lbl="Haiku"  ;;
+        *)      _scm_lbl="$_scm"  ;;
+      esac
       if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
         _scm_icon="${RED}↓${RST}"; _sc_worst="down"
       elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then

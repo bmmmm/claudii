@@ -286,6 +286,25 @@ assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 # No bc in the script
 assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-cc-statusline" || true)"
 
+# Regression: claude-status segment must render Opus + Sonnet + Haiku as
+# *distinct* labels. Original bug used `declare -A`, which silently breaks
+# on bash 3.2 (macOS /bin/bash) — every key resolved to arr[0], so all
+# three slots rendered the last value ("Haiku"). Run via /bin/bash
+# explicitly so the test catches future bash-3.2 regressions.
+_test_cache_dir_b32="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir_b32")
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$_test_cache_dir_b32/status-models"
+# Use a non-Opus/Sonnet/Haiku display name so the model segment doesn't
+# collide with the claude-status labels we are asserting on.
+_test_cfg_dir_b32="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir_b32")
+mkdir -p "$_test_cfg_dir_b32/claudii"
+printf '{"statusline":{"lines":[["claude-status"]]}}\n' > "$_test_cfg_dir_b32/claudii/config.json"
+output=$(echo '{"model":{"display_name":"X"},"context_window":{"used_percentage":20,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.10,"total_duration_ms":30000}}' \
+  | COLUMNS=120 CLAUDII_CACHE_DIR="$_test_cache_dir_b32" XDG_CONFIG_HOME="$_test_cfg_dir_b32" /bin/bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "bash 3.2: claude-status shows Opus exactly once"   "1" "$(echo "$strip" | grep -oE '\bOpus\b'   | wc -l | tr -d ' ')"
+assert_eq "bash 3.2: claude-status shows Sonnet exactly once" "1" "$(echo "$strip" | grep -oE '\bSonnet\b' | wc -l | tr -d ' ')"
+assert_eq "bash 3.2: claude-status shows Haiku exactly once"  "1" "$(echo "$strip" | grep -oE '\bHaiku\b'  | wc -l | tr -d ' ')"
+
 # api-duration ratio: shown when both api_duration_ms and duration_ms are present
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":60000,"total_api_duration_ms":44000}}' \
   | bash "$SL" 2>/dev/null)

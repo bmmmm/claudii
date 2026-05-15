@@ -90,11 +90,17 @@ _vibemap_render_grid() {
     if [[ "$f1" == "max" ]]; then max="$f2"; fi
   done <<< "$data"
 
-  # Build cell lookup: counts[weekday,bin] = count
-  declare -A counts
+  # Build cell lookup as flat scalars _c_<weekday>_<bin>=<count>.
+  # No declare -A: bash 3.2 (macOS /bin/bash) treats "w,b" as the comma
+  # operator → 0, so every assignment overwrites the same slot. printf -v
+  # rejects non-identifier names — skip rows where the awk emitted
+  # unexpected (non-numeric) keys instead of crashing the whole render.
+  local _c_var
   while IFS=$'\t' read -r f1 f2 f3; do
     [[ "$f1" == "max" ]] && continue
-    counts[$f1,$f2]="$f3"
+    [[ "$f1" =~ ^[0-9]+$ && "$f2" =~ ^[0-9]+$ ]] || continue
+    _c_var="_c_${f1}_${f2}"
+    printf -v "$_c_var" '%s' "$f3"
   done <<< "$data"
 
   # Read bedtime to mark "past-bedtime" rows in red.
@@ -136,7 +142,7 @@ _vibemap_render_grid() {
       printf '%s%s%s   ' "$DIM" "${bins[$b]}" "$RST"
     fi
     for wd in "${week_order[@]}"; do
-      local c="${counts[$wd,$b]:-0}"
+      local _ck="_c_${wd}_${b}" c="${!_ck:-0}"
       local ch; ch=$(_vibemap_density_char "$c" "$max")
       if (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
         printf '%s%s%s    ' "$RED" "$ch" "$RST"
@@ -169,10 +175,13 @@ _vibemap_render_strip() {
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
 
   local max=0
-  declare -A counts
+  # Same bash 3.2 workaround as the grid view — flat scalars _c_<day>_<hour>.
+  local _c_var
   while IFS=$'\t' read -r f1 f2 f3; do
     if [[ "$f1" == "max" ]]; then max="$f2"; continue; fi
-    counts[$f1,$f2]="$f3"
+    [[ "$f1" =~ ^[0-9]+$ && "$f2" =~ ^[0-9]+$ ]] || continue
+    _c_var="_c_${f1}_${f2}"
+    printf -v "$_c_var" '%s' "$f3"
   done <<< "$data"
 
   local bedtime bt_h
@@ -201,7 +210,7 @@ _vibemap_render_strip() {
     if (( d == 0 )); then row_today_marker="${DIM}*${RST}"; fi
     printf '%-12s %s ' "$label" "$row_today_marker"
     for (( h = 0; h < 24; h++ )); do
-      c="${counts[$d,$h]:-0}"
+      local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
       ch=$(_vibemap_density_char "$c" "$max")
       local diff=$(( (h - bt_h + 24) % 24 ))
       if (( diff < 6 )) && [[ "$ch" != " " ]]; then
