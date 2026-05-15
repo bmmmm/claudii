@@ -65,6 +65,7 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count)
 - **`(( ++var ))` not `(( var++ ))`** — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI), bash 3.2 (macOS) tolerates it silently. Use pre-increment for all standalone counters.
+- **No `declare -A` in `bin/`** — every script there has `#!/bin/bash` and runs under macOS `/bin/bash` 3.2, which silently falls back to a regular indexed array and evaluates string keys as `arr[0]` (last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays. The test runner uses Homebrew `bash` 5.x so it does NOT catch this — add a regression assert that invokes `/bin/bash` explicitly when adding similar maps.
 
 ## Token efficiency (for Claude-in-session)
 
