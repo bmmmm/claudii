@@ -580,6 +580,7 @@ _cmd_cost() {
 _cmd_sessions_inactive() {
   # "claudii sessions-inactive" — shows only inactive (stale/dead) sessions
   _cfg_init
+  _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
   [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
@@ -752,6 +753,7 @@ _rate_pct_disp() {
 
 _cmd_sessions() {
   _cfg_init
+  _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s)
   active=0 stale=0
@@ -1108,6 +1110,7 @@ _cmd_gc() {
 _cmd_default() {
   # Smart account overview: Sessions · Account · Agents · Services
   _cfg_init
+  _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s)
 

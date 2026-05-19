@@ -122,6 +122,49 @@ _spinner_stop() {
   fi
 }
 
+# Live-agents map from `claude agents --json` — populated once per command run.
+# Parallel arrays (bash 3.2 compatible — no declare -A).
+# Authoritative source of PID liveness, replacing the kill -0 + 24h-recycling guard.
+_LIVE_PIDS=()
+_LIVE_PIDS_KIND=()
+_LIVE_PIDS_STATUS=()
+_LIVE_PIDS_INITED=0
+_live_pids_init() {
+  (( _LIVE_PIDS_INITED )) && return
+  _LIVE_PIDS_INITED=1
+  command -v claude >/dev/null 2>&1 || return
+  local _json _pid _kind _status _i=0
+  _json=$(claude agents --json 2>/dev/null) || return
+  [[ -z "$_json" || "$_json" == "[]" ]] && return
+  while IFS=$'\t' read -r _pid _kind _status; do
+    [[ -z "$_pid" ]] && continue
+    _LIVE_PIDS[$_i]="$_pid"
+    _LIVE_PIDS_KIND[$_i]="$_kind"
+    _LIVE_PIDS_STATUS[$_i]="$_status"
+    (( ++_i ))
+  done < <(jq -r '.[] | [.pid, (.kind // ""), (.status // "")] | @tsv' <<<"$_json" 2>/dev/null)
+}
+
+# Returns 0 iff $1 appears in _LIVE_PIDS (no fallback to kill -0 here — caller decides).
+_pid_is_live() {
+  local _p="$1" _i
+  for (( _i=0; _i<${#_LIVE_PIDS[@]}; _i++ )); do
+    [[ "${_LIVE_PIDS[$_i]}" == "$_p" ]] && return 0
+  done
+  return 1
+}
+
+# Looks up the `kind` for a known-live pid; echoes empty string if not found.
+_pid_kind() {
+  local _p="$1" _i
+  for (( _i=0; _i<${#_LIVE_PIDS[@]}; _i++ )); do
+    if [[ "${_LIVE_PIDS[$_i]}" == "$_p" ]]; then
+      printf '%s' "${_LIVE_PIDS_KIND[$_i]}"
+      return
+    fi
+  done
+}
+
 # Session JSONL map — build once, O(1) lookup per session.
 # Uses parallel arrays (bash 3.2 compatible — no declare -A).
 _SID_MAP_KEYS=()
@@ -244,7 +287,7 @@ _parse_session_cache() {
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
   _PSC_rate_5h_start= _PSC_project_path=
-  _PSC_pinned=
+  _PSC_pinned= _PSC_kind=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
@@ -271,12 +314,21 @@ _parse_session_cache() {
     _PSC_mtime=$(stat -c %Y "$1")
   fi
   _PSC_age=$(( $(date +%s) - _PSC_mtime ))
-  # Active = Claude Code process (ppid) is still running AND file is < 24h old.
-  # The 24h cap guards against PID recycling (OS reuses PIDs of long-dead processes).
+  # Active = Claude Code process (ppid) is still running.
+  # API path: ppid is listed by `claude agents --json` (caller ran _live_pids_init).
+  # Authoritative when it matches — no PID-recycling risk, also reveals _PSC_kind.
+  # Fallback: kill -0 + 24h age cap. Runs even when the API is populated because
+  # `claude agents --json` deliberately omits the CURRENT interactive session —
+  # without this fallback, `claudii se` from inside a live session would mark
+  # its own row as inactive.
   _PSC_is_active=0
-  if [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && [[ "$_PSC_ppid" != "0" ]] \
-      && (( _PSC_age < 86400 )) && kill -0 "$_PSC_ppid" 2>/dev/null; then
-    _PSC_is_active=1
+  if [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && [[ "$_PSC_ppid" != "0" ]]; then
+    if (( _LIVE_PIDS_INITED )) && _pid_is_live "$_PSC_ppid"; then
+      _PSC_is_active=1
+      _PSC_kind=$(_pid_kind "$_PSC_ppid")
+    elif (( _PSC_age < 86400 )) && kill -0 "$_PSC_ppid" 2>/dev/null; then
+      _PSC_is_active=1
+    fi
   fi
 }
 
