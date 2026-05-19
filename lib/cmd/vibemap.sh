@@ -113,11 +113,8 @@ _vibemap_render_grid() {
   local total
   total=$(wc -l < "$_VIBEMAP_PATH" 2>/dev/null | tr -d ' ')
 
-  local DIM RED RST
-  DIM=$'\033[2m'; RED=$'\033[0;31m'; RST=$'\033[0m'
-
   printf '%svibemap%s · %s entries · %sbedtime %s%s\n\n' \
-    "$DIM" "$RST" "$total" "$DIM" "$bedtime" "$RST"
+    "$CLAUDII_CLR_DIM" "$CLAUDII_CLR_RESET" "$total" "$CLAUDII_CLR_DIM" "$bedtime" "$CLAUDII_CLR_RESET"
   printf '         Mon  Tue  Wed  Thu  Fri  Sat  Sun\n'
 
   local bins=("00-03" "03-06" "06-09" "09-12" "12-15" "15-18" "18-21" "21-00")
@@ -137,22 +134,22 @@ _vibemap_render_grid() {
     done
 
     if (( is_past_bedtime )); then
-      printf '%s%s%s   ' "$RED" "${bins[$b]}" "$RST"
+      printf '%s%s%s   ' "$CLAUDII_CLR_RED" "${bins[$b]}" "$CLAUDII_CLR_RESET"
     else
-      printf '%s%s%s   ' "$DIM" "${bins[$b]}" "$RST"
+      printf '%s%s%s   ' "$CLAUDII_CLR_DIM" "${bins[$b]}" "$CLAUDII_CLR_RESET"
     fi
     for wd in "${week_order[@]}"; do
       local _ck="_c_${wd}_${b}" c="${!_ck:-0}"
       local ch; ch=$(_vibemap_density_char "$c" "$max")
       if (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
-        printf '%s%s%s    ' "$RED" "$ch" "$RST"
+        printf '%s%s%s    ' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
       else
         printf '%s    ' "$ch"
       fi
     done
     printf '\n'
   done
-  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s) %s\n' "$DIM" "$max" "$RST"
+  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s) %s\n' "$CLAUDII_CLR_DIM" "$max" "$CLAUDII_CLR_RESET"
 }
 
 # Strip view — last N days × 24 hours. Each row = one calendar day.
@@ -190,14 +187,11 @@ _vibemap_render_strip() {
   [[ -z "$bedtime" || "$bedtime" == "null" ]] && bedtime="23:00"
   bt_h="${bedtime%%:*}"; bt_h="${bt_h#0}"; bt_h="${bt_h:-0}"
 
-  local DIM RED RST
-  DIM=$'\033[2m'; RED=$'\033[0;31m'; RST=$'\033[0m'
-
   local total
   total=$(wc -l < "$_VIBEMAP_PATH" 2>/dev/null | tr -d ' ')
 
   printf '%svibemap%s · last %s days · %s entries · %sbedtime %s%s\n\n' \
-    "$DIM" "$RST" "$days" "$total" "$DIM" "$bedtime" "$RST"
+    "$CLAUDII_CLR_DIM" "$CLAUDII_CLR_RESET" "$days" "$total" "$CLAUDII_CLR_DIM" "$bedtime" "$CLAUDII_CLR_RESET"
   printf '              00 03 06 09 12 15 18 21\n'
 
   local d label epoch_for_day h c ch row_today_marker
@@ -207,21 +201,21 @@ _vibemap_render_strip() {
          || date -d "@$epoch_for_day" '+%a %d %b' 2>/dev/null \
          || printf '-%dd' "$d")
     row_today_marker=""
-    if (( d == 0 )); then row_today_marker="${DIM}*${RST}"; fi
+    if (( d == 0 )); then row_today_marker="${CLAUDII_CLR_DIM}*${CLAUDII_CLR_RESET}"; fi
     printf '%-12s %s ' "$label" "$row_today_marker"
     for (( h = 0; h < 24; h++ )); do
       local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
       ch=$(_vibemap_density_char "$c" "$max")
       local diff=$(( (h - bt_h + 24) % 24 ))
       if (( diff < 6 )) && [[ "$ch" != " " ]]; then
-        printf '%s%s%s' "$RED" "$ch" "$RST"
+        printf '%s%s%s' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
       else
         printf '%s' "$ch"
       fi
     done
     printf '\n'
   done
-  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s, red = past bedtime)%s\n' "$DIM" "$max" "$RST"
+  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s, red = past bedtime)%s\n' "$CLAUDII_CLR_DIM" "$max" "$CLAUDII_CLR_RESET"
 }
 
 _vibemap_usage() {

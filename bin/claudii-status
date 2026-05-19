@@ -53,11 +53,8 @@ _tmp_status=$(mktemp "${CACHE_STATUS}.XXXXXX") || { printf 'claudii-status: mkte
 _tmp_incidents=$(mktemp "${CACHE_INCIDENTS}.XXXXXX") || { printf 'claudii-status: mktemp failed\n' >&2; exit 1; }
 trap 'rm -f "$_tmp_status" "$_tmp_incidents"' EXIT
 
+source "${CLAUDII_HOME}/lib/visual.sh"
 source "${CLAUDII_HOME}/lib/log.sh"
-
-RED='\033[0;31m'
-YELLOW='\033[0;33m'
-NC='\033[0m'
 
 quiet=false
 _pid_file=""
@@ -89,8 +86,8 @@ if [[ -f "$CACHE_STATUS" ]]; then
     if ! $quiet; then
       while IFS='=' read -r model state; do
         case "$state" in
-          down)     echo -e "${RED}✗ ${model} down${NC}" >&2 ;;
-          degraded) echo -e "${YELLOW}~ ${model} degraded${NC}" >&2 ;;
+          down)     echo -e "${CLAUDII_CLR_RED}✗ ${model} down${CLAUDII_CLR_RESET}" >&2 ;;
+          degraded) echo -e "${CLAUDII_CLR_YELLOW}~ ${model} degraded${CLAUDII_CLR_RESET}" >&2 ;;
         esac
       done < "$CACHE_STATUS"
     fi
@@ -137,14 +134,14 @@ _write_incidents() {
     summary+=" ${m}=${ms}"
     local label; label="$(tr '[:lower:]' '[:upper:]' <<< "${m:0:1}")${m:1}"
     case "$ms" in
-      down)     $quiet || echo -e "${RED}✗ ${label} down${NC}" >&2;     any_issue=true ;;
-      degraded) $quiet || echo -e "${YELLOW}~ ${label} degraded${NC}" >&2; any_issue=true ;;
+      down)     $quiet || echo -e "${CLAUDII_CLR_RED}✗ ${label} down${CLAUDII_CLR_RESET}" >&2;     any_issue=true ;;
+      degraded) $quiet || echo -e "${CLAUDII_CLR_YELLOW}~ ${label} degraded${CLAUDII_CLR_RESET}" >&2; any_issue=true ;;
     esac
   done
   _claudii_log info "Status:${summary}"
 
   if $any_issue && [[ -n "$incident_detail" ]]; then
-    $quiet || echo -e "${YELLOW}  ↳ ${incident_detail}${NC}" >&2
+    $quiet || echo -e "${CLAUDII_CLR_YELLOW}  ↳ ${incident_detail}${CLAUDII_CLR_RESET}" >&2
   fi
 
   $any_issue && exit 1 || exit 0
@@ -223,12 +220,12 @@ fi
 # ── Step 2: RSS fallback (unresolved.json unreachable or unparseable) ─────────
 
 _claudii_log warn "unresolved.json unavailable — trying RSS fallback"
-$quiet || echo -e "${YELLOW}claudii: Primary status API unreachable, trying RSS${NC}" >&2
+$quiet || echo -e "${CLAUDII_CLR_YELLOW}claudii: Primary status API unreachable, trying RSS${CLAUDII_CLR_RESET}" >&2
 
 rss=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$RSS_URL" 2>/dev/null) || true
 
 if [[ -z "$rss" ]]; then
-  $quiet || echo -e "${YELLOW}claudii: Status API unreachable${NC}" >&2
+  $quiet || echo -e "${CLAUDII_CLR_YELLOW}claudii: Status API unreachable${CLAUDII_CLR_RESET}" >&2
   _claudii_log warn "All status sources unreachable — writing all-ok fallback"
   { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
   exit 0

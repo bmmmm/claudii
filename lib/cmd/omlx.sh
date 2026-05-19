@@ -2,6 +2,7 @@
 # and surface it on the cc-statusline. Reads/writes claudii's own config; does
 # not touch gateii's files.
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
+# Requires: visual.sh sourced first (uses CLAUDII_CLR_*)
 
 # Well-known places to look for gateii's data/agents/active.json
 _OMLX_DEFAULT_PATHS=(
