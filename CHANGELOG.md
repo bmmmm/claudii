@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.18.4] — 2026-05-20
+
 ### Added
 - **`github` sessionline segment surfaces `workspace.repo.{owner,name,pr_number}`.** Claude Code 2.1.145+ now ships repo identity and active-PR number in the statusLine JSON stdin. The new `github` segment renders `◆ <owner>/<name>` (dim) with `#<pr_number>` (yellow) appended when the API includes one — gives an at-a-glance PR pin without a `gh` subshell or a custom git script. Defensive: segment is omitted when either `owner` or `name` is missing (non-git project, no remote). Symbol constant `CLAUDII_SYM_REPO` added to `lib/visual.sh`. Not in the default layout — add `github` to `statusline.lines` in `~/.config/claudii/config.json` to enable. Tests cover full repo+PR, repo-without-PR, missing repo, and the owner-only malformed case in `tests/test_sessionline.sh`; `tests/test_docs.sh` enforces man-page sync.
 
