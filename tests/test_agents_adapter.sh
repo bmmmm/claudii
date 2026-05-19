@@ -130,6 +130,35 @@ _aa_out4=$(_aa_run "$_aa_bin4:$PATH" "
 assert_contains "garbage JSON: _LIVE_PIDS stays empty" "count=0" "$_aa_out4"
 assert_contains "garbage JSON: fallback kill -0 still marks active" "active=1" "$_aa_out4"
 
+# ── 5. End-to-end: `claudii se` renders [bg] badge for background sessions ──
+# Drive the real bin/claudii against an isolated cache + stub claude.
+_aa_bg_cache=$(mktemp -d "${TMPDIR:-/tmp}/claudii_aa_bg.XXXXXX")
+cat > "$_aa_bg_cache/session-bgsmoke" <<EOF
+model=Sonnet
+ppid=11111
+ctx_pct=20
+cost=0.05
+session_id=bg-smoke-uuid-aaaaaaaaaaaa
+EOF
+cat > "$_aa_bg_cache/session-fgsmoke" <<EOF
+model=Opus
+ppid=22222
+ctx_pct=30
+cost=0.10
+session_id=fg-smoke-uuid-bbbbbbbbbbbb
+EOF
+
+_aa_bg_out=$(
+  CLAUDII_CACHE_DIR="$_aa_bg_cache" \
+  PATH="$_aa_bin2:$PATH" \
+  "$CLAUDII_HOME/bin/claudii" sessions 2>&1
+)
+assert_contains "[bg] badge: background session marked"     "[bg]"   "$_aa_bg_out"
+# Foreground session in the same render must NOT carry a [bg] badge on its line.
+_aa_fg_line=$(echo "$_aa_bg_out" | grep -F "Opus" || true)
+assert_not_contains "[bg] badge: foreground session NOT marked" "[bg]" "$_aa_fg_line"
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────
-rm -rf "$_aa_bin1" "$_aa_bin2" "$_aa_bin4" "$_aa_cache"
-unset _aa_bin1 _aa_bin2 _aa_bin4 _aa_cache _aa_out1 _aa_out2 _aa_out2b _aa_out3 _aa_out4 _aa_syspath
+rm -rf "$_aa_bin1" "$_aa_bin2" "$_aa_bin4" "$_aa_cache" "$_aa_bg_cache"
+unset _aa_bin1 _aa_bin2 _aa_bin4 _aa_cache _aa_bg_cache _aa_out1 _aa_out2 \
+      _aa_out2b _aa_out3 _aa_out4 _aa_bg_out _aa_fg_line _aa_syspath

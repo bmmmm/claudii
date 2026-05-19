@@ -767,7 +767,7 @@ _cmd_sessions() {
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
-             _sf_fingerprint _sf_last_msg
+             _sf_fingerprint _sf_last_msg _sf_kind
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
@@ -801,6 +801,7 @@ _cmd_sessions() {
     _sf_cache[$_sf_count]="$_PSC_cache_pct"
     _sf_age[$_sf_count]="$_PSC_age"
     _sf_is_active[$_sf_count]="$_PSC_is_active"
+    _sf_kind[$_sf_count]="$_PSC_kind"
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
@@ -985,8 +986,13 @@ _cmd_sessions() {
     local _display_model
     _display_model="$(_strip_model_name "${_sf_model[$_i]:-?}")"
 
-    # Line 1: status + model + project path + metadata
-    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}"
+    # Background-session badge (kind comes from `claude agents --json`).
+    local _bg_badge=""
+    [[ "${_sf_kind[$_i]}" == "background" ]] && \
+      _bg_badge=" ${CLAUDII_CLR_DIM}[bg]${CLAUDII_CLR_RESET}"
+
+    # Line 1: status + model + [bg] + project path + metadata
+    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}${_bg_badge}"
     if [[ -n "${_sf_projpath[$_i]}" ]]; then
       line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
     fi

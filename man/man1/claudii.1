@@ -721,6 +721,12 @@ formatted as
 .BR "name(N) name(N) ..."
 (omitted when no JSONL transcript is available).
 Sessions are detected from cache files written by the CC-Statusline handler.
+Background sessions
+.RB ( "claude --bg" )
+are marked with a dim
+.B [bg]
+badge after the model name; the kind is sourced from
+.BR "claude agents --json" .
 Supports
 .B \-\-json
 (array of session objects with
