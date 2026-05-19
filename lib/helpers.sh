@@ -129,13 +129,16 @@ _LIVE_PIDS=()
 _LIVE_PIDS_KIND=()
 _LIVE_PIDS_STATUS=()
 _LIVE_PIDS_INITED=0
+# Returns 0 unconditionally — best-effort initialization, callers run under
+# `set -euo pipefail` so we must never leak a non-zero exit (claude missing,
+# garbage JSON, jq missing, etc. → silently keep arrays empty for fallback).
 _live_pids_init() {
-  (( _LIVE_PIDS_INITED )) && return
+  (( _LIVE_PIDS_INITED )) && return 0
   _LIVE_PIDS_INITED=1
-  command -v claude >/dev/null 2>&1 || return
+  command -v claude >/dev/null 2>&1 || return 0
   local _json _pid _kind _status _i=0
-  _json=$(claude agents --json 2>/dev/null) || return
-  [[ -z "$_json" || "$_json" == "[]" ]] && return
+  _json=$(claude agents --json 2>/dev/null) || return 0
+  [[ -z "$_json" || "$_json" == "[]" ]] && return 0
   while IFS=$'\t' read -r _pid _kind _status; do
     [[ -z "$_pid" ]] && continue
     _LIVE_PIDS[$_i]="$_pid"
@@ -143,6 +146,7 @@ _live_pids_init() {
     _LIVE_PIDS_STATUS[$_i]="$_status"
     (( ++_i ))
   done < <(jq -r '.[] | [.pid, (.kind // ""), (.status // "")] | @tsv' <<<"$_json" 2>/dev/null)
+  return 0
 }
 
 # Returns 0 iff $1 appears in _LIVE_PIDS (no fallback to kill -0 here — caller decides).
@@ -155,14 +159,17 @@ _pid_is_live() {
 }
 
 # Looks up the `kind` for a known-live pid; echoes empty string if not found.
+# Always returns 0 — caller captures via command substitution under `set -e`,
+# so a non-zero exit (empty _LIVE_PIDS, no match) would abort the script.
 _pid_kind() {
   local _p="$1" _i
   for (( _i=0; _i<${#_LIVE_PIDS[@]}; _i++ )); do
     if [[ "${_LIVE_PIDS[$_i]}" == "$_p" ]]; then
       printf '%s' "${_LIVE_PIDS_KIND[$_i]}"
-      return
+      return 0
     fi
   done
+  return 0
 }
 
 # Session JSONL map — build once, O(1) lookup per session.
