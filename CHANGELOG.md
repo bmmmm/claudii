@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.18.1] — 2026-05-20
+
 ### Fixed
 - **Bash 3.2 incompatibility (macOS `/bin/bash`) — claude-status segment rendered all three models as "Haiku ✓ Haiku ✓ Haiku ✓"** instead of `Opus ✓ Sonnet ✓ Haiku ✓`. `bin/claudii-cc-statusline` used `declare -A _sc_lbls=([opus]=Opus [sonnet]=Sonnet [haiku]=Haiku)`. Bash 3.2 silently falls back to a regular indexed array, evaluates the string keys in arithmetic context (`opus` → 0, `sonnet` → 0, `haiku` → 0), and all three assignments overwrite `arr[0]` — last one wins. Tests didn't catch it because the test runner invokes the script via `bash` (PATH-resolved Homebrew bash 5.x), not the `/bin/bash` shebang. Replaced with an inline `case` statement.
 - **Bash 3.2 incompatibility in `claudii vibemap` (grid + strip).** Same root cause — `declare -A counts` with `counts[$wd,$b]` keys was a no-op on macOS `/bin/bash`. Both views now use flat scalars (`_c_<wd>_<bin>=count` via `printf -v`) with a numeric-key guard so a stray corrupted row in `vibemap.tsv` skips that cell instead of failing the render.
