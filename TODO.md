@@ -31,10 +31,9 @@ delete after implementing).
 
 ## Decided against (2026-05-20)
 
-- **Peak-Hours-Indicator** — Anthropic's peak window (5am-11am PT weekdays) is an
-  official, static rule, not a live API. `cc-insomnii`'s `bedtime` already covers
-  the personal-clock case. Users who want Anthropic's peak rule have
-  [PeakClaude](https://github.com/pforret/PeakClaude).
+- **Peak-Hours-Indicator** — the 5am-11am PT weekday peak window Anthropic
+  announced in Dec 2024 is no longer in effect. Competitors that still surface
+  it (claude-pulse, PeakClaude) are tracking a defunct rule. Nothing to mirror.
 - **Active statusLine-hijack-detection** — `claudii doctor` already checks
   `.statusLine.command` (`lib/cmd/system.sh:400-411`) and warns on foreign values.
   Running the check on every render would mean jq-on-settings.json per precmd,
