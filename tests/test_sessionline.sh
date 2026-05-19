@@ -427,3 +427,37 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "omlx: bench prefix passes through" "bench:summarize-file" "$strip"
 assert_contains "omlx: gemma-it-4bit suffix stripped" "gemma-4-e2b" "$strip"
 assert_not_contains "omlx: gemma -it-4bit removed"   "-it-4bit"     "$strip"
+
+# github segment — workspace.repo.{owner,name,pr_number} from CC 2.1.145+
+_gh_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/gh-XXXXXX")"; _SL_TMPDIRS+=("$_gh_cfg")
+mkdir -p "$_gh_cfg/claudii"
+printf '{"statusline":{"lines":[["model","github"]]}}\n' > "$_gh_cfg/claudii/config.json"
+_gh_base='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
+
+# Repo + PR: shows ◆ owner/name #pr_number
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii","pr_number":42}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "github: shows owner/name"  "bmmmm/claudii" "$strip"
+assert_contains "github: shows ◆ marker"    "◆"             "$strip"
+assert_contains "github: shows #pr_number"  "#42"           "$strip"
+
+# Repo without PR: still shows owner/name but no #
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: owner/name without PR" "bmmmm/claudii" "$strip"
+assert_not_contains "github: no # when pr absent"   "#"             "$strip"
+
+# Repo block missing entirely: segment omitted, model still rendered
+output=$(echo "$_gh_base" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: model still shows when repo absent" "Opus" "$strip"
+assert_not_contains "github: no ◆ marker when repo absent"       "◆"    "$strip"
+
+# Malformed: owner without name → segment omitted (require both)
+_j=$(jq -cn --argjson w '{"repo":{"owner":"bmmmm"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_not_contains "github: owner alone → no ◆"     "◆"      "$strip"
+assert_not_contains "github: owner alone → no slash" "bmmmm/" "$strip"

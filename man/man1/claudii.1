@@ -175,6 +175,7 @@ cache-create	\[u270E]1.2K	Cache write volume (tokens written into prompt cache)
 session-name	my-feature	Session name (set via /rename or --name)
 worktree	feat/login \[u23B7] main	Worktree name + branch (dim); falls back to workspace.git_worktree for plain git worktrees
 dir	\[u2302] my-app	Working directory: ⌂ symbol + basename of workspace.project_dir (worktree.original_cwd has priority in --worktree sessions)
+github	\[u25C6] bmmmm/claudii #42	GitHub repo (owner/name) + active PR number; reads workspace.repo.* from Claude Code 2.1.145+ (absent for non-git or no remote)
 agent	@orc	Agent name (dim, prefixed @)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache; \[u26A0] hint (colored) when degraded/down

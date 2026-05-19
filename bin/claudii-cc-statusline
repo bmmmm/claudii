@@ -64,7 +64,8 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   cache_read cache_create worktree_name agent_name model_id cwd \
   session_name worktree_branch api_duration_ms exceeds_200k \
   effort_level thinking_enabled workspace_git_worktree \
-  workspace_project_dir worktree_original_cwd <<< "$(
+  workspace_project_dir worktree_original_cwd \
+  repo_host repo_owner repo_name repo_pr <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -94,8 +95,12 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.thinking.enabled // false | tostring),
     (.workspace.git_worktree // ""),
     (.workspace.project_dir // ""),
-    (.worktree.original_cwd // "")
-  ] | join("")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.worktree.original_cwd // ""),
+    (.workspace.repo.host // ""),
+    (.workspace.repo.owner // ""),
+    (.workspace.repo.name // ""),
+    (.workspace.repo.pr_number // "" | tostring)
+  ] | join("")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -415,6 +420,15 @@ if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂${RST} ${YELLOW}${_dir_name}${RST}"
 fi
 
+# GitHub / repo segment (workspace.repo.*, Claude Code 2.1.145+).
+# Renders <owner>/<name> + #<pr_number> when an open PR is detected on the
+# current branch. Skipped when repo info absent (non-git project, no remote).
+_seg_github=""
+if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
+  _seg_github="${DIM}◆ ${repo_owner}/${repo_name}${RST}"
+  _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
+fi
+
 # Terminal width for ruler segment.
 _term_cols=""
 [[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
@@ -559,6 +573,7 @@ while IFS= read -r _line_segs; do
       delta-7d)      _val="$_seg_delta7d"  ;;
       cache-create)  _val="$_seg_cache_create" ;;
       dir)           _val="$_seg_dir"      ;;
+      github)        _val="$_seg_github"   ;;
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;
       omlx)          _val="$_seg_omlx"     ;;

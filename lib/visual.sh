@@ -20,6 +20,7 @@ CLAUDII_SYM_IDENTIFIED="⚐"     # incident: root cause found, fix in progress
 CLAUDII_SYM_INVESTIGATING="‼"  # incident: actively investigating, cause unknown
 CLAUDII_SYM_VPN="⬡"         # VPN tunnel active (WireGuard)
 CLAUDII_SYM_TAILSCALE="⬢"   # Tailscale tunnel active
+CLAUDII_SYM_REPO="◆"        # github/gitlab repo (workspace.repo.* in CC 2.1.145+)
 
 # ── Fingerprint palette (muted 256-color, cycles for cross-session file coloring) ──
 CLAUDII_FP_PALETTE=(
