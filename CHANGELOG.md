@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.18.2] — 2026-05-20
+
 ### Changed
 - **Refactor: `bin/claudii` slims from 473 → 170 lines.** The 15 shared helper functions (`_collect_history_files`, `_date_init`, `_spinner_start/_stop`, `_session_build_map/_jsonl/_project_path/_resolve`, `_jq_update`, `_cfg_init`, `_validate_key`, `_cfgget`, `_parse_session_cache`, `_render_ctx_bar`, `_render_age`, `_plain`) move into the new `lib/helpers.sh` and are sourced after `visual.sh` / `spinner.sh`. The dispatcher is now back under the 300-line budget, command logic stays in `lib/cmd/*.sh`, helpers are reusable from any sourced file. No behavior change — all 683 tests pass.
 - **Refactor: consolidated ANSI constants on `CLAUDII_CLR_*`.** `lib/cmd/vibemap.sh` dropped its two `local DIM RED RST` blocks (~4 lines of raw escapes per render function) and now uses `CLAUDII_CLR_DIM` / `CLAUDII_CLR_RED` / `CLAUDII_CLR_RESET` from `visual.sh`, which is already in scope. `bin/claudii-status` now sources `lib/visual.sh` directly and uses `CLAUDII_CLR_RED` / `CLAUDII_CLR_YELLOW` / `CLAUDII_CLR_RESET` instead of its own raw `RED='\033[0;31m'` triplet. `lib/cmd/omlx.sh` gained a one-line header note documenting the implicit `visual.sh` dependency. **User-visible effect:** themes that override colors (via `theme.name` in config) now reach the heatmap and the `claudii-status` output too, which previously stayed at hardcoded red/yellow regardless of theme.
