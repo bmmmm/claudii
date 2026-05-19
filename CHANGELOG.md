@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Security
+- **Defense-in-depth hardening across three small surfaces.** `bin/claudii-cc-statusline` sets `umask 077` right after creating its 0700 cache dir, so the per-session cache files (`session-<sid>`, monthly `history-*.tsv`, the `*.tmp.$$` staging files) inherit 0600 instead of the umask-022 default 0644 — matters only if `CLAUDII_CACHE_DIR` is ever pointed outside the already-mode-700 default dir, but it's a one-line safety net. `bin/claudii-status` switches the incident-banner line (the `↳ $incident_detail` from `status.claude.com`) from `echo -e` to `printf '%s'`, so a feed that ever delivered a literal `\033`/`\n` in a title can no longer inject escape sequences into the terminal output. `.github/workflows/release.yml` tightens the tarball-SHA step from `curl -sL` to `curl -fsSL --max-time 60 --max-filesize 52428800`, so a hostile mirror can't stream an arbitrarily large body into the runner or have its 404 page hashed as a "release."
+
 ---
 
 ## [v0.18.3] — 2026-05-20

@@ -141,7 +141,9 @@ _write_incidents() {
   _claudii_log info "Status:${summary}"
 
   if $any_issue && [[ -n "$incident_detail" ]]; then
-    $quiet || echo -e "${CLAUDII_CLR_YELLOW}  ↳ ${incident_detail}${CLAUDII_CLR_RESET}" >&2
+    # printf %s — incident_detail comes from status.claude.com (jq or RSS).
+    # echo -e would interpret literal \033/\n if a feed ever delivered them.
+    $quiet || printf '%s  ↳ %s%s\n' "$CLAUDII_CLR_YELLOW" "$incident_detail" "$CLAUDII_CLR_RESET" >&2
   fi
 
   $any_issue && exit 1 || exit 0

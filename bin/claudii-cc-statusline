@@ -14,6 +14,10 @@ read -r json
 
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 [[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
+# Default-deny: every file this script creates (session-*, history-*, *.tmp.$$)
+# inherits 0600 instead of 0644 from umask 022. Cache dir is already 0700, so
+# this is defense-in-depth for the CLAUDII_CACHE_DIR override case.
+umask 077
 
 # Config (statusline.* + vibemap.*) — single jq call.
 # Separators: US (0x1F) between fields, RS (0x1E) between layout lines.

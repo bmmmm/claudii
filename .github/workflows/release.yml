@@ -38,7 +38,9 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
-          SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          # -f: fail on HTTP errors (else sha256sum hashes a 404 page);
+          # --max-time/--max-filesize bound runner exposure to a hostile mirror.
+          SHA=$(curl -fsSL --max-time 60 --max-filesize 52428800 "$URL" | sha256sum | cut -d' ' -f1)
           echo "tarball_url=$URL"   >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA"        >> "$GITHUB_OUTPUT"
           echo "Tarball $URL → SHA256 $SHA"
