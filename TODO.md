@@ -6,20 +6,6 @@
 
 ## Pending
 
-### v0.18.3 — `claude agents --json` adapter
-
-**Type: Feature**
-**Complexity: Small (Steps 1+2 only — see plan)**
-**Touches: `lib/helpers.sh`, `lib/cmd/sessions.sh`, `tests/`**
-
-Replace `kill -0 $ppid` liveness check in `_parse_session_cache` with a lookup
-against `claude agents --json` (verified to exist in Claude Code v2.1.145). Adds
-authoritative process status, eliminates the 24h PID-recycling guard, and surfaces
-`kind: background` sessions with a `[bg]` badge in `claudii se`.
-
-Detailed plan: `.claude/plans/v0.18.3-claude-agents-adapter.md` (local only —
-delete after implementing).
-
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**

@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **`claude agents --json` adapter for session liveness.** `lib/helpers.sh` gains `_live_pids_init` / `_pid_is_live` / `_pid_kind`, called once per command run by `_cmd_sessions`, `_cmd_sessions_inactive`, and `_cmd_default`. When `claude agents --json` (Claude Code ≥ 2.1.145) lists a session's `ppid`, that result is authoritative and also surfaces the `kind`. The legacy `kill -0` + 24h-age guard remains as a fallback for interactive sessions (which the API deliberately omits) and for hosts without the new `claude` binary. New `tests/test_agents_adapter.sh` covers populated/empty/garbage/no-binary paths plus an end-to-end smoketest against `bin/claudii`.
+- **Background sessions marked with `[bg]` in `claudii se`.** When `claude agents --json` reports a session as `kind=background`, the rendered model line carries a dim `[bg]` badge after the model name. Interactive sessions render unchanged.
+
 ---
 
 ## [v0.18.2] — 2026-05-20
