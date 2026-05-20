@@ -7,6 +7,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **`● Activity` segment in the bare `claudii` overview.** A 14-character strip showing prompt-activity density per day for the last two weeks (rightmost = today), rendered with the same `░ ▒ ▓ █` glyphs as `claudii vibemap`. Appears only when `vibemap.enabled=true` and at least one row exists; otherwise the dim placeholder line `○ Activity   claudii config set vibemap.enabled true` shows up so the feature is discoverable. Sits between Services and Sessions in the overview.
+
+### Changed
+- **`claudii vibemap strip`: today now visually stands apart from yesterday and the future.** The today-row's label and a new `▶` marker render in accent pink; a thin `│` cursor replaces the current-hour density char so "now" is locatable at a glance; all strictly-future hours of today are blanked out (was: indistinguishable from past hours). Past days render unchanged. Same 24-column alignment — the cursor swaps in 1:1 for the would-be density char, no width drift.
+- **`man claudii` rewritten for scannability.** 1366 → 483 lines (513 rendered). EXAMPLES moved from the bottom to right after SYNOPSIS so usage is the first thing you see. Sections reorganized around user tasks (LAUNCHING CLAUDE / DISPLAY LAYERS / COMMANDS / CC-STATUSLINE SEGMENTS / CONFIGURATION) instead of feature-by-feature. The 16 per-segment expansion blocks below the segment table were collapsed into three short paragraphs covering the non-obvious bits (color thresholds, `rate_display` flip, clock delegation) — the table itself stays as the scannable index. CONFIGURATION switched from prose to a three-column table. Three-times-repeated rate-limit colour thresholds collapsed into one canonical location. No commands or segments dropped — `tests/test_docs.sh` still enforces the full list.
+
 ---
 
 ## [v0.18.4] — 2026-05-20
