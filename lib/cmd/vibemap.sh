@@ -66,6 +66,8 @@ _vibemap_show_status() {
 
 _vibemap_clear() {
   _vibemap_load_config
+  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  rm -f "$cache_dir/vibemap-mini.cache" 2>/dev/null
   if [[ -f "$_VIBEMAP_PATH" ]]; then
     rm -f "$_VIBEMAP_PATH" \
       && printf 'vibemap cleared: %s\n' "$_VIBEMAP_PATH" \
@@ -289,7 +291,26 @@ _vibemap_mini_strip() {
   [[ "$_VIBEMAP_ENABLED" != "true" ]] && return 1
   [[ ! -f "$_VIBEMAP_PATH" ]] && return 1
 
-  local now; now=$(date +%s)
+  # TTL cache — overview renders frequently, mini-strip output changes rarely
+  # (density chars are normalized to max, so single new entries don't shift
+  # them). 60s feels live without paying the ~60ms awk+aggregate cost each
+  # time. Cache lives next to the vibemap file under the cache dir.
+  local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local cache_file="$cache_dir/vibemap-mini.cache"
+  if [[ -f "$cache_file" ]]; then
+    local mt now_s
+    mt=$(stat -f %m "$cache_file" 2>/dev/null \
+       || stat -c %Y "$cache_file" 2>/dev/null \
+       || echo 0)
+    now_s=$(date +%s)
+    if (( now_s - mt < 60 )); then
+      cat "$cache_file"
+      return 0
+    fi
+  fi
+
+  local now="$now_s"
+  [[ -z "$now" ]] && now=$(date +%s)
   local minidays=14
   local data
   data=$(awk -v now="$now" -v maxdays="$minidays" \
@@ -329,6 +350,8 @@ _vibemap_mini_strip() {
     fi
   done
 
+  mkdir -p "$cache_dir" 2>/dev/null
+  printf '%s\n' "$strip" > "$cache_file" 2>/dev/null
   printf '%s\n' "$strip"
   return 0
 }

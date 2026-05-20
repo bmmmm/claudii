@@ -7,6 +7,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **`vibemap.overview` config flag (default `true`) to hide the Activity strip in the bare `claudii` overview.** Set `claudii config set vibemap.overview false` to suppress the section entirely — when off, the mini-strip aggregation is also skipped so the overview no longer pays the ~20–60ms cost. Toggling does not affect data collection (controlled by `vibemap.enabled`) or the `claudii vibemap` / `vibemap strip` views.
+
+### Changed
+- **`claudii vibemap` (grid view): drop pink data cells, fix header alignment.** Today's data column kept the normal density coloring (or bedtime-red); only the `▶Wed` header marker stays accent. Header slots were 7 cols wide while data cells were 5, shifting today's column under yesterday's label — now both 5 cols, with header leading reduced from 9 to 8 spaces to align with the bin-label prefix.
+- **`claudii` overview Activity strip cached for 60s.** The mini-strip output (`~/.cache/claudii/vibemap-mini.cache`) is reused for up to a minute, cutting the warm-cache `_vibemap_mini_strip` call from ~67ms to ~19ms. Cache is dropped by `claudii vibemap clear`. Density chars are normalized to max, so single new entries don't shift the visible output — 60s feels live.
+
 ---
 
 ## [v0.18.6] — 2026-05-20

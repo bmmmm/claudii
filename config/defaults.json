@@ -41,6 +41,7 @@
   },
   "vibemap": {
     "enabled": false,
+    "overview": true,
     "path": ""
   },
   "debug": {

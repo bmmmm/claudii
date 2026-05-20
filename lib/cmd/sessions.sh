@@ -1441,15 +1441,24 @@ _cmd_default() {
   fi
 
   # ── Activity — mini vibemap strip ─────────────────────────────────
-  printf '\n'
-  _ov_vm_strip=""
-  _ov_vm_strip=$(_vibemap_mini_strip 2>/dev/null) && _ov_vm_ok=1 || _ov_vm_ok=0
-  if (( _ov_vm_ok )); then
-    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET}\n"
-    printf "    %s\n" "$_ov_vm_strip"
-    printf "    ${CLAUDII_CLR_DIM}last 14d · claudii vibemap strip for detail${CLAUDII_CLR_RESET}\n"
-  else
-    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Activity                        claudii config set vibemap.enabled true${CLAUDII_CLR_RESET}\n"
+  # Opt-out via vibemap.overview=false — section is suppressed entirely,
+  # skipping the mini_strip call (and its cached file read).
+  # jq quirk: `// default` treats false as falsy and replaces it with the
+  # default. For boolean opt-out flags we need an explicit equality check.
+  local _ov_vm_show
+  _ov_vm_show=$(jq -r '.vibemap.overview == false' \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null)
+  if [[ "$_ov_vm_show" != "true" ]]; then
+    printf '\n'
+    _ov_vm_strip=""
+    _ov_vm_strip=$(_vibemap_mini_strip 2>/dev/null) && _ov_vm_ok=1 || _ov_vm_ok=0
+    if (( _ov_vm_ok )); then
+      printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET}\n"
+      printf "    %s\n" "$_ov_vm_strip"
+      printf "    ${CLAUDII_CLR_DIM}last 14d · claudii vibemap strip for detail${CLAUDII_CLR_RESET}\n"
+    else
+      printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Activity                        claudii config set vibemap.enabled true${CLAUDII_CLR_RESET}\n"
+    fi
   fi
 
   # ── Sessions — summary only; details via `claudii se` ────────────
