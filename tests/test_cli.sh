@@ -186,6 +186,19 @@ sess_out=$(bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
 assert_no_literal_ansi "sessions: no literal \\033 in output" "$sess_out"
 unset sess_out
 
+# sessions pace glyph: when session cache has pace=ahead, ↑ appears in claudii se output
+_pace_sess_tmp="$(mktemp -d)"
+_pace_sess_xdg="$_pace_sess_tmp/xdg"
+mkdir -p "$_pace_sess_xdg/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_pace_sess_xdg/claudii/config.json"
+printf 'model=Sonnet 4.6\nctx_pct=50\ncost=0.50\nrate_5h=40\nrate_7d=60\nreset_5h=\nreset_7d=\nsession_id=pacesestest\nworktree=\nagent=\nburn_eta=30\npace=ahead\nppid=%s\n' "$$" \
+  > "$_pace_sess_tmp/session-paces"
+_pace_sess_out=$(CLAUDII_CACHE_DIR="$_pace_sess_tmp" XDG_CONFIG_HOME="$_pace_sess_xdg" bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
+_pace_sess_strip=$(printf '%s' "$_pace_sess_out" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "sessions pace: ↑ glyph appears when pace=ahead in cache" "↑" "$_pace_sess_strip"
+rm -rf "$_pace_sess_tmp"
+unset _pace_sess_tmp _pace_sess_xdg _pace_sess_out _pace_sess_strip
+
 # cost — ANSI guard + content check
 _cost_tmp2="$(mktemp -d)"
 cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)

@@ -169,6 +169,7 @@ lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
 duration	1h 23m	Wall-clock session duration (dim)
 api-duration	api:45m	Time spent waiting for Claude API responses (dim)
 burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim)
+pace	\[u2191] / = / \[u2193]	Burn-pace tri-state: \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
 delta-5h	\[u03B4]5h:+12%	5h rate change since session start
 delta-7d	\[u03B4]7d:+3%	7d rate change since session start
 cache-create	\[u270E]1.2K	Cache write volume (tokens written into prompt cache)
@@ -300,6 +301,24 @@ Estimated time until the 5-hour rate limit is exhausted, shown as
 .B ETA:Xm
 in dim text.
 Only shown when a burn rate can be computed (session >= 3 minutes and rate > 0).
+.TP
+.B pace
+Burn-pace tri-state derived from the ratio of actual 5h usage to the expected
+linear burn (a session that burns at a constant rate hits 100% exactly at the
+5-hour mark).
+Rendered as a single glyph:
+.B \[u2191]
+(green) when ahead (actual < 85% of linear),
+.B =
+(dim) when on-pace (85%\(em115%), or
+.B \[u2193]
+(yellow) when behind (actual > 115% of linear, will hit the limit early).
+Only computed when the session is >= 3 minutes old and rate_5h > 0.
+Not included in the default layout \(em add
+.B pace
+to
+.B statusline.lines
+to opt in.
 .TP
 .B delta-5h
 Change in 5h usage since session start, shown as
