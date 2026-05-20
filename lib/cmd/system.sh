@@ -424,6 +424,7 @@ _cmd_doctor() {
   _dc_stale=0
   for _dc_sf in "$cache_dir"/session-*; do
     [[ -f "$_dc_sf" ]] || continue
+    [[ "$_dc_sf" == *.tmp.* ]] && continue
     _dc_sf_ppid=$(grep '^ppid=' "$_dc_sf" 2>/dev/null | cut -d= -f2 || true)
     _dc_sf_mt=$(stat -f%m "$_dc_sf" 2>/dev/null || stat -c%Y "$_dc_sf" 2>/dev/null || echo 0)
     (( _dc_now - _dc_sf_mt < 86400 )) && continue

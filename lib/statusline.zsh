@@ -175,6 +175,7 @@ function _claudii_collect_sessions {
   local _sf_mt _sf_age sc s_ppid
   local s_model s_ctx s_cost s_5h s_r5h _best_r5h=""
   for _sf in "$_cache_base"/session-*(N); do
+    [[ "$_sf" == *.tmp.* ]] && continue
     _sf_mt=0
     if (( _CLAUDII_HAVE_ZSTAT )); then
       _sfst=()

@@ -194,7 +194,9 @@ _cmd_explain() {
   # SessionBar
   sb_count=0
   for _sf in "$local_cache"/session-*; do
-    [[ -f "$_sf" ]] && sb_count=$((sb_count + 1))
+    [[ -f "$_sf" ]] || continue
+    [[ "$_sf" == *.tmp.* ]] && continue
+    sb_count=$((sb_count + 1))
   done 2>/dev/null
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"

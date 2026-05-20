@@ -12,6 +12,7 @@ function _claudii_rl_warn {
   local _color _fb_model _choice _fb_effort
 
   for _sf in "$_cache_base"/session-*(N); do
+    [[ "$_sf" == *.tmp.* ]] && continue
     _sf_mt=0
     if (( ${+modules[zsh/stat]} )); then
       _rfst=()

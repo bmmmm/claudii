@@ -448,9 +448,12 @@ _cmd_cost() {
   fi
 
   now=$(date +%s)
-  # Use calendar midnight as cutoff (not rolling 24h)
-  if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
-    cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
+  # Use calendar midnight as cutoff (not rolling 24h). BSD `date -j -f '%Y-%m-%d'`
+  # leaves time-of-day at *now* when the format has no time component, so the
+  # cutoff would equal `now` and "today" would only catch files modified in the
+  # same second. Pass `00:00:00` explicitly to anchor at calendar midnight.
+  if date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then
+    cutoff=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s')
   else
     cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
   fi
@@ -1195,9 +1198,11 @@ _cmd_default() {
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
   _ov_today_cost=0 _ov_today_count=0 _ov_stale=0
   _ov_next_cron=0 _ov_total_bg=0
-  # Use calendar midnight as cutoff (not rolling 24h)
-  if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
-    _ov_cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
+  # Use calendar midnight as cutoff (not rolling 24h). BSD `date -j -f '%Y-%m-%d'`
+  # without a time component keeps the current time-of-day, returning `now`
+  # instead of midnight — pass `00:00:00` explicitly to anchor at midnight.
+  if date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then
+    _ov_cutoff=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s')
   else
     _ov_cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
   fi
