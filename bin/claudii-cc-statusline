@@ -136,12 +136,28 @@ _last_duration_ms=$(_cache_get last_duration_ms "")
 
 # Burn-rate ETA (cached for dashboard, not rendered here).
 _burn_eta=""
+_pace_state=""
 if _isset "$duration_ms"; then
   _rate_5h_int=${rate_5h%.*}
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
     _burn_eta=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
       'BEGIN { m=dur/60000; r=rat+0; print (r>0)?int((100-r)/(r/m)+0.5):0 }')
+    # Pace tri-state: compare actual rate_5h against linear burn expectation.
+    # Linear burn = session_min / 300 * 100 (hits 100% exactly at 5h mark).
+    # Thresholds: ±15% tolerance band around linear.
+    _pace_state=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
+      'BEGIN {
+        m = dur / 60000
+        linear = m / 300 * 100
+        actual = rat + 0
+        if (linear <= 0) { print ""; exit }
+        lo = linear * 0.85
+        hi = linear * 1.15
+        if      (actual < lo) print "ahead"
+        else if (actual > hi) print "behind"
+        else                  print "on_pace"
+      }')
   fi
 fi
 
@@ -158,6 +174,7 @@ _tmp_session="${_session_file}.tmp.$$"
   "agent=$agent_name" \
   "model_id=$model_id" \
   "burn_eta=$_burn_eta" \
+  "pace=$_pace_state" \
   "cache_pct=$_cache_pct" \
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
@@ -353,6 +370,13 @@ fi
 
 _seg_eta=""
 _isset "$_burn_eta" 2>/dev/null && _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
+
+_seg_pace=""
+case "${_pace_state:-}" in
+  ahead)   _seg_pace="${GREEN}↑${RST}" ;;
+  on_pace) _seg_pace="${DIM}=${RST}"   ;;
+  behind)  _seg_pace="${YELLOW}↓${RST}" ;;
+esac
 
 # Clock — delegated to cc-insomnii(1) when present and not double-wrapped.
 _seg_clock=""
@@ -565,6 +589,7 @@ while IFS= read -r _line_segs; do
       lines-changed) _val="$_seg_lines"    ;;
       duration)      _val="$_seg_dur"      ;;
       burn-eta)      _val="$_seg_eta"      ;;
+      pace)          _val="$_seg_pace"     ;;
       worktree)      _val="$_seg_worktree" ;;
       agent)         _val="$_seg_agent"    ;;
       session-name)  _val="$_seg_session_name" ;;

@@ -767,7 +767,7 @@ _cmd_sessions() {
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
-             _sf_fingerprint _sf_last_msg _sf_kind
+             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
@@ -802,6 +802,7 @@ _cmd_sessions() {
     _sf_age[$_sf_count]="$_PSC_age"
     _sf_is_active[$_sf_count]="$_PSC_is_active"
     _sf_kind[$_sf_count]="$_PSC_kind"
+    _sf_pace[$_sf_count]="$_PSC_pace"
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
@@ -1016,6 +1017,12 @@ _cmd_sessions() {
         _rem=$(( ${_sf_reset5h[$_i]} - now ))
         (( _rem > 0 )) && detail+=" ${CLAUDII_CLR_DIM}↺$(( _rem / 60 ))m${CLAUDII_CLR_RESET}"
       fi
+      # Pace glyph — shown after 5h rate when cached (opt-in signal, no noise when absent)
+      case "${_sf_pace[$_i]:-}" in
+        ahead)   detail+=" ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_PACE_AHEAD}${CLAUDII_CLR_RESET}" ;;
+        on_pace) detail+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_PACE_ON}${CLAUDII_CLR_RESET}"     ;;
+        behind)  detail+=" ${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_PACE_BEHIND}${CLAUDII_CLR_RESET}" ;;
+      esac
     fi
     detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$detail"

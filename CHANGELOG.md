@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Pace-indicator tri-state in the in-session sessionline and `claudii se`.** Derived from the existing `_burn_eta` computation: a perfectly linear user hits 100% at exactly the 5-hour mark; actual `rate_5h` is compared to that baseline. Below 85% of linear → `↑` (green, ahead); 85%–115% → `=` (dim, on-pace); above 115% → `↓` (yellow, behind). The computed state is persisted as `pace=ahead|on_pace|behind` in the per-session cache alongside `burn_eta=`. The new `pace` segment in `bin/claudii-cc-statusline` renders the glyph only (no label — glyph color is the signal). `claudii se` appends the glyph after the 5h-rate column for each session row. Symbol constants `CLAUDII_SYM_PACE_AHEAD`, `CLAUDII_SYM_PACE_ON`, `CLAUDII_SYM_PACE_BEHIND` added to `lib/visual.sh`. **Not in the default layout** — add `pace` to `statusline.lines` to opt in.
+
 ---
 
 ## [v0.18.5] — 2026-05-20

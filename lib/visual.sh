@@ -21,6 +21,9 @@ CLAUDII_SYM_INVESTIGATING="‼"  # incident: actively investigating, cause unkno
 CLAUDII_SYM_VPN="⬡"         # VPN tunnel active (WireGuard)
 CLAUDII_SYM_TAILSCALE="⬢"   # Tailscale tunnel active
 CLAUDII_SYM_REPO="◆"        # github/gitlab repo (workspace.repo.* in CC 2.1.145+)
+CLAUDII_SYM_PACE_AHEAD="↑"  # pace: burning slower than linear (comfortable)
+CLAUDII_SYM_PACE_ON="="     # pace: on-pace (within ±15% of linear burn)
+CLAUDII_SYM_PACE_BEHIND="↓" # pace: burning faster than linear (will hit limit early)
 
 # ── Fingerprint palette (muted 256-color, cycles for cross-session file coloring) ──
 CLAUDII_FP_PALETTE=(

@@ -461,3 +461,41 @@ output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_not_contains "github: owner alone → no ◆"     "◆"      "$strip"
 assert_not_contains "github: owner alone → no slash" "bmmmm/" "$strip"
+
+# ── Pace tri-state segment tests ───────────────────────────────────────────────
+_pace_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
+mkdir -p "$_pace_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["pace"]]}}\n' > "$_pace_cfg_dir/claudii/config.json"
+
+# ahead: session 30min, linear=10%, actual=5% → 5 < 10×0.85=8.5 → ahead (↑)
+# 30min = 1800000ms; linear = 30/300*100 = 10%; rate_5h=5% → 5 < 8.5 → ahead
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+  | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "pace ahead: ↑ shown" "↑" "$strip"
+
+# behind: session 30min, linear=10%, actual=20% → 20 > 10×1.15=11.5 → behind (↓)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":30}}}' \
+  | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "pace behind: ↓ shown" "↓" "$strip"
+
+# on_pace: session 30min, linear=10%, actual=10% → exactly on-pace (=)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+  | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "pace on_pace: = shown" "=" "$strip"
+
+# no data: session < 3min → pace segment empty (below gate)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":60000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+  | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_not_contains "pace: no glyph when session < 3min" "↑" "$strip"
+assert_not_contains "pace: no ↓ when session < 3min"     "↓" "$strip"
+
+# pace persisted in session cache file
+_pace_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_pace_cache_dir")
+echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+  | CLAUDII_CACHE_DIR="$_pace_cache_dir" bash "$SL" 2>/dev/null >/dev/null
+_cache_pace="$(cat "$_pace_cache_dir/session-testpace" 2>/dev/null)"
+assert_contains "pace=ahead written to session cache" "pace=ahead" "$_cache_pace"
