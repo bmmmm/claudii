@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash tests/run.sh *)",
+      "Bash(bash /Users/bma/offline_coding/claudii/tests/run.sh *)"
+    ]
+  }
+}
