@@ -77,8 +77,9 @@ _vibemap_clear() {
 
 # Grid view — 8 three-hour bins × 7 weekdays. Past-bedtime hours rendered
 # in dim red so the visual aligns with the cc-statusline bedtime color.
-# Today's weekday column is highlighted in accent (pink) in the header and
-# cells — mirroring the ▶ today-row idiom from the strip view.
+# Today's weekday gets a ▶ prefix in accent (pink) on the header — mirroring
+# the ▶ today-row idiom from the strip view. Data cells keep their normal
+# coloring (bedtime-red or default) so density stays readable.
 _vibemap_render_grid() {
   _vibemap_load_config
   if [[ ! -f "$_VIBEMAP_PATH" ]]; then
@@ -112,9 +113,6 @@ _vibemap_render_grid() {
   local bt_h="${bedtime%%:*}"
   bt_h="${bt_h#0}"; bt_h="${bt_h:-0}"
 
-  local total
-  total=$(wc -l < "$_VIBEMAP_PATH" 2>/dev/null | tr -d ' ')
-
   # Determine today's weekday: date +%w gives 0=Sun..6=Sat.
   # week_order maps column index (0=Mon..6=Sun) to weekday number.
   # We find which column index corresponds to today.
@@ -125,17 +123,18 @@ _vibemap_render_grid() {
     if (( week_order[_ci] == _dow )); then today_col=$_ci; break; fi
   done
 
-  # Header: render each weekday name; today's column gets ▶ prefix in accent.
-  # Each normal column is "  Xxx" (2 spaces + 3 chars = 5 cols wide).
-  # Today's column is "▶Xxx" (▶ is 1 char + 3 chars = 4 visible cols) to keep
-  # the same 5-column slot (▶ replaces one space, total stays aligned).
+  # Header: 5-col slots aligned with 5-col data cells.
+  # Bin label width is "00-03" (5) + 3 trailing spaces = 8 chars leading,
+  # so the header also leads with 8 spaces. Each day slot is 5 visible cols:
+  # non-today = "Mon  ", today = "▶Wed " — both put a meaningful char at the
+  # slot's first column, directly above the data char that lands there.
   local _day_names=("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun")
-  printf '         '
+  printf '        '
   for _ci in 0 1 2 3 4 5 6; do
     if (( _ci == today_col )); then
       printf '%s▶%s%s ' "$CLAUDII_CLR_ACCENT" "${_day_names[$_ci]}" "$CLAUDII_CLR_RESET"
     else
-      printf '  %s  ' "${_day_names[$_ci]}"
+      printf '%s  ' "${_day_names[$_ci]}"
     fi
   done
   printf '\n'
@@ -165,12 +164,7 @@ _vibemap_render_grid() {
       local _ck="_c_${wd}_${b}"
       local c="${!_ck:-0}"
       local ch; ch=$(_vibemap_density_char "$c" "$max")
-      if (( _ci == today_col )); then
-        # Today's column: render density char in accent (pink), regardless of
-        # bedtime coloring — accent signals "today", bedtime context is already
-        # conveyed by the row label color.
-        printf '%s%s%s    ' "$CLAUDII_CLR_ACCENT" "$ch" "$CLAUDII_CLR_RESET"
-      elif (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
+      if (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
         printf '%s%s%s    ' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
       else
         printf '%s    ' "$ch"
