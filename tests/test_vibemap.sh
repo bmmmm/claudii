@@ -233,3 +233,62 @@ if (( _cur_h < 23 )); then
 fi
 
 rm -rf "$_vm_home3"
+
+# ── grid view: today-column accent highlight ───────────────────────────────────
+
+_vm_home4=$(mktemp -d)
+_vm_path4="$_vm_home4/.cache/claudii/vibemap.tsv"
+mkdir -p "${_vm_path4%/*}"
+mkdir -p "$_vm_home4/.config/claudii"
+
+# Populate with entries on multiple weekdays so the grid has something to show
+_now4=$(date +%s)
+printf '%s\t1\t9\t0\tOpus\teeeeeeee\t0\n' "$_now4" >> "$_vm_path4"
+printf '%s\t2\t14\t0\tSonnet\tffffffff\t0\n' "$_now4" >> "$_vm_path4"
+printf '%s\t5\t10\t0\tHaiku\tgggggggg\t0\n' "$_now4" >> "$_vm_path4"
+
+cat > "$_vm_home4/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": true, "path": "$_vm_path4" }, "statusline": { "bedtime": "23:00" } }
+EOF
+
+_grid_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
+  XDG_CONFIG_HOME="$_vm_home4/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" vibemap 2>&1)
+
+# Header must contain ▶ marker (today's column)
+echo "$_grid_out" | grep -q "▶" && _ok=1 || _ok=0
+assert_eq "grid today-column: header contains ▶ marker" "1" "$_ok"
+
+# Output must contain accent ANSI escape (CLAUDII_CLR_ACCENT = \033[38;5;213m)
+printf '%s' "$_grid_out" | grep -q $'\033\[38;5;213m' && _ok=1 || _ok=0
+assert_eq "grid today-column: output contains accent ANSI escape" "1" "$_ok"
+
+# Legend line must mention today
+assert_contains "grid today-column: legend mentions today" "today" "$_grid_out"
+
+rm -rf "$_vm_home4"
+
+# ── mini-strip: today char rendered in accent ──────────────────────────────────
+
+_vm_home5=$(mktemp -d)
+_vm_path5="$_vm_home5/.cache/claudii/vibemap.tsv"
+mkdir -p "${_vm_path5%/*}"
+mkdir -p "$_vm_home5/.config/claudii"
+
+_now5=$(date +%s)
+printf '%s\t1\t9\t0\tOpus\thhhhhhHH\t0\n' "$_now5" >> "$_vm_path5"
+printf '%s\t2\t14\t0\tSonnet\tiiiiiiii\t0\n' "$(( _now5 - 86400 ))" >> "$_vm_path5"
+
+cat > "$_vm_home5/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": true, "path": "$_vm_path5" } }
+EOF
+
+_ov_out5=$(HOME="$_vm_home5" XDG_CACHE_HOME="$_vm_home5/.cache" \
+  XDG_CONFIG_HOME="$_vm_home5/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" 2>&1)
+
+# Activity strip must contain the accent ANSI escape for today
+printf '%s' "$_ov_out5" | grep -q $'\033\[38;5;213m' && _ok=1 || _ok=0
+assert_eq "mini-strip: today char rendered in accent color" "1" "$_ok"
+
+rm -rf "$_vm_home5"

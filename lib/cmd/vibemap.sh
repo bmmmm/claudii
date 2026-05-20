@@ -77,6 +77,8 @@ _vibemap_clear() {
 
 # Grid view — 8 three-hour bins × 7 weekdays. Past-bedtime hours rendered
 # in dim red so the visual aligns with the cc-statusline bedtime color.
+# Today's weekday column is highlighted in accent (pink) in the header and
+# cells — mirroring the ▶ today-row idiom from the strip view.
 _vibemap_render_grid() {
   _vibemap_load_config
   if [[ ! -f "$_VIBEMAP_PATH" ]]; then
@@ -113,13 +115,33 @@ _vibemap_render_grid() {
   local total
   total=$(wc -l < "$_VIBEMAP_PATH" 2>/dev/null | tr -d ' ')
 
-  printf '%svibemap%s · %s entries · %sbedtime %s%s\n\n' \
-    "$CLAUDII_CLR_DIM" "$CLAUDII_CLR_RESET" "$total" "$CLAUDII_CLR_DIM" "$bedtime" "$CLAUDII_CLR_RESET"
-  printf '         Mon  Tue  Wed  Thu  Fri  Sat  Sun\n'
+  # Determine today's weekday: date +%w gives 0=Sun..6=Sat.
+  # week_order maps column index (0=Mon..6=Sun) to weekday number.
+  # We find which column index corresponds to today.
+  local _dow; _dow=$(date '+%w' 2>/dev/null); _dow="${_dow:-0}"
+  local week_order=(1 2 3 4 5 6 0)
+  local today_col=-1 _ci
+  for _ci in 0 1 2 3 4 5 6; do
+    if (( week_order[_ci] == _dow )); then today_col=$_ci; break; fi
+  done
+
+  # Header: render each weekday name; today's column gets ▶ prefix in accent.
+  # Each normal column is "  Xxx" (2 spaces + 3 chars = 5 cols wide).
+  # Today's column is "▶Xxx" (▶ is 1 char + 3 chars = 4 visible cols) to keep
+  # the same 5-column slot (▶ replaces one space, total stays aligned).
+  local _day_names=("Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun")
+  printf '         '
+  for _ci in 0 1 2 3 4 5 6; do
+    if (( _ci == today_col )); then
+      printf '%s▶%s%s ' "$CLAUDII_CLR_ACCENT" "${_day_names[$_ci]}" "$CLAUDII_CLR_RESET"
+    else
+      printf '  %s  ' "${_day_names[$_ci]}"
+    fi
+  done
+  printf '\n'
 
   local bins=("00-03" "03-06" "06-09" "09-12" "12-15" "15-18" "18-21" "21-00")
   local b wd bin_start bin_end is_past_bedtime
-  local week_order=(1 2 3 4 5 6 0)
   for b in 0 1 2 3 4 5 6 7; do
     bin_start=$(( b * 3 ))
     bin_end=$(( bin_start + 3 ))
@@ -138,10 +160,17 @@ _vibemap_render_grid() {
     else
       printf '%s%s%s   ' "$CLAUDII_CLR_DIM" "${bins[$b]}" "$CLAUDII_CLR_RESET"
     fi
-    for wd in "${week_order[@]}"; do
-      local _ck="_c_${wd}_${b}" c="${!_ck:-0}"
+    for _ci in 0 1 2 3 4 5 6; do
+      wd="${week_order[$_ci]}"
+      local _ck="_c_${wd}_${b}"
+      local c="${!_ck:-0}"
       local ch; ch=$(_vibemap_density_char "$c" "$max")
-      if (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
+      if (( _ci == today_col )); then
+        # Today's column: render density char in accent (pink), regardless of
+        # bedtime coloring — accent signals "today", bedtime context is already
+        # conveyed by the row label color.
+        printf '%s%s%s    ' "$CLAUDII_CLR_ACCENT" "$ch" "$CLAUDII_CLR_RESET"
+      elif (( is_past_bedtime )) && [[ "$ch" != " " ]]; then
         printf '%s%s%s    ' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
       else
         printf '%s    ' "$ch"
@@ -149,7 +178,9 @@ _vibemap_render_grid() {
     done
     printf '\n'
   done
-  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s) %s\n' "$CLAUDII_CLR_DIM" "$max" "$CLAUDII_CLR_RESET"
+  local _today_marker="${CLAUDII_CLR_ACCENT}▶${CLAUDII_CLR_DIM}"
+  printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s, %s = today) %s\n' \
+    "$CLAUDII_CLR_DIM" "$max" "$_today_marker" "$CLAUDII_CLR_RESET"
 }
 
 # Strip view — last N days × 24 hours. Each row = one calendar day.
@@ -284,6 +315,9 @@ _vibemap_mini_strip() {
 
   # Build the 14-char strip: for each day d (13 = oldest, 0 = today), pick
   # the maximum density char seen across all 24 hours of that day.
+  # Today (d=0, rightmost) is rendered in accent (pink) — mirroring the ▶
+  # today-row idiom from the strip view. The 14-char logical length is
+  # preserved; ANSI escapes are invisible to terminal width counting.
   local strip=""
   local d h best_count best_ch c
   for (( d = minidays - 1; d >= 0; d-- )); do
@@ -293,7 +327,12 @@ _vibemap_mini_strip() {
       (( c > best_count )) && best_count=$c
     done
     best_ch=$(_vibemap_density_char "$best_count" "$max")
-    strip+="$best_ch"
+    if (( d == 0 )); then
+      # Today: wrap density char in accent color so it stands out visually.
+      strip+="${CLAUDII_CLR_ACCENT}${best_ch}${CLAUDII_CLR_RESET}"
+    else
+      strip+="$best_ch"
+    fi
   done
 
   printf '%s\n' "$strip"

@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **`claudii vibemap` (grid view): today's weekday column now highlighted in accent pink.** The column header gains a `▶` prefix; every cell in that column is rendered in `CLAUDII_CLR_ACCENT` (pink) instead of plain white, making the current weekday visually obvious at a glance. The legend updates to `▶ = today`. Column alignment preserved — `▶` replaces one space, so the slot stays 5 columns wide.
+- **`claudii` overview Activity strip: today's density char rendered in accent pink.** The rightmost character of the 14-day mini-strip (= today) is now wrapped in `CLAUDII_CLR_ACCENT`, matching the today-marker idiom from `claudii vibemap strip`. Logical 14-char length unchanged — ANSI escapes are invisible to terminal width.
+
 ---
 
 ## [v0.18.5] — 2026-05-20
