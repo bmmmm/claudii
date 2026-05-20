@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **`claudii agents` now renders a `DESCRIPTION` column** (dim) alongside `ALIAS`/`SKILL`/`MODEL`/`EFFORT`, sourced from `agents.<alias>.description` in the config. TSV / `--json` outputs gained the same field. Terminal-soft-wraps long descriptions — no truncation, since this is meant to be a quick lookup of *why* an alias exists, not just *that* it exists.
+
 ### Fixed
 - **RPROMPT freezing for the rest of a shell session after a mid-render interrupt.** `_claudii_statusline` set `_CLAUDII_PRECMD_RUNNING=1` before calling `_claudii_statusline_render` and only reset it on the normal exit path — if the render was cut short by a signal (Ctrl-C, `zle reset-prompt` from TRAPWINCH), the guard stayed `1` and every subsequent precmd returned early. The status models, age counter, and incident glyph stuck at whatever value happened to be displayed at interrupt-time. New shells were unaffected because they reinitialised the flag. Fix: guard now stores the start epoch instead of `1`, treats a flag older than 5s as stuck (auto-recovers without manual unset), and the cleanup runs in a zsh `{ … } always { … }` block so non-normal exits still clear it.
 

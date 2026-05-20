@@ -183,28 +183,30 @@ _cmd_agents() {
 
   if _plain; then
     # TSV / piped output
-    printf "alias\tskill\tmodel\teffort\n"
-    echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv'
+    printf "alias\tskill\tmodel\teffort\tdescription\n"
+    echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // ""), (.value.description // "")] | @tsv'
   else
-    # Pretty table: single jq TSV call, then compute widths + render in shell
+    # Pretty table: single jq TSV call, then compute widths + render in shell.
+    # Description is the last column — left untruncated; terminal soft-wraps it.
     local _ag_rows=()
-    while IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort; do
-      _ag_rows+=("${_ag_alias}	${_ag_skill}	${_ag_model}	${_ag_effort}")
-    done < <(echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // "")] | @tsv')
+    while IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort _ag_desc; do
+      _ag_rows+=("${_ag_alias}	${_ag_skill}	${_ag_model}	${_ag_effort}	${_ag_desc}")
+    done < <(echo "$agents_json" | jq -r 'to_entries[] | [.key, (.value.skill // ""), (.value.model // ""), (.value.effort // ""), (.value.description // "")] | @tsv')
 
-    max_alias=5; max_skill=5; max_model=5
+    max_alias=5; max_skill=5; max_model=5; max_effort=6
     for _row in "${_ag_rows[@]}"; do
-      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort <<< "$_row"
+      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort _ag_desc <<< "$_row"
       [[ ${#_ag_alias} -gt $max_alias ]] && max_alias=${#_ag_alias}
       [[ ${#_ag_skill} -gt $max_skill ]] && max_skill=${#_ag_skill}
       [[ ${#_ag_model} -gt $max_model ]] && max_model=${#_ag_model}
+      [[ ${#_ag_effort} -gt $max_effort ]] && max_effort=${#_ag_effort}
     done
 
     printf '\n'
-    printf "  ${CLAUDII_CLR_ACCENT}%-${max_alias}s  %-${max_skill}s  %-${max_model}s  EFFORT${CLAUDII_CLR_RESET}\n" "ALIAS" "SKILL" "MODEL"
+    printf "  ${CLAUDII_CLR_ACCENT}%-${max_alias}s  %-${max_skill}s  %-${max_model}s  %-${max_effort}s  DESCRIPTION${CLAUDII_CLR_RESET}\n" "ALIAS" "SKILL" "MODEL" "EFFORT"
     for _row in "${_ag_rows[@]}"; do
-      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort <<< "$_row"
-      printf "  %-${max_alias}s  %-${max_skill}s  %-${max_model}s  %s\n" "$_ag_alias" "$_ag_skill" "$_ag_model" "$_ag_effort"
+      IFS=$'\t' read -r _ag_alias _ag_skill _ag_model _ag_effort _ag_desc <<< "$_row"
+      printf "  %-${max_alias}s  %-${max_skill}s  %-${max_model}s  %-${max_effort}s  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_ag_alias" "$_ag_skill" "$_ag_model" "$_ag_effort" "$_ag_desc"
     done
     printf '\n'
     printf 'Type the alias to launch. Example: %s\n\n' "${_ag_rows[0]%%	*}"

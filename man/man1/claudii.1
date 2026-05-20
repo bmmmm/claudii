@@ -377,7 +377,9 @@ in
 .IR config.json .
 .TP
 .B agents
-List configured agents (alias \(-> skill mapping) or show onboarding instructions.
+List configured agents as a table with columns
+.IR ALIAS ", " SKILL ", " MODEL ", " EFFORT ", " DESCRIPTION .
+With no agents configured, shows onboarding instructions instead.
 Supports
 .BR \-\-json .
 Configure via:
@@ -386,6 +388,7 @@ Configure via:
 claudii config set agents.clorch.skill orchestrate
 claudii config set agents.clorch.model opus
 claudii config set agents.clorch.effort high
+claudii config set agents.clorch.description "Orchestrator"
 .fi
 .RE
 .
