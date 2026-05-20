@@ -28,17 +28,24 @@ function TRAPWINCH {
 }
 
 function _claudii_statusline {
-  # Reentrancy guard — skip if already running
-  [[ -n "${_CLAUDII_PRECMD_RUNNING:-}" ]] && return
-  typeset -g _CLAUDII_PRECMD_RUNNING=1
-  local _t=$EPOCHREALTIME
-  _claudii_statusline_render
-  local _el=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
-  _CLAUDII_METRICS[precmd.last_us]=$_el
-  _CLAUDII_METRICS[precmd.calls]=$(( ${_CLAUDII_METRICS[precmd.calls]:-0} + 1 ))
-  _CLAUDII_METRICS[precmd.total_us]=$(( ${_CLAUDII_METRICS[precmd.total_us]:-0} + _el ))
-  _claudii_log debug "precmd: $(_claudii_fmt_us $_el)"
-  typeset -g _CLAUDII_PRECMD_RUNNING=
+  # Reentrancy guard — flag holds the start epoch; treat as stuck after 5s
+  # so a Ctrl-C / signal interrupt mid-render can't freeze RPROMPT for the
+  # rest of the session.
+  if [[ "${_CLAUDII_PRECMD_RUNNING:-}" == <-> ]]; then
+    (( ${EPOCHSECONDS:-0} - _CLAUDII_PRECMD_RUNNING < 5 )) && return
+  fi
+  typeset -g _CLAUDII_PRECMD_RUNNING=${EPOCHSECONDS:-1}
+  {
+    local _t=$EPOCHREALTIME
+    _claudii_statusline_render
+    local _el=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
+    _CLAUDII_METRICS[precmd.last_us]=$_el
+    _CLAUDII_METRICS[precmd.calls]=$(( ${_CLAUDII_METRICS[precmd.calls]:-0} + 1 ))
+    _CLAUDII_METRICS[precmd.total_us]=$(( ${_CLAUDII_METRICS[precmd.total_us]:-0} + _el ))
+    _claudii_log debug "precmd: $(_claudii_fmt_us $_el)"
+  } always {
+    typeset -g _CLAUDII_PRECMD_RUNNING=
+  }
 }
 
 # Spawn claudii-status in background, but only if no previous fetch is still running.

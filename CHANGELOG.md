@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **RPROMPT freezing for the rest of a shell session after a mid-render interrupt.** `_claudii_statusline` set `_CLAUDII_PRECMD_RUNNING=1` before calling `_claudii_statusline_render` and only reset it on the normal exit path — if the render was cut short by a signal (Ctrl-C, `zle reset-prompt` from TRAPWINCH), the guard stayed `1` and every subsequent precmd returned early. The status models, age counter, and incident glyph stuck at whatever value happened to be displayed at interrupt-time. New shells were unaffected because they reinitialised the flag. Fix: guard now stores the start epoch instead of `1`, treats a flag older than 5s as stuck (auto-recovers without manual unset), and the cleanup runs in a zsh `{ … } always { … }` block so non-normal exits still clear it.
+
 ### Added
 - **`vibemap.overview` config flag (default `true`) to hide the Activity strip in the bare `claudii` overview.** Set `claudii config set vibemap.overview false` to suppress the section entirely — when off, the mini-strip aggregation is also skipped so the overview no longer pays the ~20–60ms cost. Toggling does not affect data collection (controlled by `vibemap.enabled`) or the `claudii vibemap` / `vibemap strip` views.
 - **`opm` agent (`opus`/`medium`)** in `config/defaults.json` for multi-file refactors with cross-file reasoning and ecosystem analysis — the slot between `opl` (review/arch) and `op` (foundation/cross-cutting) where Opus 4.7's reasoning earns its keep without going to high effort.

@@ -568,8 +568,8 @@ reent_out=$(
   CLAUDII_CACHE_DIR="$REENT_TMP" XDG_CONFIG_HOME="$REENT_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
-    # Simulate reentrancy: set the guard as if a call is already in progress
-    _CLAUDII_PRECMD_RUNNING=1
+    # Simulate reentrancy: guard holds a fresh timestamp (< 5s old)
+    _CLAUDII_PRECMD_RUNNING=\$EPOCHSECONDS
     # Call must return immediately without updating RPROMPT
     RPROMPT='ORIGINAL'
     _claudii_statusline
@@ -577,6 +577,19 @@ reent_out=$(
   " 2>/dev/null
 )
 assert_eq "reentrancy guard: second call skipped, RPROMPT unchanged" "ORIGINAL" "$reent_out"
+
+# Stale guard (older than 5s) is treated as stuck → render proceeds, RPROMPT updates
+reent_stuck=$(
+  CLAUDII_CACHE_DIR="$REENT_TMP" XDG_CONFIG_HOME="$REENT_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_PRECMD_RUNNING=\$(( EPOCHSECONDS - 60 ))
+    RPROMPT='ORIGINAL'
+    _claudii_statusline
+    [[ \"\$RPROMPT\" == 'ORIGINAL' ]] && printf 'STUCK' || printf 'RECOVERED'
+  " 2>/dev/null
+)
+assert_eq "reentrancy guard: stale guard auto-recovers" "RECOVERED" "$reent_stuck"
 
 # Guard clears after normal call completes
 reent_clear=$(
