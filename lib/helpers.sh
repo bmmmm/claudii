@@ -294,7 +294,7 @@ _parse_session_cache() {
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
   _PSC_rate_5h_start= _PSC_project_path=
-  _PSC_pinned= _PSC_kind= _PSC_pace=
+  _PSC_pinned= _PSC_kind= _PSC_pace= _PSC_cron=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
@@ -314,6 +314,7 @@ _parse_session_cache() {
       project_path)   _PSC_project_path="$_v" ;;
       pinned)         _PSC_pinned="$_v" ;;
       pace)           _PSC_pace="$_v" ;;
+      next_cron_at)   _PSC_cron="$_v" ;;
     esac
   done < "$1"
   if stat -f %m "$1" >/dev/null 2>&1; then

@@ -573,6 +573,7 @@ duration	1h 23m	Wall-clock session duration (dim)
 api-duration	api:45m	Time waiting for Claude API responses (dim)
 burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim; requires >= 3 min session)
 pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs linear: \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
+cron	\[u23F0] 42m	Time until next scheduled cron run (from Stop-hook session_crons). Opt-in only.
 delta-5h	\[u03B4]5h:+12%	5h rate change since session start
 delta-7d	\[u03B4]7d:+3%	7d rate change since session start
 cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
@@ -631,6 +632,51 @@ from
 .B statusline.bedtime
 (default
 .IR 23:00 ).
+.PP
+.B cron / Stop-hook integration:
+.B claudii-stop-hook
+reads the Stop-hook JSON that Claude Code fires after every session turn and
+extracts
+.B session_crons
+(array of scheduled tasks with a
+.B next_run_at
+timestamp) and
+.B background_tasks
+(sibling array).
+The earliest
+.B next_run_at
+is persisted as
+.B next_cron_at=<epoch>
+in the per-session cache.
+To enable, add
+.B claudii-stop-hook
+to the
+.B hooks.Stop
+array in
+.IR ~/.claude/settings.json :
+.PP
+.RS
+.EX
+"hooks": {
+  "Stop": [{ "type": "command", "command": "claudii-stop-hook" }]
+}
+.EE
+.RE
+.PP
+The
+.B cron
+segment then renders
+.B \[u23F0] <relative>
+(e.g.\&
+.BR "\[u23F0] 42m" )
+when the epoch is in the future.
+Not in the default layout \(em add
+.B cron
+to
+.B statusline.lines
+to opt in.
+.B claudii se
+also shows the glyph inline per session row when cached.
 .
 .SH CONFIGURATION
 User config:

@@ -767,7 +767,7 @@ _cmd_sessions() {
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
-             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace
+             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
@@ -803,6 +803,7 @@ _cmd_sessions() {
     _sf_is_active[$_sf_count]="$_PSC_is_active"
     _sf_kind[$_sf_count]="$_PSC_kind"
     _sf_pace[$_sf_count]="$_PSC_pace"
+    _sf_cron[$_sf_count]="$_PSC_cron"
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
@@ -1023,6 +1024,24 @@ _cmd_sessions() {
         on_pace) detail+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_PACE_ON}${CLAUDII_CLR_RESET}"     ;;
         behind)  detail+=" ${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_PACE_BEHIND}${CLAUDII_CLR_RESET}" ;;
       esac
+    fi
+    # Cron glyph — shown when next_cron_at is in the future (written by claudii-stop-hook)
+    if [[ "${_sf_cron[$_i]:-}" =~ ^[0-9]+$ && "${_sf_cron[$_i]}" != "0" ]]; then
+      _cron_rem=$(( ${_sf_cron[$_i]} - now ))
+      if (( _cron_rem > 0 )); then
+        _cron_sec=$(( _cron_rem ))
+        if   (( _cron_sec < 3600 ));  then printf -v _cron_rel '%dm'     $(( _cron_sec / 60 ))
+        elif (( _cron_sec < 86400 )); then
+          _ch=$(( _cron_sec / 3600 )); _cm=$(( (_cron_sec % 3600) / 60 ))
+          if (( _cm > 0 )); then printf -v _cron_rel '%dh%dm' "$_ch" "$_cm"
+          else printf -v _cron_rel '%dh' "$_ch"; fi
+        else
+          _cd=$(( _cron_sec / 86400 )); _ch=$(( (_cron_sec % 86400) / 3600 ))
+          if (( _ch > 0 )); then printf -v _cron_rel '%dd%dh' "$_cd" "$_ch"
+          else printf -v _cron_rel '%dd' "$_cd"; fi
+        fi
+        detail+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON}${_cron_rel}${CLAUDII_CLR_RESET}"
+      fi
     fi
     detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$detail"

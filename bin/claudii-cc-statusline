@@ -161,11 +161,16 @@ if _isset "$duration_ms"; then
   fi
 fi
 
-# Per-session cache (atomic write). Preserves pinned= flag.
+# Per-session cache (atomic write). Preserves pinned= flag and Stop-hook keys
+# (next_cron_at=, bg_tasks=) set by claudii-stop-hook so a statusLine update
+# does not erase them. Keys are read from the existing cache via _cache_get
+# and included in the new file write.
 _ppid="${PPID:-}"
+_cached_pinned=$(_cache_get pinned "")
+_cached_next_cron_at=$(_cache_get next_cron_at "")
+_cached_bg_tasks=$(_cache_get bg_tasks "")
 _tmp_session="${_session_file}.tmp.$$"
-{ [[ -f "$_session_file" ]] && grep '^pinned=' "$_session_file" 2>/dev/null || true
-  printf '%s\n' \
+{ printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
   "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
   "reset_5h=$reset_5h" "reset_7d=$reset_7d" \
@@ -180,8 +185,12 @@ _tmp_session="${_session_file}.tmp.$$"
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
   "last_duration_ms=$duration_ms" \
-  "project_path=$cwd" \
-  > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file"; } 2>/dev/null || true
+  "project_path=$cwd"
+  [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
+  [[ -n "$_cached_next_cron_at" ]]  && printf 'next_cron_at=%s\n'  "$_cached_next_cron_at"
+  [[ -n "$_cached_bg_tasks" ]]      && printf 'bg_tasks=%s\n'      "$_cached_bg_tasks"
+  true
+  } > "$_tmp_session" 2>/dev/null && mv -f "$_tmp_session" "$_session_file" 2>/dev/null || true
 
 # Flight Recorder — append one TSV row, monthly rotation.
 read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
@@ -377,6 +386,30 @@ case "${_pace_state:-}" in
   on_pace) _seg_pace="${DIM}=${RST}"   ;;
   behind)  _seg_pace="${YELLOW}↓${RST}" ;;
 esac
+
+# Cron segment — reads next_cron_at from per-session cache (written by claudii-stop-hook).
+# Renders ⏰ <relative> when the epoch is in the future; omitted when absent or past.
+# Note: _cron_secs is in seconds (not ms), so we format directly instead of calling _dur.
+# _cached_next_cron_at was already read above for the cache-write preserve step.
+_seg_cron=""
+if [[ "$_cached_next_cron_at" =~ ^[0-9]+$ && "$_cached_next_cron_at" != "0" ]]; then
+  _cron_secs=$(( _cached_next_cron_at - _now ))
+  if (( _cron_secs > 0 )); then
+    _cron_rel=""
+    if   (( _cron_secs < 60 ));    then _cron_rel="<1m"
+    elif (( _cron_secs < 3600 ));  then printf -v _cron_rel '%dm'     $(( _cron_secs / 60 ))
+    elif (( _cron_secs < 86400 )); then
+      _cch=$(( _cron_secs / 3600 )); _ccm=$(( (_cron_secs % 3600) / 60 ))
+      if (( _ccm > 0 )); then printf -v _cron_rel '%dh%dm' "$_cch" "$_ccm"
+      else printf -v _cron_rel '%dh' "$_cch"; fi
+    else
+      _ccd=$(( _cron_secs / 86400 )); _cch=$(( (_cron_secs % 86400) / 3600 ))
+      if (( _cch > 0 )); then printf -v _cron_rel '%dd%dh' "$_ccd" "$_cch"
+      else printf -v _cron_rel '%dd' "$_ccd"; fi
+    fi
+    [[ -n "$_cron_rel" ]] && _seg_cron="${DIM}⏰ ${_cron_rel}${RST}"
+  fi
+fi
 
 # Clock — delegated to cc-insomnii(1) when present and not double-wrapped.
 _seg_clock=""
@@ -590,6 +623,7 @@ while IFS= read -r _line_segs; do
       duration)      _val="$_seg_dur"      ;;
       burn-eta)      _val="$_seg_eta"      ;;
       pace)          _val="$_seg_pace"     ;;
+      cron)          _val="$_seg_cron"     ;;
       worktree)      _val="$_seg_worktree" ;;
       agent)         _val="$_seg_agent"    ;;
       session-name)  _val="$_seg_session_name" ;;

@@ -499,3 +499,52 @@ echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_win
   | CLAUDII_CACHE_DIR="$_pace_cache_dir" bash "$SL" 2>/dev/null >/dev/null
 _cache_pace="$(cat "$_pace_cache_dir/session-testpace" 2>/dev/null)"
 assert_contains "pace=ahead written to session cache" "pace=ahead" "$_cache_pace"
+
+# ── Cron segment tests ────────────────────────────────────────────────────────
+# cron segment: renders ⏰ <relative> when next_cron_at is in the future
+# session_id "slcrontest1" → first 8 chars = "slcrontest"[:8] = "slcrontest"
+# Actually "slcrontest1"[0:8] = "slcronte" — cache file = session-slcronte
+_cron_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_cron_cfg_dir")
+mkdir -p "$_cron_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["cron"]]}}\n' > "$_cron_cfg_dir/claudii/config.json"
+_cron_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_cache_dir")
+# Pre-seed session cache with a future next_cron_at (1 hour from now)
+# session_id "slcr1111" → 8 chars = "slcr1111" → cache file = session-slcr1111
+_cron_future=$(( $(date +%s) + 3600 ))
+printf 'model=Sonnet\nnext_cron_at=%s\n' "$_cron_future" > "$_cron_cache_dir/session-slcr1111"
+output=$(echo '{"session_id":"slcr1111xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_cron_cache_dir" XDG_CONFIG_HOME="$_cron_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "cron segment: ⏰ shown when next_cron_at in future" "⏰" "$strip"
+assert_contains "cron segment: time unit shown (h)" "h" "$strip"
+
+# cron segment: omitted when next_cron_at is in the past
+# session_id "slcr2222xxxx" → 8 chars = "slcr2222" → cache file = session-slcr2222
+_cron_cache_dir2="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_cache_dir2")
+_cron_past=$(( $(date +%s) - 300 ))
+printf 'model=Sonnet\nnext_cron_at=%s\n' "$_cron_past" > "$_cron_cache_dir2/session-slcr2222"
+output=$(echo '{"session_id":"slcr2222xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_cron_cache_dir2" XDG_CONFIG_HOME="$_cron_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cron segment: omitted when next_cron_at in past" "0" "$(echo "$strip" | grep -c '⏰' || true)"
+
+# cron segment: omitted when next_cron_at missing from cache
+# session_id "slcr3333xxxx" → 8 chars = "slcr3333" → cache file = session-slcr3333
+_cron_cache_dir3="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_cache_dir3")
+printf 'model=Sonnet\n' > "$_cron_cache_dir3/session-slcr3333"
+output=$(echo '{"session_id":"slcr3333xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_cron_cache_dir3" XDG_CONFIG_HOME="$_cron_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cron segment: omitted when next_cron_at missing" "0" "$(echo "$strip" | grep -c '⏰' || true)"
+
+# cron segment: cc-statusline preserves next_cron_at from stop-hook on cache rewrite
+# session_id "slcr4444xxxx" → 8 chars = "slcr4444" → cache file = session-slcr4444
+_cron_preserve_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_preserve_cache")
+_cron_future_p=$(( $(date +%s) + 7200 ))
+printf 'model=Sonnet\nnext_cron_at=%s\nbg_tasks=1\n' "$_cron_future_p" \
+  > "$_cron_preserve_cache/session-slcr4444"
+echo '{"session_id":"slcr4444xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' \
+  | CLAUDII_CACHE_DIR="$_cron_preserve_cache" bash "$SL" 2>/dev/null >/dev/null
+_preserved="$(cat "$_cron_preserve_cache/session-slcr4444" 2>/dev/null)"
+assert_contains "cron: cc-statusline preserves next_cron_at on rewrite" "next_cron_at=${_cron_future_p}" "$_preserved"
+assert_contains "cron: cc-statusline preserves bg_tasks on rewrite" "bg_tasks=1" "$_preserved"

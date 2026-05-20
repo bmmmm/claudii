@@ -1,0 +1,75 @@
+#!/bin/bash
+# claudii-stop-hook — Stop/SubagentStop hook handler.
+# Reads Stop-hook JSON from stdin, extracts session_crons and background_tasks,
+# writes next_cron_at=<epoch> and bg_tasks=<count> into the per-session cache.
+# Wire into ~/.claude/settings.json:
+#   "hooks": { "Stop": [{ "type": "command", "command": "claudii-stop-hook" }] }
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=lib/log.sh
+source "$CLAUDII_HOME/lib/log.sh"
+
+command -v jq >/dev/null 2>&1 || { printf 'claudii-stop-hook: jq not found — install jq\n' >&2; exit 1; }
+
+read -r json
+
+_cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+[[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
+umask 077
+
+# Extract session_id (first 8 chars used as cache key, same as cc-statusline)
+_session_id=$(jq -r '.session_id // ""' <<< "$json" 2>/dev/null)
+[[ -z "$_session_id" ]] && exit 0
+_sid="${_session_id:0:8}"
+[[ -z "$_sid" ]] && exit 0
+
+_session_file="$_cache_dir/session-${_sid}"
+
+# Extract session_crons — pick the earliest next_run_at epoch.
+# Accepts both epoch integers and RFC3339 strings (e.g. "2026-05-20T15:30:00Z").
+# Converts RFC3339 to epoch via `date` (GNU/BSD portable).
+_next_cron_at=""
+_raw_crons=$(jq -r '
+  .session_crons // [] |
+  if length == 0 then empty
+  else
+    map(.next_run_at // empty | tostring) |
+    min
+  end
+' <<< "$json" 2>/dev/null)
+
+if [[ -n "$_raw_crons" && "$_raw_crons" != "null" ]]; then
+  if [[ "$_raw_crons" =~ ^[0-9]+$ ]]; then
+    # Already epoch
+    _next_cron_at="$_raw_crons"
+  else
+    # Try RFC3339 → epoch conversion (portable macOS / GNU date)
+    if date -j -f '%Y-%m-%dT%H:%M:%SZ' "$_raw_crons" '+%s' >/dev/null 2>&1; then
+      _next_cron_at=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$_raw_crons" '+%s' 2>/dev/null)
+    elif date -j -f '%Y-%m-%dT%H:%M:%S%z' "${_raw_crons%Z}+0000" '+%s' >/dev/null 2>&1; then
+      _next_cron_at=$(date -j -f '%Y-%m-%dT%H:%M:%S%z' "${_raw_crons%Z}+0000" '+%s' 2>/dev/null)
+    elif date -d "$_raw_crons" '+%s' >/dev/null 2>&1; then
+      _next_cron_at=$(date -d "$_raw_crons" '+%s' 2>/dev/null)
+    fi
+  fi
+fi
+
+# Extract background_tasks count
+_bg_tasks=$(jq '.background_tasks // [] | length' <<< "$json" 2>/dev/null)
+[[ -z "$_bg_tasks" || ! "$_bg_tasks" =~ ^[0-9]+$ ]] && _bg_tasks=0
+
+_claudii_log debug "stop-hook: sid=${_sid} next_cron_at=${_next_cron_at:-<empty>} bg_tasks=${_bg_tasks}"
+
+# Read-modify-write: preserve all existing keys, update/add next_cron_at and bg_tasks.
+# Atomic write via mktemp + mv -f.
+_tmp_session="${_session_file}.tmp.$$"
+{
+  if [[ -f "$_session_file" ]]; then
+    # Preserve all lines except the keys we are updating
+    grep -v '^next_cron_at=' "$_session_file" 2>/dev/null | grep -v '^bg_tasks=' || true
+  fi
+  printf 'next_cron_at=%s\n' "${_next_cron_at:-}"
+  printf 'bg_tasks=%s\n'     "${_bg_tasks}"
+} > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file" || rm -f "$_tmp_session"
+
+true

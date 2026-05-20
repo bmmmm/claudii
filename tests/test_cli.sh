@@ -199,6 +199,22 @@ assert_contains "sessions pace: ↑ glyph appears when pace=ahead in cache" "↑
 rm -rf "$_pace_sess_tmp"
 unset _pace_sess_tmp _pace_sess_xdg _pace_sess_out _pace_sess_strip
 
+# sessions cron glyph: ⏰ appears when next_cron_at is in the future
+_cron_sess_tmp="$(mktemp -d)"
+_cron_sess_xdg="$_cron_sess_tmp/xdg"
+mkdir -p "$_cron_sess_xdg/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_cron_sess_xdg/claudii/config.json"
+_cron_sess_future=$(( $(date +%s) + 1800 ))
+printf 'model=Sonnet 4.6\nctx_pct=50\ncost=0.50\nrate_5h=40\nrate_7d=60\nreset_5h=\nreset_7d=\nsession_id=cronsetest\nworktree=\nagent=\nbg_tasks=0\npace=ahead\nnext_cron_at=%s\nppid=%s\n' \
+  "$_cron_sess_future" "$$" > "$_cron_sess_tmp/session-cronso"
+_cron_sess_out=$(CLAUDII_CACHE_DIR="$_cron_sess_tmp" XDG_CONFIG_HOME="$_cron_sess_xdg" bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
+_cron_sess_strip=$(printf '%s' "$_cron_sess_out" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "sessions cron: ⏰ glyph appears when next_cron_at in future" "⏰" "$_cron_sess_strip"
+# pace ↑ and cron ⏰ both visible together
+assert_contains "sessions pace+cron: ↑ still present with cron" "↑" "$_cron_sess_strip"
+rm -rf "$_cron_sess_tmp"
+unset _cron_sess_tmp _cron_sess_xdg _cron_sess_out _cron_sess_strip _cron_sess_future
+
 # cost — ANSI guard + content check
 _cost_tmp2="$(mktemp -d)"
 cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
