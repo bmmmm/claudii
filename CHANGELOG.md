@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.18.5] — 2026-05-20
+
 ### Added
 - **`● Activity` segment in the bare `claudii` overview.** A 14-character strip showing prompt-activity density per day for the last two weeks (rightmost = today), rendered with the same `░ ▒ ▓ █` glyphs as `claudii vibemap`. Appears only when `vibemap.enabled=true` and at least one row exists; otherwise the dim placeholder line `○ Activity   claudii config set vibemap.enabled true` shows up so the feature is discoverable. Sits between Services and Sessions in the overview.
 
