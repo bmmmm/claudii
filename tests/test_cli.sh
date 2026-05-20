@@ -387,16 +387,24 @@ _sonnet_alltime=$(echo "$_cost_hist_tsv" | awk -F'\t' '$1=="alltime" && $2=="Son
 assert_eq "cost (history): Sonnet alltime = 8.50" "8.5000" "$_sonnet_alltime"
 
 # Same-day running_spend: two entries for sid-today-sonnet (10.00 → 12.40) → delta=12.40 (no prev day)
-printf '%s\tclaude-sonnet-4-5\t10.00\t45\t25\tsid-today-sonnet\n' "$(( _cost_now - 100 ))" \
+# Pin both timestamps to today's local noon — `_cost_now - 100` would slide
+# into yesterday when CI runs in the first 1m40s after UTC midnight (epoch_to_date
+# inside the aggregator uses TZ-offset of the running host = +0000 on Ubuntu CI).
+if date -j -f '%Y-%m-%d %H:%M' "$_cost_today 12:00" '+%s' >/dev/null 2>&1; then
+  _cost_today_noon=$(date -j -f '%Y-%m-%d %H:%M' "$_cost_today 12:00" '+%s')
+else
+  _cost_today_noon=$(date -d "$_cost_today 12:00" '+%s')
+fi
+printf '%s\tclaude-sonnet-4-5\t10.00\t45\t25\tsid-today-sonnet\n' "$_cost_today_noon" \
   > "$_COST_HIST_TMP/history.tsv"
-printf '%s\tclaude-sonnet-4-5\t12.40\t50\t30\tsid-today-sonnet\n' "$_cost_now" \
+printf '%s\tclaude-sonnet-4-5\t12.40\t50\t30\tsid-today-sonnet\n' "$(( _cost_today_noon + 60 ))" \
   >> "$_COST_HIST_TMP/history.tsv"
 _cost_dedup_tsv=$(CLAUDII_CACHE_DIR="$_COST_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 _sonnet_dedup=$(echo "$_cost_dedup_tsv" | awk -F'\t' '$1=="today" && $2=="Sonnet" {print $3}')
 assert_eq "cost (history): same-day running_spend 12.40 (10.00→12.40)" "12.4000" "$_sonnet_dedup"
 
 rm -rf "$_COST_HIST_TMP"
-unset _COST_HIST_TMP _cost_now _cost_today _cost_yest_ts
+unset _COST_HIST_TMP _cost_now _cost_today _cost_yest_ts _cost_today_noon
 unset _cost_hist_tsv _cost_dedup_tsv _sonnet_today _opus_today _sonnet_alltime _sonnet_dedup
 
 # ── cost (history): falls back gracefully when no history.tsv ────────────────
