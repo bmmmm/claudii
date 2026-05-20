@@ -139,4 +139,97 @@ _out=$(_vm_run strip --days 999 2>&1; echo "rc=$?")
 echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
 assert_eq "vibemap strip: --days bounds-checked (1..90)" "1" "$_ok"
 
-rm -rf "$_vm_home"
+# ── mini-vibemap overview segment ─────────────────────────────────────────────
+
+# Setup: fresh home with vibemap enabled + some data
+_vm_home2=$(mktemp -d)
+_vm_path2="$_vm_home2/.cache/claudii/vibemap.tsv"
+mkdir -p "${_vm_path2%/*}"
+mkdir -p "$_vm_home2/.config/claudii"
+
+# Write a small data file (a few recent entries)
+_now2=$(date +%s)
+printf '%s\t1\t9\t0\tSonnet\taaaaaaaa\t1000\n' "$_now2" >> "$_vm_path2"
+printf '%s\t2\t14\t30\tOpus\tbbbbbbbb\t2000\n' "$(( _now2 - 86400 ))" >> "$_vm_path2"
+
+# Config: vibemap enabled
+cat > "$_vm_home2/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": true, "path": "$_vm_path2" } }
+EOF
+
+# Mini-strip renders when vibemap.enabled=true + data exists
+_ov_out=$(HOME="$_vm_home2" XDG_CACHE_HOME="$_vm_home2/.cache" \
+  XDG_CONFIG_HOME="$_vm_home2/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" 2>&1)
+echo "$_ov_out" | grep -q "Activity" && _ok=1 || _ok=0
+assert_eq "overview: Activity section present when vibemap enabled+data" "1" "$_ok"
+
+# The strip line should contain at least one non-space density char
+# (we wrote 2 entries, so at least one day has a char)
+_act_line=$(echo "$_ov_out" | grep -A2 "Activity" | tail -n 1 | tr -d ' \t')
+[[ -n "$_act_line" ]] && _ok=1 || _ok=0
+assert_eq "overview: Activity strip line is non-empty" "1" "$_ok"
+
+# Config: vibemap disabled → placeholder line
+cat > "$_vm_home2/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": false, "path": "$_vm_path2" } }
+EOF
+
+_ov_out2=$(HOME="$_vm_home2" XDG_CACHE_HOME="$_vm_home2/.cache" \
+  XDG_CONFIG_HOME="$_vm_home2/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" 2>&1)
+# Should still show Activity section, but as dim placeholder
+echo "$_ov_out2" | grep -q "Activity" && _ok=1 || _ok=0
+assert_eq "overview: Activity placeholder present when vibemap disabled" "1" "$_ok"
+# Placeholder references enabling command
+echo "$_ov_out2" | grep -q "vibemap.enabled true" && _ok=1 || _ok=0
+assert_eq "overview: Activity placeholder shows enable command" "1" "$_ok"
+
+rm -rf "$_vm_home2"
+
+# ── strip today-row: ▶ marker + future hours blank ────────────────────────────
+
+_vm_home3=$(mktemp -d)
+_vm_path3="$_vm_home3/.cache/claudii/vibemap.tsv"
+mkdir -p "${_vm_path3%/*}"
+mkdir -p "$_vm_home3/.config/claudii"
+
+# Populate with entries spread across hours 0-5 of today and a past day
+_now3=$(date +%s)
+printf '%s\t1\t0\t0\tOpus\tcccccccc\t0\n' "$_now3" >> "$_vm_path3"
+printf '%s\t1\t1\t0\tOpus\tcccccccc\t0\n' "$_now3" >> "$_vm_path3"
+printf '%s\t1\t2\t0\tOpus\tcccccccc\t0\n' "$_now3" >> "$_vm_path3"
+printf '%s\t2\t5\t0\tSonnet\tdddddddd\t0\n' "$(( _now3 - 86400 ))" >> "$_vm_path3"
+
+cat > "$_vm_home3/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": true, "path": "$_vm_path3" }, "statusline": { "bedtime": "23:00" } }
+EOF
+
+_strip_out=$(HOME="$_vm_home3" XDG_CACHE_HOME="$_vm_home3/.cache" \
+  XDG_CONFIG_HOME="$_vm_home3/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" vibemap strip 2>&1)
+
+# today-row must contain ▶ marker
+echo "$_strip_out" | grep -q "▶" && _ok=1 || _ok=0
+assert_eq "strip today-row: ▶ marker present" "1" "$_ok"
+
+# today-row must contain the cursor │ character
+echo "$_strip_out" | grep "▶" | grep -q "│" && _ok=1 || _ok=0
+assert_eq "strip today-row: │ cursor present in today row" "1" "$_ok"
+
+# Determine current hour — if it's before 23, hour 23 should be blank in today-row
+_cur_h=$(date '+%H' | sed 's/^0//')
+_cur_h="${_cur_h:-0}"
+if (( _cur_h < 23 )); then
+  # today-row should have trailing spaces (future hours) after the cursor
+  _today_row=$(echo "$_strip_out" | grep "▶")
+  # Strip ANSI escapes to compare raw characters
+  _today_raw=$(printf '%s' "$_today_row" | sed $'s/\033\\[[0-9;]*m//g')
+  # Count trailing spaces after the cursor position — at least one future hour
+  # if we're not in the last hour of the day.
+  _future_spaces=$(printf '%s' "$_today_raw" | grep -o ' *$' | wc -c | tr -d ' ')
+  (( _future_spaces > 0 )) && _ok=1 || _ok=0
+  assert_eq "strip today-row: future hours rendered as blank spaces" "1" "$_ok"
+fi
+
+rm -rf "$_vm_home3"

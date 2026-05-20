@@ -1355,6 +1355,18 @@ _cmd_default() {
     printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} CC-Statusline%-20s claudii cc-statusline on${CLAUDII_CLR_RESET}\n" ""
   fi
 
+  # ── Activity — mini vibemap strip ─────────────────────────────────
+  printf '\n'
+  _ov_vm_strip=""
+  _ov_vm_strip=$(_vibemap_mini_strip 2>/dev/null) && _ov_vm_ok=1 || _ov_vm_ok=0
+  if (( _ov_vm_ok )); then
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET}\n"
+    printf "    %s\n" "$_ov_vm_strip"
+    printf "    ${CLAUDII_CLR_DIM}last 14d · claudii vibemap strip for detail${CLAUDII_CLR_RESET}\n"
+  else
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Activity                        claudii config set vibemap.enabled true${CLAUDII_CLR_RESET}\n"
+  fi
+
   # ── Sessions — summary only; details via `claudii se` ────────────
   printf '\n'
   if (( _ov_any_session )); then

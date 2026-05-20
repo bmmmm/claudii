@@ -153,6 +153,14 @@ _vibemap_render_grid() {
 }
 
 # Strip view — last N days × 24 hours. Each row = one calendar day.
+#
+# Today-row special treatment:
+#   - Label rendered in CLAUDII_CLR_ACCENT (pink) with ▶ marker instead of *.
+#   - Future hours (strictly past current local hour) render as a space.
+#   - Current hour replaced by the cursor character │ in accent color.
+#     Alignment choice: the cursor occupies exactly 1 column (replacing the
+#     density char for the current hour), so the total row width stays 24
+#     columns — matching the header `00 03 06 09 12 15 18 21`.
 _vibemap_render_strip() {
   local days="${1:-14}"
   if [[ ! "$days" =~ ^[0-9]+$ ]] || (( days < 1 || days > 90 )); then
@@ -167,6 +175,8 @@ _vibemap_render_strip() {
   fi
 
   local now; now=$(date +%s)
+  # Current local hour for today-row cursor placement.
+  local cur_hour; cur_hour=$(date '+%H' 2>/dev/null); cur_hour="${cur_hour#0}"; cur_hour="${cur_hour:-0}"
   local data
   data=$(awk -v now="$now" -v maxdays="$days" \
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
@@ -194,28 +204,100 @@ _vibemap_render_strip() {
     "$CLAUDII_CLR_DIM" "$CLAUDII_CLR_RESET" "$days" "$total" "$CLAUDII_CLR_DIM" "$bedtime" "$CLAUDII_CLR_RESET"
   printf '              00 03 06 09 12 15 18 21\n'
 
-  local d label epoch_for_day h c ch row_today_marker
+  local d label epoch_for_day h c ch
   for (( d = days - 1; d >= 0; d-- )); do
     epoch_for_day=$(( now - d * 86400 ))
     label=$(date -r "$epoch_for_day" '+%a %d %b' 2>/dev/null \
          || date -d "@$epoch_for_day" '+%a %d %b' 2>/dev/null \
          || printf '-%dd' "$d")
-    row_today_marker=""
-    if (( d == 0 )); then row_today_marker="${CLAUDII_CLR_DIM}*${CLAUDII_CLR_RESET}"; fi
-    printf '%-12s %s ' "$label" "$row_today_marker"
-    for (( h = 0; h < 24; h++ )); do
-      local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
-      ch=$(_vibemap_density_char "$c" "$max")
-      local diff=$(( (h - bt_h + 24) % 24 ))
-      if (( diff < 6 )) && [[ "$ch" != " " ]]; then
-        printf '%s%s%s' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
-      else
-        printf '%s' "$ch"
-      fi
-    done
+
+    if (( d == 0 )); then
+      # Today-row: accent label + ▶ marker, cursor at current hour.
+      printf '%s%-12s ▶%s ' "$CLAUDII_CLR_ACCENT" "$label" "$CLAUDII_CLR_RESET"
+      for (( h = 0; h < 24; h++ )); do
+        if (( h == cur_hour )); then
+          # Current hour: show accent cursor │ instead of density char.
+          printf '%s│%s' "$CLAUDII_CLR_ACCENT" "$CLAUDII_CLR_RESET"
+        elif (( h > cur_hour )); then
+          # Future hours: blank space — not yet elapsed.
+          printf ' '
+        else
+          # Past hours: normal density char (bedtime coloring applies).
+          local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
+          ch=$(_vibemap_density_char "$c" "$max")
+          local diff=$(( (h - bt_h + 24) % 24 ))
+          if (( diff < 6 )) && [[ "$ch" != " " ]]; then
+            printf '%s%s%s' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
+          else
+            printf '%s' "$ch"
+          fi
+        fi
+      done
+    else
+      # Past days: unchanged rendering.
+      printf '%-12s   ' "$label"
+      for (( h = 0; h < 24; h++ )); do
+        local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
+        ch=$(_vibemap_density_char "$c" "$max")
+        local diff=$(( (h - bt_h + 24) % 24 ))
+        if (( diff < 6 )) && [[ "$ch" != " " ]]; then
+          printf '%s%s%s' "$CLAUDII_CLR_RED" "$ch" "$CLAUDII_CLR_RESET"
+        else
+          printf '%s' "$ch"
+        fi
+      done
+    fi
     printf '\n'
   done
   printf '\n%s ░ ▒ ▓ █  density (normalized to max=%s, red = past bedtime)%s\n' "$CLAUDII_CLR_DIM" "$max" "$CLAUDII_CLR_RESET"
+}
+
+# Mini-vibemap strip for the bare `claudii` overview.
+# Renders a one-line 14-char strip (rightmost = today, leftmost = oldest day).
+# Each position is the maximum density char for that calendar day.
+# Does NOT produce output when vibemap.enabled=false or no data exists —
+# callers check $? or pass the return via _vibemap_overview_segment().
+#
+# Writes directly to stdout; caller wraps with the section header.
+_vibemap_mini_strip() {
+  _vibemap_load_config
+  [[ "$_VIBEMAP_ENABLED" != "true" ]] && return 1
+  [[ ! -f "$_VIBEMAP_PATH" ]] && return 1
+
+  local now; now=$(date +%s)
+  local minidays=14
+  local data
+  data=$(awk -v now="$now" -v maxdays="$minidays" \
+    -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
+
+  local max=0 has_data=0
+  local _c_var
+  while IFS=$'\t' read -r f1 f2 f3; do
+    if [[ "$f1" == "max" ]]; then max="$f2"; continue; fi
+    [[ "$f1" =~ ^[0-9]+$ && "$f2" =~ ^[0-9]+$ ]] || continue
+    _c_var="_c_${f1}_${f2}"
+    printf -v "$_c_var" '%s' "$f3"
+    has_data=1
+  done <<< "$data"
+
+  (( has_data == 0 )) && return 1
+
+  # Build the 14-char strip: for each day d (13 = oldest, 0 = today), pick
+  # the maximum density char seen across all 24 hours of that day.
+  local strip=""
+  local d h best_count best_ch c
+  for (( d = minidays - 1; d >= 0; d-- )); do
+    best_count=0
+    for (( h = 0; h < 24; h++ )); do
+      local _ck="_c_${d}_${h}"; c="${!_ck:-0}"
+      (( c > best_count )) && best_count=$c
+    done
+    best_ch=$(_vibemap_density_char "$best_count" "$max")
+    strip+="$best_ch"
+  done
+
+  printf '%s\n' "$strip"
+  return 0
 }
 
 _vibemap_usage() {
