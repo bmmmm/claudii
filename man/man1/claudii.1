@@ -10,20 +10,34 @@ claudii \- Fast Claude Code aliases with live model status and session insights
 .PP
 When invoked with no arguments,
 .B claudii
-shows a contextual summary instead of the help text.
-The output adapts to the current state:
-an active session (cache file less than 5 minutes old) shows a compact session line
-with model, context bar, cost, and rate limits;
-a stale session shows the last known data;
-a rate-limited state (5h usage \(>= 80%) shows a warning with the reset countdown;
-and if no cache exists at all, a brief welcome message with a hint to run
-.BR "claudii doctor" .
+shows a contextual summary: active session data, a rate-limit warning
+(when 5h usage >= 80%), or a welcome message when no cache exists.
+.
+.SH EXAMPLES
+.TP
+Quick start — enable everything at once:
+.B claudii on
+.TP
+Live health check:
+.B claudii status
+.TP
+Show active sessions with cost and rate limits:
+.B claudii se
+.TP
+Read a config value:
+.B claudii config get aliases.cl.model
+.TP
+Switch CC-Statusline to dense layout:
+.B claudii cc-statusline preset focused
+.TP
+Toggle only ClaudeStatus RPROMPT:
+.B claudii claudestatus off
 .
 .SH DESCRIPTION
 .B claudii
-is a zsh plugin and CLI for Claude Code power users.
-Fast aliases to launch Claude with the right model and effort,
-live model health in your RPROMPT, and session insights inside Claude Code.
+is a zsh plugin and CLI for Claude Code power users:
+fast aliases to launch Claude with the right model and effort,
+live model health in your RPROMPT, and a metrics statusline inside Claude Code sessions.
 .
 .SH INSTALL
 .B Homebrew (recommended):
@@ -52,368 +66,13 @@ bash ~/claudii/install.sh
 .fi
 .RE
 .
-.SH OPTIONS
-.TP
-.B \-\-json
-Output structured JSON instead of formatted text.
-Available for:
-.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version .
-.TP
-.B \-\-tsv
-Output tab-separated values (header row + data rows).
-Available for:
-.BR sessions ", " cost .
-.PP
-When stdout is not a terminal (piped or redirected) and no explicit format flag is given,
-.B claudii
-strips ANSI colors and prints plain text.
-.B version
-prints only the bare version number when piped.
-.
-.SH DISPLAY LAYERS
-.B claudii
-provides three display layers plus a session dashboard, each serving a different scope:
-.TP
-.B ClaudeStatus (RPROMPT)
-Model health indicators rendered in the right-hand prompt of your shell.
-Reads from a local cache file \(em no network calls in
-.IR precmd .
-The cache is refreshed automatically in the background when it exceeds
-.B status.cache_ttl
-seconds.
-Indicators:
-.B \(dg
-= ok (green),
-.B \(ti
-= degraded (yellow),
-.B \(da
-= down (red),
-.B ?
-= API unreachable,
-.B \(lB\(el\(rB
-= loading (no cache),
-.B \(rn
-= refreshing (stale cache).
-Enable with
-.B claudii on
-/ disable with
-.BR "claudii off" .
-.TP
-.B Session Dashboard (above prompt)
-Rendered above the prompt via the precmd hook.
-Shows per-session status lines: model, context %, cost, 5h rate limit with reset countdown.
-Only shown after
-.B claudii
-commands (not after
-.B ls
-or
-.BR git ).
-Suppressed automatically after
-.BR "claudii se" / si / sessions
-since those commands already display session info.
-Controlled via the
-.B session-dashboard.enabled
-config key (values:
-.BR on ", " off ;
-default:
-.BR off ).
-.TP
-.B CC-Statusline (inside Claude Code)
-An info-dense metrics line rendered inside Claude Code sessions via the
-.B statusLine
-hook in
-.IR ~/.claude/settings.json .
-Receives live JSON from Claude Code on stdin on every turn and outputs a
-single formatted line.
-Segments are described in detail in
-.B SESSIONLINE SEGMENTS
-below.
-Enable with
-.B claudii cc-statusline on
-/ disable with
-.BR "claudii cc-statusline off" .
-.PP
-Data flow:
-.RS
-.nf
-Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboard (precmd)
-                                           \(-> history-YYYY-MM.tsv (Flight Recorder)
-.fi
-.RE
-.
-.SH SESSIONLINE SEGMENTS
-Each segment is separated by a dim
-.B \(bv
-character.
-Segments are omitted when their data is absent.
-.PP
-The output is configurable: by default four lines are emitted.
-The layout is controlled by the
-.B statusline.lines
-config key (see
-.BR "CONFIG FILE" ).
-.PP
-Available segments:
-.PP
-.TS
-l l l.
-Segment	Example	Description
-_
-model	\fBClaude Sonnet 4.5\fR	Model name (bold); effort level appended if != high; \[u25B2] when extended thinking active
-context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62% \[u26A1]73%	Context bar + usable% + cache hit ratio
-rate-5h	5h:17% \[u21BA]249m	5h rate limit with reset countdown
-rate-7d	7d:50% \[u21BA]3d15h	7d rate limit with reset countdown
-cost	$0.42	Session cost in USD (cyan)
-tokens	42.1K\(ua 8.3K\(da	Input/output tokens with K/M suffixes
-lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
-duration	1h 23m	Wall-clock session duration (dim)
-api-duration	api:45m	Time spent waiting for Claude API responses (dim)
-burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim)
-delta-5h	\[u03B4]5h:+12%	5h rate change since session start
-delta-7d	\[u03B4]7d:+3%	7d rate change since session start
-cache-create	\[u270E]1.2K	Cache write volume (tokens written into prompt cache)
-session-name	my-feature	Session name (set via /rename or --name)
-worktree	feat/login \[u23B7] main	Worktree name + branch (dim); falls back to workspace.git_worktree for plain git worktrees
-dir	\[u2302] my-app	Working directory: ⌂ symbol + basename of workspace.project_dir (worktree.original_cwd has priority in --worktree sessions)
-github	\[u25C6] bmmmm/claudii #42	GitHub repo (owner/name) + active PR number; reads workspace.repo.* from Claude Code 2.1.145+ (absent for non-git or no remote)
-agent	@orc	Agent name (dim, prefixed @)
-ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
-claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache; \[u26A0] hint (colored) when degraded/down
-clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; rendering delegated to \fBcc-insomnii\fR(1) when installed (configurable via \fBstatusline.bedtime\fR, default 23:00; \fBstatusline.insomnii\fR auto/on/off)
-.TE
-.PP
-Segment details:
-.TP
-.B model
-The model display name in
-.B bold
-(e.g.\&
-.BR "Claude Sonnet 4.5" ).
-The reasoning effort level from
-.B effort.level
-in the statusLine JSON is appended in
-.I dim
-text when set to anything other than
-.BR high
-(e.g.\&
-.IR max ).
-When extended thinking is active
-.RB ( thinking.enabled
-is true), a
-.B \[u25B2]
-indicator is appended.
-.TP
-.B context-bar
-A 10-character block bar showing context window usage.
-Color thresholds are based on the usable context percentage
-(used tokens divided by 80% of the context window size):
-green < 70%, yellow 70\(en89%, red \(>= 90%.
-A dim
-.B 1M
-indicator is appended when the context window size is >= 1,000,000 tokens.
-A
-.B >200k
-indicator (red) is shown when the current API call exceeded 200k tokens.
-When cache read tokens are present, a cache hit ratio is appended as
-.B \[u26A1]XX%
-(green >= 60%, yellow < 30%, dim otherwise).
-.TP
-.B rate-5h
-5-hour usage shown as
-.B 5h:XX%
-with optional reset countdown
-.RB ( \[u21BA]Xm ", " \[u21BA]XhYm ", or " \[u21BA]Xh
-when minutes are zero).
-Color: cyan < 50%, yellow 50\(en79%, red >= 80% \(em
-based on the underlying usage, not the displayed value.
-Only shown when the API returns rate limit data (Pro/Max plans).
-.TP
-.B rate-7d
-7-day usage shown as
-.B 7d:XX%
-with optional reset countdown:
-.BR Xm ", " XhYm ", " Xh ", " XdYh ", or " Xd
-depending on remaining time.
-Color: same thresholds as
-.BR rate-5h .
-.TP
-.B Inverted display
-Set
-.B statusline.rate_display
-to
-.B remaining
-to flip the
-.B rate-5h
-and
-.B rate-7d
-percentages from "used" to "what's left" \(em e.g.\&
-.B 5h:62%
-becomes
-.BR 5h:38% ,
-and the delta
-.B Δ5h:+12%
-becomes
-.BR Δ5h:\(mi12% .
-Colors and reset-countdown thresholds are unchanged: "close to limit" still
-renders red whether you read it as 86% used or 14% remaining.
-.TP
-.B cost
-Session cost formatted as
-.B $X.XX
-in cyan.
-Omitted when cost is zero.
-.TP
-.B tokens
-Input tokens (with
-.B \(ua
-arrow) and output tokens (with
-.B \(da
-arrow) formatted with K/M suffixes (e.g.\&
-.BR "15.2K\(ua 4.1K\(da" ).
-.TP
-.B lines-changed
-Lines added in green
-.RB ( +N )
-and lines removed in red
-.RB ( \-N ).
-Session-cumulative total (does not reset on git commit).
-Omitted when both are zero.
-.TP
-.B duration
-Wall-clock session duration formatted as
-.BR <1m ,
-.BR 5m ,
-or
-.B 1h 23m
-(dim text).
-.TP
-.B api-duration
-Time actually spent waiting for Claude API responses (as opposed to total wall-clock time),
-formatted identically to
-.BR duration .
-Shown as
-.B api:Xm
-(dim text).
-.TP
-.B burn-eta
-Estimated time until the 5-hour rate limit is exhausted, shown as
-.B ETA:Xm
-in dim text.
-Only shown when a burn rate can be computed (session >= 3 minutes and rate > 0).
-.TP
-.B delta-5h
-Change in 5h usage since session start, shown as
-.B \[u03B4]5h:+N%
-or
-.BR \[u03B4]5h:\-N% .
-Omitted when unchanged.
-.TP
-.B delta-7d
-Change in 7d usage since session start.
-Same format as
-.BR delta-5h .
-.TP
-.B cache-create
-Volume of tokens written into the prompt cache this session, shown as
-.B \[u270E]N
-with K/M suffixes (dim text).
-Distinct from the
-.B \[u26A1]
-cache hit ratio in
-.BR context-bar :
-this shows write volume, not read savings.
-Omitted when zero.
-.TP
-.B session-name
-Custom session name set via
-.B /rename
-or the
-.B \-\-name
-flag (dim text).
-Omitted when not set.
-.TP
-.B worktree
-Worktree name plus branch (
-.BR \[u23B7] " branch" )
-in dim text.
-Shown only when a worktree is active.
-.TP
-.B dir
-Working directory: \[u2302] symbol followed by basename in dim text.
-Uses
-.B worktree.original_cwd
-for
-.B --worktree
-sessions, otherwise
-.B workspace.project_dir
-(with
-.B workspace.current_dir
-as last fallback).
-Always visible when the session JSON includes a working directory path.
-.TP
-.B agent
-Agent name prefixed with
-.B @
-in dim text.
-Shown only when present in the session JSON.
-.TP
-.B clock
-Local wall-clock time with bedtime nudge / shame escalation. Rendering is
-fully delegated to the standalone
-.BR cc-insomnii (1)
-plugin: when its binary is on
-.B PATH
-and
-.B statusline.insomnii
-is
-.B auto
-(default) or
-.BR on ,
-claudii pipes the upstream JSON to cc-insomnii and uses its single-line
-output verbatim. When cc-insomnii is not installed, the segment is empty and
-the layout silently skips it. Set
-.B statusline.insomnii
-to
-.B off
-to suppress delegation entirely.
-.IP
-Bedtime is forwarded as
-.B CC_INSOMNII_BEDTIME
-from
-.BR statusline.bedtime
-(default
-.IR 23:00 ,
-24-hour HH:MM, local time), and the legacy
-.BR statusline.shame ,
-.BR statusline.motivation ,
-.B statusline.rainbow
-keys (if present) are forwarded as the matching
-.B CC_INSOMNII_*
-env vars so a single config drives both. See
-.BR cc-insomnii (1)
-for the full set of escalation modes, animations, and message catalog.
-.B claudii doctor
-reports detection status and active mode.
-.TP
-.B ruler
-Fills the remaining terminal width with horizontal rule characters (\(em).
-Relies on
-.B $COLUMNS
-for width detection; falls back to
-.B tput cols
-and then to 60 columns when neither is available (e.g. CC piped context).
-Used as the default last line (line 5) to visually separate claudii output
-from Claude Code hint lines.
-.
-.SH COMMANDS
-.
-.SS Aliases
-Shell functions for fast Claude Code access.
-Configured via
+.SH LAUNCHING CLAUDE
+Shell functions for fast model access.
+Configured under the
 .B aliases.*
-in config.
-Auto-fallback to a healthy model when the configured model is down.
-.
+config namespace.
+Auto-fallback to a healthy model when the configured model is down
+.RB ( fallback.enabled ).
 .TP
 .B cl
 Claude Sonnet, high effort. General-purpose default.
@@ -425,507 +84,303 @@ Claude Opus, high effort. Complex tasks, server work.
 Claude Opus, max effort. Maximum reasoning.
 .TP
 .B clq
-Claude Sonnet, medium effort. Search mode \(em launches in
-.IR search.dir .
+Claude Sonnet, medium effort.
+Launches in
+.I search.dir
+(default:
+.IR ~/claude-search ).
 Equivalent to
 .BR "claudii search" .
 .TP
 .B clh
-Show the alias table and run a live model health check (current model status).
+Show the alias table and run a live model health check.
 .TP
-.B clorch
-Example agent alias: launches Claude Opus (high effort) with the
-.B orchestrate
-skill as system prompt.
-Configured via
-.BR "claudii config set agents.clorch.*" .
-See
+.B clorch / cle
+Example agent aliases — see
 .BR "claudii agents" .
+.
+.SH OPTIONS
 .TP
-.B cle
-Example agent alias: launches Claude Sonnet (medium effort) with the
-.B explorer
-skill as system prompt.
-Configured via
-.BR "claudii config set agents.cle.*" .
-See
-.BR "claudii agents" .
+.B \-\-json
+Output structured JSON instead of formatted text.
+Available for:
+.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents .
+.TP
+.B \-\-tsv
+Output tab-separated values (header + data rows).
+Available for:
+.BR sessions ", " cost .
+.PP
+When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
+.B version
+prints only the bare version number when piped.
+.
+.SH DISPLAY LAYERS
+Three separate layers each serve a different scope:
+.TP
+.B ClaudeStatus (RPROMPT)
+Model health indicators in the right-hand shell prompt.
+Reads a local cache — no network calls in
+.IR precmd .
+Indicators:
+.B \(dg
+= ok,
+.B \(ti
+= degraded,
+.B \(da
+= down,
+.B ?
+= unreachable,
+.B \(lB\(el\(rB
+= loading,
+.B \(rn
+= refreshing.
+.TP
+.B Session Dashboard (above prompt)
+Per-session summary lines above the prompt, rendered via the precmd hook.
+Shows model, context %, cost, 5h rate limit + countdown.
+Only shown after
+.B claudii
+commands; suppressed after
+.BR se / si / sessions .
+.TP
+.B CC-Statusline (inside Claude Code)
+Metrics line inside Claude Code sessions via the
+.B statusLine
+hook in
+.IR ~/.claude/settings.json .
+Receives live JSON from Claude Code on each turn.
+Segments configured via
+.B statusline.lines
+(see
+.BR CONFIGURATION ).
+.PP
+Data flow:
+.RS
+.nf
+Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache \(-> Session Dashboard
+                                            \(-> history-YYYY-MM.tsv
+.fi
+.RE
+.
+.SH COMMANDS
 .
 .SS Display Layer Control
-Global and per-layer toggles for all display components.
-.
 .TP
 .B on
-Enable all display layers at once:
-ClaudeStatus RPROMPT (sets
-.B statusline.enabled
-to true),
-Session Dashboard above prompt (sets
-.B session-dashboard.enabled
-to on),
-and CC-Statusline inside Claude Code (writes
-.B statusLine
-to
-.IR ~/.claude/settings.json ).
-.
+Enable all three layers at once (ClaudeStatus, Session Dashboard, CC-Statusline).
 .TP
 .B off
-Disable all display layers at once.
-.
+Disable all three layers at once.
 .TP
 .BR "claudestatus " [on|off]
 Toggle only the ClaudeStatus RPROMPT.
-Reads/sets
-.B statusline.enabled
-in config.
-Without subcommand: show current state.
-.
+Without argument: show current state.
 .TP
 .BR "session-dashboard " [on|off]
-Control the Session Dashboard (session lines above the prompt).
-Without subcommand: show current state.
-.RS
-.TP
-.B on
-Enable the session dashboard.
-.TP
-.B off
-Disable the session dashboard.
-.RE
-.IP
-.BR "dashboard " [on|off]
-Deprecated alias for
-.BR "session-dashboard" .
-Still works for backwards compatibility.
-.
+Toggle only the Session Dashboard above the prompt.
+Without argument: show current state.
+Deprecated alias:
+.BR dashboard .
 .TP
 .BR "cc-statusline " [on|off]
 Toggle only the CC-Statusline inside Claude Code.
 Modifies
 .IR ~/.claude/settings.json .
-Without subcommand: show current state.
-.
+Without argument: show current state.
+.TP
+.BI "cc-statusline preset " [name]
+Switch the CC-Statusline layout to a named preset.
+Without a name, lists available presets.
+.RS
+.IP \(bu 2
+.B focused
+\(em dense 3-line layout: identity / metrics / env.
+.IP \(bu 2
+.B calm
+\(em bare 2-line layout: model / context-bar.
+.IP \(bu 2
+.B default
+\(em restore the shipped 5-line layout.
+.RE
+.IP
+After switching, restart Claude Code to see the change.
+Writes
+.B statusline.lines
+to
+.IR config.json .
 .TP
 .BR "insomnii " [on|off|auto|status|install]
-Manage the
+Manage the optional
 .BR cc-insomnii (1)
-delegation for the
-.B clock
-segment without leaving claudii. Subcommands:
+bedtime clock segment.
 .RS
 .IP \(bu 2
 .B on
-\(em set
-.B statusline.insomnii=on
-(require delegation; doctor warns if the binary is missing).
+\(em require delegation; doctor warns if the binary is missing.
 .IP \(bu 2
 .B off
-\(em set
-.B statusline.insomnii=off
-(suppress delegation; the clock segment renders nothing).
+\(em suppress delegation; the clock segment is empty.
 .IP \(bu 2
 .B auto
-\(em set
-.B statusline.insomnii=auto
-(default; delegate when installed, skip when not).
+\(em delegate when installed, skip when not (default).
 .IP \(bu 2
 .B status
-(or no argument) \(em show binary path, current delegation mode, and the
-forwarded
-.B statusline.bedtime
-value.
+(or no argument) \(em show binary path and active mode.
 .IP \(bu 2
 .B install
 \(em clone
 .B $CC_INSOMNII_REPO
 (default
 .IR https://github.com/bmmmm/cc-insomnii )
-into
-.B $CC_INSOMNII_CLONE_DIR
-(default
-.IR ~/.local/share/cc-insomnii-src )
 and run its
 .BR install.sh .
-Idempotent \(em re-running upgrades from the latest checkout.
+Idempotent.
 .RE
-.
 .TP
 .B explain
-Show component overview: ClaudeStatus (RPROMPT), Session Dashboard (above prompt),
-CC-Statusline (inside Claude Code). Includes current status, config, data flow,
-and a reference legend for all symbols and fields used in the output.
+Component overview with current status, data flow, and symbol legend.
 Aliases:
 .BR layers ", " components .
-.PP
-.B Session Dashboard symbols:
-.PP
-.RS
-.nf
-\[u25CF]    active           session or service is active
-\[u25CB]    inactive         session ended or service is off
-\[u2588]\[u2591]  context bar      context window fill (8 blocks = 100%)
-\[u26A1]    cache ratio      % of input served from prompt cache
-|    separator        field separator (dim)
-.fi
-.RE
-.PP
-.B CC-Statusline fields:
-.PP
-.RS
-.nf
-\[u2588]\[u2591]  context bar      context window fill (10 blocks = 100%)
-$    cost             session cost USD
-5h:  5h rate limit    token budget used %
-7d:  7d rate limit    token budget used %
-\[u21BA]    reset            minutes until rate limit refreshes
-\[u2191]    input tokens     tokens sent to model this session
-\[u2193]    output tokens    tokens received from model
-\[u26A1]    cache ratio      % of input served from prompt cache
-+/-  lines changed    code added / removed
-     duration         total session time
-.fi
-.RE
-.PP
-.B ClaudeStatus (RPROMPT) indicators:
-.PP
-.RS
-.nf
-\[u2713]    ok               model operational
-\[u26A0]    degraded         partial outage
-\[u2717]    down             major outage
-\[u27F3]    refreshing       background check running
-?    unreachable      status.claude.com not reachable
-.fi
-.RE
 .
-.SS ClaudeStatus
-Live model health monitoring in your shell RPROMPT.
-Uses the Statuspage components API; falls back to the RSS feed for per-model incident details.
-.
+.SS Model Health (ClaudeStatus)
 .TP
 .B status
-Live model health check (always bypasses the cache).
-Displays a per-model status table with icons and labels for each configured model
-(ok \(en green, degraded \(en yellow, down \(en red, unknown \(en dim).
-Shows the time since the last check and the configured refresh interval.
+Live model health check (bypasses cache).
+Per-model status table with icons, last-check time, and active incidents.
 Supports
-.B \-\-json
-(array of model/status objects).
-.
+.BR \-\-json .
+Alias:
+.BR s .
 .TP
-.BR status " 5m|15m|30m|60m"
+.BR "status " 5m|15m|30m|60m
 Set the background cache refresh interval (default: 15m).
 Values below 30s are rejected.
 .
-.PP
-RPROMPT indicators:
-.B \(dg
-= ok (green),
-.B \(ti
-= degraded (yellow),
-.B \(da
-= down (red),
-.B ?
-= API unreachable.
-.B \(lB\(el\(rB
-= loading (no cache),
-.B \(rn
-= refreshing (stale cache).
-.
-.SS Session Dashboard
-Rendered in the shell above the prompt line via
-.IR precmd .
-Reads per-session cache files written by the CC-Statusline handler.
-Shows per-session lines: model name, context %, cost, 5h rate limit with reset countdown.
-Only shown after
-.B claudii
-commands; suppressed after
-.BR "se" / si / sessions
-since those already display session info.
-.PP
-Data flow:
-.RS
-Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache file \(-> Session Dashboard (precmd)
-.RE
-.
-.SS CC-Statusline
-Rendered inside Claude Code sessions via
-.IR ~/.claude/settings.json .
-Shows model name, context usage bar, cost, token counts, rate limits,
-lines changed, session duration, burn-eta, worktree name, and agent context.
-The output is split across configurable lines (default: 4 lines) via
-.B statusline.lines
-in config.
-.
-.TP
-.B cc-statusline
-Show whether the CC-Statusline is active.
-.
-.TP
-.B "cc-statusline on"
-Add the CC-Statusline to
-.IR ~/.claude/settings.json .
-Restart Claude Code to activate.
-.
-.TP
-.B "cc-statusline off"
-Remove the CC-Statusline from
-.IR ~/.claude/settings.json .
-.
-.TP
-.B "cc-statusline preset " [name]
-Switch the CC-Statusline layout to a named preset by writing
-.B .statusline.lines
-in
-.IR ~/.config/claudii/config.json .
-Without a name, lists the available presets.
-Available presets:
-.RS
-.IP \(bu 2
-.B focused
-\(em dense 3-line layout. Line 1: model + dir (identity).
-Line 2: context-bar + rate-5h + rate-7d (metrics).
-Line 3: claude-status + vpn (env).
-For users who want everything important on screen without scrolling past noise,
-split so no single line overflows on narrow terminals.
-When
-.B cc-insomnii
-is installed,
-.B claudii cc-statusline on
-wires it up as a wrapper (cc-insomnii --after=claudii-cc-statusline), so
-the insomnii line appears on top of the focused layout automatically \(em
-no clock segment needed inside the preset.
-.IP \(bu 2
-.B calm
-\(em bare 2-line layout. Line 1: model (with effort + thinking arrow).
-Line 2: context-bar. Nothing else. Pure calmness.
-.IP \(bu 2
-.B default
-\(em restore the shipped 5-line layout with every segment.
-Use this to revert after experimenting with another preset.
-.RE
-.IP
-After switching, restart Claude Code (or wait for the next render) to see the new layout.
-The preset writes
-.B .statusline.lines
-directly, so you can hand-edit afterwards without losing the change.
-.
 .SS Sessions and Cost
-.
 .TP
 .B sessions
-List active and recent Claude Code sessions with model, context usage,
-cost, rate limits, worktree name, and agent context.
-Shows per-session details and an aggregate summary.
-A third line per session shows the fingerprint: top-5 files accessed via tool calls,
-formatted as
-.BR "name(N) name(N) ..."
-(omitted when no JSONL transcript is available).
-Sessions are detected from cache files written by the CC-Statusline handler.
+List active and recent sessions: model, context %, cost, rate limits,
+worktree, agent context, and a fingerprint of top-5 files accessed.
 Background sessions
 .RB ( "claude --bg" )
-are marked with a dim
-.B [bg]
-badge after the model name; the kind is sourced from
-.BR "claude agents --json" .
+are marked
+.BR [bg] .
 Supports
-.B \-\-json
-(array of session objects with
-.BR fingerprint " and " last_user_message
-fields) and
-.B \-\-tsv
-(tab-separated rows).
-.
+.BR \-\-json " and " \-\-tsv .
+Aliases:
+.BR se ", " ss .
 .TP
 .BI "sessions \-\-resume " id
-Resume a Claude Code session by ID.
+Resume a session by ID.
 Equivalent to
 .BR "claude --resume " id .
-The session ID can be obtained from
-.B claudii se
-(shown as the first 8 characters of the session ID in the detail line).
-Alias:
-.BR "se --resume " id .
-.
 .TP
 .B sessions-inactive
-Show inactive (ended or stale) Claude Code sessions.
-Lists sessions that are no longer active, with age, context usage, and rate-limit data.
-Each session shows a status badge: pinned (protected from GC), stale (pending GC),
-or idle (recently ended).
-A shortened session ID is shown for use with
-.BR pin / unpin .
+Inactive (ended or stale) sessions with age, context, and rate-limit data.
+Shows badges: pinned, stale, or idle.
 Alias:
 .BR si .
-.
 .TP
 .BI "pin " session-id
 Protect an inactive session from garbage collection.
 Matches by session ID substring (first match wins).
-Pinned sessions are preserved indefinitely until explicitly unpinned.
-.
 .TP
 .BI "unpin " session-id
 Remove GC protection from a pinned session.
-.
 .TP
 .B gc
 Remove stale session cache files.
-A session cache file is removed when its associated Claude Code process is dead
-and the file is older than 300 seconds, or when no PID is tracked and the file
-is older than 300 seconds.
-Pinned sessions (set with
-.BR pin )
-are never removed.
-Equivalent to the automatic garbage collection that runs on shell load,
-but triggered manually.
-Use
+Pinned sessions are never removed.
+Run
 .B claudii si
-to inspect inactive sessions before running.
-.
+to inspect before garbage collecting.
+Alias:
+.BR g .
 .TP
 .BI "resume " session-id
-Resume a Claude Code session by ID.
-Equivalent to running
-.BR "claude --resume " id .
+Resume a session by ID
+.RB ( "claude --resume " id ).
 Use
 .B claudii se
-to list sessions with their IDs.
-.
+to list IDs.
 .TP
 .B cost
-Accounting view: exact costs per period (today, week, month, year, all-time),
-per-model breakdown, and session counts.
-Week period includes a date range.
-Falls back to session cache files
-.RI ( session-* )
-when no history exists yet.
+Costs per period (today, week, month, year, all-time), with per-model breakdown.
+Falls back to session cache files when no history exists yet.
 Supports
-.B \-\-json
-(object with today/alltime breakdown) and
-.B \-\-tsv
-(period/model/cost/sessions rows).
-.
+.BR \-\-json " and " \-\-tsv .
+Alias:
+.BR c .
 .TP
 .B trends
-Visualization view: rolling 7-day window (most recent day first) with per-day cost,
-tokens, session count, and model breakdown.
-Also shows 30-day model distribution split, the costliest day in the last 30 days,
-median daily cost (30d), and a 7-day vs 30-day spend trend with direction arrow.
-The Total line includes session count and model breakdown for the 7-day window.
-The CC-Statusline handler appends a line to monthly files
-.RI ( ~/.cache/claudii/history-YYYY-MM.tsv )
-on every update. Legacy
-.I history.tsv
-files are also read for backward compatibility.
+Rolling 7-day cost chart, 30-day model split, costliest day, and spend trend.
+Reads from
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+(written by the CC-Statusline handler).
 Supports
 .BR \-\-json .
-.
+Alias:
+.BR t .
 .TP
 .B cache
-Prompt-cache view: per-day hit rate (rolling N-day window, default 7),
-per-model hit rate, and total tokens served from cache.
-Reads from a per-session JSON cache aggregated by
-.B claudii-insights
-from the JSONL transcripts under
+Prompt-cache hit rate per day and per model (default: 7-day window).
+Aggregated from JSONL transcripts under
 .IR ~/.claude/projects .
-The first invocation is slower (5\(en30 s) while the cache is built;
-subsequent runs only re-aggregate sessions whose JSONL has been
-touched since the last scan.
+First run is slower (5\(en30 s) while the cache warms; subsequent runs
+only re-aggregate changed sessions.
 .RS
 .TP
 .BI "\-\-days " N
-Override the rolling window (default 7).
+Override the rolling window.
 .RE
 .
-.SS Config
-.
+.SS Configuration
 .TP
 .B config
 Show all config values.
-.
 .TP
 .BI "config get " key
-Read a config value using dot-notation.
+Read a value using dot-notation.
 Example:
 .BR "claudii config get aliases.cl.model" .
-.
 .TP
 .BI "config set " "key value"
-Set a config value.
+Set a value.
 Example:
 .BR "claudii config set statusline.models opus,sonnet" .
-.
 .TP
 .B "config reset"
 Reset all config to defaults.
-.
 .TP
 .BI "config export " "[file]"
 Print config as JSON, or write to
 .I file
 if specified.
-.
 .TP
 .BI "config import " file
-Replace current config with a JSON file (backs up the existing config first).
-.
+Replace config with a JSON file (backs up existing config first).
 .TP
 .B "config theme"
-List available color themes.
-The active theme is marked with an asterisk.
-.
+List available color themes. Active theme marked with an asterisk.
 .TP
 .BI "config theme " name
-Set the active theme by name.
-Available themes:
+Set the active theme.
+Available:
 .B default
-(magenta accent, standard ANSI colors) and
+(magenta accent, standard ANSI) and
 .B pastel
 (softer 256-color palette).
-The theme name is stored as
+Stored as
 .B theme.name
 in
 .IR config.json .
-Unknown theme names print an error and exit non-zero.
-.
-.SS Agents
-.
 .TP
 .B agents
 List configured agents (alias \(-> skill mapping) or show onboarding instructions.
-Agents let you launch Claude with a specific skill as the system prompt using a short
-alias instead of a long
-.B \-\-append\-system\-prompt
-flag.
-.PP
-When agents are configured in
-.I config.json
-under the
-.B agents
-key, a left-aligned table is shown:
-.RS
-.nf
-ALIAS     SKILL         MODEL   EFFORT
-clorch    orchestrate   opus    high
-cle       explorer      sonnet  medium
-.fi
-.RE
-.PP
-Followed by the hint: \(dqType the alias to launch.\(dq
-.PP
-When no agents are configured, an onboarding message is shown with the equivalent
-manual command, setup instructions, and a list of skills found in
-.I .claude/skills/*/SKILL.md
-in the current directory.
-.PP
 Supports
-.B \-\-json
-(array of objects with
-.BR alias ", " skill ", " model ", " effort
-fields).
-.PP
-Configure agents via:
+.BR \-\-json .
+Configure via:
 .RS
 .nf
 claudii config set agents.clorch.skill orchestrate
@@ -934,65 +389,43 @@ claudii config set agents.clorch.effort high
 .fi
 .RE
 .
-.SS Local agents (oMLX / gateii)
-.
+.SS Local LLM (omlx / gateii)
 .TP
 .B "omlx status"
-Show whether the omlx segment is wired into the cc-statusline, the
-configured / detected
+Show whether the omlx segment is wired in, the
 .I active.json
-path, oMLX server reachability, and oMLX CLI install state.
+path, and oMLX server reachability.
 .TP
 .B "omlx connect"
-Detect a gateii install at one of the well-known paths
-.RB ( "~/offline_coding/gateii" ", " ~/coding/gateii ", " "..." ),
-store a non-default path under
-.B statusline.omlx_active_path
-if needed, append
-.B ["omlx"]
-to a custom
-.B statusline.lines
-layout (no-op if you're on built-in defaults \(em those already
-include the segment), and probe the oMLX server.
+Detect a gateii install, store the path, and probe the server.
 .TP
 .B "omlx test"
 Render the cc-statusline against a synthetic
 .I active.json
-+ a temporary layout that includes the
-.B omlx
-segment. Useful to preview
-\(*ra commit-msg Qwen3.5-9B 3s
-without a real agent running.
+with the omlx segment.
 .TP
 .B "omlx disconnect"
-Surgically remove the
-.B \(dqomlx\(dq
+Remove the
+.B omlx
 entry from any custom
 .B statusline.lines
-layout. Drops the line entirely if it had no other segments.
+layout.
 .PP
 Override the
 .I active.json
-path via env
+path via
 .B CLAUDII_OMLX_ACTIVE
 or config key
 .BR statusline.omlx_active_path .
-The segment is silently empty (and its line dropped) when no agent is
-active or gateii is not installed \(em zero impact for users without gateii.
 .
-.SS VPN tunnel state (vpnii)
-.
-The VPN segment in cc-statusline and RPROMPT shows the active tunnel name
-from
+.SS VPN State (vpnii)
+Shows the active WireGuard tunnel name in the cc-statusline and RPROMPT.
+State file:
 .IR ~/.cache/claudii/vpnii .
-That file is normally written by wg-quick PostUp/PreDown hooks; because
-wg-quick runs as root, those hooks would otherwise create a root-owned
-file that can't be cleaned up without sudo.
 .B claudii vpnii
-wraps the write/clear and drops privilege to the real user, so the cache
-file is always owned by you.
+wraps write/clear with privilege drop so the file is always user-owned.
 .PP
-.B Recommended wg conf:
+Recommended wg-quick config:
 .PP
 .RS
 .EX
@@ -1006,166 +439,103 @@ PreDown = claudii vpnii clear
 .BI "vpnii set " "<name>"
 Mark tunnel
 .I name
-as active. Resolves the target user via
+as active.
+Resolves the target user via
 .B SUDO_USER
-\(rA
-.I /dev/console
-owner (macOS GUI session) \(rA
+\(rA console owner \(rA
 .B $USER
 \(rA
-.B CLAUDII_USER
-override. Pass
-.B "\-\-user " <name>
-to override explicitly.
+.BR CLAUDII_USER .
 .TP
 .B "vpnii clear"
-Remove the state file. Aliases:
+Remove the state file.
+Aliases:
 .BR "vpnii down" ", " "vpnii off" .
 .TP
 .B "vpnii show"
 Print the current tunnel name, or
 .I "no tunnel"
-when none is set. Alias:
+when none is set.
+Alias:
 .BR "vpnii status" .
 .PP
 Tailscale is detected separately via interface scan
-.RB ( "ifconfig"
-for an IPv4 in 100.64.0.0/10) and needs no state file. Renders as
-.B "⬢ ts"
-next to any active WireGuard tunnel.
+(IPv4 in 100.64.0.0/10) and needs no state file.
 .
-.SS Vibemap (activity heatmap)
-.
-Opt-in tracking of when you prompt, rendered as an ASCII heatmap.
+.SS Activity Heatmap (vibemap)
+Opt-in prompt-timing tracker, rendered as an ASCII heatmap.
 Default
 .BR off .
-When enabled
-.RB ( vibemap.enabled
-in config), the cc-statusline appends one TSV line per render to
+When enabled, the cc-statusline appends one TSV line per render to
 .IR ~/.cache/claudii/vibemap.tsv .
-The file is local-only, never transmitted, and stores no prompt content.
 Schema:
 .BR "epoch \\\\t weekday \\\\t hour \\\\t minute \\\\t model \\\\t sid8 \\\\t delta_ms" .
-.PP
-.B Subcommands:
-.PP
+No prompt content is recorded.
 .TP
-.B "vibemap"
-Default view: weekday \[mu] 3-hour-bin grid (Mon\(enSun on the X axis,
-00\(en03 / 03\(en06 / \... / 21\(en00 on the Y axis). Cells normalized
-to the max-cell count; bins overlapping the bedtime window render in
-red so peak overdue-vibing is obvious at a glance.
+.B vibemap
+Weekday \[mu] 3-hour-bin grid (default view).
 .TP
 .BI "vibemap strip" " [--days N]"
 Last
 .I N
-days \[mu] 24 hours strip (default 14, range 1\(en90). One row per
-calendar day, today marked with
-.BR * .
-Hours within the bedtime window render in red.
+days \[mu] 24-hour strip (default 14, range 1\(en90).
 .TP
 .B "vibemap status"
-Show whether tracking is on, the file path, the entry count, file
-size, and the timestamp of the oldest entry.
+Show enabled state, file path, entry count, and oldest entry.
 .TP
 .B "vibemap path"
-Print the vibemap file path \(em useful for piping into custom tools
-.RB ( "awk -F'\\\\t' \... \"$(claudii vibemap path)\"" ).
+Print the vibemap file path.
 .TP
 .B "vibemap clear"
-Remove the vibemap file. No confirmation \(em the file is reproducible
-the moment you submit your next prompt with tracking enabled.
+Remove the vibemap file.
 .PP
-.B Enable:
-.PP
-.RS
-.EX
-claudii config set vibemap.enabled true
-.EE
-.RE
-.PP
-.B Privacy notes:
-.PP
-The vibemap file is plain TSV in your local cache directory. It records
-when you prompted (epoch + weekday + hour + minute), which model you
-were on (first word, e.g.\&
-.IR Opus ),
-the first 8 chars of the session ID, and the duration delta vs the
-previous render. It does NOT record prompt content, file paths, or
-model output \(em the cc-statusline JSON doesn\(aqt include those in
-the first place.
-.B claudii vibemap clear
-removes the file completely;
-.B claudii config set vibemap.enabled false
-stops further writes without deleting existing data.
+Enable:
+.BR "claudii config set vibemap.enabled true" .
 .
 .SS System
-.
 .TP
 .BI "search " "['query']"
 Launch Claude Code in the configured search directory
-.RI ( search.dir " in config, default:" " ~/claude-search" ).
-Uses the
-.B clq
-alias settings.
-If
+.RI ( search.dir ,
+default:
+.IR ~/claude-search ).
+If a
 .I query
-is provided, it is passed as the initial prompt.
-.
+is provided it is passed as the initial prompt.
 .TP
 .B restart
 Reload the plugin by sourcing
 .IR ~/.zshrc .
-Stays in the current directory.
-.
 .TP
 .B update
-Update claudii to the latest version.
-Auto-detects the install method:
-if
-.B CLAUDII_HOME
-is under the Homebrew prefix, runs
-.BR "brew upgrade claudii" ;
-if it is a git repository, runs
-.BR "git pull --ff-only" ;
-otherwise prints instructions for both methods and exits with an error.
-After updating, run
+Update claudii.
+Auto-detects Homebrew (runs
+.BR "brew upgrade claudii" )
+or git
+.RB ( "git pull --ff-only" ).
+Run
 .B claudii restart
-to reload the plugin.
-.
+after updating.
 .TP
 .B version
-Print the version string and about info when running interactively.
-When piped (stdout is not a terminal), prints the bare version number without the
-.B "claudii v"
-prefix.
+Print version. When piped, prints the bare number only.
 Supports
 .BR \-\-json .
-.
 .TP
 .B changelog
-Shows release notes for the current version from CHANGELOG.md.
+Release notes for the current version.
 Alias:
 .BR about .
-.
 .TP
 .B doctor
-Run an installation health check.
-Verifies that Claude Code and jq are installed,
-that the CC-Statusline is configured in
-.IR ~/.claude/settings.json ,
-that the cache directory exists,
-that completions are present,
-and that the plugin is loaded.
-Also reports the installed version.
+Installation health check: Claude Code, jq, CC-Statusline config, cache directory,
+completions, plugin load, cc-insomnii state, and version.
 Supports
-.B \-\-json
-(array of check result objects with
-.BR check ", " status ", " detail
-fields).
+.BR \-\-json .
+Alias:
+.BR d .
 .
 .SH SHORTCUTS
-Shorthands expand to their full command before processing.
 .PP
 .TS
 l l.
@@ -1176,15 +546,92 @@ si	sessions-inactive
 c	cost
 t	trends
 d	doctor
+g	gc
 about	changelog
 .TE
-.PP
-Example:
-.B claudii s
-is identical to
-.BR "claudii status" .
 .
-.SH CONFIG FILE
+.SH CC-STATUSLINE SEGMENTS
+Each segment is separated by a dim
+.B \(bv
+character and omitted when its data is absent.
+The layout is controlled by
+.B statusline.lines
+(array of arrays; each inner array is one output line).
+.PP
+.TS
+l l l.
+Segment	Example	Description
+_
+model	\fBClaude Sonnet 4.5\fR	Model name (bold); effort appended when != high; \[u25B2] when thinking active
+context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62% \[u26A1]73%	10-block bar + usable% + cache hit ratio
+rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
+rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
+cost	$0.42	Session cost in USD (cyan); omitted when zero
+tokens	42.1K\(ua 8.3K\(da	Input / output tokens with K/M suffixes
+lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
+duration	1h 23m	Wall-clock session duration (dim)
+api-duration	api:45m	Time waiting for Claude API responses (dim)
+burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim; requires >= 3 min session)
+delta-5h	\[u03B4]5h:+12%	5h rate change since session start
+delta-7d	\[u03B4]7d:+3%	7d rate change since session start
+cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
+session-name	my-feature	Custom session name (from /rename or --name)
+worktree	feat/login \[u23B7] main	Worktree + branch (dim)
+dir	\[u2302] my-app	Working directory basename (dim)
+github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
+agent	@orc	Agent name prefixed @ (dim)
+ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
+claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache
+clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
+.TE
+.PP
+.B context-bar color thresholds:
+green < 70%, yellow 70\(en89%, red >= 90% (of usable context).
+A dim
+.B 1M
+indicator is appended when the context window >= 1,000,000 tokens.
+Cache hit ratio
+.B \[u26A1]XX%
+is shown when cache-read tokens are present (green >= 60%, yellow < 30%).
+.PP
+.B rate-5h / rate-7d:
+color is cyan < 50%, yellow 50\(en79%, red >= 80%.
+Set
+.B statusline.rate_display
+to
+.B remaining
+to flip percentages from "used" to "what's left"
+(e.g.\&
+.B 5h:62%
+becomes
+.BR 5h:38% ).
+Color thresholds always key off the underlying usage.
+.PP
+.B clock:
+when
+.B cc-insomnii
+is on
+.B PATH
+and
+.B statusline.insomnii
+is
+.B auto
+(default) or
+.BR on ,
+claudii pipes the upstream JSON to cc-insomnii and uses its output verbatim.
+Set
+.B statusline.insomnii
+to
+.B off
+to suppress.
+Bedtime forwarded as
+.B CC_INSOMNII_BEDTIME
+from
+.B statusline.bedtime
+(default
+.IR 23:00 ).
+.
+.SH CONFIGURATION
 User config:
 .I ~/.config/claudii/config.json
 (or
@@ -1194,34 +641,36 @@ Created automatically from defaults on first run.
 .PP
 Key paths (dot-notation):
 .PP
-.RS
-.nf
-aliases.cl.model        model for \fBcl\fR (default: sonnet)
-aliases.cl.effort       effort for \fBcl\fR (default: high)
-aliases.clo.model       model for \fBclo\fR (default: opus)
-aliases.clm.effort      effort for \fBclm\fR (default: max)
-aliases.clq.model       model for \fBclq\fR / search (default: sonnet)
-fallback.enabled        auto-fallback on outage (default: true)
-fallback.opus.model     fallback model when opus is down
-status.cache_ttl        cache TTL in seconds (default: 900)
-statusline.enabled      ClaudeStatus in RPROMPT (default: true)
-statusline.models       models to monitor (default: opus,sonnet,haiku)
-statusline.lines        CC-Statusline layout: array of arrays, each inner array is one output line listing segment IDs in order (default: 3 lines — see SESSIONLINE SEGMENTS for all valid IDs). A single inner array produces a 1-line statusline.
-statusline.rate_display rate-5h/rate-7d display mode: \fBused\fR (default — \fB5h:62%\fR shows consumed budget) or \fBremaining\fR (\fB5h:38%\fR counts down what's left). Color thresholds key off the underlying usage in both modes, so "close to limit" stays red regardless of which side is shown.
-session-dashboard.enabled  session dashboard mode (default: off; values: on/off)
-debug.level             log level (default: off)
-search.dir              search directory (default: ~/claude-search)
-ui.spinner              spinner mode for long-running commands (default: random; values: random, beam, wave, dots, pulse, bounce, arc, orbit, ascii)
-.fi
-.RE
+.TS
+l l l.
+Key	Default	Description
+_
+aliases.cl.model	sonnet	Model for \fBcl\fR
+aliases.cl.effort	high	Effort for \fBcl\fR
+aliases.clo.model	opus	Model for \fBclo\fR
+aliases.clm.effort	max	Effort for \fBclm\fR
+aliases.clq.model	sonnet	Model for \fBclq\fR / search
+fallback.enabled	true	Auto-fallback on outage
+fallback.opus.model	sonnet	Fallback when opus is down
+status.cache_ttl	300	Status cache TTL in seconds
+statusline.enabled	true	ClaudeStatus in RPROMPT
+statusline.models	opus,sonnet,haiku	Models to monitor
+statusline.lines	(5-line default)	CC-Statusline layout — array of segment-ID arrays
+statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
+statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
+statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
+session-dashboard.enabled	off	Session Dashboard above prompt: on/off
+search.dir	~/claude-search	Directory for search mode
+ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)
+debug.level	off	Log level: off/error/warn/info/debug
+vibemap.enabled	false	Opt-in activity tracking
+.TE
 .
 .SH STATUS CACHE
-The model status cache is stored at
-.IR "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
-(overrideable via
+.I "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
+(override:
 .BR CLAUDII_CACHE_DIR ).
-It persists across terminal sessions and reboots.
-It contains one line per model:
+Contains one line per model:
 .PP
 .RS
 .nf
@@ -1231,7 +680,7 @@ haiku=ok
 .fi
 .RE
 .PP
-The cache is refreshed automatically in the background when it exceeds
+Refreshed automatically in the background when older than
 .B status.cache_ttl
 seconds.
 .
@@ -1248,9 +697,8 @@ Override the cache directory (default:
 Override the debug log level (off, error, warn, info, debug).
 .TP
 .B CLAUDII_SPINNER_MODE
-Override the spinner animation for long-running commands (random, beam, wave, dots, pulse, bounce, arc, orbit, ascii). Takes precedence over the
-.B ui.spinner
-config key. Useful for one-off invocations.
+Override the spinner animation (takes precedence over
+.BR ui.spinner ).
 .TP
 .B XDG_CONFIG_HOME
 Overrides the config directory (default:
@@ -1269,63 +717,30 @@ User configuration.
 Shipped defaults (read-only reference).
 .TP
 .I ~/.cache/claudii/status-models
-Per-model status cache.
+Per-model status cache written by
+.BR claudii-status .
 .TP
 .I ~/.cache/claudii/session-*
-Per-session cache files written by the CC-Statusline handler.
-Contains model, context percentage, cost, and rate limit data.
+Per-session cache files written by the CC-Statusline handler
+(model, context %, cost, rate-limit data).
 .TP
 .I ~/.cache/claudii/history-YYYY-MM.tsv
 Persistent session history (Flight Recorder), rotated monthly.
-TSV file with one line per CC-Statusline update:
-timestamp, model, cost, context percentage, 5-hour rate, session_id,
-input_tok, output_tok, api_duration_ms.
-Legacy
-.I history.tsv
-is also read for backward compatibility.
+One TSV line per CC-Statusline update: timestamp, model, cost, context %,
+5h rate, session_id, input_tok, output_tok, api_duration_ms.
 Read by
-.BR "claudii trends"
-and
-.BR "claudii cost" .
+.BR "claudii trends" " and " "claudii cost" .
+.TP
+.I ~/.cache/claudii/vibemap.tsv
+Opt-in activity log (written only when
+.B vibemap.enabled
+is true).
 .TP
 .I ~/.claude/settings.json
 Claude Code settings, modified by
 .BR "claudii cc-statusline" .
 .
-.SH EXAMPLES
-.TP
-Enable all display layers:
-.B claudii on
-.TP
-Live health check:
-.B claudii status
-.TP
-Toggle only ClaudeStatus:
-.B claudii claudestatus off
-.TP
-Toggle only Session Dashboard:
-.B claudii session-dashboard on
-.TP
-Toggle only CC-Statusline:
-.B claudii cc-statusline on
-.TP
-Check every 5 minutes:
-.B claudii status 5m
-.TP
-Component overview:
-.B claudii layers
-.TP
-Publish a release:
-.B bash scripts/release.sh 0.7.0
-.TP
-Dry-run to verify pre-flight checks:
-.B bash scripts/release.sh 0.7.0 \-\-dry-run
-.TP
-Read a config value:
-.B claudii config get aliases.cl.model
-.
 .SH VISUAL LANGUAGE
-claudii uses a consistent set of symbols across all output:
 .PP
 .TS
 l l l.
@@ -1333,26 +748,26 @@ Symbol	Meaning	Color
 _
 \(bu	active session	green
 \(ci	ended / inactive	dim
-\(tf	warning (rate limit, stale cache)	yellow
+\(tf	warning	yellow
 \(mu	error / failure	red
 \(OK	ok / success	green
-\(da	down (model unavailable)	red
-~	degraded (partial outage)	yellow
+\(da	down (model)	red
+~	degraded	yellow
 |	separator	\(em
-\[u2588]	progress bar \(em filled block	context-sensitive
-\[u2591]	progress bar \(em empty block	dim
+\[u2588]	progress bar filled	context-sensitive
+\[u2591]	progress bar empty	dim
 .TE
 .PP
-The helper function
+Internal:
 .B _claudii_sym
 .RI ( lib/visual.sh )
-accepts a name
+accepts names
 .RB ( active ", " inactive ", " warn ", " error ", " ok ", " down ", " degraded ", " sep )
-and prints the corresponding colored symbol.
-Constants are prefixed
-.B CLAUDII_SYM_
-(symbols) and
-.B CLAUDII_CLR_
+and prints the colored symbol.
+Constants:
+.B CLAUDII_SYM_*
+(symbols),
+.B CLAUDII_CLR_*
 (ANSI colors).
 .
 .SH SEE ALSO
