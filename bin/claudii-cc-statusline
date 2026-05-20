@@ -387,6 +387,14 @@ case "${_pace_state:-}" in
   behind)  _seg_pace="${YELLOW}↓${RST}" ;;
 esac
 
+# Bg-tasks segment — reads bg_tasks from per-session cache (written by claudii-stop-hook).
+# Renders ⚙ Nbg when bg_tasks >= 1; empty otherwise. Opt-in (not in default layout).
+# _cached_bg_tasks was already read above for the cache-write preserve step.
+_seg_bg=""
+if [[ "$_cached_bg_tasks" =~ ^[0-9]+$ && "$_cached_bg_tasks" -ge 1 ]]; then
+  _seg_bg="${DIM}⚙ ${_cached_bg_tasks}bg${RST}"
+fi
+
 # Cron segment — reads next_cron_at from per-session cache (written by claudii-stop-hook).
 # Renders ⏰ <relative> when the epoch is in the future; omitted when absent or past.
 # Note: _cron_secs is in seconds (not ms), so we format directly instead of calling _dur.
@@ -624,6 +632,7 @@ while IFS= read -r _line_segs; do
       burn-eta)      _val="$_seg_eta"      ;;
       pace)          _val="$_seg_pace"     ;;
       cron)          _val="$_seg_cron"     ;;
+      bg-tasks)      _val="$_seg_bg"       ;;
       worktree)      _val="$_seg_worktree" ;;
       agent)         _val="$_seg_agent"    ;;
       session-name)  _val="$_seg_session_name" ;;

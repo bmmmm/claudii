@@ -434,6 +434,13 @@ _cmd_cost() {
   shopt -s nullglob
   session_files=("$cache_dir"/session-*)
   shopt -u nullglob
+  # Drop atomic-write artifacts (session-*.tmp.PID left behind by crashed writers)
+  _sf_real=()
+  for _sf_e in "${session_files[@]+"${session_files[@]}"}"; do
+    [[ "$_sf_e" == *.tmp.* ]] || _sf_real+=("$_sf_e")
+  done
+  session_files=("${_sf_real[@]+"${_sf_real[@]}"}")
+  unset _sf_real _sf_e
 
   if [[ ${#session_files[@]} -eq 0 ]]; then
     echo "No session data found. Start a Claude session first."
@@ -594,6 +601,13 @@ _cmd_sessions_inactive() {
   shopt -s nullglob
   _is_files=("$cache_dir"/session-*)
   shopt -u nullglob
+  # Drop atomic-write artifacts (session-*.tmp.PID)
+  _is_real=()
+  for _is_e in "${_is_files[@]+"${_is_files[@]}"}"; do
+    [[ "$_is_e" == *.tmp.* ]] || _is_real+=("$_is_e")
+  done
+  _is_files=("${_is_real[@]+"${_is_real[@]}"}")
+  unset _is_real _is_e
 
   _has_files=0
   _rendered_any=0
@@ -700,6 +714,7 @@ _session_toggle_pin() {
   local found=0
   for f in "$cache_dir"/session-*; do
     [[ -f "$f" ]] || continue
+    [[ "$f" == *.tmp.* ]] && continue
     local sid line
     while IFS= read -r line; do sid="${line#*=}"; break; done < <(grep '^session_id=' "$f" 2>/dev/null)
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
@@ -767,7 +782,7 @@ _cmd_sessions() {
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
-             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron
+             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron _sf_bgtasks
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
@@ -779,6 +794,7 @@ _cmd_sessions() {
   shopt -s nullglob
   for sf in "$cache_dir"/session-*; do
     [[ -f "$sf" ]] || continue
+    [[ "$sf" == *.tmp.* ]] && continue
     [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
     _parse_session_cache "$sf"
 
@@ -804,6 +820,7 @@ _cmd_sessions() {
     _sf_kind[$_sf_count]="$_PSC_kind"
     _sf_pace[$_sf_count]="$_PSC_pace"
     _sf_cron[$_sf_count]="$_PSC_cron"
+    _sf_bgtasks[$_sf_count]="$_PSC_bg_tasks"
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
       _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
@@ -993,8 +1010,15 @@ _cmd_sessions() {
     [[ "${_sf_kind[$_i]}" == "background" ]] && \
       _bg_badge=" ${CLAUDII_CLR_DIM}[bg]${CLAUDII_CLR_RESET}"
 
-    # Line 1: status + model + [bg] + project path + metadata
-    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}${_bg_badge}"
+    # bg_tasks count badge — shown when bg_tasks >= 1 (from claudii-stop-hook)
+    local _bgtasks_badge=""
+    local _bgt_val="${_sf_bgtasks[$_i]:-0}"
+    if [[ "$_bgt_val" =~ ^[0-9]+$ && "$_bgt_val" -ge 1 ]]; then
+      _bgtasks_badge=" ${CLAUDII_CLR_DIM}[${_bgt_val} bg]${CLAUDII_CLR_RESET}"
+    fi
+
+    # Line 1: status + model + [bg] + [N bg] + project path + metadata
+    line="  ${status_icon} ${CLAUDII_CLR_ACCENT}${_display_model}${CLAUDII_CLR_RESET}${_bg_badge}${_bgtasks_badge}"
     if [[ -n "${_sf_projpath[$_i]}" ]]; then
       line+="  ${CLAUDII_CLR_DIM}${_sf_projpath[$_i]}${CLAUDII_CLR_RESET}"
     fi
@@ -1083,8 +1107,21 @@ _cmd_gc() {
   local _gc_files=("$_cache_base"/session-*)
   shopt -u nullglob
 
+  # Sweep orphan atomic-write artifacts (session-*.tmp.PID) older than 60s.
+  # cc-statusline/stop-hook write to .tmp.$$ then mv; a SIGKILL between write and
+  # rename leaves these behind. They are never real sessions — delete unconditionally.
+  for _sf in "${_gc_files[@]+"${_gc_files[@]}"}"; do
+    [[ "$_sf" == *.tmp.* ]] || continue
+    local _tmp_mt
+    _tmp_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
+    if (( _now - _tmp_mt > 60 )); then
+      rm -f "$_sf" && (( ++_removed ))
+    fi
+  done
+
   for _sf in "${_gc_files[@]}"; do
     [[ -f "$_sf" ]] || continue
+    [[ "$_sf" == *.tmp.* ]] && continue
 
     local _sc _ppid _pinned _sf_mt _age
     { _sc=$(<"$_sf"); } 2>/dev/null || continue
@@ -1157,6 +1194,7 @@ _cmd_default() {
 
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
   _ov_today_cost=0 _ov_today_count=0 _ov_stale=0
+  _ov_next_cron=0 _ov_total_bg=0
   # Use calendar midnight as cutoff (not rolling 24h)
   if date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s' >/dev/null 2>&1; then
     _ov_cutoff=$(date -j -f '%Y-%m-%d' "$(date '+%Y-%m-%d')" '+%s')
@@ -1169,6 +1207,7 @@ _cmd_default() {
   if [[ ${#_ov_files[@]} -gt 0 ]]; then
     for _ov_f in "${_ov_files[@]}"; do
       [[ -f "$_ov_f" ]] || continue
+      [[ "$_ov_f" == *.tmp.* ]] && continue
 
       _parse_session_cache "$_ov_f"
 
@@ -1204,6 +1243,21 @@ _cmd_default() {
             (( ++_ov_stale ))
           fi
         fi
+      fi
+
+      # Cron summary: track earliest future next_cron_at across all sessions
+      if [[ "$_PSC_cron" =~ ^[0-9]+$ && "$_PSC_cron" != "0" ]]; then
+        _ov_cron_rem=$(( _PSC_cron - now ))
+        if (( _ov_cron_rem > 0 )); then
+          if (( _ov_next_cron == 0 || _PSC_cron < _ov_next_cron )); then
+            _ov_next_cron=$_PSC_cron
+          fi
+        fi
+      fi
+
+      # bg_tasks total across all sessions
+      if [[ "$_PSC_bg_tasks" =~ ^[0-9]+$ ]]; then
+        _ov_total_bg=$(( _ov_total_bg + _PSC_bg_tasks ))
       fi
     done
   fi
@@ -1411,6 +1465,31 @@ _cmd_default() {
     # Stale session GC hint: > 5 dead sessions older than 24h (counted in first loop)
     (( _ov_stale > 5 )) && \
       printf "    ${CLAUDII_CLR_DIM}%d stale sessions  ·  claudii si${CLAUDII_CLR_RESET}\n" "$_ov_stale"
+
+    # Cron + bg_tasks summary line: shown when at least one session has a future cron
+    if (( _ov_next_cron > 0 )); then
+      _ov_cron_secs=$(( _ov_next_cron - now ))
+      if (( _ov_cron_secs > 0 )); then
+        if   (( _ov_cron_secs < 3600 ));  then
+          printf -v _ov_cron_rel '%dm' $(( _ov_cron_secs / 60 ))
+        elif (( _ov_cron_secs < 86400 )); then
+          _ov_ch=$(( _ov_cron_secs / 3600 )); _ov_cm=$(( (_ov_cron_secs % 3600) / 60 ))
+          if (( _ov_cm > 0 )); then printf -v _ov_cron_rel '%dh%dm' "$_ov_ch" "$_ov_cm"
+          else printf -v _ov_cron_rel '%dh' "$_ov_ch"; fi
+        else
+          _ov_cd=$(( _ov_cron_secs / 86400 )); _ov_ch=$(( (_ov_cron_secs % 86400) / 3600 ))
+          if (( _ov_ch > 0 )); then printf -v _ov_cron_rel '%dd%dh' "$_ov_cd" "$_ov_ch"
+          else printf -v _ov_cron_rel '%dd' "$_ov_cd"; fi
+        fi
+        _ov_cron_line="    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON} next wake in ${_ov_cron_rel}"
+        if (( _ov_total_bg > 0 )); then
+          _ov_bg_s=""; (( _ov_total_bg != 1 )) && _ov_bg_s="s"
+          _ov_cron_line+="  ·  ${_ov_total_bg} bg task${_ov_bg_s}"
+        fi
+        _ov_cron_line+="${CLAUDII_CLR_RESET}"
+        printf '%s\n' "$_ov_cron_line"
+      fi
+    fi
   else
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Sessions                        start Claude to see data here${CLAUDII_CLR_RESET}\n"
   fi

@@ -548,3 +548,33 @@ echo '{"session_id":"slcr4444xxxx","model":{"display_name":"Sonnet"},"context_wi
 _preserved="$(cat "$_cron_preserve_cache/session-slcr4444" 2>/dev/null)"
 assert_contains "cron: cc-statusline preserves next_cron_at on rewrite" "next_cron_at=${_cron_future_p}" "$_preserved"
 assert_contains "cron: cc-statusline preserves bg_tasks on rewrite" "bg_tasks=1" "$_preserved"
+
+# ── bg-tasks segment tests ────────────────────────────────────────────────────
+# bg-tasks segment: renders ⚙ Nbg when bg_tasks >= 1 in cache
+_bgt_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_bgt_cfg_dir")
+mkdir -p "$_bgt_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["bg-tasks"]]}}\n' > "$_bgt_cfg_dir/claudii/config.json"
+_bgt_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_bgt_cache_dir")
+# Pre-seed cache with bg_tasks=2
+printf 'model=Sonnet\nbg_tasks=2\n' > "$_bgt_cache_dir/session-bgt11111"
+output=$(echo '{"session_id":"bgt11111xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_bgt_cache_dir" XDG_CONFIG_HOME="$_bgt_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "bg-tasks segment: ⚙ shown when bg_tasks=2" "⚙" "$strip"
+assert_contains "bg-tasks segment: count shown (2bg)" "2bg" "$strip"
+
+# bg-tasks segment: omitted when bg_tasks=0
+_bgt_cache_dir2="$(mktemp -d)"; _SL_TMPDIRS+=("$_bgt_cache_dir2")
+printf 'model=Sonnet\nbg_tasks=0\n' > "$_bgt_cache_dir2/session-bgt22222"
+output=$(echo '{"session_id":"bgt22222xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_bgt_cache_dir2" XDG_CONFIG_HOME="$_bgt_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "bg-tasks segment: omitted when bg_tasks=0" "0" "$(echo "$strip" | grep -c '⚙' || true)"
+
+# bg-tasks segment: omitted when bg_tasks absent from cache
+_bgt_cache_dir3="$(mktemp -d)"; _SL_TMPDIRS+=("$_bgt_cache_dir3")
+printf 'model=Sonnet\n' > "$_bgt_cache_dir3/session-bgt33333"
+output=$(echo '{"session_id":"bgt33333xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | CLAUDII_CACHE_DIR="$_bgt_cache_dir3" XDG_CONFIG_HOME="$_bgt_cfg_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "bg-tasks segment: omitted when bg_tasks absent" "0" "$(echo "$strip" | grep -c '⚙' || true)"

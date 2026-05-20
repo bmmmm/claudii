@@ -215,6 +215,19 @@ assert_contains "sessions pace+cron: ↑ still present with cron" "↑" "$_cron_
 rm -rf "$_cron_sess_tmp"
 unset _cron_sess_tmp _cron_sess_xdg _cron_sess_out _cron_sess_strip _cron_sess_future
 
+# sessions bg_tasks badge: [N bg] appears in Line 1 when bg_tasks >= 1
+_bgt_cli_tmp="$(mktemp -d)"
+_bgt_cli_xdg="$_bgt_cli_tmp/xdg"
+mkdir -p "$_bgt_cli_xdg/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$_bgt_cli_xdg/claudii/config.json"
+printf 'model=Sonnet 4.6\nctx_pct=30\ncost=0.20\nrate_5h=20\nrate_7d=40\nreset_5h=\nreset_7d=\nsession_id=bgtsestest\nworktree=\nagent=\nbg_tasks=3\npace=\nnext_cron_at=\nppid=%s\n' "$$" \
+  > "$_bgt_cli_tmp/session-bgtse"
+_bgt_cli_out=$(CLAUDII_CACHE_DIR="$_bgt_cli_tmp" XDG_CONFIG_HOME="$_bgt_cli_xdg" bash "$CLAUDII_HOME/bin/claudii" sessions 2>&1 || true)
+_bgt_cli_strip=$(printf '%s' "$_bgt_cli_out" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "sessions bg_tasks: [3 bg] badge appears when bg_tasks=3" "[3 bg]" "$_bgt_cli_strip"
+rm -rf "$_bgt_cli_tmp"
+unset _bgt_cli_tmp _bgt_cli_xdg _bgt_cli_out _bgt_cli_strip
+
 # cost — ANSI guard + content check
 _cost_tmp2="$(mktemp -d)"
 cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)

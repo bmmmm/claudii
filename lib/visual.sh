@@ -25,6 +25,7 @@ CLAUDII_SYM_PACE_AHEAD="↑"  # pace: burning slower than linear (comfortable)
 CLAUDII_SYM_PACE_ON="="     # pace: on-pace (within ±15% of linear burn)
 CLAUDII_SYM_PACE_BEHIND="↓" # pace: burning faster than linear (will hit limit early)
 CLAUDII_SYM_CRON="⏰"       # next scheduled cron run (from Stop-hook session_crons)
+CLAUDII_SYM_BG="⚙"         # background task count (from Stop-hook bg_tasks)
 
 # ── Fingerprint palette (muted 256-color, cycles for cross-session file coloring) ──
 CLAUDII_FP_PALETTE=(
