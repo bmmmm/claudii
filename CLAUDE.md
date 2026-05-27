@@ -89,7 +89,6 @@ Session transcripts show recurring waste patterns. Follow these:
 6. `test_docs.sh` verifies all five stay in sync
 7. Wiki is auto-generated from the man page — never edit the wiki directly
 8. Update `CHANGELOG.md` unreleased block
-9. Check `memory/watchlist.md` Key Insights — remove entries for features now implemented
 
 ## When removing or renaming a command
 
