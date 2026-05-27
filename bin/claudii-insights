@@ -15,6 +15,7 @@
 #   claudii-insights cache-dir         # print insights cache directory
 #   claudii-insights merge [--days N] [--project PATH]
 #                                      # stream merged stats to stdout (jq-able)
+#                                      # includes per-skill and per-plugin attribution
 
 set -uo pipefail
 
@@ -59,7 +60,7 @@ _is_stale() {
   (( jm > cm ))
 }
 
-SCHEMA_VERSION=2
+SCHEMA_VERSION=3
 
 # Spot-check one cache file's schema_version. Returns 0 if matches current,
 # 1 if any sample shows an older/missing version.
@@ -193,7 +194,9 @@ _cmd_merge() {
             stop_reasons: {},
             subagent_types: {},
             permission_modes: {},
-            service_tier: {}
+            service_tier: {},
+            attribution_skills: {},
+            attribution_plugins: {}
           };
           .sessions += 1
           | .messages += ($s.messages // 0)
@@ -212,6 +215,8 @@ _cmd_merge() {
           | .subagent_types = add_obj(.subagent_types; $s.subagent_types)
           | .permission_modes = add_obj(.permission_modes; $s.permission_modes)
           | .service_tier = add_obj(.service_tier; $s.service_tier)
+          | .attribution_skills = add_obj_nested(.attribution_skills; $s.attribution_skills)
+          | .attribution_plugins = add_obj_nested(.attribution_plugins; $s.attribution_plugins)
         )
     ' "${files[@]}"
 }
@@ -228,6 +233,7 @@ claudii-insights — aggregate JSONL transcripts to JSON cache
 Usage:
   claudii-insights aggregate [--force | <jsonl>]
   claudii-insights merge [--days N] [--project PATH]
+                         # includes per-skill and per-plugin attribution
   claudii-insights cache-dir
 EOF
     ;;
