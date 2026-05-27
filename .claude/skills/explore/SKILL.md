@@ -82,13 +82,25 @@ For each changed file, assess: **Does this affect a pattern we adopted?**
 Focus on: `skills/*/SKILL.md`, `ETHOS.md`, `AGENTS.md`, `CLAUDE.md` in those repos.
 Report as: "obra/superpowers updated skill X — their new approach: Y. Our current version does Z. Recommend: adopt / ignore / note."
 
-### For Anthropic docs
+### For Anthropic CC releases (primary source)
 
-Use WebFetch to check:
-- `https://docs.anthropic.com/en/docs/claude-code/cli-usage` — new CLI flags, features
-- `https://docs.anthropic.com/en/docs/claude-code/status-bar` — new JSON fields in statusLine output
+**Use the Atom feed in the claude-code repo — it is the canonical, machine-readable changelog:**
 
-Look for: new JSON fields, new CLI flags, deprecations, pricing changes.
+```
+https://raw.githubusercontent.com/anthropics/claude-code/main/feed.xml
+```
+
+Atom 1.0, multi-release per week, full HTML content per entry, no rate limit (raw GitHub cache). Replaces `gh api repos/anthropics/claude-code/releases`, which has been unreliable.
+
+Parse strategy: fetch feed, filter `<entry>` where `<updated>` > last-checked-date in watchlist.md, extract `<title>` (version) + `<content>` (HTML bullet list). Hunt for: new statusLine JSON fields, new hook events / hook-output fields (`terminalSequence`, `hookSpecificOutput.*`, `reloadSkills`), new `claude` CLI flags, new settings.json keys, `/usage` / `/cost` / `/diff` enrichments, model/pricing changes.
+
+### For Anthropic docs (secondary, only when feed mentions a new doc page)
+
+- `https://code.claude.com/docs/en/statusline` — JSON-field reference
+- `https://code.claude.com/docs/en/hooks` — hook protocol
+- `https://platform.claude.com/docs` — API/SDK changes
+
+Don't poll these on every scan — the feed already announces relevant changes; only fetch the doc page when the feed entry references it.
 
 ### For community needs
 
