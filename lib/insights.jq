@@ -14,7 +14,7 @@
 # output shape so `claudii-insights` can detect stale caches and force-rebuild.
 
 reduce (inputs | fromjson? // empty) as $r ({
-  schema_version: 2,
+  schema_version: 3,
   sessionId: $sid,
   first_seen: null,
   last_seen: null,
@@ -22,6 +22,8 @@ reduce (inputs | fromjson? // empty) as $r ({
   assistant_messages: 0,
   days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create}
   models: {},              # model -> {in_tok, cache_read, cache_create}
+  attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create}
+  attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create}
   tools: {},               # tool_name -> count
   tool_errors: {},         # tool_name -> error count
   stop_reasons: {},        # reason -> count (assistant only)
@@ -54,6 +56,20 @@ reduce (inputs | fromjson? // empty) as $r ({
       | .models[$model].in_tok       = ((.models[$model].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
       | .models[$model].cache_read   = ((.models[$model].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
       | .models[$model].cache_create = ((.models[$model].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+      | (if ($r.attributionSkill // null) != null then
+          .attribution_skills[$r.attributionSkill].calls       = ((.attribution_skills[$r.attributionSkill].calls       // 0) + 1)
+          | .attribution_skills[$r.attributionSkill].in_tok     = ((.attribution_skills[$r.attributionSkill].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
+          | .attribution_skills[$r.attributionSkill].out_tok    = ((.attribution_skills[$r.attributionSkill].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
+          | .attribution_skills[$r.attributionSkill].cache_read = ((.attribution_skills[$r.attributionSkill].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
+          | .attribution_skills[$r.attributionSkill].cache_create = ((.attribution_skills[$r.attributionSkill].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+        else . end)
+      | (if ($r.attributionPlugin // null) != null then
+          .attribution_plugins[$r.attributionPlugin].calls       = ((.attribution_plugins[$r.attributionPlugin].calls       // 0) + 1)
+          | .attribution_plugins[$r.attributionPlugin].in_tok     = ((.attribution_plugins[$r.attributionPlugin].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
+          | .attribution_plugins[$r.attributionPlugin].out_tok    = ((.attribution_plugins[$r.attributionPlugin].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
+          | .attribution_plugins[$r.attributionPlugin].cache_read = ((.attribution_plugins[$r.attributionPlugin].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
+          | .attribution_plugins[$r.attributionPlugin].cache_create = ((.attribution_plugins[$r.attributionPlugin].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+        else . end)
       | (if $r.message.usage.service_tier then .service_tier[$r.message.usage.service_tier] = ((.service_tier[$r.message.usage.service_tier] // 0) + 1) else . end)
       | (if $r.message.stop_reason then .stop_reasons[$r.message.stop_reason] = ((.stop_reasons[$r.message.stop_reason] // 0) + 1) else . end)
       | (if (($r.message.content // null) | type) == "array" then
