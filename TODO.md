@@ -9,20 +9,62 @@
 ### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning
 
 **Type: Feature**
-**Complexity: Medium-large**
-**Touches: `bin/claudii-insights`, `lib/insights.jq`, new sub-command (likely `claudii skills-cost` + `claudii self-improve`)**
 **Triggered by:** CC v2.1.149 shipped `/usage` Per-Category Breakdown (Skills / Subagents / Plugins / MCP costs).
+**Why:** First time we can attribute cost to a *specific skill*. Opens an auto-tuning loop nobody in the ecosystem does — "outer-layer decision support" lane (Key Insights 2026-05-27 in watchlist).
 
-**Why this matters:** First time we can attribute cost to a *specific skill*. Opens an auto-tuning loop nobody in the ecosystem does — fits the "outer-layer decision support" lane (see Key Insights 2026-05-27 in watchlist).
+**Spec-gate (2026-05-27): RESOLVED.** Per-skill / per-plugin attribution IS in JSONL — top-level fields `attributionSkill` (string or null) and `attributionPlugin` (string or null) on every `assistant` row. Verified across 10 recent sessions. JSONL ingestion is sufficient — no `/usage`-runtime fallback needed.
 
-**Concept:**
-1. **Aggregate** — extend `lib/insights.jq` to extract per-skill / per-subagent / per-plugin token+cost from JSONL (same data CC `/usage` uses, from our side).
-2. **Detect outliers** — heuristics: skill X is 5× the median cost-per-invocation; subagent Y burns Opus when description fits Haiku; plugin Z's MCP server reloaded N× without being called.
-3. **Surface** — `claudii skills-cost` table, cost-trend per skill, top-N expensive.
-4. **Auto-suggest fixes** — for top-3 outliers, propose concrete edits to `~/.claude/skills/<name>/SKILL.md` (downgrade model, tighten "When NOT to use", split into cheaper variant). Print diff, ask, don't auto-apply.
-5. **Opt-in `claudii self-improve --apply`** — applies after confirmation per finding.
+---
 
-**Spec-first gate:** before coding, verify per-skill cost is actually in the JSONL stream (vs only in CC's runtime `/usage` output). If runtime-only, design needs ingestion-fallback (`claude /usage --json | claudii self-improve`). Spec → `tmp/self-improve-spec.md`.
+#### Wave 1 — Data layer + read-only view (orchestrate-able)
+
+Three independent agents, each tight scope. Tests required per agent.
+
+**Agent A — `lib/insights.jq` extension** (haiku high)
+- Bump `schema_version: 2 → 3` (forces cache rebuild on next `claudii-insights aggregate`)
+- Add to initial state: `attribution_skills: {}`, `attribution_plugins: {}`
+- In the assistant-row branch (currently lines 44–58): when `$r.attributionSkill | type == "string"`, accumulate same shape as `.models[$model]` PLUS a `calls` counter (calls needed for avg cost/call later; `.models` doesn't track this and we won't backfill it — new dimension, new counter):
+  ```
+  attribution_skills[name]: { calls, in_tok, out_tok, cache_read, cache_create }
+  attribution_plugins[name]: { calls, in_tok, out_tok, cache_read, cache_create }
+  ```
+- Sidechain rows (subagents) are out of scope for Wave 1 — leave `isSidechain: true` rows attributed normally (they may also have `attributionSkill` set from the spawning context — fine, document but don't special-case).
+- Test fixture: drop a 5-line synthetic JSONL with mixed null/string attribution into `tests/fixtures/insights-attribution.jsonl`, assert aggregated counters match by hand.
+
+**Agent B — `bin/claudii-insights merge` extension** (haiku high)
+- Add `attribution_skills: {}` and `attribution_plugins: {}` to merge initial state (line 178–197)
+- Add `.attribution_skills = add_obj_nested(.attribution_skills; $s.attribution_skills)` (and plugins) to reduce block (after line 214) — the helper is already defined
+- Update inline `--help` (line 16–17 and 230) to mention the new fields
+- Test: extend an existing merge test, assert the new keys appear and aggregate across 2 sessions
+
+**Agent C — `claudii skills-cost` command** (sonnet high)
+- New `_cmd_skills_cost()` in `lib/cmd/sessions.sh`; dispatch in `bin/claudii`; completion in `completions/_claudii`; man page entry; CHANGELOG unreleased
+- Flags: `--days N` (default 30), `--plugins` (show plugin table instead of skill table), `--json`
+- Reads from `claudii-insights merge --days N`
+- Uses existing pricing logic — locate it (`lib/cmd/cost.sh` or similar; grep `price\|pricing\|usd` first), do NOT duplicate
+- Computes per-row: total cost (in + out + cache_create + cache_read at model-correct prices), avg cost/call, model-mix string
+- Sorts desc by total cost; marks outliers (cost/call ≥ 3× median across all rows in the table) with a flag column — no auto-edit
+- Output mockup (use `lib/visual.sh` constants for color):
+  ```
+  $ claudii skills-cost --days 30
+
+  Skill                       Calls   Tot $    Avg $   Model        Flag
+  ─────────────────────────── ─────── ─────── ─────── ──────────── ────
+  explore                       17     2.31    0.136   opus-4-7      !
+  scope-permissions              4     0.08    0.020   sonnet-4-6
+  proxy                          3     0.05    0.017   sonnet-4-6
+  commit-commands:commit         3     0.04    0.013   sonnet-4-6
+
+  Median cost/call: $0.017 — rows flagged (!) are ≥3× median
+  ```
+- Tests: snapshot test against a fixture cache directory; assert outlier-flag math; assert `--plugins` switches table; assert `--json` is parseable
+
+**Out of scope for Wave 1** (Wave 2+, manual iteration after looking at real tables):
+- Subagent attribution (needs `isSidechain` + `parentUuid` chain — design after seeing real data)
+- MCP-tool attribution (needs anteilig-vs-full-row design decision)
+- Outlier heuristics beyond simple median multiple
+- Skill-edit auto-suggestion (`claudii self-improve`) — that's a judgment-LLM-call design, not mechanical
+- Auto-apply (`--apply`)
 
 ---
 
