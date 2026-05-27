@@ -25,7 +25,7 @@ Relevance filter: Does a finding strengthen the Sessionline (inner) or the outer
 
 ## Step 0: Load context
 
-1. `memory/watchlist.md` — repos, docs and sources with last-checked dates
+1. `~/.claude/projects/-Users-bma-offline-coding-claudii/memory/watchlist.md` — repos, docs and sources with last-checked dates
 2. `TODO.md` — current backlog (what we already plan)
 
 ## Step 1: Determine scan scope
@@ -144,7 +144,7 @@ What we do better: {claudii-exclusive features they lack}
 ## Step 5: Persist findings
 
 1. If the scan revealed **new feature ideas**: suggest adding them to `TODO.md`
-2. If a competitor shipped something relevant: update `memory/watchlist.md` with new "last checked" date and a note
+2. If a competitor shipped something relevant: update `~/.claude/projects/-Users-bma-offline-coding-claudii/memory/watchlist.md` with new "last checked" date and a note
 3. If Anthropic docs changed: flag new JSON fields as potential claudii features
 4. If a feature listed in Key Insights is now implemented: remove or update that entry
 5. Do NOT auto-edit files — present findings and let the user decide what to persist

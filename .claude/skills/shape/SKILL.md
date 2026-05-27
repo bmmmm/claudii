@@ -1,7 +1,7 @@
 ---
 name: shape
-description: Hygiene-check for claudii repo. Checks memories, skills, docs, settings, CI, Formula, README for staleness and inconsistencies.
-model: haiku
+description: Hygiene-check for claudii repo. Checks memories, skills, docs, settings, CI, README for staleness and inconsistencies.
+model: sonnet
 effort: high
 ---
 
@@ -26,13 +26,13 @@ claudii extends the Claude Code Statusline — inward (Sessionline) and outward 
 
 Check on every `/shape` invocation:
 
-- **Memories** (`memory/`) — stale entries? Contradictions?
+- **Memories** (`~/.claude/projects/-Users-bma-offline-coding-claudii/memory/`) — stale entries? Contradictions? Read `MEMORY.md` index first.
 - **Skills** (`.claude/skills/`) — dead references? Overlaps?
 - **CLAUDE.md** — architecture table, naming, rules still current?
 - **TODO.md / ROADMAP.md** — bloated? Duplicates?
 - **`.claude/settings.local.json`** — dead `Bash(...)` entries? Cross-check every entry against actual files and commands in `bin/`. Stale entry = command or script no longer exists.
 - **`.github/workflows/`** — do CI/release/wiki workflows reference commands or files that no longer exist?
-- **`Formula/claudii.rb`** — caveats, bin wrappers (`%w[...]`), and test assertions still match current commands and files?
+- **Homebrew Formula** — lives in `bmmmm/homebrew-tap` (single source of truth, synced by `scripts/release.sh`). Not checked here; flag only if `scripts/release.sh` has drifted from the tap.
 - **`README.md`** — example commands still valid? Referenced features still exist?
 
 For each problem found — root cause loop:
