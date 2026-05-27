@@ -313,6 +313,29 @@ Supports
 Alias:
 .BR c .
 .TP
+.B skills-cost
+Per-skill (or per-plugin) cost breakdown using attribution data from
+.BR claudii-insights .
+Shows calls, total cost, average cost per call, and an outlier flag
+.RB ( ! )
+when a skill's average is \[>=]3\[mu] the median.
+.RS
+.TP
+.BI "\-\-days " N
+Rolling window (default 30). Passed to
+.BR "claudii-insights merge" .
+.TP
+.B \-\-plugins
+Show
+.B attribution_plugins
+instead of
+.B attribution_skills
+(same column layout).
+.TP
+.B \-\-json
+Emit rows + outlier flag as JSON to stdout (parseable, no color codes).
+.RE
+.TP
 .B trends
 Rolling 7-day cost chart, 30-day model split, costliest day, and spend trend.
 Reads from

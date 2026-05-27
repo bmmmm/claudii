@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **`claudii skills-cost [--days N] [--plugins] [--json]`** — per-skill (or per-plugin) cost breakdown from `attribution_skills`/`attribution_plugins` data written by `claudii-insights`. Renders a table with Calls, Tot $, Avg $, Model (`mixed` — attribution spans multiple models in Wave 1), and an outlier flag (`!`) when a skill's average cost is ≥3× the median. `--plugins` switches to plugin attribution; `--json` emits machine-readable rows + meta object. Empty attribution block prints a "no data" hint.
+
 ### Changed
 - **`claudii agents` now renders a `DESCRIPTION` column** (dim) alongside `ALIAS`/`SKILL`/`MODEL`/`EFFORT`, sourced from `agents.<alias>.description` in the config. TSV / `--json` outputs gained the same field. Terminal-soft-wraps long descriptions — no truncation, since this is meant to be a quick lookup of *why* an alias exists, not just *that* it exists.
 
