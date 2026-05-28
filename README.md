@@ -86,6 +86,7 @@ claudii pin <id>                 # protect session from garbage collection
 claudii unpin <id>               # remove GC protection
 claudii cost / c                 # per-model cost breakdown
 claudii trends / t               # weekly/daily cost history
+claudii skills-cost              # per-skill / per-plugin cost (--plugins · --json · --days N)
 claudii explain                  # explain claudii layers and architecture
 claudii doctor / d               # installation health check
 claudii config get/set <key>     # read/write config

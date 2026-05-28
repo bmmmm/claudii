@@ -11,7 +11,7 @@ bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator for prompt-cache hit-rate insights
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, doctor
-lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default
+lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default, skills-cost
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/trends.awk          # awk program for trends aggregation

@@ -60,6 +60,7 @@ usage() {
   printf "    %-33s $d %s\n" "pin / unpin <session-id>"        "protect session from GC"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
+  printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin cost breakdown"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Config${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
