@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.19.0] — 2026-05-28
+
 ### Added
 - **`claudii skills-cost [--days N] [--plugins] [--json]`** — per-skill (or per-plugin) cost breakdown from `attribution_skills`/`attribution_plugins` data written by `claudii-insights`. Renders a table with Calls, Tot $, Avg $, Model (`mixed` — attribution spans multiple models in Wave 1), and an outlier flag (`!`) when a skill's average cost is ≥3× the median. `--plugins` switches to plugin attribution; `--json` emits machine-readable rows + meta object. Empty attribution block prints a "no data" hint.
 
