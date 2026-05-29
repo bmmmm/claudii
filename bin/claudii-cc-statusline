@@ -267,10 +267,12 @@ _seg_model=""
 if [[ -n "$model" ]]; then
   _seg_model="${BOLD}${model}${RST}"
   if [[ -n "$effort_level" && "$effort_level" != "null" ]]; then
+    # ultracode = Claude Code's xhigh + standing workflow consent (menu mode,
+    # not an API effort level). Highlight the high-end modes; dim the rest.
     case "$effort_level" in
-      max)  _eff_clr="$ACCENT" ;;
-      high) _eff_clr="$YELLOW" ;;
-      *)    _eff_clr="$DIM"    ;;
+      ultracode|max|xhigh) _eff_clr="$ACCENT" ;;
+      high)                _eff_clr="$YELLOW" ;;
+      *)                   _eff_clr="$DIM"    ;;
     esac
     _seg_model+=" ${_eff_clr}${effort_level}${RST}"
   fi

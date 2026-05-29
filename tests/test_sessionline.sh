@@ -90,6 +90,15 @@ output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"high"},"conte
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "effort mode high shown" "high" "$strip"
 
+# Effort mode xhigh + ultracode — high-end modes, shown like max/high
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"xhigh"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "effort mode xhigh shown" "xhigh" "$strip"
+
+output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"ultracode"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "effort mode ultracode shown" "ultracode" "$strip"
+
 # thinking.enabled — ▲ shown in model segment when true
 output=$(echo '{"model":{"display_name":"Opus"},"effort":{"level":"max"},"thinking":{"enabled":true},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.30,"total_duration_ms":30000}}' | bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
