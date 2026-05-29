@@ -2,7 +2,7 @@
   "aliases": {
     "cl":  { "model": "sonnet", "effort": "high",   "description": "Standard coding" },
     "clo": { "model": "opus",   "effort": "high",   "description": "Server, complex" },
-    "clm": { "model": "opus",   "effort": "max",    "description": "Hardest problems" },
+    "clm": { "model": "opus",   "effort": "xhigh",  "description": "Hardest problems" },
     "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" }
   },
   "fallback": {
@@ -55,7 +55,7 @@
     "snmax":   { "model": "sonnet", "effort": "max",                            "description": "Sonnet max — harder single-file tasks without multi-step reasoning" },
     "opl":     { "model": "opus",   "effort": "low",                            "description": "Opus low — code review, arch checks, merge assessment" },
     "opm":     { "model": "opus",   "effort": "high",                           "description": "Opus high — multi-file refactors with cross-file reasoning, ecosystem analysis" },
-    "op":      { "model": "opus",   "effort": "xhigh",                          "description": "Opus xhigh — foundation tasks, complex multi-file changes with cross-cutting concerns" },
+    "op":      { "model": "opus",   "effort": "high",                           "description": "Opus high — foundation tasks, complex multi-file changes with cross-cutting concerns" },
     "showall": { "model": "haiku",  "effort": "high",   "skill": "showall",     "description": "Show all — full project state (TODO, git, tests, sessions)" }
   },
   "theme": {

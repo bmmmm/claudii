@@ -192,7 +192,7 @@ _claudii() {
                 'aliases.clo.model:Model for clo (default: opus)'
                 'aliases.clo.effort:Effort for clo (default: high)'
                 'aliases.clm.model:Model for clm (default: opus)'
-                'aliases.clm.effort:Effort for clm (default: max)'
+                'aliases.clm.effort:Effort for clm (default: xhigh)'
                 'aliases.clq.model:Model for clq (default: sonnet)'
                 'aliases.clq.effort:Effort for clq (default: medium)'
                 'fallback.enabled:Auto-fallback on outage (true/false)'
