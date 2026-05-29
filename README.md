@@ -1,8 +1,8 @@
 # claudii
 
-**Claude Code session metrics in your shell — costs, rate limits, model health, and (with the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin installed) a bedtime nudge that escalates into a synthwave shame display past 1am.**
+**Claude Code session intelligence in your shell — costs, prompt-cache hit rate, rate limits, model health, and effort-mode awareness. With the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin, a bedtime nudge that escalates into a synthwave shame display past 1am.**
 
-Pure bash + jq. No Python, no Node, no daemons. Compatible with oh-my-zsh, zinit, and manual source.
+Pure bash + jq. No Python, no Node, no daemons. Read-only — claudii never modifies your sessions or makes API calls on your behalf. Compatible with oh-my-zsh, zinit, and manual source.
 
 ![CC-Statusline](screenshot-sessionline.png)
 
@@ -44,18 +44,24 @@ bash ~/claudii/install.sh
 
 ## What you get
 
-Three display layers, all read-only — claudii never modifies your sessions or makes API calls:
+Three display layers, all read-only:
 
 ### 1. CC-Statusline — inside Claude Code
 Dense metrics on every turn via the native `statusLine` hook:
 
 ```
-Opus max ▲  ████████░░  ⚡73%
+Opus xhigh ▲  ████████░░  ⚡73%
 5h:28%  7d:12%  eta:4h  +47/-12
 api:23m  12.4k↑ 4.2k↓  23m  feature-branch  ⌂ gateii
 Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
 ⚡ commit-msg Qwen3.5-9B 2s
 ```
+
+The model segment shows the active **effort mode** — the high-end modes (`xhigh`,
+`ultracode`, `max`) are highlighted, `▲` marks active thinking. `ultracode` is Claude
+Code's menu mode (= `xhigh` effort plus standing consent to launch multi-agent
+workflows); claudii renders it whether Claude Code reports `ultracode` or the
+underlying `xhigh`.
 
 Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only render when relevant) are documented in `man claudii`. The `clock` segment is provided by the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin (when installed) — it escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string past 1h overdue, with `breathing-pulse`, `char-decay`, `matrix-rain-drip`, and `glyph-swarm` modes once you cross +3h. Without cc-insomnii the `clock` segment renders nothing — pure CC-Statusline still works fine for everything else.
 
@@ -63,8 +69,8 @@ Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only rend
 Appears automatically after `claudii` commands when sessions are active:
 
 ```
-  sonnet-4-6   73%  $25.63  5h:28% ↺42m
-  opus-4       42%   $1.20
+  opus-4-8     73%  $25.63  5h:28% ↺42m
+  sonnet-4-6   42%   $1.20
 ```
 
 ### 3. ClaudeStatus — RPROMPT
@@ -80,15 +86,18 @@ Model health in your right prompt, refreshed every 5 minutes. Never blocks your 
 claudii                          # overview: sessions, account, agents, services
 claudii on / off                 # enable/disable all display layers
 claudii status                   # live model health check
-claudii sessions / se            # active sessions with context, cost, rate
+claudii sessions / se            # active sessions: context, cost, rate
 claudii sessions-inactive / si   # ended sessions + GC hint
-claudii pin <id>                 # protect session from garbage collection
-claudii unpin <id>               # remove GC protection
+claudii gc / g                   # garbage-collect ended sessions
+claudii pin / unpin <id>         # protect a session from garbage collection
 claudii cost / c                 # per-model cost breakdown
+claudii cache                    # prompt-cache hit rate + $ saved, per model & day
 claudii trends / t               # weekly/daily cost history
 claudii skills-cost              # per-skill / per-plugin cost (--plugins · --json · --days N)
-claudii explain                  # explain claudii layers and architecture
+claudii explain                  # explain claudii's layers and architecture
 claudii doctor / d               # installation health check
+claudii update                   # self-update (Homebrew or git checkout)
+claudii changelog                # what changed between versions
 claudii config get/set <key>     # read/write config
 claudii agents                   # list configured agent aliases
 claudii omlx [status|connect|test|disconnect]
@@ -100,28 +109,34 @@ claudii vibemap [grid|strip|status|clear|path]
                                  # opt-in activity heatmap (default off)
 ```
 
-All commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
+Most data commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
 
 ## Aliases
 
-Registered dynamically from config — add/remove without editing shell files:
+Launch aliases register dynamically from config — add/remove without editing shell files.
+Each pairs a model with an [effort level](https://platform.claude.com/docs/en/build-with-claude/effort)
+(`low` → `medium` → `high` → `xhigh` → `max`); `high` is the default that balances quality
+and token spend, `xhigh`/`max` for the heaviest work:
 
 ```bash
 cl       # Sonnet, high effort — general default
-clo      # Opus, high effort — complex tasks
-clm      # Opus, max effort — maximum reasoning
+clo      # Opus, high effort — complex tasks, server work
+clm      # Opus, xhigh effort — hardest problems, maximum reasoning
 clq      # Sonnet, medium effort — search mode
 clh      # alias table + live model health
 ```
 
 Auto-fallback: if a model is down, claudii picks a healthy one automatically.
 
-Agent aliases launch Claude with a specific skill as the system prompt:
+Agent aliases launch Claude with a specific skill as the system prompt and a model/effort
+tier matched to the workload (read-only Haiku for search, Sonnet for scoped features, Opus
+for cross-file reasoning and orchestration):
 
 ```bash
-claudii agents                              # list configured agents
+claudii agents                              # list configured agents + their tier
 claudii config set agents.myagent.skill orchestrate
 claudii config set agents.myagent.model opus
+claudii config set agents.myagent.effort high
 ```
 
 ## Config
@@ -151,5 +166,7 @@ All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 **Shell prompt (ClaudeStatus):** A background subshell fetches `status.claude.com` — components API first, then RSS feed — once every 5 minutes, writes a plain-text cache file, then exits. No persistent process, no network calls in `precmd`.
 
 **Inside Claude Code (CC-Statusline):** The native `statusLine` hook calls `claudii-cc-statusline` on each turn and passes session JSON via stdin. Nothing runs between turns.
+
+**Cost & cache data:** Read straight from Claude Code's local session JSONL — `claudii cost`, `cache`, `trends`, and `skills-cost` aggregate it with jq. No telemetry, nothing leaves your machine.
 
 </details>

@@ -6,6 +6,50 @@
 
 ## Pending
 
+### Claude 4.8 follow-through — propagate session findings
+
+> Context: Opus 4.8 recognition + effort-tier tuning + prompting discipline landed in
+> `bde6566`, `3610374`, `12d2746`, `8259fdc` (claudii) and `a73698f`, `cea827f` (dotfiles).
+> Code/config/CLAUDE.md are done; the items below are the remaining doc + agent surface.
+> Findings to apply everywhere: house default `high` (xhigh on demand, max as fallback);
+> `clm` alias is now `xhigh` (was `max`); `op`/`opm`/`orc` agents are `high`; ultracode =
+> Claude Code menu mode (= xhigh + standing workflow consent), not a CLI `--effort` value;
+> 4.8 follows prompts literally (no CRITICAL/MUST/ALL-CAPS → over-triggering), spawns fewer
+> subagents (request fan-out explicitly), and drops real bugs when told to "be conservative"
+> at a review finding-stage (use coverage-first + separate verification).
+
+#### TODO: Docs sweep — Claude 4.8 / effort / ultracode
+**Type: Docs** · **Complexity: Small** · **Touches: wiki (auto-gen), `help` output, any `docs/*.md`**
+- Regenerate wiki from the man page after the man-page update below (wiki is auto-generated — never hand-edit).
+- Grep all narrative docs + `lib/cmd/*` help strings for stale model/effort wording (`max effort`, `4-5`, `4-6` defaults, "thinking toggle").
+- Confirm CHANGELOG unreleased block covers all of `bde6566`/`3610374`/`12d2746`/`8259fdc` (it does — verify before release).
+
+#### ~~TODO: README update — aliases + effort modes~~ ✅ DONE (README revamp)
+Full README revamp: `clm` max→xhigh, effort-mode + ultracode note in the CC-Statusline
+section, effort-ladder framing in Aliases, model examples bumped (opus-4-8, Opus xhigh),
+added the missing `cache` command (prompt-cache insights) + `gc`/`update`/`changelog`.
+
+#### TODO: Man page pass — 4.8 + effort consistency
+**Type: Docs** · **Complexity: Trivial** · **Touches: `man/man1/claudii.1`**
+- Sessionline segment example still reads `Claude Sonnet 4.5` (line ~593) — bump to a current model.
+- Verify alias rows + effort wording are consistent after the `clm`→xhigh change (partly done in `12d2746`).
+- `test_docs.sh` must stay green; wiki regen follows (see docs sweep).
+
+#### TODO: Agent prompts — apply prompting discipline
+**Type: Refactor** · **Complexity: Small** · **Touches: claudii subagent spawn prompts, global persona skills (`persona-code-reviewer`, `persona-security-auditor`)**
+- Strip `CRITICAL:`/`MUST`/ALL-CAPS imperatives from spawn prompts + skill descriptions (4.8 over-triggers on these).
+- Review/bug-finding agents: switch to coverage-first ("report every finding incl. low-confidence, with a confidence level; filtering is a separate step") — keep "PROVEN-only" for cheap Explore/search agents that hallucinate.
+- State scope explicitly in prompts (4.8 no longer silently generalizes).
+- No `.claude/agents/` dir exists — these live in spawn-prompt strings + the global persona skills.
+
+#### TODO: Orchestrate skill — sync effort + 4.8 findings
+**Type: Refactor** · **Complexity: Small** · **Touches: `.claude/skills/orchestrate/SKILL.md` (project) + `~/.claude/skills/orchestrate/SKILL.md` (global, dotfiles repo)**
+- Frontmatter `effort: medium` → `effort: high` in BOTH files (out of sync since `orc` agent moved medium→high in `12d2746`).
+- Add 4.8 guidance: orchestrator must request subagent fan-out explicitly (4.8 under-spawns); review waves use coverage-first finding + separate verification.
+- Global file is in the dotfiles repo (`~/offline_coding/dotfiles`) — separate commit there.
+
+---
+
 ### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning (Wave 2+)
 
 **Wave 1 shipped 2026-05-27** — `attribution_skills` / `attribution_plugins` accumulated by `lib/insights.jq` (schema_version 3), aggregated by `bin/claudii-insights merge`, surfaced by `claudii skills-cost [--days N] [--plugins] [--json]`. First real data on `bin/claudii`: top spenders are `memory-gc` ($95.88 / 746 calls) and `orchestrate` ($35.93 / 325 calls) across 30d.
