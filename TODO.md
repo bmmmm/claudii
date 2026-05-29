@@ -29,11 +29,10 @@ Full README revamp: `clm` max→xhigh, effort-mode + ultracode note in the CC-St
 section, effort-ladder framing in Aliases, model examples bumped (opus-4-8, Opus xhigh),
 added the missing `cache` command (prompt-cache insights) + `gc`/`update`/`changelog`.
 
-#### TODO: Man page pass — 4.8 + effort consistency
-**Type: Docs** · **Complexity: Trivial** · **Touches: `man/man1/claudii.1`**
-- Sessionline segment example still reads `Claude Sonnet 4.5` (line ~593) — bump to a current model.
-- Verify alias rows + effort wording are consistent after the `clm`→xhigh change (partly done in `12d2746`).
-- `test_docs.sh` must stay green; wiki regen follows (see docs sweep).
+#### ~~TODO: Man page pass — 4.8 + effort consistency~~ ✅ DONE
+Sessionline segment example `Claude Sonnet 4.5` → `Claude Opus 4.8`; alias/effort rows
+already consistent after `12d2746`. `test_docs.sh` green. (Wiki regen still pending — see
+docs sweep below.)
 
 #### TODO: Agent prompts — apply prompting discipline
 **Type: Refactor** · **Complexity: Small** · **Touches: claudii subagent spawn prompts, global persona skills (`persona-code-reviewer`, `persona-security-auditor`)**
@@ -42,11 +41,11 @@ added the missing `cache` command (prompt-cache insights) + `gc`/`update`/`chang
 - State scope explicitly in prompts (4.8 no longer silently generalizes).
 - No `.claude/agents/` dir exists — these live in spawn-prompt strings + the global persona skills.
 
-#### TODO: Orchestrate skill — sync effort + 4.8 findings
-**Type: Refactor** · **Complexity: Small** · **Touches: `.claude/skills/orchestrate/SKILL.md` (project) + `~/.claude/skills/orchestrate/SKILL.md` (global, dotfiles repo)**
-- Frontmatter `effort: medium` → `effort: high` in BOTH files (out of sync since `orc` agent moved medium→high in `12d2746`).
-- Add 4.8 guidance: orchestrator must request subagent fan-out explicitly (4.8 under-spawns); review waves use coverage-first finding + separate verification.
-- Global file is in the dotfiles repo (`~/offline_coding/dotfiles`) — separate commit there.
+#### ~~TODO: Orchestrate skill — sync effort + 4.8 findings~~ ✅ DONE
+Frontmatter `effort: medium`→`high` in both (project claudii repo + global dotfiles repo).
+Global skill's model-selection table de-staled (dropped "Opus 4.7" preamble, Opus medium→high
+for cross-file refactor/ecosystem rows, foundation = Opus high w/ xhigh on demand) + added
+4.8 prompt deltas (coverage-first review agents, no CRITICAL/MUST/ALL-CAPS).
 
 ---
 

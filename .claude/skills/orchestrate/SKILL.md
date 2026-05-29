@@ -2,7 +2,7 @@
 name: orchestrate
 description: Orchestrate claudii TODO items with parallel subagents. Extends global /orchestrate with claudii-specific rules.
 model: opus
-effort: medium
+effort: high
 ---
 
 # claudii Orchestrator — Project Override
