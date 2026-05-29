@@ -73,4 +73,17 @@ _BAD_RC=$(CLAUDE_PROJECTS_DIR="$_BAD_PROJ" CLAUDII_CACHE_DIR="$_BAD_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" cache >/dev/null 2>&1; echo $?)
 assert_eq "cache (malformed line): still exits 0" "0" "$_BAD_RC"
 
+# ── Model-label map: new + older versions all resolve (model-update guard) ──
+# Source insights.sh (pure function defs, no side effects) to call the label fn
+# directly. Adding a new model means adding a case here AND in
+# _insights_model_label — keep them in lock-step. NOT a subshell: assert_eq
+# increments the run.sh PASS/FAIL counters in the current scope.
+source "$CLAUDII_HOME/lib/cmd/insights.sh" 2>/dev/null
+assert_eq "label: opus 4.8 (latest)"  "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
+assert_eq "label: opus 4.7 (older)"   "Opus 4.7"   "$(_insights_model_label claude-opus-4-7)"
+assert_eq "label: opus 4.6 (older)"   "Opus 4.6"   "$(_insights_model_label claude-opus-4-6)"
+assert_eq "label: sonnet 4.6"         "Sonnet 4.6" "$(_insights_model_label claude-sonnet-4-6)"
+assert_eq "label: haiku 4.5"          "Haiku 4.5"  "$(_insights_model_label claude-haiku-4-5)"
+assert_eq "label: unknown opus->tier" "Opus"       "$(_insights_model_label claude-opus-9-9)"
+
 unset _SID _TS _JSONL _CACHE_OUT _CACHE_RC _CACHE_OUT_30 _EMPTY_OUT _BAD_RC

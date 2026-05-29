@@ -50,13 +50,19 @@ _insights_short_num() {
 }
 
 # Map full model id to short label.
+# When a new model ships, add its versioned case ABOVE the bare fallback
+# (most-specific-first; the bare *opus*/*sonnet*/*haiku* lines must stay last).
+# Older versions are kept on purpose so historical cost/insights data still
+# resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
 _insights_model_label() {
   case "$1" in
+    *opus-4-8*)   printf 'Opus 4.8'   ;;
     *opus-4-7*)   printf 'Opus 4.7'   ;;
     *opus-4-6*)   printf 'Opus 4.6'   ;;
     *opus*)       printf 'Opus'       ;;
     *sonnet-4-6*) printf 'Sonnet 4.6' ;;
     *sonnet*)     printf 'Sonnet'     ;;
+    *haiku-4-5*)  printf 'Haiku 4.5'  ;;
     *haiku*)      printf 'Haiku'      ;;
     '<synthetic>'|synthetic) printf 'synthetic' ;;
     *)            printf '%s' "$1"    ;;

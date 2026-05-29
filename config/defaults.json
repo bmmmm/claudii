@@ -49,7 +49,7 @@
   },
   "agents": {
     "sh":      { "model": "haiku",  "effort": "high",   "skill": "shape",       "description": "Shaper — hygiene checks, TODO planning" },
-    "orc":     { "model": "opus",   "effort": "medium", "skill": "orchestrate", "description": "Orchestrator — spawns + merges agents (Opus 4.7 for long tool-chains)" },
+    "orc":     { "model": "opus",   "effort": "medium", "skill": "orchestrate", "description": "Orchestrator — spawns + merges agents (Opus 4.8 for long tool-chains)" },
     "hk":      { "model": "haiku",  "effort": "high",                           "description": "Haiku worker — docs, tests, small fixes, status reports" },
     "sn":      { "model": "sonnet", "effort": "high",                           "description": "Sonnet worker — bug fixes, standard features (1–3 files, clear scope)" },
     "snmax":   { "model": "sonnet", "effort": "max",                            "description": "Sonnet max — harder single-file tasks without multi-step reasoning" },

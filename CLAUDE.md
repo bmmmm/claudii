@@ -98,6 +98,31 @@ Session transcripts show recurring waste patterns. Follow these:
 4. `.claude/settings.local.json` — remove stale `Bash(...)` allow entry (local only — never commit, never `git add .claude/`)
 5. Formula caveats live only in `bmmmm/homebrew-tap` (single source of truth) — `scripts/release.sh` syncs URL/SHA at release time. Edit there directly if caveats change.
 
+## When a new Claude model ships
+
+claudii does **not** pick the model for Claude Code — `/model` does. claudii only
+*recognizes and displays* model IDs. The aliases/agent tiers in `config/defaults.json`
+are version-agnostic on purpose (`opus`/`sonnet`/`haiku` + effort — Claude Code resolves
+`opus` to the latest). So a model bump is a display + docs sweep, not a config rename.
+Older versions stay selectable via `/model`; we only keep their friendly labels.
+
+Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 4.9):
+
+1. `lib/cmd/insights.sh` → `_insights_model_label()` — add `*opus-4-N*) → 'Opus 4.N'`
+   case **above** the bare `*opus*` fallback (most-specific-first). Keep older cases.
+2. `tests/test_cache.sh` — add a `label: opus 4.N (latest)` assert next to the existing
+   ones (sourced `_insights_model_label` guard). Older asserts stay as regression cover.
+3. `config/defaults.json` — bump any agent `description` that names a version
+   (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
+4. `bin/claudii-cc-statusline` already shows `.model.display_name` verbatim — no change.
+5. The tier-collapsing AWK in `lib/cmd/sessions.sh` / `lib/cmd/display.sh` is
+   version-agnostic (matches bare `opus`/`sonnet`/`haiku`) — no change.
+6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
+
+If the new model also changes **pricing**, update the per-token constants in
+`lib/cmd/sessions.sh` (`_P_IN`/`_P_OUT`/`_P_CR`/`_P_CC`) — those are the only hardcoded
+rates. Verify `claudii cost` totals afterwards.
+
 ## Project skills
 
 `/shape` — hygiene + TODOs · `/orchestrate` — implement TODOs · `/explore` — ecosystem scan

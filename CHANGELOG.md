@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Opus 4.8 recognition.** `_insights_model_label()` (`lib/cmd/insights.sh`) now maps `claude-opus-4-8` → `Opus 4.8` for the `claudii cache` per-model breakdown. Older versions (`Opus 4.7`, `Opus 4.6`, `Sonnet 4.6`) keep their labels so historical data still resolves; `Haiku 4.5` gained a versioned label too. A new sourced-function test in `tests/test_cache.sh` locks the latest + older labels in place. The in-session statusline already shows the model verbatim via `.model.display_name`, and agent aliases stay version-agnostic (`opus`/`sonnet`/`haiku` + effort — Claude Code resolves to the latest), so no config rename is needed. The `orc` agent description now references Opus 4.8.
+
+### Changed
+- **Documented the model-update process.** New "When a new Claude model ships" section in `CLAUDE.md` defines the repeatable checklist (display label + test + agent description + changelog; pricing constants only if rates change) so future model bumps are a mechanical sweep rather than a hunt.
+
 ---
 
 ## [v0.19.0] — 2026-05-28
