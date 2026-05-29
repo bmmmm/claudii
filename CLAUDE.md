@@ -75,7 +75,7 @@ Session transcripts show recurring waste patterns. Follow these:
 - **Use `bash tests/run.sh --summary`** instead of `… | tail -5` — saves ~500 lines per run.
 - **Batch Edits per file** — 3+ sequential Edits to the same file means rewrite with Write instead.
 - **Never `cat`/`grep`/`find` via Bash** — use Read/Grep/Glob tools. Pre-tool hooks should block this; if they don't, fix the hook.
-- **Subagent prompts**: enforce "under 400 words" reply caps and "only report PROVEN bugs with reproducers" — Explore agents otherwise hallucinate verbose reports.
+- **Subagent prompts**: always cap reply length ("under 400 words"). Then split by agent role: *search/Explore* agents (read-only, cheap models) get "only report PROVEN findings with reproducers" — they hallucinate verbose reports otherwise. *Bug-finding/review* agents (Opus) get the opposite — "report every finding incl. low-confidence ones, with a confidence level; filtering happens in a separate step." Claude 4.8 follows "be conservative / only high-severity" literally and silently drops real bugs (recall loss), so move filtering out of the finding stage and verify on the main thread.
 - **Parallelize tool calls** when independent — one message with N Bash/Read/Grep calls, not N sequential messages.
 - **Agent reports are advisory, not authoritative** — always verify claims against current code before fixing (Explore agents hallucinate file paths, CI config, and variable semantics).
 

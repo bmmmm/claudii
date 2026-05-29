@@ -222,7 +222,7 @@ assert_eq "agents: exit 0" "0" "$_ag_exit"
 
 # agents: shows model and effort columns
 assert_matches "agents: output has model info" "opus|sonnet|haiku" "$_ag_out"
-assert_matches "agents: output has effort info" "high|medium|max" "$_ag_out"
+assert_matches "agents: output has effort info" "xhigh|high|medium|low|max" "$_ag_out"
 
 rm -rf "$_ag_base"
 unset _AG_BASE _AG_XDG _ag_xdg _ag_base _ag_out _ag_json _ag_json_ok _ag_exit
