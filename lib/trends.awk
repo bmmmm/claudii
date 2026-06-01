@@ -2,17 +2,7 @@
 # Standalone awk program, called via -f from _cmd_trends()
 # Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
 # Variables (passed via -v): today, week_start, last_mon, last_sun, thirty,
-#   week_days, fmt, cyan, dim, pink, reset, daily_api
-
-BEGIN {
-  # Parse daily_api "date\tms|date\tms|..." into api_by_day[date] = ms
-  n = split(daily_api, _api_parts, "|")
-  for (i = 1; i <= n; i++) {
-    if (_api_parts[i] == "") continue
-    split(_api_parts[i], _ap, "\t")
-    if (_ap[1] != "") api_by_day[_ap[1]] = _ap[2] + 0
-  }
-}
+#   week_days, fmt, cyan, dim, pink, reset
 
 function fmt_tok(t) {
   if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
@@ -24,6 +14,7 @@ function fmt_tok(t) {
 {
   day = $1; model = $2; cost = $3 + 0; sid = $4
   in_tok = $5 + 0; out_tok = $6 + 0; total_tok = in_tok + out_tok
+  if ($7 + 0 > 0) api_by_day[$1] += $7   # daily API duration (folded in from a 2nd awk pass)
   if (sid == "") next
 
   # running_spend: attribute incremental cost delta to this row's day.
@@ -88,8 +79,6 @@ END {
       tw_cost += day_cost[d]
       tw_sessions += day_sessions[d]
       tw_tok += (d in day_tok ? day_tok[d] : 0)
-      # Accumulate model breakdown for Total line
-      for (m in model_sessions_30d) { _dummy = m }  # force array init
     }
     if (d >= last_mon && d <= last_sun) {
       lw_cost += day_cost[d]; lw_sessions += day_sessions[d]; lw_tok += (d in day_tok ? day_tok[d] : 0)

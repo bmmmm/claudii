@@ -98,14 +98,8 @@ ${_epoch_awk}
   # Kill spinner before output
   _spinner_stop
 
-  # Pre-compute daily API duration totals from augmented data (field 7 = api_dur_ms)
-  # Use | as record separator — BSD awk (macOS) rejects literal newlines in -v values
-  _daily_api=$(awk -F'\t' '
-    NF >= 7 && $7 > 0 { daily[$1] += $7 }
-    END { for (d in daily) printf "%s\t%s|", d, daily[d] }
-  ' <<< "$_trends_augmented")
-
   # Step 2: awk does dedup, aggregation, and ALL output formatting
+  # (daily API totals are folded into trends.awk's main pass — field 7 = api_dur_ms)
   echo "$_trends_augmented" | awk -F'\t' \
     -v today="$today_str" \
     -v week_start="$week_start_str" \
@@ -118,7 +112,6 @@ ${_epoch_awk}
     -v dim="$CLAUDII_CLR_DIM" \
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
-    -v daily_api="$_daily_api" \
     -f "$CLAUDII_HOME/lib/trends.awk"
 }
 
