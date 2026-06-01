@@ -79,11 +79,17 @@ function _claudii_launch {
   _claudii_log debug "launch: alias=$alias_name model=$model effort=$effort"
   [[ -n "$dir" ]] && cd "${dir/#\~/$HOME}"
 
-  # Check fallback
+  # Check fallback — read the status-models cache the precmd keeps warm instead of
+  # a synchronous network round-trip on every launch. The old inline claudii-status
+  # call blocked the launch up to ~5s on a stale cache AND dumped the health line to
+  # the terminal before every `cl`/`clo`/… start. If the cache is absent (brand-new
+  # shell, status job not finished), kick off a background refresh ( cmd & ) and
+  # proceed with the chosen model — fallback is a convenience, not a gate.
   if [[ "$(claudii_config_get fallback.enabled)" == "true" ]]; then
-    "$CLAUDII_HOME/bin/claudii-status" 2>&1
     local cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-    if [[ -f "$cache" ]] && grep -q "^${model}=down" "$cache" 2>/dev/null; then
+    if [[ ! -f "$cache" ]]; then
+      ( "$CLAUDII_HOME/bin/claudii-status" --quiet &>/dev/null & )
+    elif grep -q "^${model}=down" "$cache" 2>/dev/null; then
       local fb_model=$(claudii_config_get "fallback.$model.model")
       local fb_effort=$(claudii_config_get "fallback.$model.effort")
       if [[ -z "$fb_model" ]]; then
