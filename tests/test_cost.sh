@@ -193,3 +193,25 @@ assert_contains "cost (week header): Week line shows date range" "(" "$_week_lin
 assert_contains "cost (week header): Week line has a year" "20" "$_week_line"
 
 unset _COST_WEEKHDR_TMP _now_ts cost_weekhdr_out _week_line
+
+# ── cost: mixed-model day attributes each increment to the active model ───────
+# Regression: a single session that switches model mid-day must split the day's
+# spend by the model active at each increment, not credit the whole day to the
+# last model seen (Opus work + Sonnet cleanup must NOT show all spend as Sonnet).
+# Uses the real 9-col history format written by cc-statusline (sid in col 6).
+_COST_MIXMODEL_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_MIXMODEL_TMP")
+_now_ts=$(date +%s)
+
+printf '%s\tclaude-opus-4-8\t1.00\t50\t30\tmixmodel-sid\t5000\t1000\t0\n'   "$(( _now_ts - 300 ))"  > "$_COST_MIXMODEL_TMP/history.tsv"
+printf '%s\tclaude-sonnet-4-6\t1.50\t50\t30\tmixmodel-sid\t6000\t1500\t0\n' "$(( _now_ts - 100 ))" >> "$_COST_MIXMODEL_TMP/history.tsv"
+
+cost_mixmodel_out=$(CLAUDII_CACHE_DIR="$_COST_MIXMODEL_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+_mm_opus=$(printf '%s\n' "$cost_mixmodel_out" | awk -F'\t' '$1=="alltime" && $2=="Opus"   {print $3}')
+_mm_sonnet=$(printf '%s\n' "$cost_mixmodel_out" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
+
+assert_eq "cost (mixed-model day): Opus credited its 1.00 increment" "1" \
+  "$(awk "BEGIN{print (\"$_mm_opus\"+0 > 0.99 && \"$_mm_opus\"+0 < 1.01) ? 1 : 0}")"
+assert_eq "cost (mixed-model day): Sonnet credited only its 0.50 increment (not 1.50)" "1" \
+  "$(awk "BEGIN{print (\"$_mm_sonnet\"+0 > 0.49 && \"$_mm_sonnet\"+0 < 0.51) ? 1 : 0}")"
+
+unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet

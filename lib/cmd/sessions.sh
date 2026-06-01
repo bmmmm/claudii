@@ -85,79 +85,63 @@ ${_epoch_awk}
       day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
       in_tok = $6 + 0; out_tok = $7 + 0; total_tok = in_tok + out_tok
       if (sid == "" || day == "") next
-      key = sid SUBSEP day
 
       # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
       if (raw != "" && (!(model in model_display) || \
           (index(raw, ".") > 0 && index(model_display[model], ".") == 0)))
         model_display[model] = raw
 
-      # running_spend[sid]: cumulative spend from first observation.
-      # Increments on cost increases; on reset (cost drops) adds the new post-reset cost
-      # as fresh spend. This correctly accounts for intra-day resets (e.g. context compaction).
+      # Per-row spend increment, attributed to the model ACTIVE on this row.
+      # cost ($3) is the session-cumulative total (model-agnostic), so a per-model
+      # cost series cannot be reconstructed — but each *increment* can be attributed
+      # to whichever model was running when it was incurred. This fixes the
+      # mixed-model-day bug where the whole-day delta was credited to the last
+      # model seen (e.g. Opus work + Sonnet cleanup → all counted as Sonnet).
+      # Increments on cost increases; a >50% drop counts the post-reset cost as
+      # fresh spend (context compaction); minor fluctuations are ignored.
+      # NOTE: relies on rows arriving in chronological order per session
+      # (guaranteed by real-time history append + lexical glob == chronological).
+      cinc = 0
       if (sid in sid_baseline) {
         prev = sid_baseline[sid]
-        if (cost > prev) {
-          running_spend[sid] += cost - prev
-        } else if (cost < prev * 0.5) {
-          running_spend[sid] += cost  # genuine reset (context compaction)
-        } # else: minor fluctuation — update baseline silently
+        if (cost > prev)            cinc = cost - prev
+        else if (cost < prev * 0.5) cinc = cost   # genuine reset (context compaction)
       } else {
-        running_spend[sid] = cost  # first row: treat starting cost as spend (like prev=0)
+        cinc = cost                                # first row: starting cost as spend
       }
       sid_baseline[sid] = cost
 
-      # Token running_spend — same delta approach as cost
+      # Token increment — same delta approach; tokens are reported as model-agnostic
+      # period totals, so they are accumulated per-day, not per-model.
+      tinc = 0
       if (sid in tok_baseline) {
-        prev_tok = tok_baseline[sid]
-        if (total_tok > prev_tok)            { tok_running[sid] += total_tok - prev_tok }
-        else if (total_tok < prev_tok * 0.5) { tok_running[sid] += total_tok }
+        ptok = tok_baseline[sid]
+        if (total_tok > ptok)            tinc = total_tok - ptok
+        else if (total_tok < ptok * 0.5) tinc = total_tok
       } else {
-        tok_running[sid] = total_tok
+        tinc = total_tok
       }
       tok_baseline[sid] = total_tok
-      day_tok_snapshot[key] = tok_running[sid]
 
-      # Record running_spend snapshot at end of each (session, day)
-      day_spend[key] = running_spend[sid]
-      sid_model[key] = model
-      if (!(sid SUBSEP day in sid_has_day)) {
-        sid_day_list[sid] = (sid in sid_day_list) ? (sid_day_list[sid] " " day) : day
-        sid_has_day[sid SUBSEP day] = 1
+      all_models[model] = 1
+      mk = substr(day, 1, 7); yk = substr(day, 1, 4)
+      if (cinc > 0) {
+        all_months[mk] = 1; all_years[yk] = 1
+        alltime_cost[model]         += cinc; seen_sid_alltime[model SUBSEP sid]          = 1
+        if (day == today)      { today_cost[model] += cinc; seen_sid_today[model SUBSEP sid] = 1 }
+        if (day >= week_start) { week_cost[model]  += cinc; seen_sid_week[model SUBSEP sid]  = 1 }
+        month_cost[model SUBSEP mk] += cinc; seen_sid_month[model SUBSEP mk SUBSEP sid] = 1
+        year_cost[model SUBSEP yk]  += cinc; seen_sid_year[model SUBSEP yk SUBSEP sid]  = 1
       }
-      all_sids[sid] = 1
+      if (tinc > 0) {
+        alltime_tok += tinc
+        if (day == today)      today_tok += tinc
+        if (day >= week_start) week_tok  += tinc
+        month_tok[mk] += tinc
+        year_tok[yk]  += tinc
+      }
     }
     END {
-      for (sid in all_sids) {
-        n = split(sid_day_list[sid], days_arr, " ")
-        # Bubble sort ascending (YYYY-MM-DD is lexicographically ordered)
-        for (i = 1; i <= n; i++)
-          for (j = i + 1; j <= n; j++)
-            if (days_arr[i] > days_arr[j]) { tmp = days_arr[i]; days_arr[i] = days_arr[j]; days_arr[j] = tmp }
-        prev_spend = 0; prev_tok = 0
-        for (i = 1; i <= n; i++) {
-          d = days_arr[i]
-          k = sid SUBSEP d
-          cur_spend = (k in day_spend) ? day_spend[k] : 0
-          cur_tok   = (k in day_tok_snapshot) ? day_tok_snapshot[k] : 0
-          delta     = cur_spend - prev_spend
-          tok_delta = cur_tok - prev_tok
-          if (delta < 0)     delta = 0
-          if (tok_delta < 0) tok_delta = 0
-          m = (k in sid_model) ? sid_model[k] : "?"
-          prev_spend = cur_spend; prev_tok = cur_tok
-          all_models[m] = 1
-          alltime_cost[m] += delta; seen_sid_alltime[m SUBSEP sid] = 1; alltime_tok += tok_delta
-          if (d == today)      { today_cost[m] += delta; seen_sid_today[m SUBSEP sid] = 1; today_tok += tok_delta }
-          if (d >= week_start) { week_cost[m]  += delta; seen_sid_week[m SUBSEP sid]  = 1; week_tok  += tok_delta }
-          mon_key = substr(d, 1, 7)
-          month_cost[m SUBSEP mon_key] += delta; seen_sid_month[m SUBSEP mon_key SUBSEP sid] = 1; month_tok[mon_key] += tok_delta
-          all_months[mon_key] = 1
-          yr_key = substr(d, 1, 4)
-          year_cost[m SUBSEP yr_key] += delta; seen_sid_year[m SUBSEP yr_key SUBSEP sid] = 1; year_tok[yr_key] += tok_delta
-          all_years[yr_key] = 1
-        }
-      }
 
       # Sort months descending (bubble sort on keys — YYYY-MM sorts lexically)
       n_mon = 0; for (mk in all_months) mon_keys[++n_mon] = mk
