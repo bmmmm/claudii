@@ -479,12 +479,8 @@ _cmd_cost() {
 
     short=$(_norm_model_short "$model")
 
-    # Get mtime
-    if stat -f%m "$f" >/dev/null 2>&1; then
-      mtime=$(stat -f%m "$f")
-    else
-      mtime=$(stat -c%Y "$f")
-    fi
+    # Get mtime (one fork: BSD stat -f, GNU stat -c fallback; 0 if both fail)
+    mtime=$(stat -f%m "$f" 2>/dev/null || stat -c%Y "$f" 2>/dev/null || echo 0)
 
     # Find or add model index
     idx=$(_cost_model_idx "$short")
@@ -501,7 +497,11 @@ _cmd_cost() {
     _alltime_cost[$idx]=$(awk -v a="${_alltime_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
     _alltime_count[$idx]=$(( ${_alltime_count[$idx]} + 1 ))
 
-    # Accumulate today (mtime within last 24h)
+    # Accumulate today (file mtime on or after local calendar midnight — cutoff
+    # above). This no-history fallback keys "today" off the session file's mtime,
+    # so a multi-day session's full cumulative cost lands in "today" (approximate).
+    # The history path (_cmd_cost_from_history) is accurate and is preferred
+    # whenever history-*.tsv exists.
     if (( mtime >= cutoff )); then
       _today_cost[$idx]=$(awk -v a="${_today_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
       _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))

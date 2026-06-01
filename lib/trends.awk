@@ -19,6 +19,10 @@ function fmt_tok(t) {
 
   # running_spend: attribute incremental cost delta to this row's day.
   # Handles intra-day resets (context compaction) correctly.
+  # Relies on rows arriving in chronological order per session (guaranteed by the
+  # real-time history append + lexical-glob collection in _collect_history_files).
+  # The same delta logic lives in _cmd_cost_from_history (lib/cmd/sessions.sh) —
+  # keep both in sync.
   if (sid in sid_baseline) {
     prev = sid_baseline[sid]
     if (cost > prev) {

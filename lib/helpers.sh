@@ -55,6 +55,12 @@ _cfgget() {
 }
 
 # Collect history TSV files into _HIST_FILES (history.tsv + monthly history-*.tsv).
+# Order matters: the per-session cost-delta math in trends.awk and
+# _cmd_cost_from_history assumes rows arrive in chronological order per session.
+# That holds because cc-statusline appends in real time (in-file order) and the
+# monthly history-*.tsv glob is lexical == chronological (legacy history.tsv,
+# pre-rotation, sorts first). A future change to how these files are merged or
+# collected must preserve that ordering or add an explicit sort.
 _HIST_FILES=()
 _collect_history_files() {
   local _dir="$1"
