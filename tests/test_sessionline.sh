@@ -292,6 +292,29 @@ output_1M=$(echo '{"model":{"display_name":"T"},"context_window":{"used_percenta
 strip_1M=$(echo "$output_1M" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 
+# ── Tailscale segment reads the ~30s TTL cache (no per-render ifconfig fork) ──
+# Deterministic: pre-seed $cache/vpnii-ts with a fresh epoch so the ifconfig
+# probe is skipped entirely and the cached up/down value drives the segment.
+_ts_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cfg_dir")
+mkdir -p "$_ts_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["vpn"]]}}\n' > "$_ts_cfg_dir/claudii/config.json"
+_ts_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cache_dir")
+_ts_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}'
+
+# Fresh cache, up=1 → ts shown (cache hit, ifconfig not consulted)
+printf '%s 1\n' "$(date +%s)" > "$_ts_cache_dir/vpnii-ts"
+output=$(echo "$_ts_json" | XDG_CONFIG_HOME="$_ts_cfg_dir" CLAUDII_CACHE_DIR="$_ts_cache_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "tailscale: fresh cache up=1 → ts shown" "ts" "$strip"
+
+# Fresh cache, up=0 → ts hidden (cache hit, no probe)
+printf '%s 0\n' "$(date +%s)" > "$_ts_cache_dir/vpnii-ts"
+output=$(echo "$_ts_json" | XDG_CONFIG_HOME="$_ts_cfg_dir" CLAUDII_CACHE_DIR="$_ts_cache_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_not_contains "tailscale: fresh cache up=0 → ts hidden" "ts" "$strip"
+
+unset _ts_cfg_dir _ts_cache_dir _ts_json output strip
+
 # No bc in the script
 assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-cc-statusline" || true)"
 

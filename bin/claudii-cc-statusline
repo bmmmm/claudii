@@ -590,7 +590,26 @@ if [[ -f "$_vpn_state" ]]; then
   _vpn_tunnel=$(<"$_vpn_state")
   [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
 fi
-if ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.'; then
+# Tailscale — the ifconfig probe is a fork + grep on every render, so cache the
+# up/down result ~30s (shared with the zsh RPROMPT segment in lib/vpnii.zsh:
+# $_cache_dir/vpnii-ts, "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through
+# to a re-probe via the numeric guard.
+_ts_cache="${_cache_dir}/vpnii-ts"
+_ts_up=1; _ts_have=0
+if [[ -r "$_ts_cache" ]]; then
+  _ts_line=""; { _ts_line=$(<"$_ts_cache"); } 2>/dev/null
+  _ts_ep="${_ts_line%% *}"; _ts_val="${_ts_line##* }"
+  if [[ "$_ts_ep" =~ ^[0-9]+$ ]] && (( _now - _ts_ep < 30 )); then
+    [[ "$_ts_val" == "1" ]] && _ts_up=0
+    _ts_have=1
+  fi
+fi
+if (( ! _ts_have )); then
+  _ts_up=1
+  ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' && _ts_up=0
+  printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_cache" 2>/dev/null || true
+fi
+if (( _ts_up == 0 )); then
   [[ -n "$_seg_vpn" ]] && _seg_vpn+="  "
   _seg_vpn+="${GREEN}⬢${RST} ${DIM}ts${RST}"
 fi
