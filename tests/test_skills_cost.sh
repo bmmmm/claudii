@@ -152,6 +152,16 @@ _sc_dispatch_rc=$(bash "$CLAUDII_HOME/bin/claudii" skills-cost --help >/dev/null
 assert_eq "skills-cost dispatch: exit 0 on --help" "0" "$_sc_dispatch_rc"
 assert_contains "skills-cost dispatch: usage shown" "skills-cost" "$_sc_dispatch_out"
 
+# ── Test 8: --days rejects non-positive-integer values (was silently ignored) ─
+_sc_bad_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --days abc 2>&1; echo "rc=$?")
+assert_contains "skills-cost --days abc: actionable error" "positive integer" "$_sc_bad_out"
+assert_contains "skills-cost --days abc: exit 1" "rc=1" "$_sc_bad_out"
+_sc_zero_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --days 0 2>&1; echo "rc=$?")
+assert_contains "skills-cost --days 0: rejected (exit 1)" "rc=1" "$_sc_zero_out"
+
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
-      _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc
+      _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc \
+      _sc_bad_out _sc_zero_out

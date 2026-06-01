@@ -1187,6 +1187,14 @@ _cmd_skills_cost() {
     shift
   done
 
+  # --days must be a positive integer. A non-numeric value previously slipped the
+  # `[[ "$days" -gt 0 ]] 2>/dev/null` guard and silently became "no cutoff" (all
+  # time), and also broke the downstream jq `($d|tonumber)` and `printf "%d"`.
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
+    return 1
+  fi
+
   # Pricing constants (per-token, in USD).
   # Skills run across mixed models; we use Sonnet rates as a conservative blended rate.
   # Model column shows "mixed" to signal this Wave-1 limitation.
@@ -1201,13 +1209,12 @@ _cmd_skills_cost() {
   local _insights_dir="$_cache_base/insights"
 
   # Gather cache files; filter by --days cutoff using last_seen field.
-  local _cutoff_iso=""
-  if [[ -n "$days" && "$days" -gt 0 ]] 2>/dev/null; then
-    if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-      _cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
-    else
-      _cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
-    fi
+  # days is a validated positive integer (above), so compute the cutoff directly.
+  local _cutoff_iso
+  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+    _cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+  else
+    _cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
   fi
 
   shopt -s nullglob
