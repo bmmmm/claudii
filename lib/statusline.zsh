@@ -195,9 +195,10 @@ function _claudii_collect_sessions {
     sc=""
     { sc=$(<"$_sf"); } 2>/dev/null
     [[ -z "$sc" ]] && continue
+    local _sc_nl=$'\n'"$sc"
 
     s_ppid=""
-    [[ $'\n'"$sc" == *$'\n'ppid=* ]] && s_ppid="${${sc#*ppid=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'ppid=* ]] && s_ppid="${${_sc_nl#*$'\n'ppid=}%%$'\n'*}"
     if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
       # Authoritative liveness check — show even if file is old (long-running task).
       # 24h cap guards against PID recycling (OS reuses PIDs of long-dead processes).
@@ -209,7 +210,6 @@ function _claudii_collect_sessions {
     fi
 
     s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
-    local _sc_nl=$'\n'"$sc"
     [[ "$_sc_nl" == *$'\n'model=* ]]    && s_model="${${_sc_nl#*$'\n'model=}%%$'\n'*}"
     [[ "$_sc_nl" == *$'\n'ctx_pct=* ]]  && s_ctx="${${_sc_nl#*$'\n'ctx_pct=}%%$'\n'*}"
     [[ "$_sc_nl" == *$'\n'cost=* ]]     && s_cost="${${_sc_nl#*$'\n'cost=}%%$'\n'*}"

@@ -27,8 +27,11 @@ function _claudii_rl_warn {
     [[ -z "$_sf_content" ]] && continue
 
     _rl_5h="" _rl_reset=""
-    [[ $'\n'"$_sf_content" == *$'\n'rate_5h=* ]] && _rl_5h="${${_sf_content#*rate_5h=}%%$'\n'*}"
-    [[ $'\n'"$_sf_content" == *$'\n'reset_5h=* ]] && _rl_reset="${${_sf_content#*reset_5h=}%%$'\n'*}"
+    # Anchor the extraction (not just the guard) on a leading newline so a value
+    # that happens to contain "rate_5h=" can't be matched as the key.
+    local _nl=$'\n'"$_sf_content"
+    [[ "$_nl" == *$'\n'rate_5h=* ]]  && _rl_5h="${${_nl#*$'\n'rate_5h=}%%$'\n'*}"
+    [[ "$_nl" == *$'\n'reset_5h=* ]] && _rl_reset="${${_nl#*$'\n'reset_5h=}%%$'\n'*}"
 
     [[ -z "$_rl_5h" ]] && continue
     _rl_int=${_rl_5h%.*}
