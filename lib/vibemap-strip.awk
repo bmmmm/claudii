@@ -5,12 +5,18 @@
 #         Plus one final line: "max\t<n>" — max cell count, for normalization.
 #
 # Args (via -v):
-#   now=<epoch>     — current time, used to compute days_ago. Required.
-#   maxdays=<n>     — drop rows older than this. Default 14.
+#   now=<epoch>       — current time, used to compute days_ago. Required.
+#   maxdays=<n>       — drop rows older than this. Default 14.
+#   tz_offset=<secs>  — signed local UTC offset in seconds (from `date +%z`).
+#                       Default 0 (UTC). Buckets rows by LOCAL calendar day.
 #
-# Day boundaries follow local time; we compute days_ago by truncating both
-# epochs to local midnight (epoch_local % 86400 → seconds-since-local-midnight,
-# subtracted to get the local-midnight of that day) before integer-dividing.
+# days_ago is a LOCAL calendar-day difference: floor((epoch+tz_offset)/86400)
+# for `now` minus the same for each row. This buckets midnight-to-midnight in
+# local time — matching the calendar-date labels the renderer draws — rather
+# than a rolling 24h window from `now` (which mis-rowed late-evening entries
+# near midnight). tz_offset is fixed at the offset of `now`, so rows on the far
+# side of a DST transition can be off by one day for the ~1h around midnight
+# twice a year — acceptable for a weekly activity view.
 
 BEGIN {
   FS = "\t"
@@ -19,18 +25,16 @@ BEGIN {
     print "vibemap-strip.awk: needs -v now=<epoch>" > "/dev/stderr"
     exit 2
   }
-  # Anchor to local midnight of "today". Caller passes `now`, we keep it.
+  tz_offset = tz_offset + 0                    # empty → 0 (UTC)
+  now_day = int((now + tz_offset) / 86400)     # local day number of "now"
   max = 0
 }
 
 NF >= 4 {
-  e  = $1 + 0
-  h  = $3 + 0
+  e = $1 + 0
+  h = $3 + 0
   if (h < 0 || h > 23) next
-  # Calendar-day diff: snap both to local midnight, divide.
-  # Without timezone math in pure awk, approximate via 86400 buckets — fine
-  # for weekly views, off-by-one for entries crossing DST. Acceptable.
-  d = int((now - e) / 86400)
+  d = now_day - int((e + tz_offset) / 86400)   # local calendar-day difference
   if (d < 0) d = 0
   if (d > maxdays - 1) next
   count[d, h]++

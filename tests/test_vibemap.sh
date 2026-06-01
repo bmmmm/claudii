@@ -99,6 +99,21 @@ assert_eq "strip awk: d=1 = 1 entry" "1" "$_d1"
 _oldold=$(echo "$_strip_out" | awk -F'\t' '$1>14 || $1=="max" { next } $1>0 && $1>1 { sum+=$3 } END { print sum+0 }')
 assert_eq "strip awk: ancient entries dropped beyond maxdays" "0" "$_oldold"
 
+# Calendar-day boundary (regression): an entry <24h before `now` but on the
+# PREVIOUS local day must bucket as d=1, not d=0. now=1700100000 is 02:00 UTC;
+# 1700091000 is 23:30 UTC the day before (2.5h earlier). The old rolling-24h
+# math put it at d=0 ("today"); calendar-day math correctly puts it at d=1.
+cat > "$_vm_home/strip-boundary.tsv" <<EOF
+1700091000	0	23	30	Opus	bbbbbbbb	0
+EOF
+_strip_b=$(awk -v now="$_strip_now" -v maxdays=14 -v tz_offset=0 \
+  -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_vm_home/strip-boundary.tsv")
+_b_d0=$(echo "$_strip_b" | awk -F'\t' '$1==0 { sum+=$3 } END { print sum+0 }')
+_b_d1=$(echo "$_strip_b" | awk -F'\t' '$1==1 { sum+=$3 } END { print sum+0 }')
+assert_eq "strip awk: prev-day entry within 24h buckets as d=1 (calendar, not rolling)" "1" "$_b_d1"
+assert_eq "strip awk: prev-day entry not counted as today" "0" "$_b_d0"
+unset _strip_b _b_d0 _b_d1
+
 # ── CLI lifecycle: status / clear / path ──────────────────────────────────────
 
 # config dir for the CLI to read

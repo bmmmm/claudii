@@ -202,10 +202,11 @@ _vibemap_render_strip() {
   fi
 
   local now; now=$(date +%s)
+  local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
   # Current local hour for today-row cursor placement.
   local cur_hour; cur_hour=$(date '+%H' 2>/dev/null); cur_hour="${cur_hour#0}"; cur_hour="${cur_hour:-0}"
   local data
-  data=$(awk -v now="$now" -v maxdays="$days" \
+  data=$(awk -v now="$now" -v maxdays="$days" -v tz_offset="${tz_off:-0}" \
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
 
   local max=0
@@ -311,9 +312,10 @@ _vibemap_mini_strip() {
 
   local now="$now_s"
   [[ -z "$now" ]] && now=$(date +%s)
+  local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
   local minidays=14
   local data
-  data=$(awk -v now="$now" -v maxdays="$minidays" \
+  data=$(awk -v now="$now" -v maxdays="$minidays" -v tz_offset="${tz_off:-0}" \
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
 
   local max=0 has_data=0

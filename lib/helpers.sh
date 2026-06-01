@@ -67,15 +67,21 @@ _collect_history_files() {
   return 0
 }
 
+# Local UTC offset in seconds (signed), parsed from `date +%z` ("+HHMM"/"-HHMM").
+# Echoes nothing if date +%z yields no output; callers coerce empty → 0.
+_tz_offset_secs() {
+  date +%z 2>/dev/null | awk '{
+    s = (substr($0,1,1) == "-") ? -1 : 1
+    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
+  }'
+}
+
 # Date init — sets _DATE_CMD ("macos"|"gnu"), _TZ_OFFSET (seconds), _WS_DOW (1=Mon..7=Sun).
 _DATE_CMD="" _TZ_OFFSET="" _WS_DOW=""
 _date_init() {
   if date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1; then _DATE_CMD="macos"; else _DATE_CMD="gnu"; fi
 
-  _TZ_OFFSET=$(date +%z | awk '{
-    s = (substr($0,1,1) == "-") ? -1 : 1
-    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
-  }')
+  _TZ_OFFSET=$(_tz_offset_secs)
 
   # Read configurable week_start (default: monday).
   local _ws_name
