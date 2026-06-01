@@ -23,8 +23,10 @@ _vpnii_resolve_user() {
     printf '%s' "$CLAUDII_USER"; return
   fi
   # macOS GUI session — /dev/console is owned by the logged-in user.
-  # stat -f is macOS-only; on Linux -f means filesystem status and exits 0
-  # with multi-line output, so the || fallback to -c '%U' never triggers.
+  # stat -f is macOS-only (%Su = console owner); GNU stat uses -c '%U'. We
+  # branch on `uname -s` rather than chaining `stat -f … || stat -c …`, because
+  # on Linux `stat -f` reports filesystem status and exits 0 — an || fallback
+  # would never fire there.
   local console_user
   if [[ "$(uname -s)" == "Darwin" ]]; then
     console_user=$(stat -f '%Su' /dev/console 2>/dev/null || true)
@@ -41,7 +43,10 @@ _vpnii_user_home() {
   # Resolve home directory for an arbitrary user without `eval ~$user`.
   local u="$1" home=""
   if command -v dscl >/dev/null 2>&1; then
-    home=$(dscl . -read "/Users/$u" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+    # Strip the "NFSHomeDirectory: " label rather than field-splitting — awk
+    # '{print $2}' would truncate a home path containing spaces. -n…p emits
+    # nothing if the label is absent, so the getent fallback below still fires.
+    home=$(dscl . -read "/Users/$u" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p')
   fi
   if [[ -z "$home" ]]; then
     home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
@@ -93,6 +98,9 @@ _vpnii_set() {
     # user with sudo rights; non-root → non-target without sudo will fail.
     sudo -n -u "$target_user" mkdir -p "$target_dir" 2>/dev/null \
       || { echo "claudii vpnii: cannot mkdir $target_dir as $target_user (need sudo or matching uid)" >&2; return 1; }
+    # Match the direct branch: tighten the dir to 0700 (best-effort — the dir
+    # already exists, a chmod failure must not abort the write).
+    sudo -n -u "$target_user" chmod 0700 "$target_dir" 2>/dev/null || true
     printf '%s\n' "$name" | sudo -n -u "$target_user" tee "$target_path" >/dev/null \
       || { echo "claudii vpnii: write to $target_path as $target_user failed" >&2; return 1; }
   fi
