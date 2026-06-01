@@ -107,6 +107,12 @@ assert_eq "sessions-inactive: produces output" "0" "$([ -z "$si_long_out" ] && e
 _changelog_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | cut -d'"' -f2)
 changelog_out=$(bash "$CLAUDII_HOME/bin/claudii" changelog 2>&1 || true)
 assert_contains "changelog: contains version" "$_changelog_version" "$changelog_out"
+# Must actually find + emit the release notes, not the "no entry" fallback.
+# (CHANGELOG headers are v-prefixed "## [v0.19.0]" while VERSION is "0.19.0";
+#  a literal/v-aware match is required — the version number alone appears in the
+#  header line regardless, so it can't distinguish found-notes from not-found.)
+assert_not_contains "changelog: resolves the release notes (not the empty fallback)" \
+  "No changelog entry" "$changelog_out"
 unset _changelog_version changelog_out si_out si_long_out
 
 # cost: must run without declare -A error (bash 3.2 compat — macOS default shell)

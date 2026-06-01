@@ -136,10 +136,12 @@ _cmd_changelog() {
   printf '\n'
   _changelog="$CLAUDII_HOME/CHANGELOG.md"
   if [[ -f "$_changelog" ]]; then
+    # Literal substring match (not regex — VERSION dots must not act as any-char)
+    # and accept both "[0.19.0]" and the v-prefixed "[v0.19.0]" header form.
     _notes=$(awk -v ver="$VERSION" '
       /^## \[/ {
         if (found) { exit }
-        if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+        if (index($0, "[" ver "]") > 0 || index($0, "[v" ver "]") > 0) { found=1; next }
       }
       found { print }
     ' "$_changelog")
