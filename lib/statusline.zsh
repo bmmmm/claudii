@@ -237,8 +237,9 @@ function _claudii_collect_sessions {
 
 function _claudii_session_dashboard {
   local _dash_mode="${_CLAUDII_CFG_CACHE[session-dashboard.enabled]:-${_CLAUDII_DEF_CACHE[session-dashboard.enabled]:-${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}}}"
-  # Any value other than "off" enables the dashboard
-  if [[ "$_dash_mode" == "off" ]]; then
+  # "auto"/"on"/"true" enable; off/false/0 disable. (auto is the default-on
+  # sentinel — don't flip to an != on/true whitelist or it breaks the default.)
+  if [[ "$_dash_mode" == off || "$_dash_mode" == false || "$_dash_mode" == 0 ]]; then
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
   if (( _CLAUDII_CMD_RAN == 0 )); then
