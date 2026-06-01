@@ -48,7 +48,9 @@ _omlx_probe_server() {
   local n gb _omlx_jq
   _omlx_jq=$(jq -r '[.loaded_count // 0, ((.current_model_memory // 0) / 1073741824)] | join("\t")' <<< "$resp" 2>/dev/null) || return 1
   IFS=$'\t' read -r n gb <<< "$_omlx_jq"
-  printf '%s loaded models, %.1f GB' "$n" "$gb"
+  # LC_NUMERIC=C so %.1f always uses a dot — a locale with comma decimals would
+  # render "1,5 GB" (cosmetic, but the segment is display-only either way).
+  LC_NUMERIC=C printf '%s loaded models, %.1f GB' "$n" "$gb"
   return 0
 }
 
@@ -58,7 +60,10 @@ _omlx_in_layout() {
   _cfg_init >/dev/null 2>&1 || true
   local file=""
   if [[ -n "${CONFIG:-}" && -f "$CONFIG" ]]; then
-    if jq -e '.statusline.lines // null != null' "$CONFIG" >/dev/null 2>&1; then
+    # `//` binds looser than `!=`, so `.statusline.lines // null != null` parsed
+    # as `.statusline.lines // (null != null)` = `… // false` — the `!= null` was
+    # dead. Parenthesise to actually test "lines is present".
+    if jq -e '(.statusline.lines // null) != null' "$CONFIG" >/dev/null 2>&1; then
       file="$CONFIG"
     fi
   fi
@@ -246,20 +251,26 @@ _omlx_test() {
   fi
   local tmp
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/claudii-omlx-test.XXXXXX") || return 1
-  # Synthetic active.json — a fresh entry so the freshness guard accepts it
-  cat > "$tmp/active.json" <<EOF
+  # Subshell + EXIT trap cleans the temp dir even if a command below aborts under
+  # `set -e` (bin/claudii runs set -euo pipefail). A function-level RETURN trap
+  # does NOT fire on a set -e abort; an EXIT trap scoped to a subshell does,
+  # without clobbering the CLI's own traps.
+  (
+    trap 'rm -rf "$tmp"' EXIT
+    # Synthetic active.json — a fresh entry so the freshness guard accepts it
+    cat > "$tmp/active.json" <<EOF
 {"task":"commit-msg","model":"Qwen3.5-9B-MLX-4bit","started_epoch":$(($(date +%s)-3)),"pid":99999,"prompt_preview":"refactor scripts/git-tracking.sh"}
 EOF
-  # Synthetic config — pin a layout that *includes* the omlx segment so the
-  # render demo actually shows ⚡ regardless of the user's real config.
-  mkdir -p "$tmp/cfg/claudii"
-  printf '{"statusline":{"lines":[["model"],["omlx"]],"omlx_active_path":"%s/active.json"}}\n' "$tmp" > "$tmp/cfg/claudii/config.json"
+    # Synthetic config — pin a layout that *includes* the omlx segment so the
+    # render demo actually shows ⚡ regardless of the user's real config.
+    mkdir -p "$tmp/cfg/claudii"
+    printf '{"statusline":{"lines":[["model"],["omlx"]],"omlx_active_path":"%s/active.json"}}\n' "$tmp" > "$tmp/cfg/claudii/config.json"
 
-  echo -e "${CLAUDII_CLR_BOLD}claudii omlx test${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(simulated active.json + temporary layout)${CLAUDII_CLR_RESET}"
-  echo
-  echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":15,"context_window_size":200000}}' \
-    | XDG_CONFIG_HOME="$tmp/cfg" claudii-cc-statusline 2>/dev/null
-  echo
-  echo -e "  ${CLAUDII_CLR_DIM}(this is what your statusline will show while a real omlx agent is running)${CLAUDII_CLR_RESET}"
-  rm -rf "$tmp"
+    echo -e "${CLAUDII_CLR_BOLD}claudii omlx test${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(simulated active.json + temporary layout)${CLAUDII_CLR_RESET}"
+    echo
+    echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":15,"context_window_size":200000}}' \
+      | XDG_CONFIG_HOME="$tmp/cfg" claudii-cc-statusline 2>/dev/null
+    echo
+    echo -e "  ${CLAUDII_CLR_DIM}(this is what your statusline will show while a real omlx agent is running)${CLAUDII_CLR_RESET}"
+  )
 }
