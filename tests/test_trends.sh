@@ -250,3 +250,24 @@ _opus_sessions=$(printf '%s' "$trends_wa_json" | jq -r '.model_split_30d.Opus.se
 assert_eq "trends: 'myopusx' substring not classified as Opus" "1" "${_opus_sessions:-0}"
 
 unset _TRENDS_WA_TMP _now_ts trends_wa_json _opus_sessions
+
+# ── trends: 7-day window weekday names match `date` (no off-by-one) ───────────
+# Regression for the single-awk boundary consolidation (epoch_to_date + a weekday
+# table replacing ~21 `date` forks). Each this_week entry's day name must equal
+# what `date` produces for that date — guards the (ld+4)%7 weekday formula.
+_TRENDS_WD_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_WD_TMP")
+_now_ts=$(date +%s)
+printf '%s\tclaude-opus-4-8\t1.00\t50\t30\twd-sid\t5000\t1000\t0\n' "$_now_ts" > "$_TRENDS_WD_TMP/history.tsv"
+trends_wd_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WD_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+_wd_mismatch=0
+while IFS=' ' read -r _wd_date _wd_name; do
+  [[ -z "$_wd_date" ]] && continue
+  if date -j -f '%Y-%m-%d' "$_wd_date" '+%a' >/dev/null 2>&1; then
+    _wd_ref=$(date -j -f '%Y-%m-%d' "$_wd_date" '+%a')
+  else
+    _wd_ref=$(date -d "$_wd_date" '+%a' 2>/dev/null)
+  fi
+  [[ "$_wd_name" != "$_wd_ref" ]] && _wd_mismatch=1
+done < <(echo "$trends_wd_json" | jq -r '.this_week[] | "\(.date) \(.day)"')
+assert_eq "trends: 7-day window weekday names match date (no off-by-one)" "0" "$_wd_mismatch"
+unset _TRENDS_WD_TMP _now_ts trends_wd_json _wd_mismatch _wd_date _wd_name _wd_ref

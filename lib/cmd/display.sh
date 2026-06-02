@@ -13,69 +13,54 @@ _cmd_trends() {
     exit 0
   fi
 
-  # Strategy: bash does date conversions (portable macOS/GNU), awk does
-  # all aggregation and formatting (no associative arrays needed in bash).
+  # Strategy: one awk pass (epoch_to_date + a weekday table) computes every date
+  # boundary and the rolling 7-day window, replacing ~21 `date` subprocess spawns
+  # plus the macOS/GNU branching. awk does all aggregation/formatting afterwards.
   now=$(date +%s)
 
   _date_init
-  local _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW" _date_cmd="$_DATE_CMD"
+  local _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
+  local _epoch_awk
+  _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
 
-  # Precompute date boundaries (local time + configurable week_start)
-  local _days_back
-  if [[ "$_date_cmd" == "macos" ]]; then
-    today_str=$(date -j -f '%s' "$now" '+%Y-%m-%d')
-    today_dow=$(date -j -f '%s' "$now" '+%u')  # 1=Mon..7=Sun
-    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
-    this_monday_ts=$(( now - _days_back * 86400 ))
-    this_monday_str=$(date -j -f '%s' "$this_monday_ts" '+%Y-%m-%d')
-    last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(date -j -f '%s' "$last_monday_ts" '+%Y-%m-%d')
-    last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(date -j -f '%s' "$last_sunday_ts" '+%Y-%m-%d')
-    thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(date -j -f '%s' "$thirty_days_ago_ts" '+%Y-%m-%d')
-  else
-    today_str=$(date -d "@$now" '+%Y-%m-%d')
-    today_dow=$(date -d "@$now" '+%u')
-    _days_back=$(( (today_dow - _ws_dow + 7) % 7 ))
-    this_monday_ts=$(( now - _days_back * 86400 ))
-    this_monday_str=$(date -d "@$this_monday_ts" '+%Y-%m-%d')
-    last_monday_ts=$(( this_monday_ts - 7 * 86400 ))
-    last_monday_str=$(date -d "@$last_monday_ts" '+%Y-%m-%d')
-    last_sunday_ts=$(( this_monday_ts - 86400 ))
-    last_sunday_str=$(date -d "@$last_sunday_ts" '+%Y-%m-%d')
-    thirty_days_ago_ts=$(( now - 30 * 86400 ))
-    thirty_days_ago_str=$(date -d "@$thirty_days_ago_ts" '+%Y-%m-%d')
-  fi
-
-  # Build week_days string: "date:name,date:name,..." for rolling 7-day window (6 days ago..today)
-  _week_days=""
-  _seven_days_ago_ts=$(( now - 6 * 86400 ))
-  if [[ "$_date_cmd" == "macos" ]]; then
-    week_start_str=$(date -j -f '%s' "$_seven_days_ago_ts" '+%Y-%m-%d')
-  else
-    week_start_str=$(date -d "@$_seven_days_ago_ts" '+%Y-%m-%d')
-  fi
-  for (( d=0; d<7; d++ )); do
-    day_ts=$(( _seven_days_ago_ts + d * 86400 ))
-    if [[ "$_date_cmd" == "macos" ]]; then
-      _wd=$(date -j -f '%s' "$day_ts" '+%Y-%m-%d')
-      _wn=$(date -j -f '%s' "$day_ts" '+%a')
-    else
-      _wd=$(date -d "@$day_ts" '+%Y-%m-%d')
-      _wn=$(date -d "@$day_ts" '+%a')
-    fi
-    [[ -n "$_week_days" ]] && _week_days+=","
-    _week_days+="${_wd}:${_wn}"
-  done
+  # All boundaries in ONE BEGIN-only awk (reads no input). Fixed tz_offset (from
+  # now) — the same basis as the data-augment pass below, so boundary dates and
+  # the bucketed data days compare consistently (d >= week_start). DST edges can
+  # shift a boundary by <=1 day twice a year, matching the augment's approximation.
+  local _bnd
+  _bnd=$(awk -v now="$now" -v tz_offset="${_tz_offset:-0}" -v ws_dow="${_ws_dow:-1}" "
+${_epoch_awk}
+"'
+    BEGIN {
+      split("Sun Mon Tue Wed Thu Fri Sat", _wn, " ")
+      today_day = int((now + tz_offset) / 86400)
+      dow_u     = ((today_day + 3) % 7) + 1        # %u: Mon=1..Sun=7 (epoch day 0 = Thu)
+      days_back = (dow_u - ws_dow + 7) % 7
+      this_week_ts = now - days_back * 86400        # current week start (per ws_dow)
+      last_mon_ts  = this_week_ts - 7 * 86400       # previous full week start
+      last_sun_ts  = this_week_ts - 86400           # previous full week end
+      thirty_ts    = now - 30 * 86400
+      seven_ts     = now - 6 * 86400                # rolling 7-day window start
+      wd = ""
+      for (i = 0; i < 7; i++) {
+        ts = seven_ts + i * 86400
+        ld = int((ts + tz_offset) / 86400)
+        wd = wd (wd == "" ? "" : ",") epoch_to_date(ts) ":" _wn[((ld + 4) % 7) + 1]
+      }
+      printf "%s\t%s\t%s\t%s\t%s\n", \
+        epoch_to_date(now), epoch_to_date(seven_ts), epoch_to_date(last_mon_ts), \
+        epoch_to_date(last_sun_ts), epoch_to_date(thirty_ts)
+      printf "%s\n", wd
+    }
+  ' </dev/null)
+  { IFS=$'\t' read -r today_str week_start_str last_monday_str last_sunday_str thirty_days_ago_str
+    IFS= read -r _week_days; } <<< "$_bnd" || true
 
   # Show spinner for pretty output (not JSON/TSV — those are piped)
   _spinner_start "${_hist_dir/#$HOME/\~}/history-*.tsv"
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
-  # Shared epoch_to_date from lib/epoch_to_date.awk
-  local _epoch_awk
-  _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+  # Shared epoch_to_date from lib/epoch_to_date.awk (read above).
   _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
 "'
