@@ -810,14 +810,23 @@ _cmd_sessions() {
     _sf_bgtasks[$_sf_count]="$_PSC_bg_tasks"
     # Resolve project path + session name from JSONL (only for pretty output)
     if [[ "$_FORMAT" != "tsv" ]]; then
-      _sf_projpath[$_sf_count]=$(_session_project_path "$_PSC_session_id")
-      # Single awk pass for name + fingerprint + last_message (was 3 separate greps)
-      local _resolved _res_name _res_fp _res_msg
+      # One awk pass over the JSONL for name + fingerprint + last_message + cwd.
+      # (Was a separate _session_project_path grep|head|grep|sed pipe PLUS a
+      #  _session_resolve awk — each re-scanned the same file and re-resolved the
+      #  jsonl path. Now a single resolve does all four.)
+      local _resolved _res_name _res_fp _res_msg _res_cwd
       _resolved=$(_session_resolve "$_PSC_session_id")
-      { IFS= read -r _res_name; IFS= read -r _res_fp; IFS= read -r _res_msg; } <<< "$_resolved" || true
+      { IFS= read -r _res_name; IFS= read -r _res_fp; IFS= read -r _res_msg; IFS= read -r _res_cwd; } <<< "$_resolved" || true
       _sf_sesname[$_sf_count]="$_res_name"
       _sf_fingerprint[$_sf_count]="$_res_fp"
       _sf_last_msg[$_sf_count]="$_res_msg"
+      # Shorten the resolved cwd ($HOME→~, cap 40) — matches old _session_project_path.
+      _sf_projpath[$_sf_count]=""
+      if [[ -n "$_res_cwd" ]]; then
+        _ppath="${_res_cwd/#$HOME/\~}"
+        (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
+        _sf_projpath[$_sf_count]="$_ppath"
+      fi
       # Fallback: project_path written directly by sessionline (agents without session_id)
       if [[ -z "${_sf_projpath[$_sf_count]}" && -n "$_PSC_project_path" ]]; then
         _ppath="${_PSC_project_path/#$HOME/\~}"

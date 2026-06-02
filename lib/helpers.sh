@@ -219,27 +219,13 @@ _session_jsonl() {
   done
 }
 
-# Resolve project path (cwd) for a given session_id from JSONL transcript.
-_session_project_path() {
-  local sid="$1" jsonl
-  jsonl=$(_session_jsonl "$sid")
-  [[ -z "$jsonl" ]] && return
-  local cwd
-  cwd=$(grep -m5 '"cwd"' "$jsonl" 2>/dev/null | head -1 | grep -o '"cwd":"[^"]*"' | sed 's/"cwd":"//; s/"$//' || true)
-  [[ -z "$cwd" ]] && return
-  local short="${cwd/#$HOME/\~}"
-  if (( ${#short} > 40 )); then
-    short="...${short: -37}"
-  fi
-  echo "$short"
-}
-
-# Single-pass JSONL resolver: extracts name, fingerprint, last_message in one awk.
-# Output: 3 lines (name\nfingerprint\nlast_message), any may be empty.
+# Single-pass JSONL resolver: extracts name, fingerprint, last_message, cwd in one
+# awk. Output: 4 lines (name\nfingerprint\nlast_message\ncwd), any may be empty.
+# cwd is the raw project path (first "cwd" seen); the caller shortens it.
 _session_resolve() {
   local sid="$1" jsonl
   jsonl=$(_session_jsonl "$sid")
-  [[ -z "$jsonl" ]] && { printf '\n\n\n'; return; }
+  [[ -z "$jsonl" ]] && { printf '\n\n\n\n'; return; }
   awk '
     # Session name: last "Session renamed to:" match
     match($0, /"Session renamed to: [^"\\]*"/) {
@@ -249,6 +235,9 @@ _session_resolve() {
       gsub(/\\033\[[0-9;]*m/, "", name)
       gsub(/\\e\[[0-9;]*m/, "", name)
     }
+    # First cwd seen → project path (folds in the old _session_project_path
+    # grep|head|grep|sed pipe; same "first cwd" semantics). `"cwd":"` is 7 chars.
+    cwd == "" && match($0, /"cwd":"[^"]*"/) { cwd = substr($0, RSTART+7, RLENGTH-8) }
     # Fingerprint: collect file_path occurrences
     {
       pos = 0
@@ -296,8 +285,11 @@ _session_resolve() {
         if (length(msg) > 80) msg = substr(msg, 1, 80)
       }
       print msg
+
+      # Project path (raw cwd; caller shortens $HOME→~ + truncates)
+      print cwd
     }
-  ' "$jsonl" 2>/dev/null || printf '\n\n\n'
+  ' "$jsonl" 2>/dev/null || printf '\n\n\n\n'
 }
 
 # Parse session cache file (key=value lines) into _PSC_* variables.
