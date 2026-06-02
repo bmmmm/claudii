@@ -177,10 +177,12 @@ unset _TRENDS_EMPTY_TOK_TMP _now_ts trends_empty_tok_out trends_empty_tok_err
 # ── trends: new features — Last 7 days, reverse order, Total with sessions, Median, Trend ──
 _TRENDS_NEW_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_NEW_TMP")
 _now_ts=$(date +%s)
-# Two sessions today: one Opus, one Sonnet
+# Two sessions today (Opus + Sonnet) plus one ~35 days ago, so history spans
+# >30 days and the Trend line is shown (it is gated on >=30 days of history).
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"              "claude-opus-4-5"   "5.00"  "new-sid1" "5.00"  "50000" "10000" \
-  "$(( _now_ts - 300 ))"  "claude-sonnet-4-5" "2.00"  "new-sid2" "2.00"  "20000" "5000"  \
+  "$_now_ts"                   "claude-opus-4-5"   "5.00"  "new-sid1" "5.00"  "50000" "10000" \
+  "$(( _now_ts - 300 ))"       "claude-sonnet-4-5" "2.00"  "new-sid2" "2.00"  "20000" "5000"  \
+  "$(( _now_ts - 35 * 86400 ))" "claude-opus-4-5"  "3.00"  "new-sid3" "3.00"  "30000" "8000"  \
   > "$_TRENDS_NEW_TMP/history.tsv"
 
 trends_new_out=$(CLAUDII_CACHE_DIR="$_TRENDS_NEW_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
@@ -209,6 +211,22 @@ fi
 unset _new_today_line _new_first_wdline
 
 unset _TRENDS_NEW_TMP _now_ts trends_new_out
+
+# ── trends: Trend line gated on >=30 days of history (sparse → hidden) ────────
+# With only a few days of data the fixed-/30 denominator would report a wildly
+# misleading swing, so the Trend line is suppressed until history spans 30 days.
+_TRENDS_SPARSE_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_SPARSE_TMP")
+_now_ts=$(date +%s)
+# Only today + 2 days ago → earliest cost day is well under 30 days back.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"                  "claude-opus-4-5"   "5.00" "sp-sid1" "5.00" "50000" "10000" \
+  "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "sp-sid2" "2.00" "20000" "5000"  \
+  > "$_TRENDS_SPARSE_TMP/history.tsv"
+trends_sparse_out=$(CLAUDII_CACHE_DIR="$_TRENDS_SPARSE_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
+assert_not_contains "trends (sparse history): Trend line hidden (<30 days)" "Trend:" "$trends_sparse_out"
+# Median should still show (it's not gated)
+assert_contains "trends (sparse history): Median still shown" "Median:" "$trends_sparse_out"
+unset _TRENDS_SPARSE_TMP _now_ts trends_sparse_out
 
 # ── trends: CRLF history (cross-platform sync) + short rows → no crash ────────
 # Regression: awk used to leak \r into model names and choke on malformed rows.

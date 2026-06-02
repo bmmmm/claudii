@@ -270,14 +270,22 @@ END {
     printf "  Median:        %s$%.2f/day (30d)%s\n", cyan, median_cost, reset
   }
 
-  # 7d vs 30d spend trend
+  # 7d vs 30d spend trend — only meaningful once history actually spans ~30 days.
+  # The 30d average uses a fixed /30 denominator (honest burn rate), so a sparse
+  # window (e.g. 3 days of data) makes avg_7d (÷7) dwarf avg_30d (÷30) and report
+  # a huge misleading swing. Gate the line until the earliest cost day is ≥30 days
+  # back (i.e. min_cost_day on or before the 30-days-ago boundary).
   avg_7d = (tw_cost > 0) ? tw_cost / 7 : 0
 
-  cost_30d = 0
-  for (d in day_cost) { if (d >= thirty) cost_30d += day_cost[d] }
+  cost_30d = 0; min_cost_day = ""
+  for (d in day_cost) {
+    if (d >= thirty) cost_30d += day_cost[d]
+    if (day_cost[d] > 0 && (min_cost_day == "" || d < min_cost_day)) min_cost_day = d
+  }
   avg_30d = cost_30d / 30   # fixed 30-day denominator (honest burn rate)
+  have_30d_history = (min_cost_day != "" && min_cost_day <= thirty)
 
-  if (avg_30d > 0) {
+  if (avg_30d > 0 && have_30d_history) {
     trend_raw = (avg_7d - avg_30d) / avg_30d * 100
     trend_pct = int(trend_raw + (trend_raw >= 0 ? 0.5 : -0.5))
     trend_arrow = (trend_pct > 0) ? "\342\206\221" : (trend_pct < 0 ? "\342\206\223" : "\342\206\222")
