@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.20.0] — 2026-06-04
+
 ### Added
 - **Opus 4.8 recognition.** `_insights_model_label()` (`lib/cmd/insights.sh`) now maps `claude-opus-4-8` → `Opus 4.8` for the `claudii cache` per-model breakdown. Older versions (`Opus 4.7`, `Opus 4.6`, `Sonnet 4.6`) keep their labels so historical data still resolves; `Haiku 4.5` gained a versioned label too. A new sourced-function test in `tests/test_cache.sh` locks the latest + older labels in place. The in-session statusline already shows the model verbatim via `.model.display_name`, and agent aliases stay version-agnostic (`opus`/`sonnet`/`haiku` + effort — Claude Code resolves to the latest), so no config rename is needed. The `orc` agent description now references Opus 4.8.
 - **Sessionline highlights the high-end effort modes (`xhigh`, `ultracode`).** Claude Code's effort menu gained `ultracode` (= `xhigh` effort + standing consent to launch multi-agent workflows; it is a menu mode, not an API/CLI effort level). The in-session sessionline rendered `xhigh`/`ultracode` in the dim fallback colour — same weight as `low`/`medium` — which under-represented the most powerful modes. They now render in the accent colour alongside `max`. Handles whatever Claude Code reports as `effort.level` (`ultracode` or the underlying `xhigh`).
