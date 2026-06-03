@@ -179,11 +179,14 @@ _ov_out=$(HOME="$_vm_home2" XDG_CACHE_HOME="$_vm_home2/.cache" \
 echo "$_ov_out" | grep -q "Activity" && _ok=1 || _ok=0
 assert_eq "overview: Activity section present when vibemap enabled+data" "1" "$_ok"
 
-# The strip line should contain at least one non-space density char
-# (we wrote 2 entries, so at least one day has a char)
-_act_line=$(echo "$_ov_out" | grep -A2 "Activity" | tail -n 1 | tr -d ' \t')
-[[ -n "$_act_line" ]] && _ok=1 || _ok=0
-assert_eq "overview: Activity strip line is non-empty" "1" "$_ok"
+# The Activity block must contain a real density char (░▒▓█), not just be non-empty.
+# Two ways the old assert passed VACUOUSLY: (a) `tail -n 1` grabbed the "last 14d…"
+# FOOTER line, not the strip; (b) when the mini-strip crashed under set -u (cold cache,
+# bash 5.x), the caller's 2>/dev/null fell through to the disabled placeholder. Grep the
+# whole 2-line block (header + strip) for a density char so the strip itself is asserted.
+_act_block=$(echo "$_ov_out" | grep -A2 "Activity")
+echo "$_act_block" | grep -qE '[░▒▓█]' && _ok=1 || _ok=0
+assert_eq "overview: Activity strip renders density chars (not the disabled placeholder)" "1" "$_ok"
 
 # Config: vibemap disabled → placeholder line
 cat > "$_vm_home2/.config/claudii/config.json" <<EOF

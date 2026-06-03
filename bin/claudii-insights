@@ -69,7 +69,10 @@ _schema_ok() {
   local samples=("$CACHE_DIR"/*.json)
   shopt -u nullglob
   (( ${#samples[@]} == 0 )) && return 0   # empty cache is not a mismatch
-  local v; v=$(jq -r '.schema_version // 1' "${samples[0]}" 2>/dev/null)
+  # Check the MIN schema_version across ALL caches, not just samples[0] — a mixed
+  # v2/v3 dir (cross-machine ~/.cache sync, interrupted rebuild) must still trigger a
+  # rebuild. Streams one version per file (no slurp); runs rarely (per aggregate gate).
+  local v; v=$(jq -r '.schema_version // 1' "${samples[@]}" 2>/dev/null | sort -n | head -1)
   [[ "$v" == "$SCHEMA_VERSION" ]]
 }
 
@@ -142,6 +145,15 @@ _cmd_merge() {
     esac
     shift
   done
+
+  # --days, when given, must be a positive integer. A non-numeric value makes the
+  # `date -v "-${days}d"` below fail → empty cutoff → silently "no cutoff" (all sessions).
+  # Validate BEFORE the empty-cache early-return so the error fires regardless of cache
+  # state. Sibling guard already shipped in lib/cmd/skills-cost.sh.
+  if [[ -n "$days" ]] && { ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; }; then
+    printf 'merge: --days must be a positive integer (got: %s)\n' "$days" >&2
+    exit 1
+  fi
 
   shopt -s nullglob
   local files=("$CACHE_DIR"/*.json)

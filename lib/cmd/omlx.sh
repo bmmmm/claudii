@@ -268,8 +268,11 @@ EOF
 
     echo -e "${CLAUDII_CLR_BOLD}claudii omlx test${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(simulated active.json + temporary layout)${CLAUDII_CLR_RESET}"
     echo
+    # Pin CLAUDII_OMLX_ACTIVE too — it wins over the synthetic config's omlx_active_path
+    # (cc-statusline resolves ${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-…}}), so a user with it
+    # exported would otherwise see their real omlx state instead of this demo.
     echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":15,"context_window_size":200000}}' \
-      | XDG_CONFIG_HOME="$tmp/cfg" claudii-cc-statusline 2>/dev/null
+      | CLAUDII_OMLX_ACTIVE="$tmp/active.json" XDG_CONFIG_HOME="$tmp/cfg" claudii-cc-statusline 2>/dev/null
     echo
     echo -e "  ${CLAUDII_CLR_DIM}(this is what your statusline will show while a real omlx agent is running)${CLAUDII_CLR_RESET}"
   )

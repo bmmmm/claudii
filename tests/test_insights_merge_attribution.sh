@@ -154,4 +154,16 @@ assert_eq "merge: attribution_plugins.email.cache_create == 30" "30" "$email_cac
 is_valid_json=$(printf '%s\n' "$merged_output" | jq . >/dev/null 2>&1; echo $?)
 assert_eq "merge: output is valid JSON" "0" "$is_valid_json"
 
+# ── --days guard: non-integer / non-positive rejected before any cache work ────
+# A non-numeric --days used to make `date -v "-${days}d"` fail → empty cutoff →
+# silently "no cutoff" (all sessions). Guard fires regardless of cache state.
+_md_abc_out=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days abc 2>&1)
+_md_abc_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days abc >/dev/null 2>&1; echo $?)
+assert_eq       "merge --days abc: rejected (exit 1)"   "1"                "$_md_abc_rc"
+assert_contains "merge --days abc: actionable error"    "positive integer" "$_md_abc_out"
+_md_zero_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 0 >/dev/null 2>&1; echo $?)
+assert_eq       "merge --days 0: rejected (exit 1)"     "1"                "$_md_zero_rc"
+_md_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 >/dev/null 2>&1; echo $?)
+assert_eq       "merge --days 7: accepted (exit 0)"     "0"                "$_md_ok_rc"
+
 unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json

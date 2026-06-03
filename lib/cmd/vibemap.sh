@@ -12,7 +12,7 @@
 _vibemap_density_char() {
   local count="$1" max="$2"
   if (( count == 0 || max == 0 )); then printf ' '; return; fi
-  # Integer math: ratio in tenths.
+  # Integer math: ratio as a percent (0-100).
   local r=$(( count * 100 / max ))
   if   (( r <  25 )); then printf '░'
   elif (( r <  50 )); then printf '▒'
@@ -298,20 +298,19 @@ _vibemap_mini_strip() {
   # time. Cache lives next to the vibemap file under the cache dir.
   local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local cache_file="$cache_dir/vibemap-mini.cache"
+  # Compute `now` unconditionally — a cold cache (file absent) used to leave the
+  # `local mt now_s` unassigned, and `local now="$now_s"` then tripped `set -u` on
+  # bash 5.x (Linux/CI) → the mini-strip crashed and the caller's 2>/dev/null routed
+  # to the disabled placeholder. (macOS /bin/bash 3.2 treats `local now_s` as set-empty,
+  # so it was masked there.) Compute once, use for both the TTL check and the render.
+  local now; now=$(date +%s)
   if [[ -f "$cache_file" ]]; then
-    local mt now_s
-    mt=$(stat -f %m "$cache_file" 2>/dev/null \
-       || stat -c %Y "$cache_file" 2>/dev/null \
-       || echo 0)
-    now_s=$(date +%s)
-    if (( now_s - mt < 60 )); then
+    local mt; mt=$(_mtime "$cache_file")
+    if (( now - mt < 60 )); then
       cat "$cache_file"
       return 0
     fi
   fi
-
-  local now="$now_s"
-  [[ -z "$now" ]] && now=$(date +%s)
   local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
   local minidays=14
   local data

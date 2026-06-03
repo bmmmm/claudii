@@ -186,12 +186,7 @@ _cmd_status() {
           done
 
           printf '\n'
-          _cache_mtime=0
-          if stat -f%m "$cache_file" >/dev/null 2>&1; then
-            _cache_mtime=$(stat -f%m "$cache_file")
-          else
-            _cache_mtime=$(stat -c%Y "$cache_file" 2>/dev/null || echo 0)
-          fi
+          _cache_mtime=$(_mtime "$cache_file")
           _now=$(date +%s)
           _cache_age=$(( _now - _cache_mtime ))
           if (( _cache_age < 60 )); then
@@ -359,7 +354,15 @@ _cmd_cc_statusline() {
 }
 
 _cmd_update() {
-  if [[ "$CLAUDII_HOME" == "$(brew --prefix 2>/dev/null)"* ]]; then
+  # Resolve the Homebrew prefix only if brew exists; an empty $(brew --prefix) would
+  # make the glob "$_brew_prefix"/* match every path, mis-routing brew-less git installs
+  # (Linux, source clones) into the brew branch. The `|| _brew_prefix=""` is load-bearing
+  # under set -euo pipefail.
+  local _brew_prefix=""
+  if command -v brew >/dev/null 2>&1; then
+    _brew_prefix=$(brew --prefix 2>/dev/null) || _brew_prefix=""
+  fi
+  if [[ -n "$_brew_prefix" && "$CLAUDII_HOME" == "$_brew_prefix"/* ]]; then
     echo "claudii: Homebrew install detected"
     brew upgrade claudii || { printf "claudii: brew upgrade failed\n" >&2; exit 1; }
   elif git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
@@ -425,8 +428,10 @@ _cmd_doctor() {
   for _dc_sf in "$cache_dir"/session-*; do
     [[ -f "$_dc_sf" ]] || continue
     [[ "$_dc_sf" == *.tmp.* ]] && continue
-    _dc_sf_ppid=$(grep '^ppid=' "$_dc_sf" 2>/dev/null | cut -d= -f2 || true)
-    _dc_sf_mt=$(stat -f%m "$_dc_sf" 2>/dev/null || stat -c%Y "$_dc_sf" 2>/dev/null || echo 0)
+    _dc_sf_sc=""; { _dc_sf_sc=$(<"$_dc_sf"); } 2>/dev/null
+    _dc_sf_ppid=""
+    [[ $'\n'"$_dc_sf_sc" == *$'\n'ppid=* ]] && { _dc_sf_t="${_dc_sf_sc#*$'\n'ppid=}"; _dc_sf_ppid="${_dc_sf_t%%$'\n'*}"; }
+    _dc_sf_mt=$(_mtime "$_dc_sf")
     (( _dc_now - _dc_sf_mt < 86400 )) && continue
     [[ -n "$_dc_sf_ppid" ]] && kill -0 "$_dc_sf_ppid" 2>/dev/null && continue
     (( ++_dc_stale ))

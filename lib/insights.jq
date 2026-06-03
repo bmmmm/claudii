@@ -13,7 +13,7 @@
 # Schema versioning: bump `schema_version` on every breaking change to the
 # output shape so `claudii-insights` can detect stale caches and force-rebuild.
 
-reduce (inputs | fromjson? // empty) as $r ({
+reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   schema_version: 3,
   sessionId: $sid,
   first_seen: null,

@@ -66,12 +66,20 @@ _BAD_PROJ="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_BAD_PROJ")
 _BAD_CACHE="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_BAD_CACHE")
 mkdir -p "$_BAD_PROJ/-bad-project"
 {
-  printf 'not valid json{{{\n'
+  printf 'not valid json{{{\n'                        # invalid JSON — skipped by fromjson?
+  printf '%s\n' '"a bare valid-json string line"'      # valid JSON, non-object
+  printf '%s\n' '42'                                   # valid JSON, non-object
+  printf '%s\n' '[1,2,3]'                              # valid JSON, non-object (array)
   printf '{"type":"assistant","timestamp":"%s","sessionId":"%s","message":{"role":"assistant","model":"claude-opus-4-7","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_read_input_tokens":90,"cache_creation_input_tokens":0}}}\n' "$_TS" "$_SID"
 } > "$_BAD_PROJ/-bad-project/$_SID.jsonl"
 _BAD_RC=$(CLAUDE_PROJECTS_DIR="$_BAD_PROJ" CLAUDII_CACHE_DIR="$_BAD_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" cache >/dev/null 2>&1; echo $?)
-assert_eq "cache (malformed line): still exits 0" "0" "$_BAD_RC"
+assert_eq "cache (malformed + non-object lines): still exits 0" "0" "$_BAD_RC"
+# The valid assistant line AFTER the non-object lines must still aggregate. A bare
+# string/number/array line is valid JSON (fromjson? passes it) but used to abort the
+# whole reduce with a type error before insights.jq's select(type=="object") guard.
+_BAD_AM=$([ -s "$_BAD_CACHE/insights/$_SID.json" ] && jq -r '.assistant_messages // 0' "$_BAD_CACHE/insights/$_SID.json" 2>/dev/null || echo 0)
+assert_eq "cache (non-object lines): assistant message still aggregated" "1" "$_BAD_AM"
 
 # ── Model-label map: new + older versions all resolve (model-update guard) ──
 # Source insights.sh (pure function defs, no side effects) to call the label fn

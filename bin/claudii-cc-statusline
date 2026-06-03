@@ -310,7 +310,7 @@ fi
 
 _seg_cost=""
 if _isset "$cost"; then
-  _seg_cost="${CYAN}\$$(printf '%.2f' "$cost")${RST}"
+  _seg_cost="${CYAN}\$$(LC_NUMERIC=C printf '%.2f' "$cost")${RST}"
 fi
 
 # Reset countdown formatter — sets _reset_fmt + _reset_color.
