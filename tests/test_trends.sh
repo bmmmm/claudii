@@ -8,14 +8,15 @@ trap 'rm -rf "${_TRENDS_TMPDIRS[@]}" 2>/dev/null' EXIT
 # is handled correctly: trends output works and old entries without
 # tokens are processed gracefully.
 
-# ── trends: history.tsv with token columns (new v0.9.0+ format) ──────────────
-# Format: timestamp<tab>model<tab>cost<tab>session_id<tab>raw_cost<tab>input_tok<tab>output_tok
+# ── trends: history.tsv with token columns (current 9-col raw format) ────────
+# Raw format the CLI augments (sid is column 6 — matches what cc-statusline writes):
+#   timestamp  model  cost  ctx_pct  rate_5h  session_id  in_tok  out_tok  api_ms
 _TRENDS_TOK_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_TOK_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "claude-opus-4-5"   "0.50" "abc12345" "0.50" "15000" "5000" \
-  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "def67890" "0.25" "8000"  "2000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"             "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
+  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
   > "$_TRENDS_TOK_TMP/history.tsv"
 
 trends_tok_out=$(CLAUDII_CACHE_DIR="$_TRENDS_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
@@ -47,9 +48,9 @@ unset _TRENDS_TOK_TMP _now_ts trends_tok_out trends_tok_err
 _TRENDS_JSON_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_JSON_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "claude-opus-4-5"   "0.50" "abc12345" "0.50" "15000" "5000" \
-  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "def67890" "0.25" "8000"  "2000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"             "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
+  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
   > "$_TRENDS_JSON_TMP/history.tsv"
 
 trends_json=$(CLAUDII_CACHE_DIR="$_TRENDS_JSON_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
@@ -61,7 +62,13 @@ assert_contains "trends --json (tokens): has this_week_total field" '"this_week_
 assert_contains "trends --json (tokens): has last_week field" '"last_week"' "$trends_json"
 assert_contains "trends --json (tokens): has model_split_30d field" '"model_split_30d"' "$trends_json"
 
-unset _TRENDS_JSON_TMP _now_ts trends_json
+# Value assertion — locks the 9-col layout. Two sessions today: in 15000+8000=23000,
+# out 5000+2000=10000 → this_week_tokens 30000. A column shift (e.g. sid read from a
+# token field, dropping out_tok) mis-sums; the old stale 7-col fixture yielded 7000.
+_tw_tokens=$(echo "$trends_json" | jq -r '.this_week_tokens // 0')
+assert_eq "trends --json (tokens): this_week_tokens == 30000 (column layout intact)" "30000" "$_tw_tokens"
+
+unset _TRENDS_JSON_TMP _now_ts trends_json _tw_tokens
 
 # ── trends: old history entries WITHOUT token columns → graceful fallback ──────
 # Old format: timestamp model cost ctx_pct rate_5h session_id  (6 cols)
@@ -179,10 +186,10 @@ _TRENDS_NEW_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_NEW_TMP")
 _now_ts=$(date +%s)
 # Two sessions today (Opus + Sonnet) plus one ~35 days ago, so history spans
 # >30 days and the Trend line is shown (it is gated on >=30 days of history).
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"                   "claude-opus-4-5"   "5.00"  "new-sid1" "5.00"  "50000" "10000" \
-  "$(( _now_ts - 300 ))"       "claude-sonnet-4-5" "2.00"  "new-sid2" "2.00"  "20000" "5000"  \
-  "$(( _now_ts - 35 * 86400 ))" "claude-opus-4-5"  "3.00"  "new-sid3" "3.00"  "30000" "8000"  \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"                   "claude-opus-4-5"   "5.00"  "45" "30" "new-sid1" "50000" "10000" "2000" \
+  "$(( _now_ts - 300 ))"       "claude-sonnet-4-5" "2.00"  "30" "20" "new-sid2" "20000" "5000"  "1000" \
+  "$(( _now_ts - 35 * 86400 ))" "claude-opus-4-5"  "3.00"  "45" "30" "new-sid3" "30000" "8000"  "1500" \
   > "$_TRENDS_NEW_TMP/history.tsv"
 
 trends_new_out=$(CLAUDII_CACHE_DIR="$_TRENDS_NEW_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
@@ -218,9 +225,9 @@ unset _TRENDS_NEW_TMP _now_ts trends_new_out
 _TRENDS_SPARSE_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_SPARSE_TMP")
 _now_ts=$(date +%s)
 # Only today + 2 days ago → earliest cost day is well under 30 days back.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"                  "claude-opus-4-5"   "5.00" "sp-sid1" "5.00" "50000" "10000" \
-  "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "sp-sid2" "2.00" "20000" "5000"  \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"                  "claude-opus-4-5"   "5.00" "45" "30" "sp-sid1" "50000" "10000" "2000" \
+  "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "30" "20" "sp-sid2" "20000" "5000"  "1000" \
   > "$_TRENDS_SPARSE_TMP/history.tsv"
 trends_sparse_out=$(CLAUDII_CACHE_DIR="$_TRENDS_SPARSE_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
 assert_not_contains "trends (sparse history): Trend line hidden (<30 days)" "Trend:" "$trends_sparse_out"
@@ -234,13 +241,13 @@ _TRENDS_CRLF_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_CRLF_TMP")
 _now_ts=$(date +%s)
 {
   # CRLF-terminated row — common with Windows/Dropbox sync
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\r\n' \
-    "$_now_ts" "claude-opus-4-5" "0.30" "abc12345" "0.30" "1000" "500"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\r\n' \
+    "$_now_ts" "claude-opus-4-5" "0.30" "45" "30" "abc12345" "1000" "500" "300"
   # Short row (< 6 fields) — must be skipped
   printf '%s\t%s\n' "$_now_ts" "claude-sonnet-4-5"
   # Normal row after short one — must still be processed
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.10" "def67890" "0.10" "800" "200"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.10" "30" "20" "def67890" "800" "200" "150"
 } > "$_TRENDS_CRLF_TMP/history.tsv"
 
 trends_crlf_out=$(CLAUDII_CACHE_DIR="$_TRENDS_CRLF_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
@@ -257,9 +264,9 @@ unset _TRENDS_CRLF_TMP _now_ts trends_crlf_out trends_crlf_exit
 # Real model names with hyphen boundaries ("claude-opus-4-5") still match.
 _TRENDS_WA_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_WA_TMP")
 _now_ts=$(date +%s)
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "myopusx"          "9.00" "wa000001" "9.00" "1000" "500" \
-  "$(( _now_ts - 60 ))" "claude-opus-4-5"  "0.10" "wa000002" "0.10" "100"  "50" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"             "myopusx"          "9.00" "45" "30" "wa000001" "1000" "500" "200" \
+  "$(( _now_ts - 60 ))" "claude-opus-4-5"  "0.10" "30" "20" "wa000002" "100"  "50" "100" \
   > "$_TRENDS_WA_TMP/history.tsv"
 trends_wa_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WA_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
 # If "myopusx" were misclassified as Opus, Opus would dominate (9.00 vs 0.10).

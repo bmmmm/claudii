@@ -8,14 +8,15 @@ trap 'rm -rf "${_COST_TMPDIRS[@]}" 2>/dev/null' EXIT
 # is handled correctly: display works and old entries without tokens
 # are processed gracefully.
 
-# ── cost: history.tsv with token columns (new v0.9.0+ format) ────────────────
-# Format: timestamp<tab>model<tab>cost<tab>session_id<tab>raw_cost<tab>input_tok<tab>output_tok
+# ── cost: history.tsv with token columns (current 9-col raw format) ──────────
+# Raw format the CLI augments (sid is column 6 — matches what cc-statusline writes):
+#   timestamp  model  cost  ctx_pct  rate_5h  session_id  in_tok  out_tok  api_ms
 _COST_TOK_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_TOK_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"              "claude-opus-4-5"   "0.50" "abc12345" "0.50" "15000" "5000" \
-  "$(( _now_ts - 60 ))"  "claude-sonnet-4-5" "0.25" "def67890" "0.25" "8000"  "2000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"              "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
+  "$(( _now_ts - 60 ))"  "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
   > "$_COST_TOK_TMP/history.tsv"
 
 cost_tok_out=$(CLAUDII_CACHE_DIR="$_COST_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
@@ -61,9 +62,9 @@ _now_ts=$(date +%s)
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$(( _now_ts - 86400 ))" "claude-sonnet-4-5" "0.10" "40" "20" "old-session-id" \
   > "$_COST_MIX_TMP/history.tsv"
-# New entry (7 cols) — v0.9.0+
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts" "claude-sonnet-4-5" "0.25" "new-session-id" "0.25" "8000" "2000" \
+# New entry (9 cols) — current format (sid in col 6)
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts" "claude-sonnet-4-5" "0.25" "50" "30" "new-session-id" "8000" "2000" "0" \
   >> "$_COST_MIX_TMP/history.tsv"
 
 cost_mix_out=$(CLAUDII_CACHE_DIR="$_COST_MIX_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
@@ -80,9 +81,9 @@ unset _COST_MIX_TMP _now_ts cost_mix_out cost_mix_err
 _COST_JSON_TOK_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_JSON_TOK_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "claude-opus-4-5"   "0.50" "abc12345" "0.50" "15000" "5000" \
-  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "def67890" "0.25" "8000"  "2000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now_ts"             "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
+  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
   > "$_COST_JSON_TOK_TMP/history.tsv"
 
 cost_json_tok=$(CLAUDII_CACHE_DIR="$_COST_JSON_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
@@ -133,18 +134,25 @@ _day0=$(( _now_ts - 86400 * 10 ))  # 10 days ago
 _day1=$(( _day0 + 86400 ))
 _day2=$(( _day0 + 86400 * 2 ))
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_day0" "claude-sonnet-4-5" "1.00" "multiday-sid" "1.00" "5000" "1000" \
-  "$_day1" "claude-sonnet-4-5" "2.00" "multiday-sid" "2.00" "5000" "1000" \
-  "$_day2" "claude-sonnet-4-5" "3.00" "multiday-sid" "3.00" "5000" "1000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_day0" "claude-sonnet-4-5" "1.00" "50" "30" "multiday-sid" "5000" "1000" "0" \
+  "$_day1" "claude-sonnet-4-5" "2.00" "50" "30" "multiday-sid" "6000" "1200" "0" \
+  "$_day2" "claude-sonnet-4-5" "3.00" "50" "30" "multiday-sid" "7000" "1400" "0" \
   > "$_COST_MULTIDAY_TMP/history.tsv"
 
-cost_multiday_out=$(CLAUDII_CACHE_DIR="$_COST_MULTIDAY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+# Assert on --tsv (period model cost sessions). The old test ran the PRETTY format and
+# assert_not_contains "session" — vacuous, since pretty output never prints that word.
+# One SID across 3 days = 1 session; cumulative cost delta (1+1+1) = 3.00.
+cost_multiday_out=$(CLAUDII_CACHE_DIR="$_COST_MULTIDAY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 
-assert_contains "cost (multiday): shows Sonnet cost" "Sonnet" "$cost_multiday_out"
-assert_not_contains "cost (multiday): no session counts in output" "session" "$cost_multiday_out"
+assert_contains "cost (multiday): shows Sonnet" "Sonnet" "$cost_multiday_out"
+_md_sessions=$(printf '%s\n' "$cost_multiday_out" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $4}')
+assert_eq "cost (multiday): 1 SID across 3 days counts as 1 session (not 3)" "1" "$_md_sessions"
+_md_cost=$(printf '%s\n' "$cost_multiday_out" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
+assert_eq "cost (multiday): cumulative cost delta = 3.00 (1+1+1)" "1" \
+  "$(awk "BEGIN{print (\"$_md_cost\"+0 > 2.99 && \"$_md_cost\"+0 < 3.01) ? 1 : 0}")"
 
-unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out
+unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out _md_sessions _md_cost
 
 # ── cost: Bug 2 — minor cost fluctuation must not trigger a false reset ───────
 # A cost drop of <50% (floating-point noise) should NOT count as extra spend.
@@ -157,12 +165,12 @@ _base=$(( _now_ts - 3600 ))
 # Total real spend: ~10.001 (just the initial cost + tiny increment)
 # Session B: cost goes 5.00 → 0.10 (genuine compaction drop >50%, should add 0.10)
 # Total real spend: ~5.10
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$(( _base - 200 ))" "claude-opus-4-5" "10.000" "noise-sid" "10.000" "5000" "1000" \
-  "$(( _base - 100 ))" "claude-opus-4-5" "10.002" "noise-sid" "10.002" "5000" "1000" \
-  "$(( _base - 50  ))" "claude-opus-4-5" "10.001" "noise-sid" "10.001" "5000" "1000" \
-  "$(( _base - 300 ))" "claude-opus-4-5" "5.000"  "reset-sid" "5.000"  "5000" "1000" \
-  "$_base"              "claude-opus-4-5" "0.100"  "reset-sid" "0.100"  "5000" "1000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(( _base - 200 ))" "claude-opus-4-5" "10.000" "50" "30" "noise-sid" "5000" "1000" "0" \
+  "$(( _base - 100 ))" "claude-opus-4-5" "10.002" "50" "30" "noise-sid" "5000" "1000" "0" \
+  "$(( _base - 50  ))" "claude-opus-4-5" "10.001" "50" "30" "noise-sid" "5000" "1000" "0" \
+  "$(( _base - 300 ))" "claude-opus-4-5" "5.000"  "50" "30" "reset-sid" "5000" "1000" "0" \
+  "$_base"              "claude-opus-4-5" "0.100"  "50" "30" "reset-sid" "5000" "1000" "0" \
   > "$_COST_RESET_TMP/history.tsv"
 
 cost_reset_out=$(CLAUDII_CACHE_DIR="$_COST_RESET_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
@@ -181,8 +189,8 @@ unset _COST_RESET_TMP _now_ts _base cost_reset_out _cost_alltime
 _COST_WEEKHDR_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_WEEKHDR_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$(( _now_ts - 3600 ))" "claude-sonnet-4-5" "1.00" "wk-sid" "1.00" "5000" "1000" \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(( _now_ts - 3600 ))" "claude-sonnet-4-5" "1.00" "50" "30" "wk-sid" "5000" "1000" "0" \
   > "$_COST_WEEKHDR_TMP/history.tsv"
 
 cost_weekhdr_out=$(CLAUDII_CACHE_DIR="$_COST_WEEKHDR_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
