@@ -540,9 +540,13 @@ _cron_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_cron_c
 mkdir -p "$_cron_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["cron"]]}}\n' > "$_cron_cfg_dir/claudii/config.json"
 _cron_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_cache_dir")
-# Pre-seed session cache with a future next_cron_at (1 hour from now)
+# Pre-seed session cache with a future next_cron_at (2 hours from now).
+# Must stay safely >1h: an exact +3600 raced the render clock — if the wall-clock
+# second ticked between this seed and the statusline's own `date +%s`, the delta
+# fell to 3599s and the unit flipped from "h" to "59m", flaking the "(h)" assert
+# below on CI. +7200 leaves a full hour of slack so a tick can't cross the bound.
 # session_id "slcr1111" → 8 chars = "slcr1111" → cache file = session-slcr1111
-_cron_future=$(( $(date +%s) + 3600 ))
+_cron_future=$(( $(date +%s) + 7200 ))
 printf 'model=Sonnet\nnext_cron_at=%s\n' "$_cron_future" > "$_cron_cache_dir/session-slcr1111"
 output=$(echo '{"session_id":"slcr1111xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
   | CLAUDII_CACHE_DIR="$_cron_cache_dir" XDG_CONFIG_HOME="$_cron_cfg_dir" bash "$SL" 2>/dev/null)
