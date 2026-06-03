@@ -64,17 +64,20 @@ _claudii_session_gc() {
   # Run at most once per hour (lockfile mtime check)
   [[ -f "$lock" ]] && (( now - $(stat -f%m "$lock" 2>/dev/null || stat -c%Y "$lock" 2>/dev/null || echo 0) < 3600 )) && return
   touch "$lock"
-  local f ppid mtime
+  local f ppid mtime _sc _t
   for f in "$cache_dir"/session-*; do
     [[ -f "$f" ]] || continue
-    ppid=$(grep '^ppid=' "$f" 2>/dev/null | cut -d= -f2)
+    # Read once, extract fields via parameter expansion — no grep|cut fork per file.
+    { _sc=$(<"$f"); } 2>/dev/null || continue
+    ppid=""
+    [[ $'\n'"$_sc" == *$'\n'ppid=* ]] && { _t="${_sc#*$'\n'ppid=}"; ppid="${_t%%$'\n'*}"; }
     mtime=$(stat -f%m "$f" 2>/dev/null || stat -c%Y "$f" 2>/dev/null || echo 0)
     # Safety: never delete files modified < 1h ago
     (( now - mtime < 3600 )) && continue
     # Never delete if ppid alive
     [[ -n "$ppid" ]] && kill -0 "$ppid" 2>/dev/null && continue
-    # Never delete pinned sessions
-    grep -q '^pinned=1$' "$f" 2>/dev/null && continue
+    # Never delete pinned sessions (full-line match, trailing newline guards last line)
+    [[ $'\n'"$_sc"$'\n' == *$'\n'pinned=1$'\n'* ]] && continue
     rm -f "$f"
   done
 }

@@ -1,4 +1,4 @@
-# touches: lib/cmd/sessions.sh bin/claudii completions/_claudii man/man1/claudii.1 CHANGELOG.md
+# touches: lib/cmd/skills-cost.sh bin/claudii completions/_claudii man/man1/claudii.1 CHANGELOG.md
 
 # test_skills_cost.sh — claudii skills-cost command
 #
@@ -12,6 +12,11 @@ trap 'rm -rf "${_SC_TMPDIRS[@]}" 2>/dev/null' EXIT
 # Helper: create a per-session JSON fixture with attribution data.
 # Args: out_file, skills_json_inline, plugins_json_inline
 # Both skill/plugin args are inlined directly into the jq expression (must be valid JSON).
+# last_seen is computed at load time (recent) so the --days cutoff window always
+# contains the fixture. A hardcoded date (was 2026-05-27) silently went stale: once
+# wall-clock passed fixture+7d the `--days 7` cutoff filtered every row out and the
+# command returned early before building .meta, flipping the --days-passthrough test.
+_SC_LAST_SEEN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 _sc_write_fixture() {
   local out_file="$1"
   local skills_json="${2:-{\}}"
@@ -20,7 +25,8 @@ _sc_write_fixture() {
   jq -n \
     --argjson s "${skills_json}" \
     --argjson p "${plugins_json}" \
-    '{schema_version:3,sessionId:"test-session-01",last_seen:"2026-05-27T12:00:00Z",messages:5,assistant_messages:3,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_skills:$s,attribution_plugins:$p}' \
+    --arg ls "$_SC_LAST_SEEN" \
+    '{schema_version:3,sessionId:"test-session-01",last_seen:$ls,messages:5,assistant_messages:3,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_skills:$s,attribution_plugins:$p}' \
     > "$out_file"
 }
 

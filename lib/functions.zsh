@@ -18,7 +18,7 @@ function _claudii_rl_warn {
       _rfst=()
       zstat -H _rfst "$_sf" 2>/dev/null && _sf_mt=${_rfst[mtime]:-0}
     else
-      _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || echo 0)
+      _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
     fi
     (( (EPOCHSECONDS - _sf_mt) > 300 )) && continue
 

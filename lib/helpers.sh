@@ -11,6 +11,11 @@ _plain() { [[ "${_TTY:-0}" -eq 0 ]] || [[ -n "${_FORMAT:-}" ]]; }
 # Validate config key — alphanumeric, dots, hyphens, underscores only (prevents jq injection)
 _validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1 (allowed: alphanumeric, dots, hyphens, underscores)" >&2; return 1; }; }
 
+# File mtime (epoch seconds) — single fork: BSD `stat -f%m`, GNU `stat -c%Y` fallback,
+# 0 if both fail. Canonical home for the idiom that was inlined across lib/cmd/*.
+# (The zsh hot paths in statusline.zsh/functions.zsh prefer the zstat builtin instead.)
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
 # Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
 # Usage: _jq_update <file> <jq-filter> [jq-args...]
 # Example: _jq_update "$CONFIG" '.debug.level = "info"'
@@ -322,12 +327,11 @@ _parse_session_cache() {
       bg_tasks)       _PSC_bg_tasks="$_v" ;;
     esac
   done < "$1"
-  if stat -f %m "$1" >/dev/null 2>&1; then
-    _PSC_mtime=$(stat -f %m "$1")
-  else
-    _PSC_mtime=$(stat -c %Y "$1")
-  fi
-  _PSC_age=$(( $(date +%s) - _PSC_mtime ))
+  _PSC_mtime=$(_mtime "$1")
+  # _NOW is set once per command by callers (_cmd_sessions / _cmd_sessions_inactive /
+  # _cmd_default) so this per-session helper doesn't fork `date` each loop iteration;
+  # falls back to a fork when unset (standalone call).
+  _PSC_age=$(( ${_NOW:-$(date +%s)} - _PSC_mtime ))
   # Active = Claude Code process (ppid) is still running.
   # API path: ppid is listed by `claude agents --json` (caller ran _live_pids_init).
   # Authoritative when it matches — no PID-recycling risk, also reveals _PSC_kind.

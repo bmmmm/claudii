@@ -11,7 +11,8 @@ bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator for prompt-cache hit-rate insights
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, doctor
-lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, default, skills-cost
+lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, pin, gc, default
+lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin cost from insights cache)
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/trends.awk          # awk program for trends aggregation
@@ -120,8 +121,9 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
 If the new model also changes **pricing**, update the per-token constants in
-`lib/cmd/sessions.sh` (`_P_IN`/`_P_OUT`/`_P_CR`/`_P_CC`) — those are the only hardcoded
-rates. Verify `claudii cost` totals afterwards.
+`lib/cmd/skills-cost.sh` (`_P_IN`/`_P_OUT`/`_P_CR`/`_P_CC`) — those are the only hardcoded
+rates (`claudii cost` itself reads `costUSD` from history, not these). Verify
+`claudii skills-cost` totals afterwards.
 
 ## Project skills
 
