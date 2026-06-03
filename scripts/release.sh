@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# claudii release — bump version, run tests locally, push tag. CI does the rest.
+# claudii release — bump version, run tests locally (before AND after the bump),
+# push tag. CI does the rest.
 #
 # Usage: scripts/release.sh <version> [--dry-run] [--watch]
+#
+# Tests run twice on purpose: pass 1 before the bump is a fast gate (no files
+# mutated yet); pass 2 after the bump is authoritative — the bump rewrites
+# CHANGELOG.md + VERSION, so version-aware tests must be re-validated against the
+# exact state being tagged, or a bump-induced failure only shows up on CI after
+# the tag is already public.
 #
 # After the tag push, .github/workflows/release.yml handles:
 #   1. Tests on clean Ubuntu env
@@ -85,8 +92,8 @@ else
   _ok "On non-main branch '$_branch' (releasing from there)"
 fi
 
-# ── Tests (BEFORE bump — no rollback path) ────────────────────────────────────
-_step "Tests"
+# ── Tests, pass 1 (BEFORE bump — fast gate; nothing mutated yet, no rollback) ──
+_step "Tests (pre-bump)"
 if (( _dry_run )); then
   _ok "Tests — skipped (dry-run)"
 else
@@ -134,6 +141,28 @@ else
     { print }
   ' "$_changelog" > "${_changelog}.tmp.$$" && mv "${_changelog}.tmp.$$" "$_changelog"
   _ok "CHANGELOG.md [Unreleased] → [$_rel_tag] — $_today"
+fi
+
+# ── Tests, pass 2 (AFTER bump — authoritative) ────────────────────────────────
+# The bump rewrites CHANGELOG.md ([Unreleased] → [vX.Y.Z]) and the VERSION. Tests
+# that read those for the *current* version (e.g. the `changelog` notes check)
+# only validate the exact state that gets tagged HERE — pass 1 ran against the
+# pre-bump tree and can stay green while this fails. CI would catch it, but only
+# after the tag is already public (a half-release). On failure, roll the three
+# bumped files back to HEAD (no commit exists yet) and abort: no commit, no tag.
+_step "Tests (post-bump)"
+if (( _dry_run )); then
+  _ok "Tests post-bump — skipped (dry-run)"
+else
+  if _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" --summary 2>&1); then
+    _passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
+    _ok "Tests green post-bump (${_passed:-?})"
+  else
+    _fail "Tests failed after bump — rolled back, no commit/tag/push made"
+    git -C "$CLAUDII_HOME" checkout -- "$_bin_file" "$_man_file" "$_changelog" 2>/dev/null || true
+    echo "$_test_out" | tail -10 >&2
+    exit 1
+  fi
 fi
 
 # ── Tag & Push ────────────────────────────────────────────────────────────────

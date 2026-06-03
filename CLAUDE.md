@@ -152,6 +152,33 @@ Only check what the commit actually touches — skip checks that don't apply:
 - Removed a command? → orphaned `tests/test_<command>.sh` deleted?
 - Docs/config only? → no checks needed
 
+## When releasing
+
+`scripts/release.sh <version>` is the only entry point. It bumps `bin/claudii`
+VERSION + the man page + `CHANGELOG.md` (`[Unreleased]` → `[vX.Y.Z]`), runs the
+test suite **twice** (pass 1 before the bump = fast gate; pass 2 after the bump =
+authoritative — the bump rewrites the CHANGELOG, and version-aware tests like the
+`changelog` notes check only validate the tagged state), commits, then pushes
+`main` + the tag to `origin` (Forgejo). It returns once the tag is pushed.
+
+1. **Version (SemVer):** any `### Added` in the unreleased block → bump MINOR
+   (`0.20.0`); only `### Fixed`/`### Changed` → bump PATCH (`0.20.1`).
+2. **Dry-run first:** `scripts/release.sh X.Y.Z --dry-run` checks pre-flight
+   (clean tree, tag free, on main) + bump targets without mutating anything.
+3. **Real run:** `scripts/release.sh X.Y.Z`. The double test-pass means a
+   bump-induced failure aborts locally (files rolled back, no tag) instead of
+   surfacing only on CI.
+4. **Always watch CI — the script does NOT.** The tag reaches GitHub via the
+   Forgejo→GitHub mirror and triggers `.github/workflows/release.yml` (clean-env
+   tests → GitHub Release → Homebrew-tap sync). Run
+   `gh run watch <id> --repo bmmmm/claudii` and confirm green. A failed run
+   leaves the tag public with **no** Release and **no** tap sync — a half-release.
+5. **Recovery from a half-release** (tag pushed, CI failed, no artifact yet): fix
+   + commit on main, `git tag -f vX.Y.Z`, `git push origin main`, then
+   `git push origin vX.Y.Z --force` — the mirror force-carries the tag and
+   re-triggers the workflow. Safe **only** because no artifact was consumed (tap
+   not synced, no Release created); never force-move a tag that already shipped.
+
 ## Memory Types
 
 This project overrides the default memory type set. Use these instead of the harness defaults:
