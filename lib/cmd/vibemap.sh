@@ -281,7 +281,7 @@ _vibemap_render_strip() {
 }
 
 # Mini-vibemap strip for the bare `claudii` overview.
-# Renders a one-line 14-char strip (rightmost = today, leftmost = oldest day).
+# Renders a one-line 43-char strip (rightmost = today, leftmost = oldest day).
 # Each position is the maximum density char for that calendar day.
 # Does NOT produce output when vibemap.enabled=false or no data exists —
 # callers check $? or pass the return via _vibemap_overview_segment().
@@ -312,7 +312,9 @@ _vibemap_mini_strip() {
     fi
   fi
   local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
-  local minidays=14
+  # Width matches the "last 43d · …" caption below the strip in the overview —
+  # no point keeping the bar artificially narrow when the caption is wider.
+  local minidays=43
   local data
   data=$(awk -v now="$now" -v maxdays="$minidays" -v tz_offset="${tz_off:-0}" \
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
@@ -329,11 +331,11 @@ _vibemap_mini_strip() {
 
   (( has_data == 0 )) && return 1
 
-  # Build the 14-char strip: for each day d (13 = oldest, 0 = today), pick
+  # Build the strip: for each day d (minidays-1 = oldest, 0 = today), pick
   # the maximum density char seen across all 24 hours of that day.
   # Today (d=0, rightmost) is rendered in accent (pink) — mirroring the ▶
-  # today-row idiom from the strip view. The 14-char logical length is
-  # preserved; ANSI escapes are invisible to terminal width counting.
+  # today-row idiom from the strip view. The logical length stays minidays;
+  # ANSI escapes are invisible to terminal width counting.
   local strip=""
   local d h best_count best_ch c
   for (( d = minidays - 1; d >= 0; d-- )); do

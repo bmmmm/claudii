@@ -65,10 +65,17 @@ ${_epoch_awk}
   today_mon="${today_str:0:7}"   # YYYY-MM
   today_year="${today_str:0:4}"  # YYYY
 
+  # Terminal width drives how many month/year tiles fit side-by-side (default 80
+  # when not a tty / COLUMNS unset). Pretty output only — JSON/TSV ignore it.
+  local _cost_cols="${COLUMNS:-}"
+  [[ "$_cost_cols" =~ ^[0-9]+$ ]] || _cost_cols=$(tput cols 2>/dev/null || echo 80)
+  [[ "$_cost_cols" =~ ^[0-9]+$ ]] || _cost_cols=80
+
   # awk: compute daily deltas, aggregate into today/week/month/year/alltime
   echo "$_augmented" | awk -F'\t' \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
+    -v cols="$_cost_cols" \
     -v fmt="${_FORMAT:-}" \
     -v cyan="$CLAUDII_CLR_CYAN" \
     -v dim="$CLAUDII_CLR_DIM" \
@@ -81,10 +88,85 @@ ${_epoch_awk}
       if (t > 0)        return t ""
       return ""
     }
+    function rep(c, n,   s, i) { s = ""; for (i = 0; i < n; i++) s = s c; return s }
+    # Look up one model/period cost cell ("" when the model had no spend there).
+    function cell_cost(kind, m, pk,   k) {
+      k = m SUBSEP pk
+      if (kind == "month") return (k in month_cost) ? month_cost[k] : ""
+      return (k in year_cost) ? year_cost[k] : ""
+    }
+    # Render a set of periods (months or years) as fixed-width tiles laid out
+    # side-by-side, as many per row as the terminal width allows. Each tile:
+    #   <period>
+    #     <Model>   $cost
+    #     ────────────────
+    #     Total     $cost     (only when the period has >1 model)
+    # Padding is computed from a tracked visible width (cell_vis), so ANSI color
+    # escapes never throw off column alignment or the vertical │ separators.
+    function render_grid(pkeys, np, kind,
+                         LW, VW, TW, dashw, sepvis, sepcol, perrow,
+                         i, pk, mi2, m, c, valstr, tot,
+                         start, end, ncols, ci, rr, nmod, dstr, tval,
+                         maxrows, r, line_out, cell, vis, pad) {
+      if (np == 0) { printf "    (none)\n\n"; return }
+      LW = 5; VW = 5                            # min widths: "Total", "$0.00"
+      for (i = 1; i <= np; i++) {
+        pk = pkeys[i]; tot = 0
+        for (mi2 = 1; mi2 <= n_ordered; mi2++) {
+          m = ordered_models[mi2]; c = cell_cost(kind, m, pk)
+          if (c == "") continue
+          if (length(m) > LW) LW = length(m)
+          valstr = sprintf("$%.2f", c + 0); if (length(valstr) > VW) VW = length(valstr)
+          tot += c
+        }
+        valstr = sprintf("$%.2f", tot); if (length(valstr) > VW) VW = length(valstr)
+      }
+      TW = 2 + LW + 1 + VW; dashw = LW + 1 + VW
+      sepvis = 5; sepcol = sprintf("%s  \342\224\202  %s", dim, reset)
+      perrow = int((cols - 2 + sepvis) / (TW + sepvis))
+      if (perrow < 1) perrow = 1
+      if (perrow > 6) perrow = 6                # cap — avoid a wall of tiles on ultra-wide terminals
+      for (start = 1; start <= np; start += perrow) {
+        end = start + perrow - 1; if (end > np) end = np
+        ncols = end - start + 1; maxrows = 0
+        for (ci = 1; ci <= ncols; ci++) {
+          pk = pkeys[start + ci - 1]; rr = 0; tot = 0; nmod = 0
+          rr++; cell_str[ci, rr] = pk; cell_vis[ci, rr] = length(pk)
+          for (mi2 = 1; mi2 <= n_ordered; mi2++) {
+            m = ordered_models[mi2]; c = cell_cost(kind, m, pk)
+            if (c == "") continue
+            valstr = sprintf("%*s", VW, sprintf("$%.2f", c + 0))
+            rr++; cell_str[ci, rr] = sprintf("  %-*s %s%s%s", LW, m, cyan, valstr, reset)
+            cell_vis[ci, rr] = 2 + LW + 1 + VW
+            tot += c; nmod++
+          }
+          if (nmod > 1) {
+            dstr = rep("\342\224\200", dashw)
+            rr++; cell_str[ci, rr] = sprintf("  %s%s%s", dim, dstr, reset); cell_vis[ci, rr] = 2 + dashw
+            tval = sprintf("%*s", VW, sprintf("$%.2f", tot))
+            rr++; cell_str[ci, rr] = sprintf("  %s%-*s%s %s%s%s", pink, LW, "Total", reset, cyan, tval, reset)
+            cell_vis[ci, rr] = 2 + LW + 1 + VW
+          }
+          col_nrows[ci] = rr; if (rr > maxrows) maxrows = rr
+        }
+        for (r = 1; r <= maxrows; r++) {
+          line_out = "  "
+          for (ci = 1; ci <= ncols; ci++) {
+            if (r <= col_nrows[ci]) { cell = cell_str[ci, r]; vis = cell_vis[ci, r] }
+            else { cell = ""; vis = 0 }
+            pad = TW - vis; if (pad < 0) pad = 0
+            line_out = line_out cell rep(" ", pad)
+            if (ci < ncols) line_out = line_out sepcol
+          }
+          print line_out
+        }
+        printf "\n"
+      }
+    }
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
       in_tok = $6 + 0; out_tok = $7 + 0; total_tok = in_tok + out_tok
-      if (sid == "" || day == "") next
+      if (sid == "" || day == "" || model == "") next
 
       # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
       if (raw != "" && (!(model in model_display) || \
@@ -286,6 +368,13 @@ ${_epoch_awk}
         }
       }
 
+      # Ordered model list for the tile renderer: canonical tiers first, extras
+      # after (stable iteration order so tile rows align across all periods).
+      n_ordered = 0
+      for (mi = 1; mi <= 3; mi++) if (_mo[mi] in all_models) ordered_models[++n_ordered] = _mo[mi]
+      for (m in all_models)
+        if (m != "Opus" && m != "Sonnet" && m != "Haiku" && m != "") ordered_models[++n_ordered] = m
+
       printf "\n"
       if (legend != "") { printf "  %s%s%s\n\n", dim, legend, reset }
       printf "  %sToday%s\n", pink, reset
@@ -317,83 +406,10 @@ ${_epoch_awk}
 
       printf "\n"
       printf "  %sMonths%s\n", pink, reset
-      for (i = 1; i <= n_mon; i++) {
-        mk = mon_keys[i]
-        total = 0; n_mod = 0
-        for (mi2 = 1; mi2 <= 3; mi2++) {
-          m = _mo[mi2]; k = m SUBSEP mk
-          if (k in month_cost) { total += month_cost[k]; n_mod++ }
-        }
-        for (m in all_models) {
-          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
-            k = m SUBSEP mk
-            if (k in month_cost) { total += month_cost[k]; n_mod++ }
-          }
-        }
-        if (total == 0) continue
-        printf "    %s\n", mk
-        for (mi2 = 1; mi2 <= 3; mi2++) {
-          m = _mo[mi2]; k = m SUBSEP mk
-          if (k in month_cost) {
-            printf "      %-8s %s$%.2f%s\n", m, cyan, month_cost[k], reset
-          }
-        }
-        for (m in all_models) {
-          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
-            k = m SUBSEP mk
-            if (k in month_cost) {
-              printf "      %-8s %s$%.2f%s\n", m, cyan, month_cost[k], reset
-            }
-          }
-        }
-        if (n_mod > 1) {
-          printf "%s\n", line
-          printf "      %s%-8s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
-          printf "\n"
-        }
-      }
-      if (n_mon == 0) printf "    (none)\n"
+      render_grid(mon_keys, n_mon, "month")
 
-      printf "\n"
       printf "  %sYears%s\n", pink, reset
-      for (i = 1; i <= n_yr; i++) {
-        yk = yr_keys[i]
-        total = 0; n_mod = 0
-        for (mi2 = 1; mi2 <= 3; mi2++) {
-          m = _mo[mi2]; k = m SUBSEP yk
-          if (k in year_cost) { total += year_cost[k]; n_mod++ }
-        }
-        for (m in all_models) {
-          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
-            k = m SUBSEP yk
-            if (k in year_cost) { total += year_cost[k]; n_mod++ }
-          }
-        }
-        if (total == 0) continue
-        printf "    %s\n", yk
-        for (mi2 = 1; mi2 <= 3; mi2++) {
-          m = _mo[mi2]; k = m SUBSEP yk
-          if (k in year_cost) {
-            printf "      %-8s %s$%.2f%s\n", m, cyan, year_cost[k], reset
-          }
-        }
-        for (m in all_models) {
-          if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
-            k = m SUBSEP yk
-            if (k in year_cost) {
-              printf "      %-8s %s$%.2f%s\n", m, cyan, year_cost[k], reset
-            }
-          }
-        }
-        if (n_mod > 1) {
-          printf "%s\n", line
-          printf "      %s%-8s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
-          printf "\n"
-        }
-      }
-      if (n_yr == 0) printf "    (none)\n"
-
-      printf "\n"
+      render_grid(yr_keys, n_yr, "year")
     }
     '
 }
@@ -1450,7 +1466,7 @@ _cmd_default() {
     if (( _ov_vm_ok )); then
       printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET}\n"
       printf "    %s\n" "$_ov_vm_strip"
-      printf "    ${CLAUDII_CLR_DIM}last 14d · claudii vibemap strip for detail${CLAUDII_CLR_RESET}\n"
+      printf "    ${CLAUDII_CLR_DIM}last 43d · claudii vibemap strip for detail${CLAUDII_CLR_RESET}\n"
     else
       printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Activity                        claudii config set vibemap.enabled true${CLAUDII_CLR_RESET}\n"
     fi

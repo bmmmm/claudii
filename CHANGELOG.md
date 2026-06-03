@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **`claudii cost` renders Months and Years as side-by-side tiles.** The Months/Years sections stacked one period per block — wasteful on wide terminals where you want to compare months at a glance. They now lay out as fixed-width tiles, as many per row as `$COLUMNS` allows (`tput cols` fallback, 80 default; capped at 6 to avoid a wall of tiles), separated by a dim vertical `│` rule. Padding is computed from a tracked visible width so ANSI colour codes never throw off column alignment or the vertical separators. Today/Week stay single-column (single periods). The per-period `─── / Total` footer still only shows when a period spans >1 model. Empty model rows (a stray history row with no model field) are now dropped at ingestion, so the legend no longer shows a `()` ghost entry.
+- **Overview Activity strip widened from 14 to 43 days.** The mini vibemap strip under the `claudii` overview was held to 14 chars while its own `last … · claudii vibemap strip for detail` caption ran wider — wasted width. It now spans 43 days to fill the caption line.
+
 ---
 
 ## [v0.20.0] — 2026-06-04

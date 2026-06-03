@@ -223,3 +223,30 @@ assert_eq "cost (mixed-model day): Sonnet credited only its 0.50 increment (not 
   "$(awk "BEGIN{print (\"$_mm_sonnet\"+0 > 0.49 && \"$_mm_sonnet\"+0 < 0.51) ? 1 : 0}")"
 
 unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet
+
+# ── cost: Months render as side-by-side tiles separated by │ ──────────────────
+# Two distinct calendar months must appear on the SAME pretty-output line,
+# separated by the vertical bar, when the terminal is wide enough. Padding is
+# tracked via visible width, so the column alignment survives ANSI color codes.
+_COST_TILES_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_TILES_TMP")
+_now_ts=$(date +%s)
+
+# One session ~5 days ago (this month) and one ~40 days ago (a prior month).
+printf '%s\tclaude-opus-4-6\t12.00\t0\t0\ttile-a\t5000\t1000\t0\n'  "$(( _now_ts - 5*86400 ))"  > "$_COST_TILES_TMP/history.tsv"
+printf '%s\tclaude-opus-4-6\t34.00\t0\t0\ttile-b\t5000\t1000\t0\n'  "$(( _now_ts - 40*86400 ))" >> "$_COST_TILES_TMP/history.tsv"
+
+cost_tiles_out=$(COLUMNS=120 CLAUDII_CACHE_DIR="$_COST_TILES_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+# Strip ANSI, then find a header line that holds two YYYY-MM tiles split by │.
+_tiles_line=$(printf '%s\n' "$cost_tiles_out" \
+  | sed $'s/\033\\[[0-9;]*m//g' \
+  | grep '│' \
+  | grep -E '20[0-9][0-9]-[0-9][0-9].+20[0-9][0-9]-[0-9][0-9]')
+[ -n "$_tiles_line" ] && _ok=1 || _ok=0
+assert_eq "cost (tiles): two month headers share a line with a │ separator" "1" "$_ok"
+assert_no_literal_ansi "cost (tiles): no literal \\033 in tile output" "$cost_tiles_out"
+
+# Narrow terminal must still render (perrow floors to 1, never divide-by-zero).
+cost_tiles_narrow=$(COLUMNS=20 CLAUDII_CACHE_DIR="$_COST_TILES_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_contains "cost (tiles): narrow terminal still shows a month" "Months" "$cost_tiles_narrow"
+
+unset _COST_TILES_TMP _now_ts cost_tiles_out _tiles_line cost_tiles_narrow _ok
