@@ -6,46 +6,15 @@
 
 ## Pending
 
-### Claude 4.8 follow-through — propagate session findings
+### Agent prompts — apply prompting discipline (global, not this repo)
 
-> Context: Opus 4.8 recognition + effort-tier tuning + prompting discipline landed in
-> `bde6566`, `3610374`, `12d2746`, `8259fdc` (claudii) and `a73698f`, `cea827f` (dotfiles).
-> Code/config/CLAUDE.md are done; the items below are the remaining doc + agent surface.
-> Findings to apply everywhere: house default `high` (xhigh on demand, max as fallback);
-> `clm` alias is now `xhigh` (was `max`); `op`/`opm`/`orc` agents are `high`; ultracode =
-> Claude Code menu mode (= xhigh + standing workflow consent), not a CLI `--effort` value;
-> 4.8 follows prompts literally (no CRITICAL/MUST/ALL-CAPS → over-triggering), spawns fewer
-> subagents (request fan-out explicitly), and drops real bugs when told to "be conservative"
-> at a review finding-stage (use coverage-first + separate verification).
+**Type: Refactor** · **Complexity: Small** · **Touches: global persona skills (`persona-code-reviewer`, `persona-security-auditor`) in `~/.claude/skills/`**
 
-#### TODO: Docs sweep — Claude 4.8 / effort / ultracode
-**Type: Docs** · **Complexity: Small** · **Touches: wiki (auto-gen), `help` output, any `docs/*.md`**
-- Regenerate wiki from the man page after the man-page update below (wiki is auto-generated — never hand-edit).
-- Grep all narrative docs + `lib/cmd/*` help strings for stale model/effort wording (`max effort`, `4-5`, `4-6` defaults, "thinking toggle").
-- Confirm CHANGELOG unreleased block covers all of `bde6566`/`3610374`/`12d2746`/`8259fdc` (it does — verify before release).
+claudii's own skills (`.claude/skills/`) are already clean — no `CRITICAL`/`MUST`/ALL-CAPS imperatives. What remains lives outside this repo:
 
-#### ~~TODO: README update — aliases + effort modes~~ ✅ DONE (README revamp)
-Full README revamp: `clm` max→xhigh, effort-mode + ultracode note in the CC-Statusline
-section, effort-ladder framing in Aliases, model examples bumped (opus-4-8, Opus xhigh),
-added the missing `cache` command (prompt-cache insights) + `gc`/`update`/`changelog`.
-
-#### ~~TODO: Man page pass — 4.8 + effort consistency~~ ✅ DONE
-Sessionline segment example `Claude Sonnet 4.5` → `Claude Opus 4.8`; alias/effort rows
-already consistent after `12d2746`. `test_docs.sh` green. (Wiki regen still pending — see
-docs sweep below.)
-
-#### TODO: Agent prompts — apply prompting discipline
-**Type: Refactor** · **Complexity: Small** · **Touches: claudii subagent spawn prompts, global persona skills (`persona-code-reviewer`, `persona-security-auditor`)**
-- Strip `CRITICAL:`/`MUST`/ALL-CAPS imperatives from spawn prompts + skill descriptions (4.8 over-triggers on these).
+- Strip `CRITICAL:`/`MUST`/ALL-CAPS imperatives from the global persona skills (4.8 over-triggers on these).
 - Review/bug-finding agents: switch to coverage-first ("report every finding incl. low-confidence, with a confidence level; filtering is a separate step") — keep "PROVEN-only" for cheap Explore/search agents that hallucinate.
 - State scope explicitly in prompts (4.8 no longer silently generalizes).
-- No `.claude/agents/` dir exists — these live in spawn-prompt strings + the global persona skills.
-
-#### ~~TODO: Orchestrate skill — sync effort + 4.8 findings~~ ✅ DONE
-Frontmatter `effort: medium`→`high` in both (project claudii repo + global dotfiles repo).
-Global skill's model-selection table de-staled (dropped "Opus 4.7" preamble, Opus medium→high
-for cross-file refactor/ecosystem rows, foundation = Opus high w/ xhigh on demand) + added
-4.8 prompt deltas (coverage-first review agents, no CRITICAL/MUST/ALL-CAPS).
 
 ---
 
@@ -62,10 +31,6 @@ for cross-file refactor/ecosystem rows, foundation = Opus high w/ xhigh on deman
 - **Auto-apply** (`--apply`) — last, after suggestions are trusted
 
 **Refactor candidate from Wave 1:** Agent C's `_cmd_skills_cost` reads insights cache files directly instead of using `claudii-insights merge` (because Agent B's merge extension wasn't visible to C at spawn time). Functionally equivalent but architecturally inconsistent — should be refactored to use `merge` so the cutoff/project filters stay in one place.
-
----
-
-
 
 ---
 
@@ -105,14 +70,16 @@ CC v2.1.141 fixed "Multi-Line Statusline Row Dropping / Corruption when line > t
 
 ccstatusline shipped #282 (compaction counter). Pairs naturally with our
 burn-ETA — "how many compactions did this session survive?". Inner layer.
-Defer until after v0.18.4-6.
+(Defer-until-v0.18.4-6 note dropped — we're past v0.19.0, no longer gated.)
+
+---
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**
 **Complexity: Medium**
 **Touches: Orchestrator-Skill**
-**Blockiert:** Claude Code `--resume` im Agent-Tool nicht unterstützt.
+**Blockiert (extern):** Claude Code unterstützt `--resume` im Agent-/Task-Tool nicht — kein Permission-Gate, nichts freizugeben. Wartet auf Upstream-Feature.
 
 ---
 
@@ -125,7 +92,3 @@ Defer until after v0.18.4-6.
   `.statusLine.command` (`lib/cmd/system.sh:400-411`) and warns on foreign values.
   Running the check on every render would mean jq-on-settings.json per precmd,
   which is the wrong perf trade for an edge case.
-
----
-
-## In Progress
