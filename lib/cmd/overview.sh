@@ -53,7 +53,8 @@ _cmd_default() {
         _ov_acct_7d_start="$_PSC_rate_7d_start"
       fi
 
-      # Today's cost accumulation
+      # Today's cost accumulation — fallback only, used when no history exists
+      # (overridden by the history-delta computation after this loop).
       if (( _PSC_mtime >= _ov_cutoff )); then
         _ov_today_count=$(( _ov_today_count + 1 ))
         if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
@@ -88,6 +89,45 @@ _cmd_default() {
         _ov_total_bg=$(( _ov_total_bg + _PSC_bg_tasks ))
       fi
     done
+  fi
+
+  # ── Today's cost from history deltas ──────────────────────────────
+  # Same per-session increment attribution as `claudii cost`, so the overview
+  # and the cost command agree (the session-cache sum above double-counts
+  # multi-day sessions: cumulative cost keyed by file mtime). Only the files
+  # that can hold today's rows are scanned (legacy history.tsv + current
+  # month) — a session spanning a month boundary loses its prior-month
+  # baseline on the 1st, which matches first-row-counts-as-spend semantics.
+  # Session count = distinct SIDs with spend today (matches `claudii cost`).
+  _ov_hist_files=()
+  [[ -s "$cache_dir/history.tsv" ]] && _ov_hist_files+=("$cache_dir/history.tsv")
+  _ov_hist_month="$cache_dir/history-$(date '+%Y-%m').tsv"
+  [[ -s "$_ov_hist_month" ]] && _ov_hist_files+=("$_ov_hist_month")
+  if [[ ${#_ov_hist_files[@]} -gt 0 ]]; then
+    _ov_tz=$(_tz_offset_secs)
+    _ov_today_hist=$(awk -F'\t' -v tz_offset="${_ov_tz:-0}" -v today="$(date '+%Y-%m-%d')" "
+$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+"'
+      NF < 6 { next }
+      $1 == "timestamp" || $1 == "" || $6 == "" { next }
+      {
+        ts = $1 + 0; if (ts == 0) next
+        cost = $3 + 0; sid = $6
+        cinc = 0
+        if (sid in base) {
+          prev = base[sid]
+          if (cost > prev)            cinc = cost - prev
+          else if (cost < prev * 0.5) cinc = cost   # genuine reset (compaction)
+        } else cinc = cost
+        base[sid] = cost
+        if (cinc > 0 && epoch_to_date(ts) == today) { total += cinc; seen[sid] = 1 }
+      }
+      END { n = 0; for (s in seen) n++; printf "%.4f %d", total, n }
+    ' "${_ov_hist_files[@]}" 2>/dev/null)
+    if [[ "$_ov_today_hist" == *" "* ]]; then
+      _ov_today_cost="${_ov_today_hist% *}"
+      _ov_today_count="${_ov_today_hist##* }"
+    fi
   fi
 
   # ── Account ───────────────────────────────────────────────────────

@@ -307,35 +307,28 @@ _cmd_sessions() {
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON array from collected data
-    _json_arr="["
-    _first=1
+    # One jq invocation over US-delimited rows (was one jq -n fork PER session).
+    # Fields are session metadata / truncated single-line strings — they cannot
+    # contain 0x1F or newlines, so the row format is unambiguous.
+    local _jd=$'\x1f' _json_rows=""
     for (( _i=0; _i<_sf_count; _i++ )); do
-      [[ "$_first" -eq 0 ]] && _json_arr+=","
-      _json_arr+=$(jq -n \
-        --arg model "${_sf_model[$_i]}" \
-        --arg ctx_pct "${_sf_ctx[$_i]}" \
-        --arg cost "${_sf_cost[$_i]:-0}" \
-        --arg rate_5h "${_sf_rate5h[$_i]}" \
-        --arg rate_7d "${_sf_rate7d[$_i]}" \
-        --arg reset_5h "${_sf_reset5h[$_i]}" \
-        --arg session_id "${_sf_sid[$_i]}" \
-        --arg worktree "${_sf_worktree[$_i]}" \
-        --arg agent "${_sf_agent[$_i]}" \
-        --arg age "${_sf_age[$_i]}" \
-        --arg status "${_sf_is_active[$_i]}" \
-        --arg fingerprint "${_sf_fingerprint[$_i]}" \
-        --arg last_user_message "${_sf_last_msg[$_i]}" \
-        '{model:$model, ctx_pct:($ctx_pct|if .=="" then null else tonumber? end),
-          cost:($cost|tonumber? // 0), rate_5h:($rate_5h|if .=="" then null else tonumber? end),
-          rate_7d:($rate_7d|if .=="" then null else tonumber? end),
-          reset_5h:($reset_5h|if .=="" then null else tonumber? end),
-          session_id:$session_id, worktree:$worktree, agent:$agent,
-          age_seconds:($age|tonumber), status:$status,
-          fingerprint:$fingerprint, last_user_message:$last_user_message}')
-      _first=0
+      _json_rows+="${_sf_model[$_i]}${_jd}${_sf_ctx[$_i]}${_jd}${_sf_cost[$_i]:-0}${_jd}"
+      _json_rows+="${_sf_rate5h[$_i]}${_jd}${_sf_rate7d[$_i]}${_jd}${_sf_reset5h[$_i]}${_jd}"
+      _json_rows+="${_sf_sid[$_i]}${_jd}${_sf_worktree[$_i]}${_jd}${_sf_agent[$_i]}${_jd}"
+      _json_rows+="${_sf_age[$_i]}${_jd}${_sf_is_active[$_i]}${_jd}"
+      _json_rows+="${_sf_fingerprint[$_i]}${_jd}${_sf_last_msg[$_i]}"$'\n'
     done
-    _json_arr+="]"
-    echo "$_json_arr" | jq .
+    printf '%s' "$_json_rows" | jq -Rs 'split("\n") | map(select(length > 0) | split("\u001f") | {
+        model: .[0],
+        ctx_pct: (.[1] | if . == "" then null else (tonumber? // null) end),
+        cost: (.[2] | tonumber? // 0),
+        rate_5h: (.[3] | if . == "" then null else (tonumber? // null) end),
+        rate_7d: (.[4] | if . == "" then null else (tonumber? // null) end),
+        reset_5h: (.[5] | if . == "" then null else (tonumber? // null) end),
+        session_id: .[6], worktree: .[7], agent: .[8],
+        age_seconds: (.[9] | tonumber), status: .[10],
+        fingerprint: .[11], last_user_message: .[12]
+      })'
     exit 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
     printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\n"

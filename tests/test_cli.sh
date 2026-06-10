@@ -465,6 +465,26 @@ assert_matches "cost (no history): shows no-data message" "No cost history" "$_c
 rm -rf "$_COST_NOHIST_TMP"
 unset _COST_NOHIST_TMP _cost_nohist_out
 
+# ── overview: today's cost comes from history deltas, not session-cache sums ──
+# A session cache holding cumulative cost=99.00 (fresh mtime) must NOT drive the
+# overview's "today" figure when history exists: the history rows say the
+# session's spend today is 1.00 -> 3.00 cumulative = 3.00 in deltas. The old
+# mtime-keyed sum showed 99.00 and disagreed with `claudii cost`.
+_OV_HIST_TMP="$(mktemp -d)"
+printf 'model=Sonnet\nctx_pct=50\ncost=99.00\nrate_5h=30\nrate_7d=20\nsession_id=ovhist-sid\nppid=%s\n' "$$" \
+  > "$_OV_HIST_TMP/session-ovhist"
+_ov_now=$(date +%s)
+printf '%s\tclaude-sonnet-4-6\t1.00\t50\t30\tovhist-sid\t5000\t1000\t0\n' "$(( _ov_now - 120 ))" \
+  > "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv"
+printf '%s\tclaude-sonnet-4-6\t3.00\t50\t30\tovhist-sid\t6000\t1200\t0\n' "$_ov_now" \
+  >> "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv"
+_ov_hist_out=$(CLAUDII_CACHE_DIR="$_OV_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" 2>/dev/null \
+  | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "overview (history): today cost = history delta sum" '$3.00 today (1 session)' "$_ov_hist_out"
+assert_not_contains "overview (history): cumulative session-cache cost not used" '$99' "$_ov_hist_out"
+rm -rf "$_OV_HIST_TMP"
+unset _OV_HIST_TMP _ov_now _ov_hist_out
+
 
 # ── claudii se --resume flag: recognized, no 'Unknown command' ────────────
 resume_out=$(bash "$CLAUDII_HOME/bin/claudii" se --resume fakeid123 2>&1 || true)
