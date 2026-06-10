@@ -44,6 +44,9 @@ _cfg_init() {
 # Config value lookup — user config first, falls back to defaults.json
 # Builds a properly quoted jq path so hyphenated keys (e.g. session-dashboard.enabled)
 # are accessed as ."session-dashboard"."enabled" rather than the invalid .session-dashboard.enabled
+# Type-check instead of `// empty`: jq treats boolean false as falsy, so
+# `false // empty` would swallow an explicit user `false` and fall through to
+# the default (claudestatus off reported "on"). Mirrors _cmd_config get.
 _cfgget() {
   local key="$1" val _jp="" _seg
   _validate_key "$key" || return 1
@@ -54,8 +57,8 @@ _cfgget() {
   for _seg in "${_cfgget_segs[@]}"; do
     _jp+='."'"$_seg"'"'
   done
-  val=$(jq -r "${_jp} // empty" "$CONFIG" 2>/dev/null)
-  [[ -z "$val" ]] && val=$(jq -r "${_jp} // empty" "$DEFAULTS" 2>/dev/null)
+  val=$(jq -r "if (${_jp} | type) != \"null\" then (${_jp} | tostring) else empty end" "$CONFIG" 2>/dev/null)
+  [[ -z "$val" ]] && val=$(jq -r "if (${_jp} | type) != \"null\" then (${_jp} | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
   echo "$val"
 }
 

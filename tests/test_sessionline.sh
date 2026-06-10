@@ -614,3 +614,46 @@ output=$(echo '{"session_id":"bgt33333xxxx","model":{"display_name":"Sonnet"},"c
   | CLAUDII_CACHE_DIR="$_bgt_cache_dir3" XDG_CONFIG_HOME="$_bgt_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "bg-tasks segment: omitted when bg_tasks absent" "0" "$(echo "$strip" | grep -c '⚙' || true)"
+
+# ── reset countdown color: ≥24h must render dim, not green ───────────────────
+# Regression: _fmt_reset left `local _m` unassigned in the ≥24h branch, so the
+# color ladder's `(( _m < 5 ))` saw 0 and painted multi-day resets green
+# whenever used% was ≥50.
+_rst_epoch=$(( $(date +%s) + 200000 ))   # ~2d7h out
+output=$(echo '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":60,"resets_at":'"$_rst_epoch"'}}}' \
+  | bash "$SL" 2>&1)
+assert_contains "reset >24h at 60% used: dim color (not green)" $'\033[2m↺2d' "$output"
+unset _rst_epoch
+
+# ── insomnii env forwarding: explicit false survives, corrupt config heals ───
+# Regression 1: `.statusline.shame // true` swallowed an explicit false (jq
+# treats false as falsy) — opt-out was impossible.
+# Regression 2: a corrupt config.json made the jq fail and the read blanked
+# the pre-seeded "true" defaults — empty values were forwarded to cc-insomnii.
+_ins_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_ins_dir")
+mkdir -p "$_ins_dir/bin" "$_ins_dir/cfg/claudii"
+cat > "$_ins_dir/bin/cc-insomnii" <<'EOF'
+#\!/bin/bash
+printf 'shame=%s motivation=%s rainbow=%s\n' \
+  "$CC_INSOMNII_SHAME" "$CC_INSOMNII_MOTIVATION" "$CC_INSOMNII_RAINBOW" \
+  > "$CLAUDII_TEST_INSOMNII_OUT"
+EOF
+chmod +x "$_ins_dir/bin/cc-insomnii"
+
+printf '{"statusline":{"shame":false}}\n' > "$_ins_dir/cfg/claudii/config.json"
+echo '{"model":{"display_name":"Opus"}}' \
+  | CLAUDII_TEST_INSOMNII_OUT="$_ins_dir/env.out" PATH="$_ins_dir/bin:$PATH" \
+    XDG_CONFIG_HOME="$_ins_dir/cfg" bash "$SL" >/dev/null 2>&1
+_ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
+assert_contains "insomnii env: explicit shame=false forwarded" "shame=false" "$_ins_env"
+assert_contains "insomnii env: motivation defaults to true"    "motivation=true" "$_ins_env"
+
+printf 'NOT JSON\n' > "$_ins_dir/cfg/claudii/config.json"
+rm -f "$_ins_dir/env.out"
+echo '{"model":{"display_name":"Opus"}}' \
+  | CLAUDII_TEST_INSOMNII_OUT="$_ins_dir/env.out" PATH="$_ins_dir/bin:$PATH" \
+    XDG_CONFIG_HOME="$_ins_dir/cfg" bash "$SL" >/dev/null 2>&1
+_ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
+assert_contains "insomnii env: corrupt config falls back to shame=true" "shame=true" "$_ins_env"
+assert_contains "insomnii env: corrupt config falls back to rainbow=true" "rainbow=true" "$_ins_env"
+unset _ins_dir _ins_env

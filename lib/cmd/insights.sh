@@ -103,6 +103,14 @@ _cmd_cache() {
     shift
   done
 
+  # Validate here — claudii-insights merge also validates, but its stderr is
+  # swallowed by _insights_merged_json (2>/dev/null), so a bad --days used to
+  # surface as the misleading "No insight data yet".
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
+    return 1
+  fi
+
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
     printf '  No insight data yet — run a Claude session and try again.\n'

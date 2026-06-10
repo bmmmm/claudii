@@ -95,3 +95,19 @@ assert_eq "label: haiku 4.5"          "Haiku 4.5"  "$(_insights_model_label clau
 assert_eq "label: unknown opus->tier" "Opus"       "$(_insights_model_label claude-opus-9-9)"
 
 unset _SID _TS _JSONL _CACHE_OUT _CACHE_RC _CACHE_OUT_30 _EMPTY_OUT _BAD_RC
+
+# ── --days validation: bad value must error, not print "No insight data" ─────
+# Regression: claudii-insights merge validates --days but _insights_merged_json
+# swallows its stderr (2>/dev/null) — a bad value surfaced as the misleading
+# "No insight data yet". _cmd_cache now validates before calling merge.
+_dv_base=$(mktemp -d "${TMPDIR:-/tmp}/claudii_cache_days.XXXXXX")
+mkdir -p "$_dv_base/xdg/claudii" "$_dv_base/cache" "$_dv_base/proj"
+cp "$CLAUDII_HOME/config/defaults.json" "$_dv_base/xdg/claudii/config.json"
+_dv_out=$(CLAUDE_PROJECTS_DIR="$_dv_base/proj" CLAUDII_CACHE_DIR="$_dv_base/cache" \
+  XDG_CONFIG_HOME="$_dv_base/xdg" \
+  bash "$CLAUDII_HOME/bin/claudii" cache --days foo 2>&1; echo "rc=$?")
+assert_contains "cache --days foo: actionable error" "positive integer" "$_dv_out"
+assert_contains "cache --days foo: exit 1" "rc=1" "$_dv_out"
+assert_not_contains "cache --days foo: no misleading no-data message" "No insight data" "$_dv_out"
+rm -rf "$_dv_base"
+unset _dv_base _dv_out

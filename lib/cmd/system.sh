@@ -8,7 +8,10 @@ _cmd_on() {
   _jq_update "$CONFIG" '.statusline.enabled = true | ."session-dashboard".enabled = "on"'
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
-    if ! jq -e '.statusLine.command == "claudii-cc-statusline"' "$SETTINGS" >/dev/null 2>&1; then
+    # contains() — the configured command may be the cc-insomnii wrapper
+    # ("cc-insomnii --after=claudii-cc-statusline"). An equality check used to
+    # clobber that wrapper with the plain command on every `claudii on`.
+    if ! jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$SETTINGS" >/dev/null 2>&1; then
       _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
     fi
   fi
@@ -292,7 +295,7 @@ _cmd_cc_statusline() {
       ;;
     on)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; exit 1
       fi
       # Pick the right statusLine command. When cc-insomnii is installed AND
       # delegation isn't explicitly off, use the wrapper so insomnii always
@@ -316,7 +319,7 @@ _cmd_cc_statusline() {
       ;;
     off)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmaingret/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; exit 1
       fi
       if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
         _jq_update "$SETTINGS" 'del(.statusLine)'
@@ -404,7 +407,8 @@ _cmd_doctor() {
   settings="${HOME}/.claude/settings.json"
   if [[ ! -f "$settings" ]]; then
     _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
-  elif jq -e '.statusLine.command == "claudii-cc-statusline"' "$settings" >/dev/null 2>&1; then
+  elif jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$settings" >/dev/null 2>&1; then
+    # contains() accepts the cc-insomnii wrapper command too
     _dc_add "cc_statusline" "ok" "CC-Statusline configured"
   elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
     other=$(jq -r '.statusLine.command // "unknown"' "$settings")

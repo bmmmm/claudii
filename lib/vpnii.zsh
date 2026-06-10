@@ -11,8 +11,8 @@
 #   PostUp  = claudii vpnii set HomeLab
 #   PreDown = claudii vpnii clear
 #
-# Resolves the target user via SUDO_USER → /dev/console owner (GUI) → $USER
-# → CLAUDII_USER override. Override with: claudii vpnii set HomeLab --user bma
+# Resolves the target user via SUDO_USER → CLAUDII_USER env → /dev/console
+# owner (GUI) → $USER. Override with: claudii vpnii set HomeLab --user bma
 
 typeset -g  _VPNII_STATE_FILE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/vpnii"
 typeset -g  _VPNII_TS_CACHE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/vpnii-ts"

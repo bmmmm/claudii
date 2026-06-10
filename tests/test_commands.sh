@@ -107,6 +107,14 @@ assert_no_literal_ansi "claudestatus off: no literal \\033 in output" "$_cds_out
 _cds_val=$(XDG_CONFIG_HOME="$_cds_xdg" bash "$CLAUDII_HOME/bin/claudii" config get statusline.enabled 2>&1)
 assert_eq "claudestatus off: sets statusline.enabled=false" "false" "$_cds_val"
 
+# claudestatus off → the status DISPLAY reports off too. Regression: _cfgget
+# read via `// empty`, which treats boolean false as falsy — the explicit
+# user false fell through to the defaults' true and the display said "on"
+# while config.json said false.
+_cds_disp=$(XDG_CONFIG_HOME="$_cds_xdg" bash "$CLAUDII_HOME/bin/claudii" claudestatus 2>&1)
+assert_contains "claudestatus off: display reports off (false survives _cfgget)" "off" "$_cds_disp"
+unset _cds_disp
+
 # claudestatus (no arg) → shows current state, no crash
 _cds_noarg_exit=$(XDG_CONFIG_HOME="$_cds_xdg" bash "$CLAUDII_HOME/bin/claudii" claudestatus >/dev/null 2>&1; echo $?)
 assert_eq "claudestatus (no arg): exit 0" "0" "$_cds_noarg_exit"
@@ -195,6 +203,53 @@ rm -rf "$_cssl_base"
 unset _CSSL_BASE _CSSL_XDG _cssl_xdg _cssl_base _cssl_exit _cssl_out _cssl_cmd
 unset _cssl_idem_exit _cssl_off_exit _cssl_off_out _cssl_has_sl _cssl_off2_exit
 unset _cssl_missing_exit _cssl_missing_msg
+
+# ── claudii on must not clobber the cc-insomnii wrapper ───────────────────────
+# Regression: _cmd_on compared statusLine.command with == "claudii-cc-statusline";
+# the wrapper command installed by `cc-statusline on` (with cc-insomnii present)
+# failed that check and got overwritten with the plain command on every
+# `claudii on`.
+_make_cfg_tmp _CWR
+mkdir -p "$_CWR_BASE/fakehome/.claude"
+printf '{"statusLine":{"type":"command","command":"cc-insomnii --after=claudii-cc-statusline"}}' \
+  > "$_CWR_BASE/fakehome/.claude/settings.json"
+HOME="$_CWR_BASE/fakehome" XDG_CONFIG_HOME="$_CWR_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" on >/dev/null 2>&1
+_cwr_cmd=$(jq -r '.statusLine.command' "$_CWR_BASE/fakehome/.claude/settings.json" 2>/dev/null)
+assert_eq "claudii on: preserves cc-insomnii wrapper statusLine" \
+  "cc-insomnii --after=claudii-cc-statusline" "$_cwr_cmd"
+rm -rf "$_CWR_BASE"
+unset _CWR_BASE _CWR_XDG _CWR_CACHE _cwr_cmd
+
+# ── zsh agent registration: skill-less agents + no field-shift noise ──────────
+# Regression 1: agents without a skill (hk/sn/op/…) were skipped entirely —
+# advertised by `claudii agents` but never registered (command not found).
+# Regression 2: the registration TSV used tab separators; zsh `read` collapses
+# runs of IFS-whitespace, so an empty skill field shifted model→skill and
+# effort→model, printing "invalid agent effort:" on every shell start.
+if command -v zsh >/dev/null 2>&1; then
+  _make_cfg_tmp _ZAG
+  _zag_out=$(XDG_CONFIG_HOME="$_ZAG_XDG" zsh -fc '
+    export CLAUDII_HOME="'"$CLAUDII_HOME"'"
+    typeset -gA _CLAUDII_METRICS
+    zmodload zsh/datetime 2>/dev/null; zmodload zsh/mathfunc 2>/dev/null
+    source "$CLAUDII_HOME/lib/visual.sh" 2>/dev/null
+    source "$CLAUDII_HOME/lib/config.zsh" 2>/dev/null
+    source "$CLAUDII_HOME/lib/functions.zsh"
+    for a in hk sn op orc; do
+      (( ${+functions[$a]} )) && print "registered: $a" || print "MISSING: $a"
+    done
+    print "body-hk: ${functions[hk]}"
+  ' 2>&1)
+  assert_contains "zsh agents: skill-less hk registered"   "registered: hk"  "$_zag_out"
+  assert_contains "zsh agents: skill-less sn registered"   "registered: sn"  "$_zag_out"
+  assert_contains "zsh agents: skill agent orc registered" "registered: orc" "$_zag_out"
+  assert_contains "zsh agents: hk body is a plain launcher" \
+    '_claudii_agent_launch "" "haiku" "high"' "$_zag_out"
+  assert_not_contains "zsh agents: no field-shift error noise" "invalid agent" "$_zag_out"
+  rm -rf "$_ZAG_BASE"
+  unset _ZAG_BASE _ZAG_XDG _ZAG_CACHE _zag_out
+fi
 
 # ── agents ────────────────────────────────────────────────────────────────────
 

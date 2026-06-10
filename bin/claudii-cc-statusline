@@ -36,9 +36,9 @@ if [[ -f "$_config_file" ]]; then
       (.statusline.bedtime // ""),
       (.vibemap.enabled // false | tostring),
       (.vibemap.path // ""),
-      (.statusline.shame // true | tostring),
-      (.statusline.motivation // true | tostring),
-      (.statusline.rainbow // true | tostring),
+      (if .statusline.shame == false then "false" else "true" end),
+      (if .statusline.motivation == false then "false" else "true" end),
+      (if .statusline.rainbow == false then "false" else "true" end),
       (.statusline.insomnii // "auto")
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
@@ -47,6 +47,12 @@ fi
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
 _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 [[ "$_cfg_insomnii" != "off" && "$_cfg_insomnii" != "on" ]] && _cfg_insomnii="auto"
+# Re-apply opt-out defaults AFTER the read: a failing jq (corrupt config.json)
+# leaves read with no input, which blanks every listed var — including the
+# pre-seeded "true" defaults. Only an explicit "false" opts out.
+[[ "$_cfg_shame"      != "false" ]] && _cfg_shame="true"
+[[ "$_cfg_motivation" != "false" ]] && _cfg_motivation="true"
+[[ "$_cfg_rainbow"    != "false" ]] && _cfg_rainbow="true"
 
 # Clock segment delegation
 _use_insomnii=0
@@ -319,6 +325,11 @@ _fmt_reset() {
   local _secs="$1" _pct="$2" _m _h _d _rh
   _reset_fmt=""; _reset_color=""
   (( _secs <= 0 )) && return
+  # _m feeds the color ladder below and must be set on EVERY branch — the
+  # >=24h branch used to leave it unassigned, so `(( _m < 5 ))` saw 0 and
+  # painted multi-day resets green instead of dim. The <60m branch overwrites
+  # it with the rounded display value.
+  _m=$(( _secs / 60 ))
   if (( _secs < 3600 )); then
     _m=$(( (_secs + 30) / 60 ))
     (( _m <= 0 )) && return

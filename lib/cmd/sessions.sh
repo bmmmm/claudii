@@ -615,6 +615,7 @@ _cmd_sessions_inactive() {
 
   _has_files=0
   _rendered_any=0
+  _is_stale=0 _is_pinned=0
 
   [[ ${#_is_files[@]} -gt 0 ]] && _has_files=1
 
@@ -629,14 +630,19 @@ _cmd_sessions_inactive() {
       # Skip active sessions — this command shows only inactive
       if [[ $_PSC_is_active -eq 1 ]]; then continue; fi
 
-      # Status badge: pinned (protected) vs stale (GC candidate) vs idle
+      # Status badge: pinned (protected) vs stale (GC candidate) vs idle.
+      # Footer counters increment HERE so they always match the rendered list
+      # (a second kill-0-only loop used to disagree with the agents-API+24h
+      # liveness the rows are based on).
       local _is_badge _is_tag=""
       if [[ "$_PSC_pinned" == "1" ]]; then
         _is_badge="${CLAUDII_CLR_CYAN}${CLAUDII_SYM_PIN}${CLAUDII_CLR_RESET}"
         _is_tag=" ${CLAUDII_CLR_CYAN}pinned${CLAUDII_CLR_RESET}"
+        (( ++_is_pinned ))
       elif (( _PSC_age >= 3600 )); then
         _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
         _is_tag=" ${CLAUDII_CLR_DIM}stale${CLAUDII_CLR_RESET}"
+        (( ++_is_stale ))
       else
         _is_badge="${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET}"
       fi
@@ -683,22 +689,8 @@ _cmd_sessions_inactive() {
     printf "  No session data found.\n"
   fi
 
-  # GC footer: count stale and pinned files
-  _is_stale=0 _is_pinned=0
-  for _is_gc_f in "${_is_files[@]}"; do
-    [[ -f "$_is_gc_f" ]] || continue
-    # Read once, extract via parameter expansion — no grep fork per file.
-    local _is_gc_sc _is_gc_t; _is_gc_ppid=""
-    { _is_gc_sc=$(<"$_is_gc_f"); } 2>/dev/null || continue
-    [[ $'\n'"$_is_gc_sc" == *$'\n'ppid=* ]] && { _is_gc_t="${_is_gc_sc#*$'\n'ppid=}"; _is_gc_ppid="${_is_gc_t%%$'\n'*}"; }
-    [[ -n "$_is_gc_ppid" ]] && kill -0 "$_is_gc_ppid" 2>/dev/null && continue
-    _is_gc_mtime=$(_mtime "$_is_gc_f")
-    if [[ $'\n'"$_is_gc_sc"$'\n' == *$'\n'pinned=1$'\n'* ]]; then
-      (( ++_is_pinned ))
-    elif (( _NOW - _is_gc_mtime >= 3600 )); then
-      (( ++_is_stale ))
-    fi
-  done
+  # GC footer — counters collected in the render loop above (same data, same
+  # liveness logic, no second pass over the files).
   local _gc_parts=""
   (( _is_stale > 0 )) && _gc_parts="${_is_stale} stale"
   (( _is_pinned > 0 )) && {
@@ -1403,7 +1395,8 @@ _cmd_default() {
   [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
-  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command == "claudii-cc-statusline"' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
+  # contains() — also matches the cc-insomnii wrapper command
+  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
   _ov_svc_any=0
   [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
   [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1

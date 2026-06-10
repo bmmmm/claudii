@@ -57,10 +57,17 @@ function _claudii_rl_warn {
       case "$_choice" in
         s|S)
           _fb_effort=$(claudii_config_get "fallback.opus.effort")
-          local -n _rl_model_ref_="$_model_var"
-          _rl_model_ref_="$_fb_model"
-          [[ -n "$_fb_effort" ]] && { local -n _rl_effort_ref_="$_effort_var"; _rl_effort_ref_="$_fb_effort"; }
-          printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${_fb_effort:-$(claudii_config_get aliases.$_model_var.effort)}${CLAUDII_CLR_RESET}\n"
+          # No namerefs: zsh 5.9 (macOS) has no `local -n`/`typeset -n` — it
+          # errored "bad option: -n" and the model was silently NOT switched
+          # while the confirmation line still printed. eval on the validated
+          # internal varname ("model"/"effort" from _claudii_launch) instead.
+          eval "${_model_var}=\${_fb_model}"
+          [[ -n "$_fb_effort" ]] && eval "${_effort_var}=\${_fb_effort}"
+          # Effort shown = what the launch will actually use: the fallback
+          # effort, or the caller's unchanged effort var ((P) indirection —
+          # the old `aliases.$_model_var.effort` looked up the literal key
+          # "aliases.model.effort", which never exists).
+          printf "→ ${CLAUDII_CLR_CYAN}${_fb_model} ${_fb_effort:-${(P)_effort_var}}${CLAUDII_CLR_RESET}\n"
           ;;
         w|W)
           printf "${CLAUDII_CLR_DIM}Cancelled.${CLAUDII_CLR_RESET}\n"
@@ -132,9 +139,18 @@ _claudii_register_aliases
 
 # Agent launcher — starts claude with a skill as system prompt
 # Looks in: .claude/skills/<name>/SKILL.md (project) → ~/.claude/agents/<name>.md (global)
+# Empty agent_name = plain worker launch (model/effort only, no system prompt) —
+# used by skill-less agents like hk/sn/op from config.agents.
 function _claudii_agent_launch {
   local agent_name="$1" model="${2:-opus}" effort="${3:-high}"
   shift 3 2>/dev/null || shift $#
+
+  if [[ -z "$agent_name" ]]; then
+    _claudii_log info "agent launch: plain worker model=$model effort=$effort"
+    claude --model "$model" --effort "$effort" "$@"
+    return $?
+  fi
+
   local agent_file=""
 
   # Project skill first, then global agents
@@ -173,16 +189,27 @@ function _claudii_register_agents {
   local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
   [[ -f "$config" ]] || return
 
-  local agents_json
-  agents_json=$(jq -r '.agents // {} | to_entries[] | "\(.key)\t\(.value.skill // "")\t\(.value.model // "opus")\t\(.value.effort // "high")"' "$config" 2>/dev/null) || return
+  # US (0x1F) separator, not tab: zsh `read` treats tab as IFS-whitespace and
+  # collapses runs of it, so an empty skill field ("hk\t\thaiku\thigh") shifted
+  # every following field (model→skill, effort→model, effort empty → "invalid
+  # agent effort" on every shell start). 0x1F is non-whitespace → empty fields
+  # survive.
+  local agents_json _us=$'\x1f'
+  agents_json=$(jq -r '.agents // {} | to_entries[] | [.key, (.value.skill // ""), (.value.model // "opus"), (.value.effort // "high")] | join("\u001f")' "$config" 2>/dev/null) || return
 
   [[ -z "$agents_json" ]] && return
 
-  while IFS=$'\t' read -r name skill model effort; do
-    [[ -z "$name" || -z "$skill" ]] && continue
+  while IFS="$_us" read -r name skill model effort; do
+    [[ -z "$name" ]] && continue
     [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
     [[ "$name" == claudii || "$name" == claude || "$name" == clh ]] && { echo "claudii: reserved name: $name" >&2; continue; }
-    [[ "$skill"  =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo "claudii: invalid agent skill: $skill" >&2; continue; }
+    # skill is optional — agents without one (hk/sn/op/…) register as plain
+    # model/effort launchers. Skipping them entirely left every skill-less
+    # default agent advertised by `claudii agents` but unregistered (command
+    # not found).
+    if [[ -n "$skill" ]]; then
+      [[ "$skill" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo "claudii: invalid agent skill: $skill" >&2; continue; }
+    fi
     [[ "$model"  =~ ^[a-zA-Z][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent model: $model" >&2; continue; }
     [[ "$effort" =~ ^[a-zA-Z]+$               ]] || { echo "claudii: invalid agent effort: $effort" >&2; continue; }
     functions[$name]="_claudii_agent_launch \"$skill\" \"$model\" \"$effort\" \"\$@\""
