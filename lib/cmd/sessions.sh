@@ -451,15 +451,8 @@ _cmd_cost() {
   fi
 
   now=$(date +%s)
-  # Use calendar midnight as cutoff (not rolling 24h). BSD `date -j -f '%Y-%m-%d'`
-  # leaves time-of-day at *now* when the format has no time component, so the
-  # cutoff would equal `now` and "today" would only catch files modified in the
-  # same second. Pass `00:00:00` explicitly to anchor at calendar midnight.
-  if date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then
-    cutoff=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s')
-  else
-    cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
-  fi
+  # Calendar-midnight cutoff for "today" (not rolling 24h) — see _midnight_epoch.
+  cutoff=$(_midnight_epoch)
 
   # Parallel indexed arrays for per-model totals (bash 3.2 compatible, no declare -A)
   _cost_models=()
@@ -595,26 +588,15 @@ _cmd_sessions_inactive() {
   _cfg_init
   _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
-  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
-  _rate_mark=""
-  [[ "$_RATE_DISP" == "remaining" ]] && _rate_mark="↓"
+  _rate_disp_init
   _NOW=$(date +%s)
 
   printf '\n'
   printf "  ${CLAUDII_CLR_BOLD}Inactive Sessions${CLAUDII_CLR_RESET}\n"
   printf "  ${CLAUDII_CLR_DIM}Sessions whose Claude Code process has ended. Cache kept until GC runs.${CLAUDII_CLR_RESET}\n"
 
-  shopt -s nullglob
-  _is_files=("$cache_dir"/session-*)
-  shopt -u nullglob
-  # Drop atomic-write artifacts (session-*.tmp.PID)
-  _is_real=()
-  for _is_e in "${_is_files[@]+"${_is_files[@]}"}"; do
-    [[ "$_is_e" == *.tmp.* ]] || _is_real+=("$_is_e")
-  done
-  _is_files=("${_is_real[@]+"${_is_real[@]}"}")
-  unset _is_real _is_e
+  _session_files "$cache_dir"
+  _is_files=("${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}")
 
   _has_files=0
   _rendered_any=0
@@ -712,9 +694,8 @@ _session_toggle_pin() {
   local action="$1" needle="$2"
   local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local found=0
-  for f in "$cache_dir"/session-*; do
-    [[ -f "$f" ]] || continue
-    [[ "$f" == *.tmp.* ]] && continue
+  _session_files "$cache_dir"
+  for f in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
     local sid line
     while IFS= read -r line; do sid="${line#*=}"; break; done < <(grep '^session_id=' "$f" 2>/dev/null)
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
@@ -773,10 +754,7 @@ _cmd_sessions() {
   now=$(date +%s); _NOW="$now"
   active=0 stale=0
   latest_5h="" latest_7d="" latest_reset="" latest_5h_mt=0
-  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
-  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
-  _rate_mark=""
-  [[ "$_RATE_DISP" == "remaining" ]] && _rate_mark="↓"
+  _rate_disp_init
 
   # Collect all session data into parallel arrays
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
@@ -791,10 +769,8 @@ _cmd_sessions() {
   # Build session→JSONL map once (O(1) lookup per session instead of O(dirs) scan)
   _session_build_map
 
-  shopt -s nullglob
-  for sf in "$cache_dir"/session-*; do
-    [[ -f "$sf" ]] || continue
-    [[ "$sf" == *.tmp.* ]] && continue
+  _session_files "$cache_dir"
+  for sf in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
     [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
     _parse_session_cache "$sf"
 
@@ -859,7 +835,6 @@ _cmd_sessions() {
     fi
     (( ++_sf_count ))
   done
-  shopt -u nullglob
 
   # Kill spinner and clear spinner line
   _spinner_stop
@@ -1060,21 +1035,8 @@ _cmd_sessions() {
     fi
     # Cron glyph — shown when next_cron_at is in the future (written by claudii-stop-hook)
     if [[ "${_sf_cron[$_i]:-}" =~ ^[0-9]+$ && "${_sf_cron[$_i]}" != "0" ]]; then
-      _cron_rem=$(( ${_sf_cron[$_i]} - now ))
-      if (( _cron_rem > 0 )); then
-        _cron_sec=$(( _cron_rem ))
-        if   (( _cron_sec < 3600 ));  then printf -v _cron_rel '%dm'     $(( _cron_sec / 60 ))
-        elif (( _cron_sec < 86400 )); then
-          _ch=$(( _cron_sec / 3600 )); _cm=$(( (_cron_sec % 3600) / 60 ))
-          if (( _cm > 0 )); then printf -v _cron_rel '%dh%dm' "$_ch" "$_cm"
-          else printf -v _cron_rel '%dh' "$_ch"; fi
-        else
-          _cd=$(( _cron_sec / 86400 )); _ch=$(( (_cron_sec % 86400) / 3600 ))
-          if (( _ch > 0 )); then printf -v _cron_rel '%dd%dh' "$_cd" "$_ch"
-          else printf -v _cron_rel '%dd' "$_cd"; fi
-        fi
-        detail+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON}${_cron_rel}${CLAUDII_CLR_RESET}"
-      fi
+      _fmt_rel $(( ${_sf_cron[$_i]} - now ))
+      [[ -n "$_REL_FMT" ]] && detail+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON}${_REL_FMT}${CLAUDII_CLR_RESET}"
     fi
     detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP} ${_AGE_STR}${CLAUDII_CLR_RESET}"
     printf '%s\n' "$detail"
@@ -1197,29 +1159,19 @@ _cmd_default() {
   printf '\n'
 
   # ── Gather session data ────────────────────────────────────────────
-  shopt -s nullglob
-  _ov_files=("$cache_dir"/session-*)
-  shopt -u nullglob
+  _session_files "$cache_dir"
+  _ov_files=("${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}")
 
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
   _ov_today_cost=0 _ov_today_count=0 _ov_stale=0
   _ov_next_cron=0 _ov_total_bg=0
-  # Use calendar midnight as cutoff (not rolling 24h). BSD `date -j -f '%Y-%m-%d'`
-  # without a time component keeps the current time-of-day, returning `now`
-  # instead of midnight — pass `00:00:00` explicitly to anchor at midnight.
-  if date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' >/dev/null 2>&1; then
-    _ov_cutoff=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s')
-  else
-    _ov_cutoff=$(date -d "$(date '+%Y-%m-%d')" '+%s')
-  fi
+  # Calendar-midnight cutoff for "today" (not rolling 24h) — see _midnight_epoch.
+  _ov_cutoff=$(_midnight_epoch)
   _ov_any_session=0
   _ov_active_count=0 _ov_inactive_count=0
 
   if [[ ${#_ov_files[@]} -gt 0 ]]; then
     for _ov_f in "${_ov_files[@]}"; do
-      [[ -f "$_ov_f" ]] || continue
-      [[ "$_ov_f" == *.tmp.* ]] && continue
-
       _parse_session_cache "$_ov_f"
 
       # Skip if no model (corrupt/empty file)
@@ -1280,11 +1232,7 @@ _cmd_default() {
 
     # rate_display: "remaining" flips % to 100-X; color thresholds stay on used%.
     # _rate_mark gives a visible cue (↓) for the inverted mode.
-    local _RATE_DISP _rate_mark
-    _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
-    [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
-    _rate_mark=""
-    [[ "$_RATE_DISP" == "remaining" ]] && _rate_mark="↓"
+    _rate_disp_init
 
     _ov_5h_int=${_ov_acct_5h%.*}
     _ov_5h_disp=$_ov_5h_int
@@ -1344,21 +1292,10 @@ _cmd_default() {
           _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ov_sign}${_ov_delta_disp}%)${CLAUDII_CLR_RESET}"
         fi
       fi
-      # 7d reset countdown
+      # 7d reset countdown (shared cascade: m / h+m / d+h, zero units suppressed)
       if [[ -n "$_ov_acct_reset_7d" && "$_ov_acct_reset_7d" != "0" ]]; then
-        _ov_r7d_rem=$(( _ov_acct_reset_7d - now ))
-        if (( _ov_r7d_rem > 0 )); then
-          if (( _ov_r7d_rem >= 86400 )); then
-            _ov_r7d_d=$(( _ov_r7d_rem / 86400 ))
-            _ov_r7d_h=$(( (_ov_r7d_rem % 86400) / 3600 ))
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_ov_r7d_d}d${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
-          elif (( _ov_r7d_rem >= 3600 )); then
-            _ov_r7d_h=$(( _ov_r7d_rem / 3600 ))
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_ov_r7d_h}h${CLAUDII_CLR_RESET}"
-          else
-            _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺$(( _ov_r7d_rem / 60 ))m${CLAUDII_CLR_RESET}"
-          fi
-        fi
+        _fmt_rel $(( _ov_acct_reset_7d - now ))
+        [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
       fi
     fi
     # Today's cost with accent color, and session count
@@ -1489,20 +1426,9 @@ _cmd_default() {
 
     # Cron + bg_tasks summary line: shown when at least one session has a future cron
     if (( _ov_next_cron > 0 )); then
-      _ov_cron_secs=$(( _ov_next_cron - now ))
-      if (( _ov_cron_secs > 0 )); then
-        if   (( _ov_cron_secs < 3600 ));  then
-          printf -v _ov_cron_rel '%dm' $(( _ov_cron_secs / 60 ))
-        elif (( _ov_cron_secs < 86400 )); then
-          _ov_ch=$(( _ov_cron_secs / 3600 )); _ov_cm=$(( (_ov_cron_secs % 3600) / 60 ))
-          if (( _ov_cm > 0 )); then printf -v _ov_cron_rel '%dh%dm' "$_ov_ch" "$_ov_cm"
-          else printf -v _ov_cron_rel '%dh' "$_ov_ch"; fi
-        else
-          _ov_cd=$(( _ov_cron_secs / 86400 )); _ov_ch=$(( (_ov_cron_secs % 86400) / 3600 ))
-          if (( _ov_ch > 0 )); then printf -v _ov_cron_rel '%dd%dh' "$_ov_cd" "$_ov_ch"
-          else printf -v _ov_cron_rel '%dd' "$_ov_cd"; fi
-        fi
-        _ov_cron_line="    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON} next wake in ${_ov_cron_rel}"
+      _fmt_rel $(( _ov_next_cron - now ))
+      if [[ -n "$_REL_FMT" ]]; then
+        _ov_cron_line="    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_CRON} next wake in ${_REL_FMT}"
         if (( _ov_total_bg > 0 )); then
           _ov_bg_s=""; (( _ov_total_bg != 1 )) && _ov_bg_s="s"
           _ov_cron_line+="  ·  ${_ov_total_bg} bg task${_ov_bg_s}"

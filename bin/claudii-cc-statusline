@@ -7,6 +7,8 @@ export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 source "$CLAUDII_HOME/lib/log.sh"
 # shellcheck source=lib/vibemap.sh
 source "$CLAUDII_HOME/lib/vibemap.sh"
+# shellcheck source=lib/timefmt.sh
+source "$CLAUDII_HOME/lib/timefmt.sh"
 
 command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found — install jq\n' >&2; exit 1; }
 
@@ -410,26 +412,11 @@ fi
 
 # Cron segment — reads next_cron_at from per-session cache (written by claudii-stop-hook).
 # Renders ⏰ <relative> when the epoch is in the future; omitted when absent or past.
-# Note: _cron_secs is in seconds (not ms), so we format directly instead of calling _dur.
 # _cached_next_cron_at was already read above for the cache-write preserve step.
 _seg_cron=""
 if [[ "$_cached_next_cron_at" =~ ^[0-9]+$ && "$_cached_next_cron_at" != "0" ]]; then
-  _cron_secs=$(( _cached_next_cron_at - _now ))
-  if (( _cron_secs > 0 )); then
-    _cron_rel=""
-    if   (( _cron_secs < 60 ));    then _cron_rel="<1m"
-    elif (( _cron_secs < 3600 ));  then printf -v _cron_rel '%dm'     $(( _cron_secs / 60 ))
-    elif (( _cron_secs < 86400 )); then
-      _cch=$(( _cron_secs / 3600 )); _ccm=$(( (_cron_secs % 3600) / 60 ))
-      if (( _ccm > 0 )); then printf -v _cron_rel '%dh%dm' "$_cch" "$_ccm"
-      else printf -v _cron_rel '%dh' "$_cch"; fi
-    else
-      _ccd=$(( _cron_secs / 86400 )); _cch=$(( (_cron_secs % 86400) / 3600 ))
-      if (( _cch > 0 )); then printf -v _cron_rel '%dd%dh' "$_ccd" "$_cch"
-      else printf -v _cron_rel '%dd' "$_ccd"; fi
-    fi
-    [[ -n "$_cron_rel" ]] && _seg_cron="${DIM}⏰ ${_cron_rel}${RST}"
-  fi
+  _fmt_rel $(( _cached_next_cron_at - _now ))
+  [[ -n "$_REL_FMT" ]] && _seg_cron="${DIM}⏰ ${_REL_FMT}${RST}"
 fi
 
 # Clock — delegated to cc-insomnii(1) when present and not double-wrapped.
@@ -556,14 +543,8 @@ if [[ -f "$_status_cache" ]]; then
 
     _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
     if [[ "$_sc_mtime" =~ ^[0-9]+$ ]] && (( _sc_mtime > 0 )); then
-      _sc_age_sec=$(( _now - _sc_mtime ))
-      (( _sc_age_sec < 0 )) && _sc_age_sec=0
-      if   (( _sc_age_sec < 60 ));    then _sc_age_str="${_sc_age_sec}s"
-      elif (( _sc_age_sec < 3600 ));  then printf -v _sc_age_str '%dm' $(( _sc_age_sec / 60 ))
-      elif (( _sc_age_sec < 86400 )); then printf -v _sc_age_str '%dh' $(( _sc_age_sec / 3600 ))
-      else                                 printf -v _sc_age_str '%dd' $(( _sc_age_sec / 86400 ))
-      fi
-      _seg_claude_status+=" ${DIM}${_sc_age_str}${RST}"
+      _fmt_brief $(( _now - _sc_mtime ))
+      _seg_claude_status+=" ${DIM}${_BRIEF_FMT}${RST}"
     fi
 
     if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _seg_claude_status+=" ${RED}‼${RST}"

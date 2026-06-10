@@ -4,6 +4,10 @@
 # Callers must source visual.sh, spinner.sh first (for CLAUDII_CLR_*/CLAUDII_SYM_*
 # and _claudii_spinner) and must set CLAUDII_HOME.
 
+# Shared relative-time formatters (_fmt_rel / _fmt_brief)
+# shellcheck source=lib/timefmt.sh
+source "$CLAUDII_HOME/lib/timefmt.sh"
+
 # Returns 0 (true) when output should be plain (no ANSI colors):
 # either piped without an explicit format flag, or an explicit --json/--tsv flag is set.
 _plain() { [[ "${_TTY:-0}" -eq 0 ]] || [[ -n "${_FORMAT:-}" ]]; }
@@ -107,6 +111,43 @@ _collect_history_files() {
   for _f in "$_dir"/history-*.tsv; do
     [[ -f "$_f" && -s "$_f" ]] && _HIST_FILES+=("$_f")
   done
+  return 0
+}
+
+# Epoch seconds of local calendar midnight (today 00:00:00), echoed to stdout.
+# BSD `date -j -f '%Y-%m-%d'` without a time component keeps the current
+# time-of-day (cutoff would equal `now`), so 00:00:00 is passed explicitly;
+# GNU date fallback for Linux. Echoes 0 if both fail.
+_midnight_epoch() {
+  date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' 2>/dev/null \
+    || date -d "$(date '+%Y-%m-%d')" '+%s' 2>/dev/null \
+    || echo 0
+}
+
+# Rate-display mode init — sets _RATE_DISP ("used"|"remaining") and _rate_mark
+# ("" | "↓") from config. One _cfgget, shared by se/si/overview.
+_rate_disp_init() {
+  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
+  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
+  _rate_mark=""
+  [[ "$_RATE_DISP" == "remaining" ]] && _rate_mark="↓"
+  return 0
+}
+
+# Collect session cache files into _SESSION_FILES, dropping atomic-write
+# artifacts (session-*.tmp.PID left behind by crashed writers). gc keeps its
+# own glob — it needs the .tmp files for the orphan sweep.
+_SESSION_FILES=()
+_session_files() {
+  local _dir="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}}" _f
+  _SESSION_FILES=()
+  shopt -s nullglob
+  for _f in "$_dir"/session-*; do
+    [[ -f "$_f" ]] || continue
+    [[ "$_f" == *.tmp.* ]] && continue
+    _SESSION_FILES+=("$_f")
+  done
+  shopt -u nullglob
   return 0
 }
 
@@ -399,13 +440,8 @@ _render_ctx_bar() {
   _CTX_BAR="${_clr}${_bar}${CLAUDII_CLR_RESET}"
 }
 
-# Render age (seconds) into _AGE_STR.
+# Render age (seconds) into _AGE_STR ("Xs ago" … "Xd ago").
 _render_age() {
-  local _s=${1:-0}
-  (( _s < 0 )) && _s=0
-  if   [[ $_s -lt 60    ]]; then _AGE_STR="${_s}s ago"
-  elif [[ $_s -lt 3600  ]]; then _AGE_STR="$(( _s / 60 ))m ago"
-  elif [[ $_s -lt 86400 ]]; then _AGE_STR="$(( _s / 3600 ))h ago"
-  else                           _AGE_STR="$(( _s / 86400 ))d ago"
-  fi
+  _fmt_brief "${1:-0}"
+  _AGE_STR="${_BRIEF_FMT} ago"
 }
