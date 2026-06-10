@@ -1,4 +1,4 @@
-# touches: lib/cmd/sessions.sh lib/cmd/system.sh lib/cmd/display.sh lib/statusline.zsh lib/functions.zsh
+# touches: lib/cmd/sessions.sh lib/cmd/overview.sh lib/cmd/system.sh lib/cmd/display.sh lib/statusline.zsh lib/functions.zsh
 # test_tmp_filter.sh — atomic-write artifacts (session-*.tmp.PID) must never be
 # parsed as real sessions, and gc must sweep ones older than 60s.
 

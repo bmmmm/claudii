@@ -1,4 +1,4 @@
-# touches: lib/cmd/sessions.sh lib/cmd/display.sh lib/cmd/system.sh bin/claudii
+# touches: lib/cmd/sessions.sh lib/cmd/cost.sh lib/cmd/overview.sh lib/cmd/display.sh lib/cmd/system.sh bin/claudii
 # test_cli.sh — claudii CLI E2E tests
 
 # version — when piped (no TTY) prints bare version number; with --json prints JSON

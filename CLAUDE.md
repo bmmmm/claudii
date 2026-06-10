@@ -11,11 +11,14 @@ bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator for prompt-cache hit-rate insights
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, doctor
-lib/cmd/sessions.sh     # Commands: cost, sessions, sessions-inactive, pin, gc, default
+lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
+lib/cmd/cost.sh         # Command: cost (history-based aggregation + tile renderer)
+lib/cmd/overview.sh     # Command: default overview (bare `claudii`)
 lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin cost from insights cache)
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/trends.awk          # awk program for trends aggregation
+lib/timefmt.sh          # Shared relative-time formatters (_fmt_rel/_fmt_brief, bash 3.2)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
@@ -116,7 +119,7 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
 3. `config/defaults.json` — bump any agent `description` that names a version
    (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
 4. `bin/claudii-cc-statusline` already shows `.model.display_name` verbatim — no change.
-5. The tier-collapsing AWK in `lib/cmd/sessions.sh` / `lib/cmd/display.sh` is
+5. The tier-collapsing AWK in `lib/cmd/cost.sh` / `lib/cmd/display.sh` is
    version-agnostic (matches bare `opus`/`sonnet`/`haiku`) — no change.
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 

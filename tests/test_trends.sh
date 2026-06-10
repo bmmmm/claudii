@@ -1,4 +1,4 @@
-# touches: lib/cmd/sessions.sh lib/cmd/display.sh
+# touches: lib/cmd/cost.sh lib/cmd/display.sh
 
 # test_trends.sh — claudii trends token-tracking tests (v0.9.0+)
 # Verifies that history.tsv with token columns (input_tok, output_tok)

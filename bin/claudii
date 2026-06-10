@@ -92,6 +92,8 @@ _cmd_resume() {
 
 source "$CLAUDII_HOME/lib/cmd/system.sh"
 source "$CLAUDII_HOME/lib/cmd/sessions.sh"
+source "$CLAUDII_HOME/lib/cmd/cost.sh"
+source "$CLAUDII_HOME/lib/cmd/overview.sh"
 source "$CLAUDII_HOME/lib/cmd/skills-cost.sh"
 source "$CLAUDII_HOME/lib/cmd/display.sh"
 source "$CLAUDII_HOME/lib/cmd/config.sh"
