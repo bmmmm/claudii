@@ -25,29 +25,6 @@ _cmd_cost_from_history() {
   # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
   local _epoch_awk
   _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
-  local _augmented
-  _augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
-${_epoch_awk}
-"'
-    { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
-    NF < 6 { next }     # guard against short/malformed rows (history schema has >= 6 cols)
-    $1 == "timestamp" || $1 == "" || $6 == "" { next }
-    {
-      ts = $1 + 0; if (ts == 0) next
-      day = epoch_to_date(ts)
-      model = $2; cost = $3 + 0; sid = $6; raw = $2
-      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
-      if      (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
-      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
-      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
-      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
-    }
-  ' "${_history_files[@]}")
-
-  if [[ -z "$_augmented" ]]; then
-    echo "  No history data found — start a Claude session to record costs."
-    return
-  fi
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -71,8 +48,28 @@ ${_epoch_awk}
   [[ "$_cost_cols" =~ ^[0-9]+$ ]] || _cost_cols=$(tput cols 2>/dev/null || echo 80)
   [[ "$_cost_cols" =~ ^[0-9]+$ ]] || _cost_cols=80
 
-  # awk: compute daily deltas, aggregate into today/week/month/year/alltime
-  echo "$_augmented" | awk -F'\t' \
+  # Stage 1 augments rows (epoch→day, model normalization), stage 2 computes
+  # daily deltas and aggregates into today/week/month/year/alltime. Piped
+  # directly — capturing stage 1 into a shell variable copied a multi-MB
+  # intermediate through the shell twice; the pipe also runs both concurrently.
+  # The empty-input case (no valid rows) is handled in stage 2's END block.
+  awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
+${_epoch_awk}
+"'
+    { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
+    NF < 6 { next }     # guard against short/malformed rows (history schema has >= 6 cols)
+    $1 == "timestamp" || $1 == "" || $6 == "" { next }
+    {
+      ts = $1 + 0; if (ts == 0) next
+      day = epoch_to_date(ts)
+      model = $2; cost = $3 + 0; sid = $6; raw = $2
+      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
+      if      (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
+      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
+      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
+      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
+    }
+  ' "${_history_files[@]}" | awk -F'\t' \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
     -v cols="$_cost_cols" \
@@ -224,6 +221,12 @@ ${_epoch_awk}
       }
     }
     END {
+      # No valid rows reached us (history files empty/malformed) — same message
+      # the pre-pipe code printed after its empty-capture check.
+      if (NR == 0) {
+        printf "  No history data found — start a Claude session to record costs.\n"
+        exit
+      }
 
       # Sort months descending (bubble sort on keys — YYYY-MM sorts lexically)
       n_mon = 0; for (mk in all_months) mon_keys[++n_mon] = mk
