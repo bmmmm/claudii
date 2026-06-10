@@ -201,6 +201,32 @@ pastel_green=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" b
 ')
 assert_contains "theme load pastel: green uses 114" "114" "$pastel_green"
 
+# ── _cfgget memo: write-then-read in the same process stays fresh ─────────────
+# The per-key memo (printf -v dynamic vars) must be invalidated by _jq_update,
+# and the whole pattern must work under macOS /bin/bash 3.2 (the test runner
+# uses Homebrew bash 5.x, which would hide a 3.2-only substitution failure).
+_memo_script='
+  set -u
+  source "$CLAUDII_HOME/lib/visual.sh"
+  source "$CLAUDII_HOME/lib/spinner.sh"
+  source "$CLAUDII_HOME/lib/helpers.sh"
+  _cfg_init
+  v1=$(_cfgget status.cache_ttl)
+  v1b=$(_cfgget status.cache_ttl)          # memo hit
+  _jq_update "$CONFIG" ".status.cache_ttl = 777"
+  v2=$(_cfgget status.cache_ttl)           # must see the new value
+  _jq_update "$CONFIG" "del(.fallback)"    # remove key from user config entirely
+  f1=$(_cfgget fallback.enabled)           # absent in config -> defaults fallback path
+  printf "%s|%s|%s|%s" "$v1" "$v1b" "$v2" "$f1"
+'
+for _memo_bash in /bin/bash bash; do
+  bash "$CLAUDII_HOME/bin/claudii" config reset >/dev/null 2>&1
+  _memo_out=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
+    "$_memo_bash" -c "$_memo_script" 2>&1)
+  assert_eq "_cfgget memo ($_memo_bash): fresh after _jq_update, defaults fallback intact" \
+    "300|300|777|true" "$_memo_out"
+done
+unset _memo_script _memo_bash _memo_out
 
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME"

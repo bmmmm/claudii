@@ -25,6 +25,9 @@ _jq_update() {
   local _tmp; _tmp=$(mktemp) || return 1
   if jq "$@" "$_file" > "$_tmp"; then
     mv -f "$_tmp" "$_file"
+    # Config may have changed — drop the _cfgget per-process memo so a
+    # write-then-read in the same command never serves a stale value.
+    _cfgget_memo_clear
   else
     rm -f "$_tmp"
     return 1
@@ -47,9 +50,27 @@ _cfg_init() {
 # Type-check instead of `// empty`: jq treats boolean false as falsy, so
 # `false // empty` would swallow an explicit user `false` and fall through to
 # the default (claudestatus off reported "on"). Mirrors _cmd_config get.
+#
+# Perf: one jq fork per unique key (config + slurped defaults in a single
+# invocation, was two forks), and a per-process memo so repeated keys
+# (statusline.rate_display is read by se/si/overview alike) fork nothing.
+# Memo uses printf -v dynamic vars + a "__set" marker (bash 3.2 has no
+# associative arrays and no ${!var+x}); _jq_update clears it on config writes.
+_CFGMEMO_VARS=""
+_cfgget_memo_clear() {
+  local _v
+  for _v in $_CFGMEMO_VARS; do unset "$_v"; done
+  _CFGMEMO_VARS=""
+}
 _cfgget() {
   local key="$1" val _jp="" _seg
   _validate_key "$key" || return 1
+  local _ck="_CFGMEMO_${key//[^a-zA-Z0-9_]/_}"
+  local _cks="${_ck}__set"
+  if [[ "${!_cks:-}" == "1" ]]; then
+    printf '%s\n' "${!_ck}"
+    return 0
+  fi
   # Split on '.' and quote each segment: "a.b-c.d" → ."a"."b-c"."d"
   local _IFS_OLD="$IFS"
   IFS='.' read -ra _cfgget_segs <<< "$key"
@@ -57,8 +78,16 @@ _cfgget() {
   for _seg in "${_cfgget_segs[@]}"; do
     _jp+='."'"$_seg"'"'
   done
-  val=$(jq -r "if (${_jp} | type) != \"null\" then (${_jp} | tostring) else empty end" "$CONFIG" 2>/dev/null)
-  [[ -z "$val" ]] && val=$(jq -r "if (${_jp} | type) != \"null\" then (${_jp} | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
+  # CONFIG is guaranteed by _cfg_init; if a caller skipped init, query the
+  # defaults file twice rather than erroring on a missing input.
+  local _cfg_in="$CONFIG"
+  [[ -r "$_cfg_in" ]] || _cfg_in="$DEFAULTS"
+  val=$(jq -r --slurpfile _d "$DEFAULTS" \
+    "if (${_jp} | type) != \"null\" then (${_jp} | tostring) elif (\$_d[0]${_jp} | type) != \"null\" then (\$_d[0]${_jp} | tostring) else empty end" \
+    "$_cfg_in" 2>/dev/null)
+  printf -v "$_ck" '%s' "$val"
+  printf -v "$_cks" '%s' "1"
+  _CFGMEMO_VARS+=" $_ck $_cks"
   echo "$val"
 }
 
