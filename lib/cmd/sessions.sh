@@ -421,166 +421,21 @@ _cmd_cost() {
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
-  # Prefer history (Flight Recorder) for correct daily-delta cost attribution.
-  # Monthly rotation: read history-*.tsv + legacy history.tsv
-  # Falls back to session-cache files when no history exists yet.
+  # History (Flight Recorder) is the only data source — it carries correct
+  # daily-delta cost attribution. Monthly rotation: history-*.tsv + legacy
+  # history.tsv. The old no-history fallback (summing cumulative session-cache
+  # cost by file mtime) was removed in 0.21: it only ever applied before the
+  # first statusline render wrote history, and its mtime-keyed "today"
+  # misattributed multi-day sessions.
   _collect_history_files "$cache_dir"
-  if [[ ${#_HIST_FILES[@]} -gt 0 ]]; then
-    today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
-    _spinner_start "${cache_dir/#$HOME/\~}/history-*.tsv"
-    _cmd_cost_from_history "${_HIST_FILES[@]}" "$today_str"
-    _spinner_stop
-    return
+  if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
+    echo "No cost history yet — run 'claudii cc-statusline on' and start a Claude session to record costs."
+    return 0
   fi
-
-
-  shopt -s nullglob
-  session_files=("$cache_dir"/session-*)
-  shopt -u nullglob
-  # Drop atomic-write artifacts (session-*.tmp.PID left behind by crashed writers)
-  _sf_real=()
-  for _sf_e in "${session_files[@]+"${session_files[@]}"}"; do
-    [[ "$_sf_e" == *.tmp.* ]] || _sf_real+=("$_sf_e")
-  done
-  session_files=("${_sf_real[@]+"${_sf_real[@]}"}")
-  unset _sf_real _sf_e
-
-  if [[ ${#session_files[@]} -eq 0 ]]; then
-    echo "No session data found. Start a Claude session first."
-    exit 0
-  fi
-
-  now=$(date +%s)
-  # Calendar-midnight cutoff for "today" (not rolling 24h) — see _midnight_epoch.
-  cutoff=$(_midnight_epoch)
-
-  # Parallel indexed arrays for per-model totals (bash 3.2 compatible, no declare -A)
-  _cost_models=()
-  _today_cost=()
-  _today_count=()
-  _alltime_cost=()
-  _alltime_count=()
-
-  # Helper: find index of model in _cost_models, returns -1 if not found
-  _cost_model_idx() {
-    local needle="$1" _i
-    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
-      [[ "${_cost_models[$_i]}" == "$needle" ]] && echo "$_i" && return
-    done
-    echo "-1"
-  }
-
-  # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
-  _spinner_start
-
-  for f in "${session_files[@]}"; do
-    [[ -f "$f" ]] || continue
-    [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${f/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
-
-    # Read key=value pairs
-    cost="" model=""
-    while IFS='=' read -r key val; do
-      case "$key" in
-        cost)  cost="$val"  ;;
-        model) model="$val" ;;
-      esac
-    done < "$f"
-
-    [[ -z "$model" ]] && continue
-    [[ -z "$cost" ]]  && cost="0"
-
-    short=$(_norm_model_short "$model")
-
-    # Get mtime (one fork: BSD stat -f, GNU stat -c fallback; 0 if both fail)
-    mtime=$(_mtime "$f")
-
-    # Find or add model index
-    idx=$(_cost_model_idx "$short")
-    if [[ "$idx" == "-1" ]]; then
-      idx=${#_cost_models[@]}
-      _cost_models+=("$short")
-      _today_cost+=("0")
-      _today_count+=("0")
-      _alltime_cost+=("0")
-      _alltime_count+=("0")
-    fi
-
-    # Accumulate all-time
-    _alltime_cost[$idx]=$(awk -v a="${_alltime_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
-    _alltime_count[$idx]=$(( ${_alltime_count[$idx]} + 1 ))
-
-    # Accumulate today (file mtime on or after local calendar midnight — cutoff
-    # above). This no-history fallback keys "today" off the session file's mtime,
-    # so a multi-day session's full cumulative cost lands in "today" (approximate).
-    # The history path (_cmd_cost_from_history) is accurate and is preferred
-    # whenever history-*.tsv exists.
-    if (( mtime >= cutoff )); then
-      _today_cost[$idx]=$(awk -v a="${_today_cost[$idx]}" -v b="$cost" 'BEGIN{printf "%.4f", a+b}')
-      _today_count[$idx]=$(( ${_today_count[$idx]} + 1 ))
-    fi
-  done
-
-  # Kill spinner and clear spinner line
+  today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
+  _spinner_start "${cache_dir/#$HOME/\~}/history-*.tsv"
+  _cmd_cost_from_history "${_HIST_FILES[@]}" "$today_str"
   _spinner_stop
-
-  if [[ "$_FORMAT" == "json" ]]; then
-    # Build JSON inline — avoids one jq subprocess per model
-    _today_inner="" _alltime_inner=""
-    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
-      m="${_cost_models[$_i]}"
-      [[ -n "$_alltime_inner" ]] && _alltime_inner+=","
-      _alltime_inner+="\"$m\":{\"cost\":${_alltime_cost[$_i]},\"sessions\":${_alltime_count[$_i]}}"
-      if [[ "${_today_count[$_i]}" != "0" ]]; then
-        [[ -n "$_today_inner" ]] && _today_inner+=","
-        _today_inner+="\"$m\":{\"cost\":${_today_cost[$_i]},\"sessions\":${_today_count[$_i]}}"
-      fi
-    done
-    printf '{"today":{%s},"alltime":{%s}}\n' "$_today_inner" "$_alltime_inner"
-    exit 0
-  elif [[ "$_FORMAT" == "tsv" ]]; then
-    printf "period\tmodel\tcost\tsessions\n"
-    for (( _i=0; _i<${#_cost_models[@]}; _i++ )); do
-      m="${_cost_models[$_i]}"
-      [[ "${_today_count[$_i]}" != "0" ]] && \
-        printf "today\t%s\t%s\t%s\n" "$m" "${_today_cost[$_i]}" "${_today_count[$_i]}"
-      printf "alltime\t%s\t%s\t%s\n" "$m" "${_alltime_cost[$_i]}" "${_alltime_count[$_i]}"
-    done
-    exit 0
-  fi
-
-  _cost_sep='  ─────────────────────'
-
-  _print_section() {
-    local section="$1"  # "today" or "alltime"
-    local total=0 has_data=0
-    for (( _pi=0; _pi<${#_cost_models[@]}; _pi++ )); do
-      local _pm="${_cost_models[$_pi]}"
-      if [[ "$section" == "today" ]]; then
-        local _pc="${_today_cost[$_pi]}" _pn="${_today_count[$_pi]}"
-      else
-        local _pc="${_alltime_cost[$_pi]}" _pn="${_alltime_count[$_pi]}"
-      fi
-      [[ "$_pn" == "0" ]] && continue
-      printf "    %-12s ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}  %s session%s\n" \
-        "$_pm" "$(printf '%.2f' "$_pc")" "$_pn" "$( (( _pn != 1 )) && echo 's' || true)"
-      total=$(awk -v a="$total" -v b="$_pc" 'BEGIN{print a+b}')
-      has_data=1
-    done
-    if (( has_data )); then
-      printf "${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_cost_sep"
-      printf "    ${CLAUDII_CLR_CYAN}\$%s${CLAUDII_CLR_RESET}\n" "$(printf '%.2f' "$total")"
-    else
-      printf "    (none)\n"
-    fi
-  }
-
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}Today${CLAUDII_CLR_RESET}\n"
-  _print_section today
-  printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}All time${CLAUDII_CLR_RESET}\n"
-  _print_section alltime
-  printf '\n'
 }
 
 _cmd_sessions_inactive() {

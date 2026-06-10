@@ -241,7 +241,7 @@ unset _bgt_cli_tmp _bgt_cli_xdg _bgt_cli_out _bgt_cli_strip
 _cost_tmp2="$(mktemp -d)"
 cost_out2=$(CLAUDII_CACHE_DIR="$_cost_tmp2" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
 assert_no_literal_ansi "cost: no literal \\033 in output" "$cost_out2"
-assert_matches "cost: shows no-sessions text" "No session" "$cost_out2"
+assert_matches "cost: shows no-history text" "No cost history" "$cost_out2"
 rm -rf "$_cost_tmp2"
 unset _cost_tmp2 cost_out2
 
@@ -461,7 +461,7 @@ unset _cost_hist_tsv _cost_dedup_tsv _sonnet_today _opus_today _sonnet_alltime _
 # ── cost (history): falls back gracefully when no history.tsv ────────────────
 _COST_NOHIST_TMP="$(mktemp -d)"
 _cost_nohist_out=$(CLAUDII_CACHE_DIR="$_COST_NOHIST_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1 || true)
-assert_matches "cost (no history): shows no-data message" "No session" "$_cost_nohist_out"
+assert_matches "cost (no history): shows no-data message" "No cost history" "$_cost_nohist_out"
 rm -rf "$_COST_NOHIST_TMP"
 unset _COST_NOHIST_TMP _cost_nohist_out
 
@@ -490,8 +490,9 @@ assert_contains "spinner: sessions stdout contains model" "Sonnet" "$_sp_stdout"
 assert_eq "spinner: sessions stdout has no spinner chars" "0" \
   "$(printf '%s' "$_sp_stdout" | grep -c '⠋\|⠙\|⠹\|⠸\|⠼\|⠴\|⠦\|⠧\|⠇\|⠏' || true)"
 
-# cost with session data — stdout only
-printf 'model=Sonnet\nctx_pct=50\ncost=1.23\n' > "$_SP_CACHE/session-sp-cost"
+# cost with history data — stdout only (cost reads history.tsv, not session caches)
+printf '%s\tclaude-sonnet-4-6\t1.23\t50\t30\tsp-cost-sid\t5000\t1000\t0\n' "$(date +%s)" \
+  > "$_SP_CACHE/history.tsv"
 _sp_cost_stdout=$(HOME="$_SP_TMP" CLAUDII_CACHE_DIR="$_SP_CACHE" XDG_CONFIG_HOME="$_SP_XDG" \
   bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
 assert_contains "spinner: cost stdout shows model" "Sonnet" "$_sp_cost_stdout"
