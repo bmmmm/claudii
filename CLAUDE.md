@@ -58,7 +58,7 @@ sonnet=ok
 haiku=ok
 ```
 
-Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
+Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file dedup (`status.pid`): the zsh precmd (adaptive TTL: 2× base healthy, ÷5 during incidents) and `bin/claudii-cc-statusline` (base TTL — without it the cache went stale during long Claude Code sessions with no shell prompt). No network in precmd itself — both only spawn the fetch in background.
 
 ## Rules
 
@@ -70,6 +70,8 @@ Written by `bin/claudii-status`, read by RPROMPT (no network in precmd).
 - Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count)
 - **`(( ++var ))` not `(( var++ ))`** — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI), bash 3.2 (macOS) tolerates it silently. Use pre-increment for all standalone counters.
 - **No `declare -A` in `bin/`** — every script there has `#!/bin/bash` and runs under macOS `/bin/bash` 3.2, which silently falls back to a regular indexed array and evaluates string keys as `arr[0]` (last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays. The test runner uses Homebrew `bash` 5.x so it does NOT catch this — add a regression assert that invokes `/bin/bash` explicitly when adding similar maps.
+- **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh). The configured command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only the wrap script invokes `claudii-cc-statusline`); literal matching broke twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber the user's chain.
+- **The 5h rate limit is account-wide** — never attribute it to a single model in UI text, and read it from the *newest* fresh `session-*` cache file (glob order is by session id, not freshness). All rate displays follow `statusline.rate_display`; color/thresholds stay keyed on used%.
 
 ## Token efficiency (for Claude-in-session)
 
