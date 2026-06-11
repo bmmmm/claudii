@@ -6,18 +6,6 @@
 
 ## Pending
 
-### Agent prompts — apply prompting discipline (global, not this repo)
-
-**Type: Refactor** · **Complexity: Small** · **Touches: global persona skills (`persona-code-reviewer`, `persona-security-auditor`) in `~/.claude/skills/`**
-
-claudii's own skills (`.claude/skills/`) are already clean — no `CRITICAL`/`MUST`/ALL-CAPS imperatives. What remains lives outside this repo:
-
-- Strip `CRITICAL:`/`MUST`/ALL-CAPS imperatives from the global persona skills (4.8 over-triggers on these).
-- Review/bug-finding agents: switch to coverage-first ("report every finding incl. low-confidence, with a confidence level; filtering is a separate step") — keep "PROVEN-only" for cheap Explore/search agents that hallucinate.
-- State scope explicitly in prompts (4.8 no longer silently generalizes).
-
----
-
 ### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning (Wave 2+)
 
 **Wave 1 shipped 2026-05-27** — `attribution_skills` / `attribution_plugins` accumulated by `lib/insights.jq` (schema_version 3), aggregated by `bin/claudii-insights merge`, surfaced by `claudii skills-cost [--days N] [--plugins] [--json]`. First real data on `bin/claudii`: top spenders are `memory-gc` ($95.88 / 746 calls) and `orchestrate` ($35.93 / 325 calls) across 30d.
@@ -60,18 +48,6 @@ claudii's own skills (`.claude/skills/`) are already clean — no `CRITICAL`/`MU
 **Verified 2026-06-12 against code.claude.com/docs/en/statusline:** `context_window.used_percentage` is pre-calculated against the **full** `context_window_size` (200k, or 1M extended) — no auto-compact threshold field exists anywhere in the statusline JSON. Auto-compact triggers well before 100%, so our bar under-reports urgency the same way claude-pace's did.
 
 **Design sketch (claude-pace prior art):** read `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the statusline process env (inherited from CC) and scale the bar/threshold colors against the effective window; fall back to raw `used_percentage` when unset. Verify first what the env var actually contains on a live session before building.
-
----
-
-### Verify v2.1.141 Multi-Line Statusline Bugfix Closed Our Reports
-
-**Type: Investigation**
-**Complexity: Trivial**
-
-CC v2.1.141 fixed "Multi-Line Statusline Row Dropping / Corruption when line > terminal width". We render multi-line sessionline — likely hit our users. Action:
-1. `git log --grep="multi-line\|statusline.*width\|row.*drop" --since=2026-03`
-2. Scan Forgejo/GitHub issues for sessionline corruption reports
-3. If all pre-2.1.141 → close with "fixed upstream in CC 2.1.141" + bump min-version note in README
 
 ---
 
