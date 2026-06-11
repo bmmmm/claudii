@@ -122,7 +122,10 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
    (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
 4. `bin/claudii-cc-statusline` already shows `.model.display_name` verbatim — no change.
 5. The tier-collapsing AWK in `lib/cmd/cost.sh` / `lib/cmd/display.sh` is
-   version-agnostic (matches bare `opus`/`sonnet`/`haiku`) — no change.
+   version-agnostic (matches bare `fable`/`opus`/`sonnet`/`haiku`) — no change
+   for version bumps within a tier. A **new tier** (e.g. Fable in 2026-06)
+   needs a new branch in BOTH files, most-capable-first, plus a bare-tier
+   fallback case in `_insights_model_label()`.
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
 If the new model also changes **pricing**, update the per-token constants in

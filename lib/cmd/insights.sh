@@ -56,6 +56,8 @@ _insights_short_num() {
 # resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
 _insights_model_label() {
   case "$1" in
+    *fable-5*)    printf 'Fable 5'    ;;
+    *fable*)      printf 'Fable'      ;;
     *opus-4-8*)   printf 'Opus 4.8'   ;;
     *opus-4-7*)   printf 'Opus 4.7'   ;;
     *opus-4-6*)   printf 'Opus 4.6'   ;;

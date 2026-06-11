@@ -44,9 +44,22 @@ claudii's own skills (`.claude/skills/`) are already clean — no `CRITICAL`/`MU
 **Use-cases:**
 - ClaudeStatus model down → window-title `[!opus down] claude`
 - Burn-ETA critical (<30min to depletion) → bell + title
-- Session ended (Stop hook) → notification "session ended, cost $X.YZ"
+- Session ended → notification "session ended, cost $X.YZ" — use the **`SessionEnd` hook** (CC v2.1.169), not Stop: fires on real session termination, has matchers for the end reason (`clear`/`resume`/`logout`/`prompt_input_exit`/`other`), cannot block (observability-only — exactly our case)
 
-**Before patching:** read `code.claude.com/docs/en/hooks` for exact `terminalSequence` schema (added 2026-05-18).
+**Schema (verified against code.claude.com/docs/en/hooks, 2026-06-12):** hook stdout JSON `{"terminalSequence": "<escape sequence>"}`; allowlist is OSC `0`/`1`/`2` (window/icon title), OSC `9` (iTerm2/ConEmu/Windows Terminal/WezTerm notify, incl. `9;4` taskbar progress), OSC `99` (Kitty), OSC `777` (urxvt/**Ghostty**/Warp), bare BEL. Anything else is rejected silently. Works in tmux/screen, requires CC ≥2.1.141. Ghostty (our terminal) → OSC 777: `printf '\033]777;notify;%s;%s\007' "$title" "$body"`.
+
+---
+
+### Context bar — auto-compact awareness
+
+**Type: Feature**
+**Complexity: Small-medium**
+**Touches: `bin/claudii-cc-statusline` (context bar render)**
+**Triggered by:** claude-pace v0.9.1 shipped exactly this fix (their #15: bar looked "nearly empty" while auto-compact was imminent).
+
+**Verified 2026-06-12 against code.claude.com/docs/en/statusline:** `context_window.used_percentage` is pre-calculated against the **full** `context_window_size` (200k, or 1M extended) — no auto-compact threshold field exists anywhere in the statusline JSON. Auto-compact triggers well before 100%, so our bar under-reports urgency the same way claude-pace's did.
+
+**Design sketch (claude-pace prior art):** read `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the statusline process env (inherited from CC) and scale the bar/threshold colors against the effective window; fall back to raw `used_percentage` when unset. Verify first what the env var actually contains on a live session before building.
 
 ---
 

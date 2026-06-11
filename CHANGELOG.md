@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Fable 5 recognition** (CC v2.1.170 shipped `claude-fable-5`, Anthropic's new Mythos-class tier above Opus). `_insights_model_label()` (`lib/cmd/insights.sh`) maps `*fable-5*` → `Fable 5` plus a bare `*fable*` tier fallback — previously the raw model ID leaked into the `claudii cache` per-model table. The tier-collapsing AWK in `lib/cmd/cost.sh` / `lib/cmd/display.sh` gained a `Fable` branch (most-capable-first) so cost tiles and trends group Fable sessions under one label instead of per-version IDs. Label asserts added to `tests/test_cache.sh`; the CLAUDE.md model-ship checklist now distinguishes version bumps (no AWK change) from new tiers (AWK branch in both files required).
+
 ### Changed
 - **`release.sh` watches CI by default** (`scripts/release.sh`). The script used to return once the tag was pushed; confirming the GitHub workflow (clean-env tests → Release → tap sync) was a manual step that CLAUDE.md still described as "the script does NOT watch" although a `--watch` flag already existed. Watching is now the default (`--no-watch` opts out for headless runs): the script polls up to 2min for the mirror-triggered run (was 30s — the Forgejo→GitHub mirror regularly needs longer), blocks on `gh run watch`, and exits non-zero with half-release recovery instructions if the workflow fails or never appears.
 - **`release.sh` pre-flight validates the CHANGELOG against the version bump.** Two new gates: the `[Unreleased]` block must contain at least one entry (an empty block would tag a release with empty notes), and a block containing `### Added` rejects a PATCH-level version (SemVer: Added → MINOR) unless `--allow-version-mismatch` is passed.
