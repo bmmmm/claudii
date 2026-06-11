@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.21.0] — 2026-06-12
+
 ### Added
 - **Overview is modular and config-driven** (`lib/cmd/overview.sh`). The bare `claudii` page is now built from section renderers — `account`, `sessions`, `activity`, `agents`, `services`, `commands` — with order and selection controlled by the new `overview.sections` config array (default in `config/defaults.json`; unknown names render an actionable inline warning instead of failing). New `commands` section: grouped quick reference (sessions / cost / activity / display / tools / system) where every listed item is a literal `claudii` subcommand — vibemap, omlx, vpnii, cache, gc, resume are finally discoverable from the overview. `config import` accepts the new `overview` top-level key.
 
