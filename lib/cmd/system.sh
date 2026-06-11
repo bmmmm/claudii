@@ -200,8 +200,26 @@ _cmd_status() {
           fi
           _ttl_val=$(_cfgget status.cache_ttl)
           _ttl_val="${_ttl_val:-900}"
+          # Mirror the adaptive RPROMPT TTL (lib/statusline.zsh): healthy → 2×
+          # base, degraded/down → base÷5 (min 60s), API unreachable → base.
+          # Display the effective interval — the bare config value promised
+          # "every 15m" while the healthy-state refresh actually ran at 30m.
+          _eff_ttl=$_ttl_val
+          if ! grep -q '^_api=unreachable$' "$cache_file" 2>/dev/null; then
+            if grep -q '=down\|=degraded' "$cache_file" 2>/dev/null; then
+              _eff_ttl=$(( _ttl_val / 5 ))
+              (( _eff_ttl < 60 )) && _eff_ttl=60
+            else
+              _eff_ttl=$(( _ttl_val * 2 ))
+            fi
+          fi
           _ttl_min=$(( _ttl_val / 60 ))
-          printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
+          _eff_min=$(( _eff_ttl / 60 )); (( _eff_min < 1 )) && _eff_min=1
+          if (( _eff_ttl == _ttl_val )); then
+            printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
+          else
+            printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm (adaptive, base %sm)${CLAUDII_CLR_RESET}\n" "$_age_str" "$_eff_min" "$_ttl_min"
+          fi
         fi
 
         # Current incidents from unresolved.json (cached by claudii-status).

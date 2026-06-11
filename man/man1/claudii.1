@@ -254,8 +254,11 @@ Alias:
 .BR s .
 .TP
 .BR "status " 5m|15m|30m|60m
-Set the background cache refresh interval (default: 15m).
+Set the base background cache refresh interval (default: 15m).
 Values below 30s are rejected.
+The effective interval adapts to the last known state: 2\(mu base while
+healthy, base\(di5 (min 60s) during incidents, base when the status API is
+unreachable.
 .
 .SS Sessions and Cost
 .TP

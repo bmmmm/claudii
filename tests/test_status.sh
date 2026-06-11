@@ -1,4 +1,4 @@
-# touches: bin/claudii-status
+# touches: bin/claudii-status lib/cmd/system.sh
 # test_status.sh — status checker E2E tests
 
 # Setup: test config so models are well-known and controllable
@@ -200,6 +200,24 @@ _mock_json='{"incidents":[{"name":"Line1\nLine2\nLine3","impact":"minor"}]}'
 _flat=$(echo "$_mock_json" | jq -r '.incidents[0].name' | tr '\n' ' ' | sed 's/ *$//')
 assert_eq "incident name: newlines stripped to spaces" "Line1 Line2 Line3" "$_flat"
 assert_eq "incident name: zero embedded newlines" "0" "$(printf '%s' "$_flat" | tr -cd '\n' | wc -c | tr -d ' ')"
+
+# ── `claudii status` footer: effective (adaptive) refresh interval ──
+# Healthy state → 2× base TTL with "(adaptive, base Xm)" suffix; unreachable
+# API → bare base TTL, no suffix. Fresh cache mtime keeps claudii-status on
+# its cache-hit path (no network) so the prepared cache survives the display.
+
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_ftr_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+assert_contains "status footer: healthy shows adaptive interval" "(adaptive, base" "$_ftr_out"
+
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$CLAUDII_CACHE_DIR/status-models"
+_ftr_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+assert_contains "status footer: unreachable shows base interval" "refreshes every" "$_ftr_out"
+if echo "$_ftr_out" | grep -q "(adaptive, base"; then
+  assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "suffix present"
+else
+  assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "no suffix"
+fi
 
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
