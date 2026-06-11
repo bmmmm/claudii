@@ -44,7 +44,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 |------|---------|----------|---------|
 | **Session Dashboard** | automatic, after `claudii` commands | PROMPT (above prompt line) | Active sessions: model · ctx% · cost · 5h rate · ↺ |
 | **ClaudeStatus** | automatic, after every command | RPROMPT (right side) | API health per model |
-| **Overview** (`claudii`) | on demand | stdout | Account rate limits · Agents config · Services status · Session count summary |
+| **Overview** (`claudii`) | on demand | stdout | Modular sections via `overview.sections`: account · sessions · activity · agents · services · commands |
 | **`claudii status`** | on demand | stdout | Per-model API health + current incident from RSS timeline |
 | **`claudii se`** | on demand | stdout | Full session detail: project · name · context bar · cost · rate · age · ID |
 | **`claudii si`** | on demand | stdout | Inactive/ended sessions with GC hint |
