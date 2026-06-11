@@ -15,6 +15,34 @@ _plain() { [[ "${_TTY:-0}" -eq 0 ]] || [[ -n "${_FORMAT:-}" ]]; }
 # Validate config key — alphanumeric, dots, hyphens, underscores only (prevents jq injection)
 _validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1 (allowed: alphanumeric, dots, hyphens, underscores)" >&2; return 1; }; }
 
+# Returns 0 when the given Claude Code statusLine command is connected to
+# claudii-cc-statusline — either directly ("claudii-cc-statusline",
+# "cc-insomnii --after=claudii-cc-statusline") or through one level of wrapper
+# indirection (e.g. "cc-insomnii --after=my-wrap" where my-wrap is a script
+# that invokes claudii-cc-statusline). Every word of the command (a leading
+# --after= is stripped) that resolves to a readable file is grepped for the
+# literal string. Used by on/cc-statusline/doctor/overview so a custom wrapper
+# chain is recognized instead of being reported as "other" — or worse,
+# clobbered by `claudii on`.
+# Usage: _cc_statusline_connected "<statusLine command string>"
+_cc_statusline_connected() {
+  local _cmd="${1:-}" _w _p
+  [[ -z "$_cmd" ]] && return 1
+  [[ "$_cmd" == *claudii-cc-statusline* ]] && return 0
+  # read -ra instead of unquoted `for _w in $_cmd` — word-splitting is wanted,
+  # but an unquoted expansion would also glob (a command containing `*` or `?`
+  # would expand against the cwd).
+  local -a _words=()
+  IFS=' ' read -ra _words <<< "$_cmd"
+  for _w in "${_words[@]}"; do
+    _w="${_w#--after=}"
+    [[ -z "$_w" || "$_w" == -* ]] && continue
+    _p=$(command -v "$_w" 2>/dev/null) || continue
+    [[ -f "$_p" && -r "$_p" ]] && grep -q "claudii-cc-statusline" "$_p" 2>/dev/null && return 0
+  done
+  return 1
+}
+
 # File mtime (epoch seconds) — single fork: BSD `stat -f%m`, GNU `stat -c%Y` fallback,
 # 0 if both fail. Canonical home for the idiom that was inlined across lib/cmd/*.
 # (The zsh hot paths in statusline.zsh/functions.zsh prefer the zstat builtin instead.)

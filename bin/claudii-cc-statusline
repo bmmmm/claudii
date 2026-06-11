@@ -27,9 +27,11 @@ _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
+_cfg_status_ttl=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
-    _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii < <(
+    _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
+    _cfg_status_ttl < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
       (.statusline.models // ""),
@@ -41,7 +43,8 @@ if [[ -f "$_config_file" ]]; then
       (if .statusline.shame == false then "false" else "true" end),
       (if .statusline.motivation == false then "false" else "true" end),
       (if .statusline.rainbow == false then "false" else "true" end),
-      (.statusline.insomnii // "auto")
+      (.statusline.insomnii // "auto"),
+      (.status.cache_ttl // "" | tostring)
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
@@ -553,6 +556,33 @@ if [[ -f "$_status_cache" ]]; then
     elif [[ "${_sc_worst:-}" == "down" ]];                           then _seg_claude_status+=" ${RED}⚠${RST}"
     elif [[ "${_sc_worst:-}" == "degraded" ]];                       then _seg_claude_status+=" ${YELLOW}⚠${RST}"
     fi
+  fi
+fi
+
+# ClaudeStatus self-refresh — the zsh precmd is the primary cache refresher,
+# but inside a long Claude Code session no zsh prompt may ever fire, so the
+# segment age would grow unbounded (this script only reads the cache).
+# Spawn claudii-status in the background when the cache is older than the
+# configured TTL (or missing). claudii-status re-checks the TTL itself and
+# exits fast on a fresh cache; the PID-file liveness check prevents stacking
+# fetches across rapid renders and parallel sessions. Skipped entirely when
+# the layout doesn't render the claude-status segment.
+if [[ "$_lines_raw" == *claude-status* ]]; then
+  _sc_ttl="$_cfg_status_ttl"
+  [[ "$_sc_ttl" =~ ^[0-9]+$ ]] || _sc_ttl=300
+  _sc_age=$(( _now - $(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0) ))
+  if (( _sc_age > _sc_ttl )); then
+    _spid_file="$_cache_dir/status.pid"
+    _spid=""
+    [[ -f "$_spid_file" ]] && { _spid=$(<"$_spid_file"); } 2>/dev/null
+    _sp_fresh=0
+    if [[ "$_spid" =~ ^[0-9]+$ ]] && kill -0 "$_spid" 2>/dev/null; then
+      # PID alive — trust it only while the PID file is recent (< 30s), same
+      # recycling guard as the zsh spawner.
+      _sp_mt=$(stat -f%m "$_spid_file" 2>/dev/null || stat -c%Y "$_spid_file" 2>/dev/null || echo 0)
+      (( _now - _sp_mt < 30 )) && _sp_fresh=1
+    fi
+    (( _sp_fresh )) || ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_spid_file" >/dev/null 2>&1 & )
   fi
 fi
 

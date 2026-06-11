@@ -240,8 +240,8 @@ $(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
   [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
-  # contains() — also matches the cc-insomnii wrapper command
-  [[ -f "$_ov_sl_settings" ]] && jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$_ov_sl_settings" >/dev/null 2>&1 && _ov_sl_on=1
+  # _cc_statusline_connected — also matches wrapper chains (cc-insomnii, user scripts)
+  [[ -f "$_ov_sl_settings" ]] && _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$_ov_sl_settings" 2>/dev/null)" && _ov_sl_on=1
   _ov_svc_any=0
   [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
   [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1

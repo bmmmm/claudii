@@ -8,10 +8,11 @@ _cmd_on() {
   _jq_update "$CONFIG" '.statusline.enabled = true | ."session-dashboard".enabled = "on"'
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]]; then
-    # contains() — the configured command may be the cc-insomnii wrapper
-    # ("cc-insomnii --after=claudii-cc-statusline"). An equality check used to
-    # clobber that wrapper with the plain command on every `claudii on`.
-    if ! jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$SETTINGS" >/dev/null 2>&1; then
+    # _cc_statusline_connected — the configured command may be a wrapper chain
+    # ("cc-insomnii --after=claudii-cc-statusline", or a user wrapper script
+    # that itself invokes claudii-cc-statusline). A bare string/equality check
+    # used to clobber such chains with the plain command on every `claudii on`.
+    if ! _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)"; then
       _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
     fi
   fi
@@ -311,6 +312,11 @@ _cmd_cc_statusline() {
       _current=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
       if [[ "$_current" == "$_sl_cmd" ]]; then
         echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
+      elif [[ "$_current" != "claudii-cc-statusline" ]] && _cc_statusline_connected "$_current"; then
+        # Custom wrapper chain that ultimately invokes claudii-cc-statusline —
+        # keep it. Only the plain command gets auto-upgraded to the insomnii
+        # wrapper; a user chain would lose its extra segments if replaced.
+        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_current)${CLAUDII_CLR_RESET}"
       else
         _jq_update "$SETTINGS" ". + {\"statusLine\": {\"type\": \"command\", \"command\": \"$_sl_cmd\"}}"
         echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
@@ -345,7 +351,11 @@ _cmd_cc_statusline() {
             echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(cc-insomnii wrapper)${CLAUDII_CLR_RESET}"
             ;;
           *)
-            echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
+            if _cc_statusline_connected "$_cur_cmd"; then
+              echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_cur_cmd)${CLAUDII_CLR_RESET}"
+            else
+              echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
+            fi
             ;;
         esac
       fi
@@ -407,8 +417,8 @@ _cmd_doctor() {
   settings="${HOME}/.claude/settings.json"
   if [[ ! -f "$settings" ]]; then
     _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
-  elif jq -e '.statusLine.command // "" | contains("claudii-cc-statusline")' "$settings" >/dev/null 2>&1; then
-    # contains() accepts the cc-insomnii wrapper command too
+  elif _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)"; then
+    # Accepts wrapper chains too (cc-insomnii wrapper, user wrapper scripts)
     _dc_add "cc_statusline" "ok" "CC-Statusline configured"
   elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
     other=$(jq -r '.statusLine.command // "unknown"' "$settings")
