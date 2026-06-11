@@ -165,6 +165,25 @@ Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache \(-> Session Dashboard
 .
 .SH COMMANDS
 .
+.SS Overview (bare claudii)
+Running
+.B claudii
+with no arguments prints the Overview: a modular status page built from
+sections. Default order: account (rate limits + today's cost), sessions
+(active/inactive/stale counts, next cron wake, bg tasks), activity
+(mini vibemap strip), agents (configured agents grouped by model tier,
+plus shell aliases), services (ClaudeStatus / Dashboard / CC-Statusline
+state), commands (grouped quick reference).
+.PP
+Section order and selection are config-driven via
+.B overview.sections
+(array of section names) \(em remove a name to hide that section,
+reorder the array to reorder the output. Unknown names render an
+inline warning instead of failing.
+.PP
+Dim lines starting with \(->\& list invocable commands only \(em
+never data.
+.
 .SS Display Layer Control
 .TP
 .B on
@@ -744,6 +763,7 @@ ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/as
 debug.level	off	Log level: off/error/warn/info/debug
 vibemap.enabled	false	Opt-in activity tracking
 vibemap.overview	true	Show Activity strip in claudii overview
+overview.sections	account…commands	Overview section order + selection (array)
 .TE
 .
 .SH STATUS CACHE

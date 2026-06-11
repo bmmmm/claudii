@@ -36,6 +36,9 @@
   "cost": {
     "week_start": "monday"
   },
+  "overview": {
+    "sections": ["account", "sessions", "activity", "agents", "services", "commands"]
+  },
   "session-dashboard": {
     "enabled": "off"
   },

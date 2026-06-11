@@ -276,11 +276,12 @@ for i in 1 2 3 4 5 6; do
   [[ -n "$_stale_ts" ]] && touch -t "$_stale_ts" "$STALE_HINT_TMP/session-stale0${i}"
 done
 stale_hint_out=$(CLAUDII_CACHE_DIR="$STALE_HINT_TMP" XDG_CONFIG_HOME="$STALE_XDG" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
-# Hint appears when > 5 stale sessions: should contain "stale" and "si"
-assert_contains "default view: stale GC hint with 6 stale sessions" "stale" "$stale_hint_out"
-assert_contains "default view: stale GC hint mentions si command" "si" "$stale_hint_out"
+# Stale count is part of the Sessions count line whenever > 0, with a gc hint
+assert_contains "default view: stale count with 6 stale sessions" "6 stale" "$stale_hint_out"
+assert_contains "default view: stale state offers gc command" "claudii gc" "$stale_hint_out"
+assert_contains "default view: inactive state offers si command" "claudii si" "$stale_hint_out"
 
-# Only 3 stale files → hint should NOT appear (threshold is > 5)
+# Few (3) stale files → count + gc hint still shown (no minimum threshold)
 STALE_FEW_TMP="$(mktemp -d)"
 STALE_FEW_XDG="$STALE_FEW_TMP/xdg"
 mkdir -p "$STALE_FEW_XDG/claudii"
@@ -290,12 +291,13 @@ for i in 1 2 3; do
   [[ -n "$_stale_ts" ]] && touch -t "$_stale_ts" "$STALE_FEW_TMP/session-stale0${i}"
 done
 stale_few_out=$(CLAUDII_CACHE_DIR="$STALE_FEW_TMP" XDG_CONFIG_HOME="$STALE_FEW_XDG" bash "$CLAUDII_HOME/bin/claudii" 2>&1 || true)
-# With 3 stale files, the hint line ("> 5" trigger) must not appear
-stale_hint_line=$(echo "$stale_few_out" | grep -c "stale sessions" || true)
-assert_eq "default view: no stale GC hint with 3 stale sessions" "0" "$stale_hint_line"
+assert_contains "default view: stale count shown even for 3 stale sessions" "3 stale" "$stale_few_out"
+# No stale sessions at all → the word "stale" must not appear (clean cache)
+stale_clean_line=$(echo "$stale_hint_out" | grep -c "0 stale" || true)
+assert_eq "default view: never renders a zero stale count" "0" "$stale_clean_line"
 
 rm -rf "$STALE_HINT_TMP" "$STALE_FEW_TMP"
-unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME STALE_HINT_TMP STALE_FEW_TMP STALE_XDG STALE_FEW_XDG _stale_ts stale_hint_out stale_few_out stale_hint_line
+unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME STALE_HINT_TMP STALE_FEW_TMP STALE_XDG STALE_FEW_XDG _stale_ts stale_hint_out stale_few_out stale_clean_line
 
 # ── Gap 8 — claudii si ANSI guard ─────────────────────────────────────────
 SI_ANSI_TMP="$(mktemp -d)"
