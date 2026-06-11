@@ -1,4 +1,4 @@
-# touches: man/man1/claudii.1 completions/_claudii bin/claudii
+# touches: man/man1/claudii.1 completions/_claudii bin/claudii CHANGELOG.md
 # test_docs.sh — man page + autocomplete stay in sync with bin/claudii
 
 MAN="$CLAUDII_HOME/man/man1/claudii.1"
@@ -60,3 +60,13 @@ _lint_postinc=$(grep -rn '^\s*(( [a-zA-Z_][a-zA-Z_0-9]* *++ ))' \
 assert_eq "lint: no standalone (( var++ )) post-increments in lib/ or bin/claudii" \
   "" "$_lint_postinc"
 unset _lint_postinc
+
+# ── CHANGELOG hygiene: [Unreleased] block ───────────────────────────────────
+# Entries get appended over weeks; a second "### Added/Changed/Fixed" header in
+# the unreleased block ships duplicated sections into the tagged release notes.
+_unrel=$(awk '/^## \[Unreleased\]/{f=1;next} f&&/^## /{exit} f' "$CLAUDII_HOME/CHANGELOG.md")
+_dup_headers=$(echo "$_unrel" | grep '^### ' | sort | uniq -d)
+assert_eq "CHANGELOG [Unreleased] has no duplicate ### section headers" "" "$_dup_headers"
+_unknown_headers=$(echo "$_unrel" | grep '^### ' | grep -vE '^### (Added|Changed|Fixed|Removed|Deprecated|Security)$' || true)
+assert_eq "CHANGELOG [Unreleased] uses only Keep-a-Changelog section names" "" "$_unknown_headers"
+unset _unrel _dup_headers _unknown_headers

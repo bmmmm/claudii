@@ -160,25 +160,29 @@ Only check what the commit actually touches — skip checks that don't apply:
 ## When releasing
 
 `scripts/release.sh <version>` is the only entry point. It bumps `bin/claudii`
-VERSION + the man page + `CHANGELOG.md` (`[Unreleased]` → `[vX.Y.Z]`), runs the
-test suite **twice** (pass 1 before the bump = fast gate; pass 2 after the bump =
-authoritative — the bump rewrites the CHANGELOG, and version-aware tests like the
-`changelog` notes check only validate the tagged state), commits, then pushes
-`main` + the tag to `origin` (Forgejo). It returns once the tag is pushed.
+VERSION + the man page + `CHANGELOG.md` (`[Unreleased]` → `[vX.Y.Z]`), runs
+tests **twice** (pass 1 before the bump = full suite; pass 2 after the bump =
+only the version-aware test files, grep-discovered via `VERSION=`/`CHANGELOG` —
+the bump touches nothing else), commits, pushes `main` + the tag to `origin`
+(Forgejo), then **watches CI by default** and exits non-zero if the workflow
+fails (`--no-watch` to opt out for headless runs).
 
 1. **Version (SemVer):** any `### Added` in the unreleased block → bump MINOR
-   (`0.20.0`); only `### Fixed`/`### Changed` → bump PATCH (`0.20.1`).
+   (`0.20.0`); only `### Fixed`/`### Changed` → bump PATCH (`0.20.1`). The
+   pre-flight enforces this (plus a non-empty unreleased block); a deliberate
+   under-bump needs `--allow-version-mismatch`.
 2. **Dry-run first:** `scripts/release.sh X.Y.Z --dry-run` checks pre-flight
-   (clean tree, tag free, on main) + bump targets without mutating anything.
+   (clean tree, tag free, on main, CHANGELOG plausibility) + bump targets
+   without mutating anything.
 3. **Real run:** `scripts/release.sh X.Y.Z`. The double test-pass means a
    bump-induced failure aborts locally (files rolled back, no tag) instead of
-   surfacing only on CI.
-4. **Always watch CI — the script does NOT.** The tag reaches GitHub via the
-   Forgejo→GitHub mirror and triggers `.github/workflows/release.yml` (clean-env
-   tests → GitHub Release → Homebrew-tap sync). Run
-   `gh run watch <id> --repo bmmmm/claudii` and confirm green. A failed run
-   leaves the tag public with **no** Release and **no** tap sync — a half-release.
-5. **Recovery from a half-release** (tag pushed, CI failed, no artifact yet): fix
+   surfacing only on CI. The tag reaches GitHub via the Forgejo→GitHub mirror
+   and triggers `.github/workflows/release.yml` (clean-env tests → GitHub
+   Release → Homebrew-tap sync); the script polls up to 2min for the run to
+   appear, then blocks on `gh run watch`. A failed run leaves the tag public
+   with **no** Release and **no** tap sync — a half-release; with `--no-watch`
+   you must confirm CI green yourself.
+4. **Recovery from a half-release** (tag pushed, CI failed, no artifact yet): fix
    + commit on main, `git tag -f vX.Y.Z`, `git push origin main`, then
    `git push origin vX.Y.Z --force` — the mirror force-carries the tag and
    re-triggers the workflow. Safe **only** because no artifact was consumed (tap

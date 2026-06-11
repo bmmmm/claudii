@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # claudii release — bump version, run tests locally (before AND after the bump),
-# push tag. CI does the rest.
+# push tag, watch CI until the workflow is green. CI does the publish.
 #
-# Usage: scripts/release.sh <version> [--dry-run] [--watch]
+# Usage: scripts/release.sh <version> [--dry-run] [--no-watch] [--allow-version-mismatch]
 #
-# Tests run twice on purpose: pass 1 before the bump is a fast gate (no files
-# mutated yet); pass 2 after the bump is authoritative — the bump rewrites
-# CHANGELOG.md + VERSION, so version-aware tests must be re-validated against the
-# exact state being tagged, or a bump-induced failure only shows up on CI after
-# the tag is already public.
+# Tests run twice on purpose: pass 1 before the bump is the full suite (fast
+# gate, no files mutated yet); pass 2 after the bump re-runs only the
+# version-aware test files (those reading VERSION= or CHANGELOG) — the bump
+# only rewrites bin/claudii VERSION, the man-page version string, and
+# CHANGELOG.md, so re-validating the whole suite adds nothing. Without pass 2
+# a bump-induced failure only shows up on CI after the tag is already public.
 #
 # After the tag push, .github/workflows/release.yml handles:
 #   1. Tests on clean Ubuntu env
@@ -24,25 +25,29 @@
 #     → Actions). If the secret is missing, the workflow logs a warning and skips
 #     the tap sync — you can update the Formula manually after the release.
 #
-# Local script returns once the tag is pushed. Pass --watch to block on
-# `gh run watch <id>` and exit non-zero if the workflow fails.
+# The script blocks on `gh run watch` by default and exits non-zero if the
+# workflow fails — a failed run leaves the tag public with no Release and no
+# tap sync (half-release), so watching is part of the release, not optional.
+# Pass --no-watch only for headless runs where something else watches CI.
 
 set -euo pipefail
 CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # ── Args ──────────────────────────────────────────────────────────────────────
-_dry_run=0; _watch=0; _rel_version=""
+_usage="Usage: $0 <version> [--dry-run] [--no-watch] [--allow-version-mismatch]"
+_dry_run=0; _watch=1; _allow_mismatch=0; _rel_version=""
 for _arg in "$@"; do
   case "$_arg" in
-    --dry-run) _dry_run=1 ;;
-    --watch)   _watch=1 ;;
-    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
-    -*)        echo "Unknown flag: $_arg" >&2
-               echo "Usage: $0 <version> [--dry-run] [--watch]" >&2; exit 1 ;;
-    *)         _rel_version="$_arg" ;;
+    --dry-run)  _dry_run=1 ;;
+    --watch)    _watch=1 ;;   # default; kept for backward compatibility
+    --no-watch) _watch=0 ;;
+    --allow-version-mismatch) _allow_mismatch=1 ;;
+    -h|--help)  sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -*)         echo "Unknown flag: $_arg" >&2; echo "$_usage" >&2; exit 1 ;;
+    *)          _rel_version="$_arg" ;;
   esac
 done
-[[ -z "$_rel_version" ]] && { echo "Usage: $0 <version> [--dry-run] [--watch]" >&2; exit 1; }
+[[ -z "$_rel_version" ]] && { echo "$_usage" >&2; exit 1; }
 _rel_version="${_rel_version#v}"
 [[ "$_rel_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
   echo "Error: version must be X.Y.Z (got: $_rel_version)" >&2; exit 1; }
@@ -90,6 +95,39 @@ if [[ "$_branch" == "main" ]]; then
   _ok "On main"
 else
   _ok "On non-main branch '$_branch' (releasing from there)"
+fi
+
+# CHANGELOG: [Unreleased] must exist and carry at least one entry — releasing
+# an empty block would tag a release with empty notes.
+_unreleased=$(awk '/^## \[Unreleased\]/{f=1;next} f&&/^## /{exit} f' "$CLAUDII_HOME/CHANGELOG.md")
+if ! grep -q '^## \[Unreleased\]' "$CLAUDII_HOME/CHANGELOG.md"; then
+  _fail "CHANGELOG.md has no [Unreleased] block"
+  exit 1
+fi
+if ! grep -q '^- ' <<< "$_unreleased"; then
+  _fail "CHANGELOG.md [Unreleased] block is empty — nothing to release"
+  exit 1
+fi
+_ok "CHANGELOG [Unreleased] has entries"
+
+# SemVer plausibility: '### Added' in the unreleased block requires a MINOR
+# (or MAJOR) bump; only Fixed/Changed → PATCH. Catches the most likely human
+# error (under-bumping a feature release). Override: --allow-version-mismatch.
+_cur_version=$(grep '^VERSION=' "$CLAUDII_HOME/bin/claudii" | head -1 | tr -d '"' | cut -d= -f2)
+IFS=. read -r _cur_maj _cur_min _ <<< "$_cur_version"
+IFS=. read -r _new_maj _new_min _ <<< "$_rel_version"
+if grep -q '^### Added' <<< "$_unreleased" \
+   && (( _new_maj == _cur_maj && _new_min == _cur_min )); then
+  if (( _allow_mismatch )); then
+    _ok "Version $_rel_version is a PATCH bump despite '### Added' (override accepted)"
+  else
+    _fail "[Unreleased] has '### Added' but $_cur_version → $_rel_version is only a PATCH bump"
+    echo "  SemVer rule: Added → bump MINOR (${_cur_maj}.$(( _cur_min + 1 )).0)." >&2
+    echo "  Pass --allow-version-mismatch to release $_rel_version anyway." >&2
+    exit 1
+  fi
+else
+  _ok "Version $_rel_version matches unreleased content (current: $_cur_version)"
 fi
 
 # ── Tests, pass 1 (BEFORE bump — fast gate; nothing mutated yet, no rollback) ──
@@ -143,20 +181,35 @@ else
   _ok "CHANGELOG.md [Unreleased] → [$_rel_tag] — $_today"
 fi
 
-# ── Tests, pass 2 (AFTER bump — authoritative) ────────────────────────────────
+# ── Tests, pass 2 (AFTER bump — authoritative for the bumped files) ──────────
 # The bump rewrites CHANGELOG.md ([Unreleased] → [vX.Y.Z]) and the VERSION. Tests
 # that read those for the *current* version (e.g. the `changelog` notes check)
 # only validate the exact state that gets tagged HERE — pass 1 ran against the
 # pre-bump tree and can stay green while this fails. CI would catch it, but only
-# after the tag is already public (a half-release). On failure, roll the three
-# bumped files back to HEAD (no commit exists yet) and abort: no commit, no tag.
+# after the tag is already public (a half-release). Since the bump touches only
+# VERSION / man-page version / CHANGELOG.md, pass 2 re-runs just the test files
+# that read those (grep-discovered, falls back to the full suite if none match).
+# On failure, roll the three bumped files back to HEAD (no commit exists yet)
+# and abort: no commit, no tag.
 _step "Tests (post-bump)"
 if (( _dry_run )); then
   _ok "Tests post-bump — skipped (dry-run)"
 else
-  if _test_out=$(bash "$CLAUDII_HOME/tests/run.sh" --summary 2>&1); then
+  _va_tests=()
+  while IFS= read -r _t; do
+    [[ -n "$_t" ]] && _va_tests+=("$_t")
+  done < <(grep -lE '\bVERSION=|CHANGELOG' "$CLAUDII_HOME"/tests/test_*.sh 2>/dev/null || true)
+  if (( ${#_va_tests[@]} == 0 )); then
+    # No version-aware test found — discovery broke; run the full suite instead.
+    _test_cmd=(bash "$CLAUDII_HOME/tests/run.sh" --summary)
+    _scope="full suite (no version-aware tests found)"
+  else
+    _test_cmd=(bash "$CLAUDII_HOME/tests/run.sh" --summary "${_va_tests[@]}")
+    _scope="${#_va_tests[@]} version-aware file(s)"
+  fi
+  if _test_out=$("${_test_cmd[@]}" 2>&1); then
     _passed=$(echo "$_test_out" | grep -oE '[0-9]+ passed' | tail -1)
-    _ok "Tests green post-bump (${_passed:-?})"
+    _ok "Tests green post-bump (${_passed:-?}, $_scope)"
   else
     _fail "Tests failed after bump — rolled back, no commit/tag/push made"
     git -C "$CLAUDII_HOME" checkout -- "$_bin_file" "$_man_file" "$_changelog" 2>/dev/null || true
@@ -200,9 +253,10 @@ if (( _dry_run )); then
 fi
 
 if (( _watch )) && command -v gh >/dev/null 2>&1; then
-  # Wait briefly for the workflow run to register, then block on `gh run watch`.
+  # The tag reaches GitHub via the Forgejo→GitHub mirror — the run can take
+  # well over 30s to register. Poll up to 2 minutes, then block on watch.
   _run_id=""
-  for _try in 1 2 3 4 5 6; do
+  for _try in $(seq 1 24); do
     _run_id=$(gh run list --workflow=release.yml --limit=5 \
       --json databaseId,headBranch \
       --jq ".[] | select(.headBranch==\"${_rel_tag}\") | .databaseId" 2>/dev/null \
@@ -218,14 +272,20 @@ if (( _watch )) && command -v gh >/dev/null 2>&1; then
       _ok "Release: $_release_url"
     else
       _fail "Workflow failed — see $_actions_url/runs/${_run_id}"
+      echo "  Half-release: tag is public, no GitHub Release / tap sync yet." >&2
+      echo "  Recover: fix + commit on main, git tag -f $_rel_tag, push main," >&2
+      echo "  then git push origin $_rel_tag --force (mirror re-triggers CI)." >&2
       exit 1
     fi
   else
-    _ok "Workflow not yet visible — check $_actions_url"
-    _ok "Release will appear at: $_release_url"
+    _fail "Workflow not visible after 2min — mirror may be stuck"
+    echo "  Check $_actions_url — release is NOT confirmed until CI is green." >&2
+    exit 1
   fi
 else
-  _ok "Tag pushed — CI runs the rest"
+  (( _watch )) || _ok "Watch disabled (--no-watch) — confirm CI yourself"
+  command -v gh >/dev/null 2>&1 || _ok "gh not found — cannot watch CI"
+  _ok "Tag pushed — CI runs the rest. Release is NOT done until CI is green:"
   _ok "Workflow:  $_actions_url"
   _ok "Release:   $_release_url"
 fi

@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **`release.sh` watches CI by default** (`scripts/release.sh`). The script used to return once the tag was pushed; confirming the GitHub workflow (clean-env tests → Release → tap sync) was a manual step that CLAUDE.md still described as "the script does NOT watch" although a `--watch` flag already existed. Watching is now the default (`--no-watch` opts out for headless runs): the script polls up to 2min for the mirror-triggered run (was 30s — the Forgejo→GitHub mirror regularly needs longer), blocks on `gh run watch`, and exits non-zero with half-release recovery instructions if the workflow fails or never appears.
+- **`release.sh` pre-flight validates the CHANGELOG against the version bump.** Two new gates: the `[Unreleased]` block must contain at least one entry (an empty block would tag a release with empty notes), and a block containing `### Added` rejects a PATCH-level version (SemVer: Added → MINOR) unless `--allow-version-mismatch` is passed.
+- **Release test pass 2 runs only version-aware tests.** The post-bump pass re-ran the full suite although the bump only rewrites `bin/claudii` VERSION, the man-page version string, and CHANGELOG.md. It now grep-discovers the test files that read those (`VERSION=`/`CHANGELOG`) and runs just them, falling back to the full suite if discovery comes up empty. `tests/run.sh` gained multi-file positional args through the parallel/aggregate path so `--summary` works for subsets (single-file runs previously bypassed aggregation).
+- **CHANGELOG hygiene is now tested** (`tests/test_docs.sh`). The unreleased block must not contain duplicate `###` section headers (v0.21.0 shipped with two `### Changed` sections, caught only by hand at release time) and only Keep-a-Changelog section names are allowed.
+
 ---
 
 ## [v0.21.0] — 2026-06-12

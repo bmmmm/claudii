@@ -1,9 +1,10 @@
 #!/bin/bash
 # claudii test runner — simple bash-based E2E tests
-# Usage: ./tests/run.sh [test_file]
+# Usage: ./tests/run.sh [--summary] [--for <source_file>] [test_file...]
 #
-# Runs each test file as a subprocess (parallel by default).
-# Set CLAUDII_TEST_SEQUENTIAL=1 to force sequential execution.
+# Runs each test file as a subprocess (parallel by default). With one or more
+# test_file args, only those files run (same parallel/aggregate path, so
+# --summary works). Set CLAUDII_TEST_SEQUENTIAL=1 to force sequential execution.
 
 set -uo pipefail
 # Note: no set -e — tests may produce non-zero exits intentionally
@@ -152,21 +153,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Run tests
-if [[ -n "${1:-}" ]]; then
-  # Run specific test file — inline (no parallelization)
-  export ZDOTDIR=$(mktemp -d "${TMPDIR:-/tmp}/claudii_zdotdir.XXXXXX")
-  echo -e "${YELLOW}Running: $1${NC}"
-  source "$1"
-  rm -rf "$ZDOTDIR" 2>/dev/null || true
+# Select test files: explicit args > full glob
+_test_files=()
+if [[ $# -gt 0 ]]; then
+  for _f in "$@"; do
+    [[ -f "$_f" ]] || { echo -e "${RED}Test file not found: $_f${NC}" >&2; exit 1; }
+    _test_files+=("$_f")
+  done
 else
-  # Parallel: launch each test file as a subprocess, aggregate results
+  for _f in "$TESTS_DIR"/test_*.sh; do
+    [[ -f "$_f" ]] && _test_files+=("$_f")
+  done
+fi
+
+# Run tests — parallel subprocesses, aggregate results
+{
   _out_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_run.XXXXXX")
   _pids=()
   _out_files=()
 
-  for test_file in "$TESTS_DIR"/test_*.sh; do
-    [[ -f "$test_file" ]] || continue
+  for test_file in "${_test_files[@]}"; do
     # Skip files that don't touch the requested source file
     if [[ -n "$_for_file" ]]; then
       grep -qE "^# touches:.*(^|[[:space:]])${_for_file}([[:space:]]|$)" "$test_file" 2>/dev/null || continue
@@ -210,7 +216,7 @@ else
   done
 
   rm -rf "$_out_dir"
-fi
+}
 
 # Summary
 if (( _summary_only )); then
