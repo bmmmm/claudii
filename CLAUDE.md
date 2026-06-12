@@ -6,23 +6,43 @@ zsh plugin + CLI for Claude Code power users.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI dispatcher + shared helpers (<300 lines)
+bin/claudii             # CLI dispatcher (<300 lines; helpers live in lib/helpers.sh)
 bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
-bin/claudii-insights       # JSONL aggregator for prompt-cache hit-rate insights
-lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, update, doctor
+bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
+bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, session-cache keys
+bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
+lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
 lib/cmd/cost.sh         # Command: cost (history-based aggregation + tile renderer)
 lib/cmd/overview.sh     # Command: default overview (bare `claudii`)
-lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin cost from insights cache)
+lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin/MCP cost, --compare)
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
+lib/cmd/insights.sh     # Command: cache (prompt-cache hit-rate table)
+lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
+lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
+lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
+lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
 lib/trends.awk          # awk program for trends aggregation
-lib/timefmt.sh          # Shared relative-time formatters (_fmt_rel/_fmt_brief, bash 3.2)
+lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
+lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/trends)
+lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
+lib/tier.jq             # jq module: tier() model→rate-tier mapping
+lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
+lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
+lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)
+lib/skills-cost-compare.jq # skills-cost --compare window-join program
+lib/vibemap-grid.awk    # vibemap grid renderer
+lib/vibemap-strip.awk   # vibemap mini-strip renderer
+lib/vibemap.sh          # vibemap core (append/resolve, shared with cc-statusline)
+lib/timefmt.sh          # Shared time formatters (_fmt_rel/_fmt_brief/_fmt_abs, bash 3.2)
+lib/spinner.sh          # Spinner animation (BG job, label file)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
-lib/visual.sh           # Color/symbol constants (CLAUDII_CLR_*, CLAUDII_SYM_*)
+lib/vpnii.zsh           # VPN/Tailscale RPROMPT segment
+lib/visual.sh           # Color/symbol constants + theme loader (CLAUDII_CLR_*, CLAUDII_SYM_*)
 lib/log.sh              # Shared logging (bash + zsh)
 config/defaults.json    # Shipped defaults
 completions/_claudii    # zsh completions
@@ -121,23 +141,25 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
 3. `config/defaults.json` — bump any agent `description` that names a version
    (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
 4. `bin/claudii-cc-statusline` already shows `.model.display_name` verbatim — no change.
-5. The tier-collapsing AWK in `lib/cmd/cost.sh` / `lib/cmd/display.sh` is
-   version-agnostic (matches bare `fable`/`opus`/`sonnet`/`haiku`) — no change
-   for version bumps within a tier. A **new tier** (e.g. Fable in 2026-06)
-   needs a new branch in BOTH files, most-capable-first, plus a bare-tier
-   fallback case in `_insights_model_label()`, plus a `tier()` branch + `_rates`
-   entry in `lib/cmd/skills-cost.sh` (see pricing note below).
+5. The tier mappings are version-agnostic (match bare `fable`/`opus`/`sonnet`/
+   `haiku`) — no change for version bumps within a tier. A **new tier** (e.g.
+   Fable in 2026-06) needs: a `tier_label()` branch in `lib/model_tier.awk`
+   (most-capable-first; covers cost AND trends), a `tier()` branch in
+   `lib/tier.jq` (covers both skills-cost programs), a `_rates` entry in
+   `lib/cmd/skills-cost.sh`, plus a bare-tier fallback case in
+   `_insights_model_label()` (see pricing note below).
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
 If the new model also changes **pricing**, update the per-model `_rates` table in
 `lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc; cache_read = 0.1×
 input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
-(`claudii cost` itself reads `costUSD` from history, not these). The jq `tier()`
-def maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/`sonnet`, unknown
-→ sonnet) — keep it in sync with the table. `claudii skills-cost` prices each
-per-model token bucket (schema-v5 `attribution_models`) at its tier; pre-v5 /
-orphaned caches have no per-model split, so their residual tokens fall back to the
-flat Sonnet rate. Verify `claudii skills-cost` totals afterwards.
+(`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
+in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/
+`sonnet`, unknown → sonnet) — keep it in sync with the table. `claudii
+skills-cost` prices each per-model token bucket (schema-v5 `attribution_models`)
+at its tier; pre-v5 / orphaned caches have no per-model split, so their residual
+tokens fall back to the flat Sonnet rate. Verify `claudii skills-cost` totals
+afterwards.
 
 ## Project skills
 
