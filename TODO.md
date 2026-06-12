@@ -25,6 +25,25 @@
 `skills-cost --json` is now a consumed interface (session-close Phase 2.7) — treat its
 shape (`rows[].{name,calls,tot_usd,avg_usd,model,outlier}`, `meta`) as a contract.
 
+**Data-quality candidates (from 2026-06-12 review — needed before the loop can truly *judge*):**
+- **Quick win — token-split in `--json` rows** (~30 lines, no schema bump): the merge cache
+  already holds `in_tok/out_tok/cache_read/cache_create` per skill; `--json` drops all but
+  `tot/avg`. The split is the actual judgment signal — out-heavy ("skill talks too much" →
+  reply-cap in SKILL.md) vs cache_read-heavy ("runs in fat sessions" → SKILL.md edits won't
+  help). Live proof: the flagged outlier `update-config` is 894 out-tok/call (quiet!) but
+  337K cache_read/call — the default "shorten replies" advice would be wrong. Add a
+  `meta.pricing` caveat alongside.
+- **Schema v5 — per-model token attribution for correct pricing**: `lib/cmd/skills-cost.sh`
+  prices *all* tokens at flat Sonnet rates ($3/$15). Opus is 5×, Haiku ⅓, Fable higher, so
+  absolute $ are wrong AND the cross-skill *ranking* is distorted (Haiku-skill 3× overstated,
+  Opus-skill 5× understated) — and the outlier rule compares over that ranking. Fix needs
+  per-model tokens (`attribution_models` stores only call counts today). Bigger; do after the
+  quick win.
+- **Trend / before-after**: avg-per-call is confounded with session context size (end-of-session
+  skills are expensive by construction — session-close/reflect read huge contexts). Without a
+  before/after delta the self-improve loop can't measure whether a SKILL.md edit helped — the
+  loop doesn't close. Needs a time-window comparison.
+
 ---
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
