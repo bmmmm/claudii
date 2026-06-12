@@ -281,6 +281,21 @@ Values below 30s are rejected.
 The effective interval adapts to the last known state: 2\(mu base while
 healthy, base\(di5 (min 60s) during incidents, base when the status API is
 unreachable.
+.TP
+.BR "status \-\-history " [\-\-days\ N]
+Print the full model-state transition log from
+.IR status-history.tsv ,
+newest first (bare
+.B status
+shows only the last 5).
+.B \-\-days\ N
+limits output to transitions within the last
+.I N
+days.
+Absolute timestamps honor
+.BR display.timezone .
+Supports
+.BR \-\-json .
 .
 .SS Sessions and Cost
 .TP

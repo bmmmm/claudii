@@ -63,6 +63,8 @@ _claudii() {
             '15m:Refresh every 15 minutes (default)'
             '30m:Refresh every 30 minutes'
             '60m:Refresh every hour'
+            '--history:Show full model-state transition log'
+            '--days:Limit --history to the last N days'
           )
           _describe 'status option' opts
           ;;

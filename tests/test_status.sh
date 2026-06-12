@@ -285,6 +285,63 @@ else
 fi
 rm -rf "$_tr_dir"
 
+# ── `claudii status --history`: full transition log ──────────────────────────
+# Seed a synthetic log: one entry ~10 days ago, two within the last day.
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+_hist_now=$(date +%s)
+{
+  printf '%s\topus\tok\tdegraded\n'   "$(( _hist_now - 10*86400 ))"
+  printf '%s\tsonnet\tok\tdown\n'     "$(( _hist_now - 3600 ))"
+  printf '%s\topus\tdown\tok\n'       "$(( _hist_now - 600 ))"
+} > "$CLAUDII_CACHE_DIR/status-history.tsv"
+
+_h_full=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "status --history: header shown" "full log" "$_h_full"
+assert_contains "status --history: old opus transition shown" "ok → degraded" "$_h_full"
+assert_contains "status --history: recent sonnet transition shown" "ok → down" "$_h_full"
+assert_contains "status --history: count footer" "3 transitions" "$_h_full"
+# Newest-first ordering: the opus down→ok (most recent) must precede the
+# 10-days-ago opus ok→degraded in the rendered output.
+_h_first=$(printf '%s\n' "$_h_full" | grep -nE 'down → ok' | head -1 | cut -d: -f1)
+_h_last=$(printf '%s\n' "$_h_full" | grep -nE 'ok → degraded' | head -1 | cut -d: -f1)
+assert_eq "status --history: newest-first ordering" "true" "$([[ -n "$_h_first" && -n "$_h_last" && "$_h_first" -lt "$_h_last" ]] && echo true || echo false)"
+
+# --days 1 drops the 10-days-ago entry → 2 transitions, no "ok → degraded"
+_h_win=$(bash "$CLAUDII_HOME/bin/claudii" status --history --days 1 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "status --history --days 1: windowed header" "last 1 day" "$_h_win"
+assert_contains "status --history --days 1: count footer" "2 transitions" "$_h_win"
+if printf '%s' "$_h_win" | grep -q "ok → degraded"; then
+  assert_eq "status --history --days 1: old entry filtered out" "filtered" "still present"
+else
+  assert_eq "status --history --days 1: old entry filtered out" "filtered" "filtered"
+fi
+
+# --days drives display.timezone via %Z (UTC vs Europe/Berlin)
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "UTC" >/dev/null 2>&1
+_h_utc=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 || true)
+assert_contains "status --history: UTC timezone suffix" "UTC" "$_h_utc"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+
+# --json: array of {ts,model,from,to}, newest-first, correct length
+_h_json=$(bash "$CLAUDII_HOME/bin/claudii" status --history --json 2>&1 || true)
+assert_eq "status --history --json: 3 rows" "3" "$(printf '%s' "$_h_json" | jq 'length' 2>/dev/null || echo NaN)"
+assert_eq "status --history --json: newest row is opus→ok" "ok" "$(printf '%s' "$_h_json" | jq -r '.[0].to' 2>/dev/null || true)"
+assert_eq "status --history --json: ts is numeric" "number" "$(printf '%s' "$_h_json" | jq -r '.[0].ts | type' 2>/dev/null || true)"
+assert_eq "status --history --json --days 1: 2 rows" "2" "$(bash "$CLAUDII_HOME/bin/claudii" status --history --json --days 1 2>&1 | jq 'length' 2>/dev/null || echo NaN)"
+
+# Error paths
+_h_baddays=$(bash "$CLAUDII_HOME/bin/claudii" status --history --days abc 2>&1; echo "exit=$?")
+assert_contains "status --history: rejects non-numeric --days" "Invalid --days value" "$_h_baddays"
+assert_contains "status --history: non-numeric --days exits 1" "exit=1" "$_h_baddays"
+_h_badopt=$(bash "$CLAUDII_HOME/bin/claudii" status --history --bogus 2>&1; echo "exit=$?")
+assert_contains "status --history: rejects unknown option" "Unknown status --history option" "$_h_badopt"
+
+# Empty log → friendly message, no crash
+rm -f "$CLAUDII_CACHE_DIR/status-history.tsv"
+_h_empty=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 || true)
+assert_contains "status --history: empty log message" "no transition history yet" "$_h_empty"
+assert_eq "status --history --json: empty log is []" "0" "$(bash "$CLAUDII_HOME/bin/claudii" status --history --json 2>&1 | jq 'length' 2>/dev/null || echo NaN)"
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

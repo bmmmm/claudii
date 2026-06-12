@@ -284,8 +284,68 @@ _cmd_status() {
         printf '\n'
       fi
       ;;
+    --history)
+      # Full transition log from status-history.tsv (vs. the last-5 shown by
+      # bare `claudii status`). Optional --days N window; newest-first.
+      cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+      _hist_file="${cache_file%/*}/status-history.tsv"
+      _days=""
+      if [[ "${3:-}" == "--days" ]]; then
+        _days="${4:-}"
+        [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${4:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; exit 1; }
+      elif [[ -n "${3:-}" ]]; then
+        echo "Unknown status --history option: ${3} — use: claudii status --history [--days N]" >&2; exit 1
+      fi
+      _cutoff=0
+      if [[ -n "$_days" ]]; then
+        _cutoff=$(( $(date +%s) - _days * 86400 ))
+      fi
+      if [[ "$_FORMAT" == "json" ]]; then
+        if [[ -s "$_hist_file" ]]; then
+          awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn | \
+            jq -Rn '[inputs | select(length > 0) | split("\t") | {ts: (.[0]|tonumber), model: .[1], from: .[2], to: .[3]}]'
+        else
+          echo "[]"
+        fi
+      else
+        _CLAUDII_TZ=$(_cfgget display.timezone)
+        printf '\n'
+        if [[ ! -s "$_hist_file" ]]; then
+          printf '  no transition history yet\n\n'
+        else
+          if [[ -n "$_days" ]]; then
+            printf "  ${CLAUDII_CLR_DIM}Status transitions (last %s day%s):${CLAUDII_CLR_RESET}\n" "$_days" "$([[ "$_days" -eq 1 ]] && echo '' || echo s)"
+          else
+            printf "  ${CLAUDII_CLR_DIM}Status transitions (full log):${CLAUDII_CLR_RESET}\n"
+          fi
+          printf '\n'
+          _hist_count=0
+          while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+            [[ -z "$_h_ts" ]] && continue
+            _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
+            _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
+            case "$_h_new" in
+              ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
+              degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
+              down)     _h_clr="$CLAUDII_CLR_RED" ;;
+              *)        _h_clr="$CLAUDII_CLR_DIM" ;;
+            esac
+            printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
+              "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
+            (( ++_hist_count ))
+          done < <(awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn)
+          printf '\n'
+          if (( _hist_count == 0 )); then
+            printf "  ${CLAUDII_CLR_DIM}no transitions in window${CLAUDII_CLR_RESET}\n"
+          else
+            printf "  ${CLAUDII_CLR_DIM}%d transition%s${CLAUDII_CLR_RESET}\n" "$_hist_count" "$([[ "$_hist_count" -eq 1 ]] && echo '' || echo s)"
+          fi
+          printf '\n'
+        fi
+      fi
+      ;;
     *)
-      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval" >&2; exit 1
+      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; exit 1
       ;;
   esac
 }
