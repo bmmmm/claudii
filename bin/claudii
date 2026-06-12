@@ -141,7 +141,7 @@ case "${1:-}" in
 
   # Session commands
   cost)                _cmd_cost              ;;
-  skills-cost)         _cmd_skills_cost "$@"  ;;
+  skills-cost)         _cmd_skills_cost "${@:2}" ;;
   sessions)
     if [[ "${2:-}" == "--resume" && -n "${3:-}" ]]; then
       exec claude --resume "$3"

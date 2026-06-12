@@ -38,59 +38,16 @@ _skills_cost_compare() {
   # "no comparable activity" line below.
 
   # Build the joined comparison rows as a JSON array (shared by both renderers).
+  # Program lives in lib/skills-cost-compare.jq (pricing + window join);
+  # tier() comes from the lib/tier.jq module via -L.
   local _rows_json
-  _rows_json=$(jq -n \
+  _rows_json=$(jq -n -L "$CLAUDII_HOME/lib" \
     --arg k "$attr_key" \
     --arg kind "$attr_kind" \
     --argjson rates "$_rates" \
     --argjson prior "$_prior" \
     --argjson recent "$_recent" \
-    '
-    def tier($m):
-      ($m // "" | ascii_downcase) as $l
-      | if   ($l | test("fable|mythos")) then "fable"
-        elif ($l | test("opus"))         then "opus"
-        elif ($l | test("haiku"))        then "haiku"
-        elif ($l | test("sonnet"))       then "sonnet"
-        else "sonnet" end;
-    # Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
-    # pricing + Sonnet residual as the single-window view).
-    def rows($m):
-      ($m.attribution_models // {} | to_entries
-        | map((.key | split("|")) as $p | select($p[0] == $kind)
-            | {name:($p[1]//""), model:($p[2]//"unknown"),
-               in_tok:(.value.in_tok//0), out_tok:(.value.out_tok//0),
-               cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)})) as $am
-      | ($m[$k] // {} | to_entries
-          | map({name:.key, calls:(.value.calls//0), in_tok:(.value.in_tok//0),
-                 out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)}))
-      | map(. as $row
-          | ([$am[] | select(.name == $row.name)]) as $cand
-          | ($cand | map(($rates[tier(.model)]) as $r
-              | (.in_tok*$r.in + .out_tok*$r.out + .cache_read*$r.cr + .cache_create*$r.cc)) | add // 0) as $musd
-          | (([$row.in_tok       - ($cand|map(.in_tok)|add//0),       0]|max)) as $ri
-          | (([$row.out_tok      - ($cand|map(.out_tok)|add//0),      0]|max)) as $ro
-          | (([$row.cache_read   - ($cand|map(.cache_read)|add//0),   0]|max)) as $rcr
-          | (([$row.cache_create - ($cand|map(.cache_create)|add//0), 0]|max)) as $rcc
-          | ($ri*$rates.sonnet.in + $ro*$rates.sonnet.out + $rcr*$rates.sonnet.cr + $rcc*$rates.sonnet.cc) as $rusd
-          | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
-    (rows($prior)) as $P
-    | (rows($recent)) as $R
-    | ([$P[].name, $R[].name] | unique) as $names
-    | $names | map(
-        . as $n
-        | (($P | map(select(.name==$n)))[0] // {calls:0,out_tok:0,tot_usd:0}) as $p
-        | (($R | map(select(.name==$n)))[0] // {calls:0,out_tok:0,tot_usd:0}) as $r
-        | {name:$n,
-           calls_prior:$p.calls, calls_recent:$r.calls,
-           out_per_call_prior:(if $p.calls>0 then ($p.out_tok/$p.calls) else 0 end),
-           out_per_call_recent:(if $r.calls>0 then ($r.out_tok/$r.calls) else 0 end),
-           avg_usd_prior:(if $p.calls>0 then ($p.tot_usd/$p.calls) else 0 end),
-           avg_usd_recent:(if $r.calls>0 then ($r.tot_usd/$r.calls) else 0 end)}
-        | . + {out_per_call_delta:(.out_per_call_recent - .out_per_call_prior)})
-    | map(select(.calls_prior>0 or .calls_recent>0))
-    | sort_by(-(.calls_prior + .calls_recent))
-    ' 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/skills-cost-compare.jq" 2>/dev/null)
 
   if [[ -z "$_rows_json" ]]; then _rows_json="[]"; fi
 
@@ -164,6 +121,10 @@ _cmd_skills_cost() {
         printf 'Usage: claudii skills-cost [--days N] [--compare BEFORE:AFTER] [--plugins] [--mcp] [--json]\n'
         return 0
         ;;
+      *)
+        printf 'claudii: unknown skills-cost flag: %s — run claudii skills-cost --help\n' "$1" >&2
+        return 1
+        ;;
     esac
     shift
   done
@@ -180,7 +141,7 @@ _cmd_skills_cost() {
   # in claudii (`claudii cost` reads costUSD from history instead). Per MTok:
   # Opus $5/$25, Sonnet $3/$15, Haiku $1/$5, Fable $10/$50; cache_read = 0.1×
   # input, cache_create (5m TTL) = 1.25× input. On a tier price change, update
-  # this table AND the bare-tier fallback in the jq `tier()` def below.
+  # this table AND the tier mapping in lib/tier.jq (shared jq module).
   #
   # tot_usd uses real per-model token attribution (schema v5, attribution_models).
   # Pre-v5 / orphaned caches carry no per-model token split; their residual
@@ -219,77 +180,16 @@ _cmd_skills_cost() {
     return 0
   fi
 
-  # Price each row at real per-model rates: every per-model token bucket in
-  # attribution_models is priced at its own tier, and any residual not covered by
-  # per-model data (pre-v5 orphans) is priced at the flat Sonnet rate. The
-  # dominant model per row comes from the per-model call counts: the top model
-  # needs ≥80% of the row's attributed calls, otherwise "mixed".
+  # Price each row at real per-model rates — program lives in
+  # lib/skills-cost-rows.jq (pricing, residual fallback, dominant model);
+  # tier() comes from the lib/tier.jq module via -L.
   # Output: TSV — name\tcalls\ttot_usd\tavg_usd\tmodel\tin\tout\tcr\tcc
   local rows_tsv
-  rows_tsv=$(jq -r \
+  rows_tsv=$(jq -r -L "$CLAUDII_HOME/lib" \
     --arg k "$attr_key" \
     --arg kind "$attr_kind" \
     --argjson rates "$_rates" \
-    '
-    # Map a raw model id to a rate-table tier (most-specific first; unknown →
-    # sonnet, the historical blended default). Keep in sync with the rate table.
-    def tier($m):
-      ($m // "" | ascii_downcase) as $l
-      | if   ($l | test("fable|mythos")) then "fable"
-        elif ($l | test("opus"))         then "opus"
-        elif ($l | test("haiku"))        then "haiku"
-        elif ($l | test("sonnet"))       then "sonnet"
-        else "sonnet" end;
-    ($rates.sonnet) as $sonnet
-    | (.attribution_models // {} | to_entries
-        | map((.key | split("|")) as $p
-            | select($p[0] == $kind)
-            | {name: ($p[1] // ""), model: ($p[2] // "unknown"),
-               calls:        (.value.calls        // 0),
-               in_tok:       (.value.in_tok       // 0),
-               out_tok:      (.value.out_tok      // 0),
-               cache_read:   (.value.cache_read   // 0),
-               cache_create: (.value.cache_create // 0)})
-      ) as $am
-    | .[$k] // {}
-    | to_entries
-    | map({
-        name:         .key,
-        calls:        (.value.calls        // 0),
-        in_tok:       (.value.in_tok       // 0),
-        out_tok:      (.value.out_tok      // 0),
-        cache_read:   (.value.cache_read   // 0),
-        cache_create: (.value.cache_create // 0)
-      })
-    | map(. as $row
-        | ([$am[] | select(.name == $row.name)]) as $cand
-        # per-model priced cost (schema-v5 token attribution)
-        | ($cand | map(($rates[tier(.model)]) as $r
-            | (.in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr + .cache_create * $r.cc)
-          ) | add // 0) as $model_usd
-        # residual = aggregate − per-model-covered tokens (pre-v5 orphans), flat Sonnet
-        | (([$row.in_tok       - ($cand | map(.in_tok)       | add // 0), 0] | max)) as $res_in
-        | (([$row.out_tok      - ($cand | map(.out_tok)      | add // 0), 0] | max)) as $res_out
-        | (([$row.cache_read   - ($cand | map(.cache_read)   | add // 0), 0] | max)) as $res_cr
-        | (([$row.cache_create - ($cand | map(.cache_create) | add // 0), 0] | max)) as $res_cc
-        | ($res_in * $sonnet.in + $res_out * $sonnet.out + $res_cr * $sonnet.cr + $res_cc * $sonnet.cc) as $res_usd
-        | $row + {tot_usd: ($model_usd + $res_usd)}
-      )
-    | map(. + {avg_usd: (if .calls > 0 then .tot_usd / .calls else 0 end)})
-    | map(. as $row | $row + {model: (
-        [$am[] | select(.name == $row.name)] as $cand
-        | ($cand | map(.calls) | add // 0) as $tot
-        | if $tot <= 0 then "mixed"
-          else ($cand | max_by(.calls)) as $top
-            | (if ($top.calls / $tot) >= 0.8 then $top.model else "mixed" end)
-          end
-      )})
-    | sort_by(-.tot_usd)
-    | .[]
-    | [.name, (.calls | tostring), (.tot_usd | tostring), (.avg_usd | tostring), .model,
-       (.in_tok | tostring), (.out_tok | tostring), (.cache_read | tostring), (.cache_create | tostring)]
-    | @tsv
-    ' <<< "$merged" 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/skills-cost-rows.jq" <<< "$merged" 2>/dev/null)
 
   if [[ -z "$rows_tsv" ]]; then
     printf 'No skill attribution data yet — run some sessions or `claudii-insights aggregate --force`.\n'

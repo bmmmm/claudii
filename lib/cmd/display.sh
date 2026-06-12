@@ -63,6 +63,7 @@ ${_epoch_awk}
   # Shared epoch_to_date from lib/epoch_to_date.awk (read above).
   _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
+$(<"$CLAUDII_HOME/lib/model_tier.awk")
 "'
     { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
     NF < 6 { next }     # guard against short/malformed rows
@@ -73,10 +74,7 @@ ${_epoch_awk}
       model = $2; cost = $3 + 0; sid = $6
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
       api_dur = ($9 == "" ? 0 : $9 + 0)
-      if      (tolower(model) ~ /(^|[^a-z])fable([^a-z]|$)/)  model = "Fable"
-      else if (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
-      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
-      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
+      model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
       print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
     }
   ' "${_HIST_FILES[@]}")

@@ -10,9 +10,10 @@ _cmd_cost_from_history() {
   local _date_cmd="$_DATE_CMD" _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
 
   # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
-  local _epoch_awk _attr_awk
+  local _epoch_awk _attr_awk _tier_awk
   _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
   _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
+  _tier_awk=$(<"$CLAUDII_HOME/lib/model_tier.awk")
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -43,6 +44,7 @@ _cmd_cost_from_history() {
   # The empty-input case (no valid rows) is handled in stage 2's END block.
   awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
+${_tier_awk}
 "'
     { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
     NF < 6 { next }     # guard against short/malformed rows (history schema has >= 6 cols)
@@ -52,10 +54,7 @@ ${_epoch_awk}
       day = epoch_to_date(ts)
       model = $2; cost = $3 + 0; sid = $6; raw = $2
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
-      if      (tolower(model) ~ /(^|[^a-z])fable([^a-z]|$)/)  model = "Fable"
-      else if (tolower(model) ~ /(^|[^a-z])opus([^a-z]|$)/)   model = "Opus"
-      else if (tolower(model) ~ /(^|[^a-z])sonnet([^a-z]|$)/) model = "Sonnet"
-      else if (tolower(model) ~ /(^|[^a-z])haiku([^a-z]|$)/)  model = "Haiku"
+      model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
       print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
   ' "${_history_files[@]}" | awk -F'\t' \
