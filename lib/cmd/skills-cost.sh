@@ -40,6 +40,8 @@ _skills_cost_compare() {
   # Build the joined comparison rows as a JSON array (shared by both renderers).
   # Program lives in lib/skills-cost-compare.jq (pricing + window join);
   # tier() comes from the lib/tier.jq module via -L.
+  # No 2>/dev/null: a failing program (broken CLAUDII_HOME, jq without module
+  # support) must surface as an error, not masquerade as "no activity".
   local _rows_json
   _rows_json=$(jq -n -L "$CLAUDII_HOME/lib" \
     --arg k "$attr_key" \
@@ -47,7 +49,10 @@ _skills_cost_compare() {
     --argjson rates "$_rates" \
     --argjson prior "$_prior" \
     --argjson recent "$_recent" \
-    -f "$CLAUDII_HOME/lib/skills-cost-compare.jq" 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/skills-cost-compare.jq" 2>&1) || {
+    printf 'claudii: skills-cost compare program failed (lib/skills-cost-compare.jq):\n%s\n' "$_rows_json" >&2
+    return 1
+  }
 
   if [[ -z "$_rows_json" ]]; then _rows_json="[]"; fi
 
@@ -184,12 +189,17 @@ _cmd_skills_cost() {
   # lib/skills-cost-rows.jq (pricing, residual fallback, dominant model);
   # tier() comes from the lib/tier.jq module via -L.
   # Output: TSV — name\tcalls\ttot_usd\tavg_usd\tmodel\tin\tout\tcr\tcc
+  # No 2>/dev/null: a failing program (broken CLAUDII_HOME, jq without module
+  # support) must surface as an error, not masquerade as "no data yet".
   local rows_tsv
   rows_tsv=$(jq -r -L "$CLAUDII_HOME/lib" \
     --arg k "$attr_key" \
     --arg kind "$attr_kind" \
     --argjson rates "$_rates" \
-    -f "$CLAUDII_HOME/lib/skills-cost-rows.jq" <<< "$merged" 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/skills-cost-rows.jq" <<< "$merged" 2>&1) || {
+    printf 'claudii: skills-cost pricing program failed (lib/skills-cost-rows.jq):\n%s\n' "$rows_tsv" >&2
+    return 1
+  }
 
   if [[ -z "$rows_tsv" ]]; then
     printf 'No skill attribution data yet — run some sessions or `claudii-insights aggregate --force`.\n'

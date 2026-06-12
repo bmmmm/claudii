@@ -13,7 +13,7 @@
 #   claudii-insights aggregate --force # rebuild every cache
 #   claudii-insights aggregate <jsonl> # refresh one specific file
 #   claudii-insights cache-dir         # print insights cache directory
-#   claudii-insights merge [--days N] [--project PATH]
+#   claudii-insights merge [--days N] [--until-days M]
 #                                      # stream merged stats to stdout (jq-able)
 #                                      # includes per-skill, per-plugin and per-MCP-tool attribution
 #   claudii-insights gc --older-than DAYS [--yes]
@@ -168,14 +168,18 @@ _cmd_aggregate() {
 #   --until-days M   only include sessions older than M days (last_seen < now-M)
 #                    — combine with --days for a bounded window [now-N, now-M),
 #                    used by `skills-cost --compare` for the prior period.
-#   --project PATH   only include sessions for that project working dir
+# (A --project filter existed as a parsed-but-dead flag since the first merge
+# version — the per-session caches carry no project field, so it could never
+# filter anything. Removed rather than silently no-op'ing; needs a schema bump
+# to implement for real.)
 _cmd_merge() {
-  local days="" until_days="" project=""
+  local days="" until_days=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --days)       shift; days="${1:-}" ;;
       --until-days) shift; until_days="${1:-}" ;;
-      --project)    shift; project="${1:-}" ;;
+      *) printf 'merge: unknown option: %s\n' "$1" >&2
+         printf 'Usage: claudii-insights merge [--days N] [--until-days M]\n' >&2; exit 1 ;;
     esac
     shift
   done
@@ -219,7 +223,6 @@ _cmd_merge() {
   jq -n \
     --arg cutoff "$cutoff_iso" \
     --arg until "$until_iso" \
-    --arg project "$project" \
     -f "$CLAUDII_HOME/lib/insights-merge.jq" "${files[@]}"
 }
 
@@ -317,7 +320,7 @@ claudii-insights — aggregate JSONL transcripts to JSON cache
 
 Usage:
   claudii-insights aggregate [--force | <jsonl>]
-  claudii-insights merge [--days N] [--project PATH]
+  claudii-insights merge [--days N] [--until-days M]
                          # includes per-skill, per-plugin and per-MCP-tool attribution
   claudii-insights gc --older-than DAYS [--yes]
                          # prune orphaned caches (source JSONL gone); dry-run without --yes

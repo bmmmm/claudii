@@ -1,6 +1,6 @@
 # insights-merge.jq — merge per-session insights caches into one aggregate.
 # Called from _cmd_merge (bin/claudii-insights) with:
-#   jq -n --arg cutoff <iso|""> --arg until <iso|""> --arg project <path|"">
+#   jq -n --arg cutoff <iso|""> --arg until <iso|"">
 #      -f lib/insights-merge.jq <cache files...>
 # Window filters: cutoff = include sessions with last_seen >= cutoff;
 # until = include sessions with last_seen < until (bounded window for
