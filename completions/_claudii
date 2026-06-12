@@ -46,7 +46,7 @@ _claudii() {
         'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'vibemap:Activity heatmap (opt-in) — grid / strip / status / clear / path'
-        'gc:Clean up stale session cache files'
+        'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
         'resume:Resume a session by ID'
         'insomnii:Bedtime statusline plugin (on/off/auto/status/install)'
         'help:Show help'
@@ -74,6 +74,15 @@ _claudii() {
             'off:Disable'
           )
           _describe 'toggle option' toggle_opts
+          ;;
+
+        gc|g)
+          local -a gc_opts
+          gc_opts=(
+            '--insights:Prune orphaned insights caches older than DAYS (dry-run by default)'
+            '--yes:Apply deletions instead of dry-run'
+          )
+          _describe 'gc option' gc_opts
           ;;
 
         insomnii)

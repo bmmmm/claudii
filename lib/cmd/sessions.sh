@@ -481,6 +481,17 @@ _cmd_sessions() {
 }
 
 _cmd_gc() {
+  local _insights_days="" _yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      gc|g)       ;;  # command name — dispatcher passes "$@" including it
+      --insights) shift; _insights_days="${1:-}" ;;
+      --yes|-y)   _yes=1 ;;
+      *) printf 'Usage: claudii gc [--insights DAYS [--yes]]\n' >&2; return 1 ;;
+    esac
+    shift
+  done
+
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local _removed=0 _kept=0 _now
   _now=${EPOCHSECONDS:-$(date +%s)}
@@ -501,7 +512,8 @@ _cmd_gc() {
     fi
   done
 
-  for _sf in "${_gc_files[@]}"; do
+  # ${arr[@]+…} guard: empty array + set -u = "unbound variable" on bash 3.2
+  for _sf in "${_gc_files[@]+"${_gc_files[@]}"}"; do
     [[ -f "$_sf" ]] || continue
     [[ "$_sf" == *.tmp.* ]] && continue
 
@@ -555,5 +567,13 @@ _cmd_gc() {
     printf "Nothing to clean up  (%d session file%s retained)\n" "$_kept" "$_ks"
   else
     printf "Removed %d stale session file%s  (%d retained)\n" "$_removed" "$_rs" "$_kept"
+  fi
+
+  # Opt-in: prune orphaned insights caches (source JSONL deleted by Claude
+  # Code). Dry-run unless --yes — orphans are the long-range cost history.
+  if [[ -n "$_insights_days" ]]; then
+    local _gc_args=(gc --older-than "$_insights_days")
+    (( _yes )) && _gc_args+=(--yes)
+    "$CLAUDII_HOME/bin/claudii-insights" "${_gc_args[@]}"
   fi
 }

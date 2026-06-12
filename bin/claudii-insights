@@ -16,6 +16,8 @@
 #   claudii-insights merge [--days N] [--project PATH]
 #                                      # stream merged stats to stdout (jq-able)
 #                                      # includes per-skill, per-plugin and per-MCP-tool attribution
+#   claudii-insights gc --older-than DAYS [--yes]
+#                                      # prune orphaned caches (dry-run without --yes)
 
 set -uo pipefail
 
@@ -263,10 +265,93 @@ _cmd_merge() {
     ' "${files[@]}"
 }
 
+# Prune ORPHANED cache files (source JSONL deleted by Claude Code) older than
+# a cutoff. Orphans are kept by design — they are the only cost history beyond
+# CC's transcript retention — so this is strictly opt-in: --older-than is
+# required and nothing is deleted without --yes (dry-run is the default).
+# Caches whose JSONL still exists are never touched: deleting one would NOT
+# trigger re-aggregation (the marker-based scan only sees files newer than
+# .last-scan), silently losing data until the next --force.
+_cmd_gc() {
+  local days="" yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --older-than) shift; days="${1:-}" ;;
+      --yes|-y)     yes=1 ;;
+      *) printf 'gc: unknown option: %s\n' "$1" >&2
+         printf 'Usage: claudii-insights gc --older-than DAYS [--yes]\n' >&2; exit 1 ;;
+    esac
+    shift
+  done
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'gc: --older-than DAYS is required (positive integer, got: %s)\n' "${days:-<empty>}" >&2
+    exit 1
+  fi
+
+  local cutoff_iso cutoff_epoch
+  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+    cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+  else
+    cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
+  fi
+  cutoff_epoch=$(( $(date +%s) - days * 86400 ))
+
+  shopt -s nullglob
+  local files=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    printf 'gc: no cache files\n'
+    return 0
+  fi
+
+  # One find pass for all live session ids — never one find per cache file.
+  local live_sids
+  live_sids=$(find "$PROJECTS_DIR" -maxdepth 2 -name "*.jsonl" -type f 2>/dev/null \
+                | sed 's|.*/||; s|\.jsonl$||')
+
+  local pruned=0 kept_live=0 kept_recent=0
+  local line sid last_seen base
+  # One jq pass for all (sid, last_seen) pairs.
+  while IFS=$'\t' read -r sid last_seen; do
+    [[ -z "$sid" ]] && continue
+    if [[ $'\n'"$live_sids"$'\n' == *$'\n'"$sid"$'\n'* ]]; then
+      (( ++kept_live ))
+      continue
+    fi
+    # Age check: last_seen when present; file mtime as fallback for degenerate
+    # caches without timestamped records (mtime = last aggregation ≈ session end).
+    if [[ -n "$last_seen" ]]; then
+      if [[ "$last_seen" > "$cutoff_iso" ]]; then
+        (( ++kept_recent ))
+        continue
+      fi
+    elif (( $(_mtime "$CACHE_DIR/$sid.json") > cutoff_epoch )); then
+      (( ++kept_recent ))
+      continue
+    fi
+    if (( yes )); then
+      rm -f "$CACHE_DIR/$sid.json" && (( ++pruned ))
+    else
+      printf 'would prune: %s  (last_seen: %s)\n' "$sid" "${last_seen:-none}"
+      (( ++pruned ))
+    fi
+  done < <(jq -r '[(input_filename | sub(".*/"; "") | sub("\\.json$"; "")), (.last_seen // "")] | @tsv' "${files[@]}" 2>/dev/null)
+
+  if (( yes )); then
+    printf 'gc: pruned %d orphaned cache(s) older than %dd  (%d live, %d recent orphans kept)\n' \
+      "$pruned" "$days" "$kept_live" "$kept_recent"
+  else
+    printf 'gc: %d orphaned cache(s) older than %dd would be pruned  (%d live, %d recent orphans kept)\n' \
+      "$pruned" "$days" "$kept_live" "$kept_recent"
+    (( pruned > 0 )) && printf 'gc: dry-run — re-run with --yes to delete\n'
+  fi
+}
+
 cmd="${1:-aggregate}"; shift || true
 case "$cmd" in
   aggregate) _cmd_aggregate "$@" ;;
   merge)     _cmd_merge "$@" ;;
+  gc)        _cmd_gc "$@" ;;
   cache-dir) printf '%s\n' "$CACHE_DIR" ;;
   -h|--help|help)
     cat <<'EOF'
@@ -276,6 +361,8 @@ Usage:
   claudii-insights aggregate [--force | <jsonl>]
   claudii-insights merge [--days N] [--project PATH]
                          # includes per-skill, per-plugin and per-MCP-tool attribution
+  claudii-insights gc --older-than DAYS [--yes]
+                         # prune orphaned caches (source JSONL gone); dry-run without --yes
   claudii-insights cache-dir
 EOF
     ;;

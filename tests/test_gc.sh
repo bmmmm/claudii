@@ -1,4 +1,4 @@
-# touches: lib/cmd/sessions.sh claudii.plugin.zsh
+# touches: lib/cmd/sessions.sh claudii.plugin.zsh bin/claudii-insights bin/claudii
 # test_gc.sh — session cache GC function tests
 
 # Setup: isolated cache dir in project tmp/
@@ -117,3 +117,63 @@ unset _gc_cache2 _gc_59min _gc_61min _gc_59_ts _gc_61_ts
 # Cleanup
 rm -rf "$_gc_cache"
 unset CLAUDII_CACHE_DIR _gc_cache _gc_old _gc_fresh _gc_old_ts
+
+# ── insights gc: orphaned-cache pruning (bin/claudii-insights gc) ───────────
+_igc_base="$CLAUDII_HOME/tmp/test_gc_insights"
+rm -rf "$_igc_base"
+mkdir -p "$_igc_base/cache/insights" "$_igc_base/projects/-fake-proj"
+_igc_cache="$_igc_base/cache/insights"
+
+# ISO timestamps: 100 days ago and now
+_igc_old_iso=$(date -u -v-100d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "100 days ago" +%Y-%m-%dT%H:%M:%SZ)
+_igc_now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# live: source JSONL exists, old last_seen → must NEVER be touched
+printf '{"sessionId":"live-sid","last_seen":"%s"}\n' "$_igc_old_iso" > "$_igc_cache/live-sid.json"
+printf '{"type":"summary"}\n' > "$_igc_base/projects/-fake-proj/live-sid.jsonl"
+# orphan, old last_seen → prune at 30d
+printf '{"sessionId":"orphan-old","last_seen":"%s"}\n' "$_igc_old_iso" > "$_igc_cache/orphan-old.json"
+# orphan, recent last_seen → keep at 30d
+printf '{"sessionId":"orphan-recent","last_seen":"%s"}\n' "$_igc_now_iso" > "$_igc_cache/orphan-recent.json"
+# orphan, no last_seen, mtime 100d ago → prune at 30d via mtime fallback
+printf '{"sessionId":"orphan-nots","last_seen":null}\n' > "$_igc_cache/orphan-nots.json"
+_igc_old_ts=$(date -v-100d +%Y%m%d%H%M.%S 2>/dev/null || date -d "100 days ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+[[ -n "$_igc_old_ts" ]] && touch -t "$_igc_old_ts" "$_igc_cache/orphan-nots.json"
+
+_igc_env=(env CLAUDII_CACHE_DIR="$_igc_base/cache" CLAUDE_PROJECTS_DIR="$_igc_base/projects")
+
+# --older-than is required
+"${_igc_env[@]}" "$CLAUDII_HOME/bin/claudii-insights" gc >/dev/null 2>&1
+assert_eq "insights gc: missing --older-than exits 1" "1" "$?"
+
+# Dry-run: reports 2 prunable, deletes nothing
+_igc_out=$("${_igc_env[@]}" "$CLAUDII_HOME/bin/claudii-insights" gc --older-than 30 2>&1)
+assert_contains "insights gc: dry-run reports 2 prunable" "2 orphaned cache(s) older than 30d would be pruned" "$_igc_out"
+assert_contains "insights gc: dry-run hints --yes" "re-run with --yes" "$_igc_out"
+assert_file_exists "insights gc: dry-run keeps old orphan" "$_igc_cache/orphan-old.json"
+assert_file_exists "insights gc: dry-run keeps no-ts orphan" "$_igc_cache/orphan-nots.json"
+
+# --yes: prunes the two old orphans, keeps live + recent orphan
+_igc_out=$("${_igc_env[@]}" "$CLAUDII_HOME/bin/claudii-insights" gc --older-than 30 --yes 2>&1)
+assert_contains "insights gc: --yes reports pruned" "pruned 2 orphaned cache(s)" "$_igc_out"
+[[ -f "$_igc_cache/orphan-old.json" ]] && _igc_r="still exists" || _igc_r="deleted"
+assert_eq "insights gc: --yes deletes old orphan" "deleted" "$_igc_r"
+[[ -f "$_igc_cache/orphan-nots.json" ]] && _igc_r="still exists" || _igc_r="deleted"
+assert_eq "insights gc: --yes deletes no-ts orphan (mtime fallback)" "deleted" "$_igc_r"
+assert_file_exists "insights gc: live cache never touched" "$_igc_cache/live-sid.json"
+assert_file_exists "insights gc: recent orphan kept" "$_igc_cache/orphan-recent.json"
+
+# CLI surface: claudii gc --insights DAYS delegates (dry-run)
+printf '{"sessionId":"orphan-old","last_seen":"%s"}\n' "$_igc_old_iso" > "$_igc_cache/orphan-old.json"
+_igc_out=$("${_igc_env[@]}" "$CLAUDII_HOME/bin/claudii" gc --insights 30 2>&1)
+assert_contains "claudii gc --insights: delegates to insights gc" "would be pruned" "$_igc_out"
+assert_file_exists "claudii gc --insights: dry-run by default" "$_igc_cache/orphan-old.json"
+
+# /bin/bash 3.2 regression: macOS system bash must produce the same dry-run result
+if [[ -x /bin/bash ]]; then
+  _igc_out=$("${_igc_env[@]}" /bin/bash "$CLAUDII_HOME/bin/claudii-insights" gc --older-than 30 2>&1)
+  assert_contains "insights gc: /bin/bash 3.2 dry-run works" "1 orphaned cache(s) older than 30d would be pruned" "$_igc_out"
+fi
+
+rm -rf "$_igc_base"
+unset _igc_base _igc_cache _igc_old_iso _igc_now_iso _igc_old_ts _igc_env _igc_out _igc_r

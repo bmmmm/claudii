@@ -317,6 +317,17 @@ Pinned sessions are never removed.
 Run
 .B claudii si
 to inspect before garbage collecting.
+With
+.BI "\-\-insights " DAYS
+additionally prunes orphaned insights caches (sessions whose source transcript
+Claude Code already deleted) older than
+.I DAYS
+days.
+Dry-run by default \(em add
+.B \-\-yes
+to delete.
+Orphaned caches are the only cost history beyond Claude Code's transcript
+retention; caches whose transcript still exists are never touched.
 Alias:
 .BR g .
 .TP
