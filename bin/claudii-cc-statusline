@@ -33,7 +33,7 @@ if [[ -f "$_config_file" ]]; then
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
     _cfg_status_ttl < <(
     jq -r '[
-      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("")) else "" end),
+      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
       (.statusline.omlx_active_path // ""),
       (.statusline.rate_display // ""),
@@ -64,9 +64,13 @@ _use_insomnii=0
 [[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1 && _use_insomnii=1
 
 # Skip clock when wrapped by cc-insomnii (it already rendered its line).
+# The ps fork runs only when delegation is possible at all (_use_insomnii) —
+# the flag's sole consumer is the clock segment, which is gated on it too.
 _wrapped_by_insomnii=0
-_parent_cmd=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d ' ')
-[[ "$_parent_cmd" == *cc-insomnii* ]] && _wrapped_by_insomnii=1
+if (( _use_insomnii )); then
+  _parent_cmd=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d ' ')
+  [[ "$_parent_cmd" == *cc-insomnii* ]] && _wrapped_by_insomnii=1
+fi
 
 # Session JSON → variables. One jq call, US (0x1F) delimited.
 _D=$'\x1f'
@@ -111,7 +115,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.repo.owner // ""),
     (.workspace.repo.name // ""),
     (.workspace.repo.pr_number // "" | tostring)
-  ] | join("")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -639,7 +643,7 @@ if [[ -f "$_omlx_active_path" ]]; then
       (.started_epoch // 0 | tostring),
       (.task // "?"),
       (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
-    ] | join("")' "$_omlx_active_path" 2>/dev/null
+    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
   )"
   if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
     _omlx_age=$(( _now - _omlx_started ))

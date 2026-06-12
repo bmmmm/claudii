@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **`claudii gc --insights DAYS [--yes]`** — opt-in pruning of orphaned insights caches (sessions whose source transcript Claude Code already deleted) older than DAYS. Dry-run by default; `--yes` deletes. Orphans are kept by design (they are the only cost history beyond CC's transcript retention), so nothing runs without the explicit flag. Caches whose transcript still exists are never touched — deleting one would not trigger re-aggregation (the marker-based scan only sees files newer than `.last-scan`). Age = `last_seen`, falling back to file mtime for degenerate caches without timestamped records. Core lives in `bin/claudii-insights gc --older-than DAYS [--yes]`.
 
 ### Changed
+- **CC-Statusline render-tick hygiene** (`bin/claudii-cc-statusline`): the `ps -o comm=` parent probe (cc-insomnii double-wrap detection) now only forks when insomnii delegation is active at all; the jq field separators are written as `\u001f`/`\u001e` escapes instead of raw control bytes (one place already used the escape — raw bytes are invisible in editors/diffs and repeatedly read as `join("")` bugs in review).
 - **Outlier flag rule: ≥2× median with ≥10 calls** (was ≥3× median, no calls floor). The 3× threshold never fired on real data (max observed 2.1×); the calls floor keeps rarely-used skills from tripping the flag on noise. JSON output documents the rule in `meta.outlier_rule`.
 
 ### Fixed
