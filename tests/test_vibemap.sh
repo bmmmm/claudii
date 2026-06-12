@@ -269,8 +269,10 @@ cat > "$_vm_home4/.config/claudii/config.json" <<EOF
 { "vibemap": { "enabled": true, "path": "$_vm_path4" }, "statusline": { "bedtime": "23:00" } }
 EOF
 
+# CLAUDII_FORCE_COLOR: the assert below checks the accent escape — captured
+# output is not a TTY, so auto-colors would blank it.
 _grid_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
-  XDG_CONFIG_HOME="$_vm_home4/.config" \
+  XDG_CONFIG_HOME="$_vm_home4/.config" CLAUDII_FORCE_COLOR=1 \
   bash "$CLAUDII_HOME/bin/claudii" vibemap 2>&1)
 
 # Header must contain ▶ marker (today's column)
@@ -301,8 +303,9 @@ cat > "$_vm_home5/.config/claudii/config.json" <<EOF
 { "vibemap": { "enabled": true, "path": "$_vm_path5" } }
 EOF
 
+# CLAUDII_FORCE_COLOR: see grid today-column test above.
 _ov_out5=$(HOME="$_vm_home5" XDG_CACHE_HOME="$_vm_home5/.cache" \
-  XDG_CONFIG_HOME="$_vm_home5/.config" \
+  XDG_CONFIG_HOME="$_vm_home5/.config" CLAUDII_FORCE_COLOR=1 \
   bash "$CLAUDII_HOME/bin/claudii" 2>&1)
 
 # Activity strip must contain the accent ANSI escape for today

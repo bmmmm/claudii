@@ -54,6 +54,11 @@ CLAUDII_CLR_RESET=$'\033[0m'
 _claudii_theme_load() {
   local theme_name=""
 
+  # Plain mode (bin/claudii blanked the constants for piped output) — a theme
+  # preset would repaint them, so skip theming entirely. The zsh plugin
+  # context always has RESET set, so this guard never fires there.
+  [ -z "${CLAUDII_CLR_RESET:-}" ] && return 0
+
   # 1. Resolve theme name — zsh plugin cache first, then jq fallback
   if [ -n "${_CLAUDII_CFG_CACHE+x}" ] 2>/dev/null; then
     # zsh associative-array context (plugin loaded)

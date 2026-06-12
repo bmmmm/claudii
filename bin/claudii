@@ -33,6 +33,17 @@ command -v jq >/dev/null 2>&1 || {
   echo "claudii: jq not found. Install: brew install jq" >&2; exit 1
 }
 
+# Auto colors (git-style): blank all ANSI constants when stdout is not a
+# terminal, so piped/redirected pretty output is clean text. --json/--tsv are
+# already plain by construction. CLAUDII_FORCE_COLOR=1 opts back in (pagers
+# like `claudii se | less -R`). The theme loader respects the blanking via
+# its empty-RESET guard (lib/visual.sh).
+if (( ! _TTY )) && [[ "${CLAUDII_FORCE_COLOR:-0}" != "1" ]]; then
+  CLAUDII_CLR_GREEN="" CLAUDII_CLR_YELLOW="" CLAUDII_CLR_RED="" CLAUDII_CLR_CYAN=""
+  CLAUDII_CLR_DIM="" CLAUDII_CLR_BOLD="" CLAUDII_CLR_ACCENT="" CLAUDII_CLR_RESET=""
+  CLAUDII_FP_PALETTE=("" "" "" "" "" "")
+fi
+
 usage() {
   local d="${CLAUDII_CLR_DIM}›${CLAUDII_CLR_RESET}"  # dim separator
   printf '\n'

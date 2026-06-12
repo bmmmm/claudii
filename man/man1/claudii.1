@@ -914,6 +914,11 @@ Path to the plugin directory. Set automatically.
 Override the cache directory (default:
 .IR ${XDG_CACHE_HOME:-~/.cache}/claudii ).
 .TP
+.B CLAUDII_FORCE_COLOR
+Set to 1 to keep ANSI colors when stdout is not a terminal (e.g.\&
+.BR "claudii se | less -R" ).
+By default piped or redirected output is plain text.
+.TP
 .B CLAUDII_LOG_LEVEL
 Override the debug log level (off, error, warn, info, debug).
 .TP

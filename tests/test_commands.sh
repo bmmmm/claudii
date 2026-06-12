@@ -316,3 +316,21 @@ assert_contains "layers: Data Flow section" "Data Flow" "$_ly_out"
 
 rm -rf "$_ly_base"
 unset _LY_BASE _LY_XDG _LY_CACHE _ly_xdg _ly_base _ly_out _ly_show_model _ly_exit
+
+# ── auto colors: piped pretty output carries no ANSI ──────────────────────────
+# bin/claudii blanks CLAUDII_CLR_* when stdout is not a TTY (captured output
+# here is a pipe). CLAUDII_FORCE_COLOR=1 must opt back in.
+
+_make_cfg_tmp _AC
+_ac_out=$(XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
+printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
+assert_eq "auto colors: piped explain output has no ANSI escapes" "0" "$_ac_has"
+
+_ac_out=$(XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" CLAUDII_FORCE_COLOR=1 \
+  bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
+printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
+assert_eq "auto colors: CLAUDII_FORCE_COLOR=1 restores ANSI" "1" "$_ac_has"
+
+rm -rf "$_AC_BASE"
+unset _AC_BASE _AC_XDG _AC_CACHE _ac_out _ac_has
