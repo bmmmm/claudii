@@ -14,10 +14,8 @@ trap 'rm -rf "${_TRENDS_TMPDIRS[@]}" 2>/dev/null' EXIT
 _TRENDS_TOK_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_TOK_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
-  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
-  > "$_TRENDS_TOK_TMP/history.tsv"
+hist_row "$_TRENDS_TOK_TMP/history.tsv" "$_now_ts"            "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200"
+hist_row "$_TRENDS_TOK_TMP/history.tsv" "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800"
 
 trends_tok_out=$(CLAUDII_CACHE_DIR="$_TRENDS_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
 trends_tok_err=$(CLAUDII_CACHE_DIR="$_TRENDS_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1 >/dev/null)
@@ -48,10 +46,8 @@ unset _TRENDS_TOK_TMP _now_ts trends_tok_out trends_tok_err
 _TRENDS_JSON_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_JSON_TMP")
 _now_ts=$(date +%s)
 
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200" \
-  "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800" \
-  > "$_TRENDS_JSON_TMP/history.tsv"
+hist_row "$_TRENDS_JSON_TMP/history.tsv" "$_now_ts"            "claude-opus-4-5"   "0.50" "45" "30" "abc12345" "15000" "5000" "1200"
+hist_row "$_TRENDS_JSON_TMP/history.tsv" "$(( _now_ts - 60 ))" "claude-sonnet-4-5" "0.25" "30" "20" "def67890" "8000"  "2000" "800"
 
 trends_json=$(CLAUDII_CACHE_DIR="$_TRENDS_JSON_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
 
@@ -186,11 +182,9 @@ _TRENDS_NEW_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_NEW_TMP")
 _now_ts=$(date +%s)
 # Two sessions today (Opus + Sonnet) plus one ~35 days ago, so history spans
 # >30 days and the Trend line is shown (it is gated on >=30 days of history).
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"                   "claude-opus-4-5"   "5.00"  "45" "30" "new-sid1" "50000" "10000" "2000" \
-  "$(( _now_ts - 300 ))"       "claude-sonnet-4-5" "2.00"  "30" "20" "new-sid2" "20000" "5000"  "1000" \
-  "$(( _now_ts - 35 * 86400 ))" "claude-opus-4-5"  "3.00"  "45" "30" "new-sid3" "30000" "8000"  "1500" \
-  > "$_TRENDS_NEW_TMP/history.tsv"
+hist_row "$_TRENDS_NEW_TMP/history.tsv" "$_now_ts"                    "claude-opus-4-5"   "5.00" "45" "30" "new-sid1" "50000" "10000" "2000"
+hist_row "$_TRENDS_NEW_TMP/history.tsv" "$(( _now_ts - 300 ))"        "claude-sonnet-4-5" "2.00" "30" "20" "new-sid2" "20000" "5000"  "1000"
+hist_row "$_TRENDS_NEW_TMP/history.tsv" "$(( _now_ts - 35 * 86400 ))" "claude-opus-4-5"   "3.00" "45" "30" "new-sid3" "30000" "8000"  "1500"
 
 trends_new_out=$(CLAUDII_CACHE_DIR="$_TRENDS_NEW_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
 
@@ -225,10 +219,8 @@ unset _TRENDS_NEW_TMP _now_ts trends_new_out
 _TRENDS_SPARSE_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_SPARSE_TMP")
 _now_ts=$(date +%s)
 # Only today + 2 days ago → earliest cost day is well under 30 days back.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"                  "claude-opus-4-5"   "5.00" "45" "30" "sp-sid1" "50000" "10000" "2000" \
-  "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "30" "20" "sp-sid2" "20000" "5000"  "1000" \
-  > "$_TRENDS_SPARSE_TMP/history.tsv"
+hist_row "$_TRENDS_SPARSE_TMP/history.tsv" "$_now_ts"                   "claude-opus-4-5"   "5.00" "45" "30" "sp-sid1" "50000" "10000" "2000"
+hist_row "$_TRENDS_SPARSE_TMP/history.tsv" "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "30" "20" "sp-sid2" "20000" "5000"  "1000"
 trends_sparse_out=$(CLAUDII_CACHE_DIR="$_TRENDS_SPARSE_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
 assert_not_contains "trends (sparse history): Trend line hidden (<30 days)" "Trend:" "$trends_sparse_out"
 # Median should still show (it's not gated)
@@ -264,10 +256,8 @@ unset _TRENDS_CRLF_TMP _now_ts trends_crlf_out trends_crlf_exit
 # Real model names with hyphen boundaries ("claude-opus-4-5") still match.
 _TRENDS_WA_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_WA_TMP")
 _now_ts=$(date +%s)
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now_ts"             "myopusx"          "9.00" "45" "30" "wa000001" "1000" "500" "200" \
-  "$(( _now_ts - 60 ))" "claude-opus-4-5"  "0.10" "30" "20" "wa000002" "100"  "50" "100" \
-  > "$_TRENDS_WA_TMP/history.tsv"
+hist_row "$_TRENDS_WA_TMP/history.tsv" "$_now_ts"            "myopusx"         "9.00" "45" "30" "wa000001" "1000" "500" "200"
+hist_row "$_TRENDS_WA_TMP/history.tsv" "$(( _now_ts - 60 ))" "claude-opus-4-5" "0.10" "30" "20" "wa000002" "100"  "50"  "100"
 trends_wa_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WA_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
 # If "myopusx" were misclassified as Opus, Opus would dominate (9.00 vs 0.10).
 # With word-anchoring, only the real Opus row is counted → Opus has 1 session.
@@ -282,7 +272,7 @@ unset _TRENDS_WA_TMP _now_ts trends_wa_json _opus_sessions
 # what `date` produces for that date — guards the (ld+4)%7 weekday formula.
 _TRENDS_WD_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_WD_TMP")
 _now_ts=$(date +%s)
-printf '%s\tclaude-opus-4-8\t1.00\t50\t30\twd-sid\t5000\t1000\t0\n' "$_now_ts" > "$_TRENDS_WD_TMP/history.tsv"
+hist_row "$_TRENDS_WD_TMP/history.tsv" "$_now_ts" "claude-opus-4-8" "1.00" "50" "30" "wd-sid" "5000" "1000" "0"
 trends_wd_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WD_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
 _wd_mismatch=0
 while IFS=' ' read -r _wd_date _wd_name; do

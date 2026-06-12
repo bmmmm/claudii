@@ -476,10 +476,8 @@ _OV_HIST_TMP="$(mktemp -d)"
 printf 'model=Sonnet\nctx_pct=50\ncost=99.00\nrate_5h=30\nrate_7d=20\nsession_id=ovhist-sid\nppid=%s\n' "$$" \
   > "$_OV_HIST_TMP/session-ovhist"
 _ov_now=$(date +%s)
-printf '%s\tclaude-sonnet-4-6\t1.00\t50\t30\tovhist-sid\t5000\t1000\t0\n' "$(( _ov_now - 120 ))" \
-  > "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv"
-printf '%s\tclaude-sonnet-4-6\t3.00\t50\t30\tovhist-sid\t6000\t1200\t0\n' "$_ov_now" \
-  >> "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv"
+hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$(( _ov_now - 120 ))" "claude-sonnet-4-6" "1.00" "50" "30" "ovhist-sid" "5000" "1000" "0"
+hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$_ov_now"             "claude-sonnet-4-6" "3.00" "50" "30" "ovhist-sid" "6000" "1200" "0"
 _ov_hist_out=$(CLAUDII_CACHE_DIR="$_OV_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" 2>/dev/null \
   | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "overview (history): today cost = history delta sum" '$3.00 today (1 session)' "$_ov_hist_out"
@@ -513,8 +511,7 @@ assert_eq "spinner: sessions stdout has no spinner chars" "0" \
   "$(printf '%s' "$_sp_stdout" | grep -c '⠋\|⠙\|⠹\|⠸\|⠼\|⠴\|⠦\|⠧\|⠇\|⠏' || true)"
 
 # cost with history data — stdout only (cost reads history.tsv, not session caches)
-printf '%s\tclaude-sonnet-4-6\t1.23\t50\t30\tsp-cost-sid\t5000\t1000\t0\n' "$(date +%s)" \
-  > "$_SP_CACHE/history.tsv"
+hist_row "$_SP_CACHE/history.tsv" "$(date +%s)" "claude-sonnet-4-6" "1.23" "50" "30" "sp-cost-sid" "5000" "1000" "0"
 _sp_cost_stdout=$(HOME="$_SP_TMP" CLAUDII_CACHE_DIR="$_SP_CACHE" XDG_CONFIG_HOME="$_SP_XDG" \
   bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
 assert_contains "spinner: cost stdout shows model" "Sonnet" "$_sp_cost_stdout"

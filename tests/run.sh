@@ -100,6 +100,20 @@ assert_no_literal_ansi() {
   fi
 }
 
+# Canonical CURRENT-format history fixture row — the 9-col layout
+# bin/claudii-cc-statusline writes:
+#   timestamp  model  cost  ctx_pct  rate_5h  session_id  in_tok  out_tok  api_ms
+# Appends one row to the file in $1. Single source of the column layout for
+# test fixtures: a future schema change updates THIS helper (and the
+# consumers), not every printf across cost/trends/cli tests (see the
+# cost-history-format lesson). Legacy-format fixtures (6-col, CRLF, short
+# rows) stay as explicit printf in the tests — they exercise format deviations.
+hist_row() {
+  local _f="$1" _ts="$2" _model="$3" _cost="$4" _ctx="${5:-0}" _rate="${6:-0}" _sid="$7" _in="${8:-0}" _out="${9:-0}" _api="${10:-0}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$_ts" "$_model" "$_cost" "$_ctx" "$_rate" "$_sid" "$_in" "$_out" "$_api" >> "$_f"
+}
+
 assert_matches() {
   local desc="$1" needle="$2" haystack="$3"
   if grep -qE "$needle" <<< "$haystack"; then
@@ -118,7 +132,7 @@ assert_matches() {
 export CLAUDII_HOME TESTS_DIR
 export GREEN RED YELLOW NC
 export -f assert_eq assert_contains assert_not_contains assert_exit_code assert_file_exists
-export -f assert_no_literal_ansi assert_matches
+export -f assert_no_literal_ansi assert_matches hist_row
 
 # ── Subprocess helper ────────────────────────────────────────────────────────
 # Runs a single test file in a subshell, writes output + summary line to $out_file.
