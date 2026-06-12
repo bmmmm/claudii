@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.22.0] — 2026-06-12
+
 ### Added
 - **Fable 5 recognition** (CC v2.1.170 shipped `claude-fable-5`, Anthropic's new Mythos-class tier above Opus). `_insights_model_label()` (`lib/cmd/insights.sh`) maps `*fable-5*` → `Fable 5` plus a bare `*fable*` tier fallback — previously the raw model ID leaked into the `claudii cache` per-model table. The tier-collapsing AWK in `lib/cmd/cost.sh` / `lib/cmd/display.sh` gained a `Fable` branch (most-capable-first) so cost tiles and trends group Fable sessions under one label instead of per-version IDs. Label asserts added to `tests/test_cache.sh`; the CLAUDE.md model-ship checklist now distinguishes version bumps (no AWK change) from new tiers (AWK branch in both files required).
 
