@@ -195,8 +195,8 @@ _cmd_explain() {
   # CC-Statusline
   settings_file="$HOME/.claude/settings.json"
   if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
-    sl_cmd=$(jq -r '.statusLine // empty' "$settings_file" 2>/dev/null)
-    if [[ -n "$sl_cmd" && "$sl_cmd" == *claudii* ]]; then
+    sl_cmd=$(jq -r '.statusLine.command // empty' "$settings_file" 2>/dev/null)
+    if [[ -n "$sl_cmd" ]] && _cc_statusline_connected "$sl_cmd"; then
       sl_state="${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}"
     else
       sl_state="${CLAUDII_CLR_DIM}not configured${CLAUDII_CLR_RESET}"
