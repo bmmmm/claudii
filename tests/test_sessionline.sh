@@ -686,3 +686,43 @@ _ac_nown='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":4
 output=$(echo "$_ac_nown" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
 assert_contains "auto-compact token count w/o window size falls back" "50%" "$output"
 unset _ac_json _ac_nown
+
+# ── Compaction counter (context-usage collapse detection) ────────────────────
+_cp_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_cp_cache")
+_cp_cfg="$(mktemp -d)";   _SL_TMPDIRS+=("$_cp_cfg")
+mkdir -p "$_cp_cfg/claudii"
+printf '{"statusline":{"lines":[["model","compactions"]]}}\n' > "$_cp_cfg/claudii/config.json"
+_cp_json() { # args: used_percentage
+  printf '{"model":{"display_name":"Opus"},"session_id":"compactsess01","context_window":{"used_percentage":%s,"total_input_tokens":1000,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.10}}' "$1"
+}
+
+# Render 1: high context — counter starts at 0, segment hidden
+output=$(_cp_json 85 | CLAUDII_CACHE_DIR="$_cp_cache" XDG_CONFIG_HOME="$_cp_cfg" bash "$SL" 2>&1)
+_cp_state=$(cat "$_cp_cache/session-compacts" 2>/dev/null)
+assert_contains "compactions: last_ctx_pct cached" "last_ctx_pct=85" "$_cp_state"
+assert_contains "compactions: counter starts 0" "compactions=0" "$_cp_state"
+if [[ "$output" == *"♻"* ]]; then
+  assert_eq "compactions: segment hidden at 0" "no-glyph" "glyph-present"
+else
+  assert_eq "compactions: segment hidden at 0" "no-glyph" "no-glyph"
+fi
+
+# Render 2: context collapses 85 → 20 → counter increments, segment renders
+output=$(_cp_json 20 | CLAUDII_CACHE_DIR="$_cp_cache" XDG_CONFIG_HOME="$_cp_cfg" bash "$SL" 2>&1)
+_cp_state=$(cat "$_cp_cache/session-compacts" 2>/dev/null)
+assert_contains "compactions: collapse detected" "compactions=1" "$_cp_state"
+assert_contains "compactions: segment renders count" "♻1" "$output"
+
+# Render 3: small drop (20 → 15) — no increment
+output=$(_cp_json 15 | CLAUDII_CACHE_DIR="$_cp_cache" XDG_CONFIG_HOME="$_cp_cfg" bash "$SL" 2>&1)
+_cp_state=$(cat "$_cp_cache/session-compacts" 2>/dev/null)
+assert_contains "compactions: small drop ignored" "compactions=1" "$_cp_state"
+
+# Render 4: climb back up then collapse again → counter 2
+_cp_json 70 | CLAUDII_CACHE_DIR="$_cp_cache" XDG_CONFIG_HOME="$_cp_cfg" bash "$SL" >/dev/null 2>&1
+output=$(_cp_json 12 | CLAUDII_CACHE_DIR="$_cp_cache" XDG_CONFIG_HOME="$_cp_cfg" bash "$SL" 2>&1)
+_cp_state=$(cat "$_cp_cache/session-compacts" 2>/dev/null)
+assert_contains "compactions: second collapse counted" "compactions=2" "$_cp_state"
+assert_contains "compactions: segment shows 2" "♻2" "$output"
+unset _cp_cache _cp_cfg _cp_state
+unset -f _cp_json

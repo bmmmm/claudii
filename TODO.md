@@ -20,18 +20,6 @@
 
 ---
 
-### Backlog — Compaction counter
-
-**Type: Feature**
-**Complexity: Small-medium**
-**Touches: session cache schema, `bin/claudii-cc-statusline`**
-
-ccstatusline shipped #282 (compaction counter). Pairs naturally with our
-burn-ETA — "how many compactions did this session survive?". Inner layer.
-(Defer-until-v0.18.4-6 note dropped — we're past v0.19.0, no longer gated.)
-
----
-
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**

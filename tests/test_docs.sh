@@ -40,7 +40,7 @@ assert_eq "toggle removed from bin/claudii" "" \
 # Update this list whenever a new segment is added to bin/claudii-cc-statusline.
 SL_SEGMENTS=(
   model context-bar rate-5h rate-7d cost tokens lines-changed duration
-  api-duration burn-eta pace cron bg-tasks delta-5h delta-7d cache-create session-name
+  api-duration burn-eta pace cron bg-tasks compactions delta-5h delta-7d cache-create session-name
   worktree agent ruler claude-status github
 )
 for seg in "${SL_SEGMENTS[@]}"; do

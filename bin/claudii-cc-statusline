@@ -145,6 +145,21 @@ _rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && _rate_7d_start
 _rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && _rate_5h_start=$(_cache_get rate_5h_start "$rate_5h")
 _last_duration_ms=$(_cache_get last_duration_ms "")
 
+# Compaction counter — no compaction signal exists in the statusline JSON, so
+# detect the footprint: context usage collapsing between renders of the SAME
+# session (>= 30-point drop from >= 50%). Survives in the cache as compactions=.
+_compactions=$(_cache_get compactions "0")
+[[ "$_compactions" =~ ^[0-9]+$ ]] || _compactions=0
+_last_ctx_pct=$(_cache_get last_ctx_pct "")
+if [[ "$ctx_pct" != "null" && -n "$ctx_pct" && "$_last_ctx_pct" =~ ^[0-9]+$ ]]; then
+  _ctx_now=${ctx_pct%.*}
+  if [[ "$_ctx_now" =~ ^[0-9]+$ ]] && (( _last_ctx_pct >= 50 && _last_ctx_pct - _ctx_now >= 30 )); then
+    (( ++_compactions ))
+  fi
+fi
+_last_ctx_store=""
+[[ -n "$ctx_pct" && "$ctx_pct" != "null" ]] && _last_ctx_store=${ctx_pct%.*}
+
 # Burn-rate ETA (cached for dashboard, not rendered here).
 _burn_eta=""
 _pace_state=""
@@ -196,6 +211,8 @@ _tmp_session="${_session_file}.tmp.$$"
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
   "last_duration_ms=$duration_ms" \
+  "last_ctx_pct=$_last_ctx_store" \
+  "compactions=$_compactions" \
   "project_path=$cwd"
   [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
   [[ -n "$_cached_next_cron_at" ]]  && printf 'next_cron_at=%s\n'  "$_cached_next_cron_at"
@@ -423,6 +440,14 @@ case "${_pace_state:-}" in
   on_pace) _seg_pace="${DIM}=${RST}"   ;;
   behind)  _seg_pace="${YELLOW}↓${RST}" ;;
 esac
+
+# Compactions segment — renders ♻N once the session survived a compaction.
+# Pairs with burn-ETA ("how many compactions did this session survive?").
+# Opt-in (not in default layout).
+_seg_compactions=""
+if [[ "$_compactions" =~ ^[0-9]+$ ]] && (( _compactions >= 1 )); then
+  _seg_compactions="${DIM}♻${_compactions}${RST}"
+fi
 
 # Bg-tasks segment — reads bg_tasks from per-session cache (written by claudii-stop-hook).
 # Renders ⚙ Nbg when bg_tasks >= 1; empty otherwise. Opt-in (not in default layout).
@@ -695,6 +720,7 @@ while IFS= read -r _line_segs; do
       pace)          _val="$_seg_pace"     ;;
       cron)          _val="$_seg_cron"     ;;
       bg-tasks)      _val="$_seg_bg"       ;;
+      compactions)   _val="$_seg_compactions" ;;
       worktree)      _val="$_seg_worktree" ;;
       agent)         _val="$_seg_agent"    ;;
       session-name)  _val="$_seg_session_name" ;;
