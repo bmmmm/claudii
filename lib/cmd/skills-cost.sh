@@ -40,24 +40,12 @@ _cmd_skills_cost() {
   local _P_CR="0.0000003"     # $0.3/M cache_read
   local _P_CC="0.00000375"    # $3.75/M cache_create
 
-  # Locate insights cache directory.
-  local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local _insights_dir="$_cache_base/insights"
-
-  # Gather cache files; filter by --days cutoff using last_seen field.
-  # days is a validated positive integer (above), so compute the cutoff directly.
-  local _cutoff_iso
-  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-    _cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
-  else
-    _cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
-  fi
-
-  shopt -s nullglob
-  local _sc_files=("$_insights_dir"/*.json)
-  shopt -u nullglob
-
-  if [[ ${#_sc_files[@]} -eq 0 ]]; then
+  # Aggregate via `claudii-insights merge` (through the shared helper) — the
+  # --days cutoff and cross-session summing live there, single source of truth.
+  # This function used to re-implement both against the raw cache files.
+  local merged
+  merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
     printf 'No skill attribution data yet — run some sessions or `claudii-insights aggregate --force`.\n'
     return 0
   fi
@@ -70,32 +58,25 @@ _cmd_skills_cost() {
     section_label="Plugin"
   fi
 
-  # Aggregate attribution data across all cache files.
-  # Output: TSV — name\tcalls\tin_tok\tout_tok\tcache_read\tcache_create
+  # Price the pre-summed attribution block.
+  # Output: TSV — name\tcalls\ttot_usd\tavg_usd
   local rows_tsv
-  rows_tsv=$(jq -rn \
-    --arg cutoff "$_cutoff_iso" \
+  rows_tsv=$(jq -r \
     --arg k "$attr_key" \
     --arg pin "$_P_IN" \
     --arg pout "$_P_OUT" \
     --arg pcr "$_P_CR" \
     --arg pcc "$_P_CC" \
     '
-    # Read all input files, filter by cutoff, aggregate attribution by name
-    [inputs
-      | select(($cutoff == "") or ((.last_seen // "") >= $cutoff))
-      | .[$k] // {}
-      | to_entries[]
-      | {name: .key, v: .value}
-    ]
-    | group_by(.name)
+    .[$k] // {}
+    | to_entries
     | map({
-        name:         .[0].name,
-        calls:        ([.[] | .v.calls         // 0] | add),
-        in_tok:       ([.[] | .v.in_tok        // 0] | add),
-        out_tok:      ([.[] | .v.out_tok       // 0] | add),
-        cache_read:   ([.[] | .v.cache_read    // 0] | add),
-        cache_create: ([.[] | .v.cache_create  // 0] | add)
+        name:         .key,
+        calls:        (.value.calls        // 0),
+        in_tok:       (.value.in_tok       // 0),
+        out_tok:      (.value.out_tok      // 0),
+        cache_read:   (.value.cache_read   // 0),
+        cache_create: (.value.cache_create // 0)
       })
     | map(. + {
         tot_usd: (
@@ -110,7 +91,7 @@ _cmd_skills_cost() {
     | .[]
     | [.name, (.calls | tostring), (.tot_usd | tostring), (.avg_usd | tostring)]
     | @tsv
-    ' "${_sc_files[@]}" 2>/dev/null)
+    ' <<< "$merged" 2>/dev/null)
 
   if [[ -z "$rows_tsv" ]]; then
     printf 'No skill attribution data yet — run some sessions or `claudii-insights aggregate --force`.\n'
