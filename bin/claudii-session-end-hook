@@ -1,0 +1,62 @@
+#!/bin/bash
+# claudii-session-end-hook — SessionEnd hook handler.
+# Reads SessionEnd JSON from stdin and emits a terminalSequence desktop
+# notification ("session ended, cost $X.YZ") when notifications are enabled.
+# SessionEnd fires on real session termination (matchers: clear/resume/logout/
+# prompt_input_exit/other) and cannot block — observability only.
+# Wire into ~/.claude/settings.json:
+#   "hooks": { "SessionEnd": [{ "type": "command", "command": "claudii-session-end-hook" }] }
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=lib/log.sh
+source "$CLAUDII_HOME/lib/log.sh"
+
+command -v jq >/dev/null 2>&1 || { printf 'claudii-session-end-hook: jq not found — install jq\n' >&2; exit 1; }
+
+read -r json
+
+_cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+umask 077
+
+# Config gate — master switch + session_end toggle + OSC flavor.
+_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+_nt_enabled="false"; _nt_session_end="true"; _nt_osc="777"
+if [[ -f "$_config_file" ]]; then
+  IFS=$'\x1f' read -r _nt_enabled _nt_session_end _nt_osc < <(
+    jq -r '[
+      (.notifications.enabled // false | tostring),
+      (if .notifications.session_end == false then "false" else "true" end),
+      (.notifications.osc // "777" | tostring)
+    ] | join("\u001f")' "$_config_file" 2>/dev/null
+  )
+fi
+[[ "$_nt_enabled" == "true" && "$_nt_session_end" == "true" ]] || exit 0
+[[ "$_nt_osc" == "9" ]] || _nt_osc="777"
+
+# Session cost from the per-session cache (written by claudii-cc-statusline),
+# keyed by the first 8 chars of session_id — same scheme as the other hooks.
+_session_id=$(jq -r '.session_id // ""' <<< "$json" 2>/dev/null)
+_body="session ended"
+if [[ -n "$_session_id" ]]; then
+  _sid="${_session_id:0:8}"
+  _session_file="$_cache_dir/session-${_sid}"
+  if [[ -f "$_session_file" ]]; then
+    _cost=$(grep -m1 '^cost=' "$_session_file" 2>/dev/null | cut -d= -f2)
+    if [[ "$_cost" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      _body="session ended, cost \$$(LC_NUMERIC=C printf '%.2f' "$_cost")"
+    fi
+  fi
+fi
+
+_claudii_log debug "session-end-hook: sid=${_session_id:0:8} body=${_body} osc=${_nt_osc}"
+
+_esc=$'\033'; _bel=$'\007'
+if [[ "$_nt_osc" == "9" ]]; then
+  # iTerm2 / WezTerm / Windows Terminal flavor — message only.
+  _nt_seq="${_esc}]9;claudii: ${_body}${_bel}"
+else
+  # Ghostty / urxvt / Warp flavor — title;body.
+  _nt_seq="${_esc}]777;notify;claudii;${_body}${_bel}"
+fi
+
+jq -n --arg seq "$_nt_seq" '{terminalSequence: $seq}'

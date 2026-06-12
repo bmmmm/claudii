@@ -72,4 +72,46 @@ _tmp_session="${_session_file}.tmp.$$"
   printf 'bg_tasks=%s\n'     "${_bg_tasks}"
 } > "$_tmp_session" && mv -f "$_tmp_session" "$_session_file" || rm -f "$_tmp_session"
 
+# ── terminalSequence notifications (CC >= 2.1.141) ───────────────────────────
+# Hook stdout JSON {"terminalSequence": "<seq>"} is forwarded to the terminal.
+# Allowlisted by CC: OSC 0/1/2 (title), OSC 9, OSC 99, OSC 777, bare BEL.
+# Opt-in via config.json notifications.* (master switch default off); empty
+# stdout is a valid hook response, so disabled/no-trigger prints nothing.
+_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+_nt_enabled="false"; _nt_model_down="true"; _nt_burn="true"; _nt_thresh="30"
+if [[ -f "$_config_file" ]]; then
+  IFS=$'\x1f' read -r _nt_enabled _nt_model_down _nt_burn _nt_thresh < <(
+    jq -r '[
+      (.notifications.enabled // false | tostring),
+      (if .notifications.model_down == false then "false" else "true" end),
+      (if .notifications.burn_eta == false then "false" else "true" end),
+      (.notifications.burn_eta_threshold_min // 30 | tostring)
+    ] | join("\u001f")' "$_config_file" 2>/dev/null
+  )
+fi
+[[ "$_nt_thresh" =~ ^[0-9]+$ ]] || _nt_thresh=30
+
+if [[ "$_nt_enabled" == "true" ]]; then
+  _esc=$'\033'; _bel=$'\007'
+  _nt_seq=""
+
+  # Model down → window title (OSC 0). First down model from the status cache.
+  if [[ "$_nt_model_down" == "true" && -f "$_cache_dir/status-models" ]]; then
+    _nt_down=$(grep -m1 '=down$' "$_cache_dir/status-models" 2>/dev/null | cut -d= -f1)
+    _nt_down="${_nt_down//[^a-zA-Z0-9._-]/}"   # control-char/format hygiene
+    [[ -n "$_nt_down" ]] && _nt_seq+="${_esc}]0;[!${_nt_down} down] claude${_bel}"
+  fi
+
+  # Burn-ETA critical → bell + window title. burn_eta= (minutes to rate-limit
+  # depletion) is written into the per-session cache by claudii-cc-statusline.
+  if [[ "$_nt_burn" == "true" && -f "$_session_file" ]]; then
+    _nt_eta=$(grep -m1 '^burn_eta=' "$_session_file" 2>/dev/null | cut -d= -f2)
+    if [[ "$_nt_eta" =~ ^[0-9]+$ ]] && (( _nt_eta > 0 && _nt_eta < _nt_thresh )); then
+      _nt_seq+="${_bel}${_esc}]0;[!${_nt_eta}m to limit] claude${_bel}"
+    fi
+  fi
+
+  [[ -n "$_nt_seq" ]] && jq -n --arg seq "$_nt_seq" '{terminalSequence: $seq}'
+fi
+
 true

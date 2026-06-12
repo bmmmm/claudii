@@ -20,22 +20,6 @@
 
 ---
 
-### `terminalSequence` Notifications from claudii hooks
-
-**Type: Feature**
-**Complexity: Small**
-**Touches: hooks (new or existing), `lib/cmd/system.sh`**
-**Triggered by:** CC v2.1.141 added `terminalSequence` field in Hook JSON Output — Desktop Notifications, Window Titles, Bells without controlling terminal.
-
-**Use-cases:**
-- ClaudeStatus model down → window-title `[!opus down] claude`
-- Burn-ETA critical (<30min to depletion) → bell + title
-- Session ended → notification "session ended, cost $X.YZ" — use the **`SessionEnd` hook** (CC v2.1.169), not Stop: fires on real session termination, has matchers for the end reason (`clear`/`resume`/`logout`/`prompt_input_exit`/`other`), cannot block (observability-only — exactly our case)
-
-**Schema (verified against code.claude.com/docs/en/hooks, 2026-06-12):** hook stdout JSON `{"terminalSequence": "<escape sequence>"}`; allowlist is OSC `0`/`1`/`2` (window/icon title), OSC `9` (iTerm2/ConEmu/Windows Terminal/WezTerm notify, incl. `9;4` taskbar progress), OSC `99` (Kitty), OSC `777` (urxvt/**Ghostty**/Warp), bare BEL. Anything else is rejected silently. Works in tmux/screen, requires CC ≥2.1.141. Ghostty (our terminal) → OSC 777: `printf '\033]777;notify;%s;%s\007' "$title" "$body"`.
-
----
-
 ### Backlog — Compaction counter
 
 **Type: Feature**

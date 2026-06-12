@@ -5,6 +5,14 @@
     "clm": { "model": "opus",   "effort": "xhigh",  "description": "Hardest problems" },
     "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" }
   },
+  "notifications": {
+    "enabled": false,
+    "model_down": true,
+    "burn_eta": true,
+    "burn_eta_threshold_min": 30,
+    "session_end": true,
+    "osc": "777"
+  },
   "fallback": {
     "enabled": true,
     "opus":   { "model": "sonnet", "effort": "high" },

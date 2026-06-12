@@ -728,6 +728,43 @@ to
 to opt in.
 .B claudii se
 also shows the glyph inline per session row when cached.
+.PP
+.B Terminal notifications (terminalSequence):
+with
+.B notifications.enabled
+set to
+.IR true ,
+the hooks emit
+.B terminalSequence
+JSON (Claude Code \(>= 2.1.141) so the terminal shows alerts without a
+controlling tty (works in tmux):
+.B claudii-stop-hook
+sets the window title when a monitored model is
+.I down
+(\fBnotifications.model_down\fR) and rings the bell when the cached burn-ETA
+drops below
+.B notifications.burn_eta_threshold_min
+minutes (\fBnotifications.burn_eta\fR);
+.B claudii-session-end-hook
+(wire into
+.BR hooks.SessionEnd )
+sends a desktop notification with the session cost on real session
+termination.
+.B notifications.osc
+picks the notify flavor:
+.I 777
+(Ghostty, urxvt, Warp) or
+.I 9
+(iTerm2, WezTerm, Windows Terminal).
+.PP
+.RS
+.EX
+"hooks": {
+  "Stop":       [{ "type": "command", "command": "claudii-stop-hook" }],
+  "SessionEnd": [{ "type": "command", "command": "claudii-session-end-hook" }]
+}
+.EE
+.RE
 .
 .SH CONFIGURATION
 User config:
@@ -758,6 +795,12 @@ statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
 statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
 statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
 session-dashboard.enabled	off	Session Dashboard above prompt: on/off
+notifications.enabled	false	terminalSequence alerts from hooks (master switch)
+notifications.model_down	true	Window-title alert when a model is down
+notifications.burn_eta	true	Bell + title when burn-ETA < threshold
+notifications.burn_eta_threshold_min	30	Burn-ETA alert threshold (minutes)
+notifications.session_end	true	Desktop notification on session end
+notifications.osc	777	Notify flavor: \fB777\fR (Ghostty/urxvt/Warp) or \fB9\fR (iTerm2/WezTerm)
 search.dir	~/claude-search	Directory for search mode
 ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)
 debug.level	off	Log level: off/error/warn/info/debug
