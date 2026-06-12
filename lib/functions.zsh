@@ -54,7 +54,7 @@ function _claudii_rl_warn {
 
   _reset_str=""
   if [[ -n "$_best_reset" && "$_best_reset" != "0" && "$_best_reset" != "null" ]]; then
-    _remaining=$(( ${_best_reset%.*} - EPOCHSECONDS ))
+    _remaining=$(( ${_best_reset%.*} - ${_CLAUDII_NOW:-$EPOCHSECONDS} ))
     if (( _remaining > 0 )); then
       _fmt_rel $_remaining
       [[ -n "$_REL_FMT" ]] && _reset_str=" · resets in ${_REL_FMT}"
