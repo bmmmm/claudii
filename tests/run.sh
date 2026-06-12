@@ -229,7 +229,11 @@ if (( _summary_only )); then
 else
   echo ""
   echo "───────────────────"
-  echo -e "  ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
+  if (( FAIL > 0 )); then
+    echo -e "  ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
+  else
+    echo -e "  ${GREEN}$PASS passed${NC}"
+  fi
   if [[ ${#ERRORS[@]} -gt 0 ]]; then
     echo ""
     echo -e "${RED}Failures:${NC}"
