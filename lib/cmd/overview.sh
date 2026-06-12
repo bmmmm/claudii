@@ -124,19 +124,14 @@ _ov_gather() {
     _ov_tz=$(_tz_offset_secs)
     _ov_today_hist=$(awk -F'\t' -v tz_offset="${_ov_tz:-0}" -v today="$(date '+%Y-%m-%d')" "
 $(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+$(<"$CLAUDII_HOME/lib/attribution.awk")
 "'
       NF < 6 { next }
       $1 == "timestamp" || $1 == "" || $6 == "" { next }
       {
         ts = $1 + 0; if (ts == 0) next
         cost = $3 + 0; sid = $6
-        cinc = 0
-        if (sid in base) {
-          prev = base[sid]
-          if (cost > prev)            cinc = cost - prev
-          else if (cost < prev * 0.5) cinc = cost   # genuine reset (compaction)
-        } else cinc = cost
-        base[sid] = cost
+        cinc = attr_delta(base, sid, cost)
         if (cinc > 0 && epoch_to_date(ts) == today) { total += cinc; seen[sid] = 1 }
       }
       END { n = 0; for (s in seen) n++; printf "%.4f %d", total, n }

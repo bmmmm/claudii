@@ -1,5 +1,7 @@
 # trends.awk — claudii trends aggregation and formatting
-# Standalone awk program, called via -f from _cmd_trends()
+# Standalone awk program, called via -f from _cmd_trends().
+# Requires lib/attribution.awk loaded first (awk -f attribution.awk -f trends.awk)
+# for the shared attr_delta() per-session delta heuristic.
 # Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
 # Variables (passed via -v): today, week_start, last_mon, last_sun, thirty,
 #   week_days, fmt, cyan, dim, pink, reset
@@ -17,38 +19,12 @@ function fmt_tok(t) {
   if ($7 + 0 > 0) api_by_day[$1] += $7   # daily API duration (folded in from a 2nd awk pass)
   if (sid == "") next
 
-  # running_spend: attribute incremental cost delta to this row's day.
-  # Handles intra-day resets (context compaction) correctly.
-  # Relies on rows arriving in chronological order per session (guaranteed by the
-  # real-time history append + lexical-glob collection in _collect_history_files).
-  # The same delta logic lives in _cmd_cost_from_history (lib/cmd/sessions.sh) —
-  # keep both in sync.
-  if (sid in sid_baseline) {
-    prev = sid_baseline[sid]
-    if (cost > prev) {
-      delta = cost - prev
-    } else if (cost < prev * 0.5) {
-      delta = cost   # genuine reset: post-compaction baseline
-    } else {
-      delta = 0      # noise or tiny decrease — ignore
-    }
-  } else {
-    delta = cost     # first row for this session
-  }
-  sid_baseline[sid] = cost
-
+  # Attribute incremental cost/token deltas to this row's day — shared
+  # heuristic (resets, noise) lives in lib/attribution.awk.
+  delta = attr_delta(sid_baseline, sid, cost)
   if (delta > 0) day_cost[day] += delta
 
-  # Token running_spend — same delta approach as cost
-  if (sid in tok_baseline) {
-    prev_tok = tok_baseline[sid]
-    if (total_tok > prev_tok)             tok_delta = total_tok - prev_tok
-    else if (total_tok < prev_tok * 0.5)  tok_delta = total_tok
-    else                                  tok_delta = 0
-  } else {
-    tok_delta = total_tok
-  }
-  tok_baseline[sid] = total_tok
+  tok_delta = attr_delta(tok_baseline, sid, total_tok)
   if (tok_delta > 0) day_tok[day] += tok_delta
 
   # Count each session once per (day, sid) for session counts and model split

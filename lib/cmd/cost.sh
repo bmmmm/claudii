@@ -10,8 +10,9 @@ _cmd_cost_from_history() {
   local _date_cmd="$_DATE_CMD" _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
 
   # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
-  local _epoch_awk
+  local _epoch_awk _attr_awk
   _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+  _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -66,7 +67,9 @@ ${_epoch_awk}
     -v dim="$CLAUDII_CLR_DIM" \
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
-    '
+    "
+${_attr_awk}
+"'
     function fmt_tok(t) {
       if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
       if (t >= 1000)    return sprintf("%.0fK", t / 1000)
@@ -164,31 +167,13 @@ ${_epoch_awk}
       # to whichever model was running when it was incurred. This fixes the
       # mixed-model-day bug where the whole-day delta was credited to the last
       # model seen (e.g. Opus work + Sonnet cleanup → all counted as Sonnet).
-      # Increments on cost increases; a >50% drop counts the post-reset cost as
-      # fresh spend (context compaction); minor fluctuations are ignored.
-      # NOTE: relies on rows arriving in chronological order per session
-      # (guaranteed by real-time history append + lexical glob == chronological).
-      cinc = 0
-      if (sid in sid_baseline) {
-        prev = sid_baseline[sid]
-        if (cost > prev)            cinc = cost - prev
-        else if (cost < prev * 0.5) cinc = cost   # genuine reset (context compaction)
-      } else {
-        cinc = cost                                # first row: starting cost as spend
-      }
-      sid_baseline[sid] = cost
+      # Delta heuristic (resets, noise) is the shared attr_delta() from
+      # lib/attribution.awk, injected above.
+      cinc = attr_delta(sid_baseline, sid, cost)
 
       # Token increment — same delta approach; tokens are reported as model-agnostic
       # period totals, so they are accumulated per-day, not per-model.
-      tinc = 0
-      if (sid in tok_baseline) {
-        ptok = tok_baseline[sid]
-        if (total_tok > ptok)            tinc = total_tok - ptok
-        else if (total_tok < ptok * 0.5) tinc = total_tok
-      } else {
-        tinc = total_tok
-      }
-      tok_baseline[sid] = total_tok
+      tinc = attr_delta(tok_baseline, sid, total_tok)
 
       all_models[model] = 1
       mk = substr(day, 1, 7); yk = substr(day, 1, 4)

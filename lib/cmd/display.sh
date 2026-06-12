@@ -98,6 +98,7 @@ ${_epoch_awk}
     -v dim="$CLAUDII_CLR_DIM" \
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
+    -f "$CLAUDII_HOME/lib/attribution.awk" \
     -f "$CLAUDII_HOME/lib/trends.awk"
 }
 
