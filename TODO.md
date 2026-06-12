@@ -6,6 +6,65 @@
 
 ## Pending
 
+### skills-cost: Pricing korrigieren + Urteils-Signale freilegen
+
+**Type: Fix + Feature** · **Complexity: gestaffelt (3 Wellen)** · **Touches: `lib/cmd/skills-cost.sh`, `lib/insights.jq`, `bin/claudii-insights`, session-close Phase 2.7 (Konsument)**
+
+Drei verifizierte Probleme am `skills-cost`-Output (Stand 2026-06-12):
+
+1. **Dollar-Beträge systematisch falsch — Flat-Sonnet-Pricing über alle Modelle.**
+   `lib/cmd/skills-cost.sh:40-43` rechnet alle Tokens zu Sonnet-Raten ($3/$15/M).
+   Opus = 5×, Haiku = ⅓, Fable mehr. Schlimmer als der absolute Fehler: das
+   **Ranking** zwischen Skills mit unterschiedlichem Modell-Mix verzerrt
+   (Haiku-dominanter Skill ~3× überzeichnet, Opus-dominanter ~5× unterzeichnet) —
+   und die 2×-Median-Outlier-Regel vergleicht genau über dieses Ranking.
+   Saubere Lösung braucht per-Modell-**Token**-Attribution (`attribution_models`
+   speichert heute nur Calls) = Schema v5.
+
+2. **Token-Split fehlt im Output — dabei ist er das eigentliche Urteils-Signal.**
+   Der Merge-Cache hat in/out/cache_read/cache_create pro Skill, aber `--json`
+   gibt nur tot/avg raus. Der Split unterscheidet "Skill redet zu viel"
+   (out-lastig → Reply-Cap in SKILL.md hilft) von "Skill läuft in fetten
+   Sessions" (cache_read-lastig → SKILL.md-Edits helfen kaum). Live-Beispiel,
+   unser geflaggter Outlier: `update-config` = 894 out-Tokens/Call (schweigsam!),
+   aber 337K cache_read/Call — der Default-Ratschlag "Antworten kürzen" wäre
+   falsch; der Hebel sind die Settings-Reads / der Trigger-Zeitpunkt. Ohne den
+   Split urteilt session-close 2.7 blind.
+
+3. **avg/Call ist konfundiert mit Session-Kontextgröße + kein Trend.**
+   Jeder Call kostet proportional zum Kontext im Moment des Calls — Skills am
+   Session-Ende sind per Konstruktion teuer (session-close $0.094, reflect
+   $0.118: konsistent hoch, sagt nichts über die Skills). Ohne Vorher/Nachher-
+   Vergleich kann der Self-Improvement-Loop nicht messen, ob ein SKILL.md-Edit
+   etwas gebracht hat — der Loop schließt sich nicht.
+
+**Wellen:**
+- [ ] **Welle A — Quick win (kein Schema-Bump, ~30 Zeilen):** Token-Split
+  (in/out/cache_read/cache_create, absolut + per Call) in die `--json`-Rows
+  aufnehmen — die Daten liegen schon im Merge. Plus `meta.pricing: "flat
+  sonnet rates"`-Caveat, damit Konsumenten den Dollar-Bias kennen.
+  Contract-Erweiterung ist additiv (session-close 2.7 liest `rows[]`-Felder).
+- [ ] **Welle B — Schema v5: per-Modell-Tokens.** `attribution_models` von
+  Calls-only auf Token-Zähler pro Modell erweitern; `skills-cost` rechnet
+  dann echte per-Modell-Raten. Consumer-Sweep pflicht (merge, skills-cost,
+  Tests — vgl. lesson "Schema-Bumps brauchen Consumer-Sweep").
+- [ ] **Welle C — Trend-Vergleich:** Zeitfenster-Vergleich (z.B.
+  `--compare 30:30` oder vorher/nachher um einen Edit-Zeitstempel), damit
+  Phase 2.7 Skill-Edits auf Wirkung prüfen kann. Design offen: Kontext-
+  Konfundierung (Problem 3) mindestens dokumentieren, idealerweise
+  out-Tokens/Call als kontextrobustere Vergleichsmetrik anbieten.
+
+---
+
+### `claudii status --history`
+
+**Type: Feature** · **Complexity: Small** · **Touches: `lib/cmd/system.sh`, man, completions, tests**
+Transition-Log (`status-history.tsv`, seit 2026-06-12) voll anzeigen statt nur
+der letzten 5 im Status-Output: `claudii status --history [--days N]`, Zeiten
+via `display.timezone`/`_fmt_abs`.
+
+---
+
 ### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning
 
 **Wave 1 shipped 2026-05-27** — `attribution_skills` / `attribution_plugins` accumulated by `lib/insights.jq` (schema_version 3), aggregated by `bin/claudii-insights merge`, surfaced by `claudii skills-cost [--days N] [--plugins] [--json]`.
