@@ -6,19 +6,162 @@
 # lives on its own. Token pricing uses a blended Sonnet rate (see the pricing-constants
 # note in-function).
 
+# --compare BEFORE:AFTER trend view. Compares the prior window
+# [now-(B+A), now-A) against the recent window [now-A, now] so a SKILL.md edit's
+# effect can be read. The headline metric is out-tokens/call — output tokens do
+# NOT scale with session context size, so unlike $/call (which is structurally
+# higher for session-end skills) it isolates "does the skill talk less now?".
+# $/call is shown for reference but flagged as context-confounded.
+# Args: compare attr_kind attr_key section_label fmt rates_json
+_skills_cost_compare() {
+  local compare="$1" attr_kind="$2" attr_key="$3" section_label="$4" fmt="$5" _rates="$6"
+
+  if [[ ! "$compare" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf 'claudii: --compare wants BEFORE:AFTER in days, e.g. --compare 30:30 (got: %s)\n' "$compare" >&2
+    return 1
+  fi
+  local _before="${compare%%:*}" _after="${compare##*:}"
+  if [[ "$_before" -lt 1 || "$_after" -lt 1 ]]; then
+    printf 'claudii: --compare BEFORE and AFTER must both be >= 1 day (got: %s)\n' "$compare" >&2
+    return 1
+  fi
+
+  # recent = last AFTER days; prior = the BEFORE days immediately before that.
+  local _recent _prior
+  _recent=$(_insights_merged_json "$_after")
+  _prior=$(_insights_merged_json "$(( _before + _after ))" "$_after")
+  [[ -z "$_recent" ]] && _recent="{}"
+  [[ -z "$_prior"  ]] && _prior="{}"
+  # No early-return on empty windows: an empty/no-overlap result flows through to
+  # rows=[] so --json still emits a valid {compare, metric, rows:[]} envelope
+  # (the session-close Phase 2.7 consumer parses it) and text mode prints the
+  # "no comparable activity" line below.
+
+  # Build the joined comparison rows as a JSON array (shared by both renderers).
+  local _rows_json
+  _rows_json=$(jq -n \
+    --arg k "$attr_key" \
+    --arg kind "$attr_kind" \
+    --argjson rates "$_rates" \
+    --argjson prior "$_prior" \
+    --argjson recent "$_recent" \
+    '
+    def tier($m):
+      ($m // "" | ascii_downcase) as $l
+      | if   ($l | test("fable|mythos")) then "fable"
+        elif ($l | test("opus"))         then "opus"
+        elif ($l | test("haiku"))        then "haiku"
+        elif ($l | test("sonnet"))       then "sonnet"
+        else "sonnet" end;
+    # Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
+    # pricing + Sonnet residual as the single-window view).
+    def rows($m):
+      ($m.attribution_models // {} | to_entries
+        | map((.key | split("|")) as $p | select($p[0] == $kind)
+            | {name:($p[1]//""), model:($p[2]//"unknown"),
+               in_tok:(.value.in_tok//0), out_tok:(.value.out_tok//0),
+               cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)})) as $am
+      | ($m[$k] // {} | to_entries
+          | map({name:.key, calls:(.value.calls//0), in_tok:(.value.in_tok//0),
+                 out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)}))
+      | map(. as $row
+          | ([$am[] | select(.name == $row.name)]) as $cand
+          | ($cand | map(($rates[tier(.model)]) as $r
+              | (.in_tok*$r.in + .out_tok*$r.out + .cache_read*$r.cr + .cache_create*$r.cc)) | add // 0) as $musd
+          | (([$row.in_tok       - ($cand|map(.in_tok)|add//0),       0]|max)) as $ri
+          | (([$row.out_tok      - ($cand|map(.out_tok)|add//0),      0]|max)) as $ro
+          | (([$row.cache_read   - ($cand|map(.cache_read)|add//0),   0]|max)) as $rcr
+          | (([$row.cache_create - ($cand|map(.cache_create)|add//0), 0]|max)) as $rcc
+          | ($ri*$rates.sonnet.in + $ro*$rates.sonnet.out + $rcr*$rates.sonnet.cr + $rcc*$rates.sonnet.cc) as $rusd
+          | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
+    (rows($prior)) as $P
+    | (rows($recent)) as $R
+    | ([$P[].name, $R[].name] | unique) as $names
+    | $names | map(
+        . as $n
+        | (($P | map(select(.name==$n)))[0] // {calls:0,out_tok:0,tot_usd:0}) as $p
+        | (($R | map(select(.name==$n)))[0] // {calls:0,out_tok:0,tot_usd:0}) as $r
+        | {name:$n,
+           calls_prior:$p.calls, calls_recent:$r.calls,
+           out_per_call_prior:(if $p.calls>0 then ($p.out_tok/$p.calls) else 0 end),
+           out_per_call_recent:(if $r.calls>0 then ($r.out_tok/$r.calls) else 0 end),
+           avg_usd_prior:(if $p.calls>0 then ($p.tot_usd/$p.calls) else 0 end),
+           avg_usd_recent:(if $r.calls>0 then ($r.tot_usd/$r.calls) else 0 end)}
+        | . + {out_per_call_delta:(.out_per_call_recent - .out_per_call_prior)})
+    | map(select(.calls_prior>0 or .calls_recent>0))
+    | sort_by(-(.calls_prior + .calls_recent))
+    ' 2>/dev/null)
+
+  if [[ -z "$_rows_json" ]]; then _rows_json="[]"; fi
+
+  # JSON mode — emit the joined rows + window/metric metadata.
+  if [[ "$fmt" == "json" ]]; then
+    jq -n --argjson rows "$_rows_json" --argjson b "$_before" --argjson a "$_after" --arg kind "$attr_kind" \
+      '{compare:{kind:$kind, before_days:$b, after_days:$a,
+                 windows:"prior = [now-(BEFORE+AFTER), now-AFTER); recent = [now-AFTER, now]"},
+        metric:"out_per_call is the context-robust signal (output tokens do not scale with session context size); avg_usd is shown but confounded by per-call context size — do not read it as edit impact",
+        rows:$rows}'
+    return 0
+  fi
+
+  if [[ "$(jq 'length' <<< "$_rows_json" 2>/dev/null)" == "0" ]]; then
+    printf '\n  No comparable %s activity across the two windows.\n\n' "$attr_kind"
+    return 0
+  fi
+
+  # Text table.
+  local _col_name_w=22
+  [[ "$attr_kind" == "mcp" ]] && _col_name_w=34
+  printf '\n'
+  printf "${CLAUDII_CLR_CYAN}claudii skills-cost --compare %s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(prior %sd → recent %sd)${CLAUDII_CLR_RESET}\n\n" \
+    "$compare" "$_before" "$_after"
+  printf "${CLAUDII_CLR_DIM}%-${_col_name_w}s %-13s %-17s %-12s %s${CLAUDII_CLR_RESET}\n" \
+    "$section_label" "Calls" "out/call" "Δ out/call" "\$/call (ctx-conf.)"
+  local _sep_seg; printf -v _sep_seg '%*s' "$_col_name_w" ''; _sep_seg=${_sep_seg// /─}
+  printf "${CLAUDII_CLR_DIM}%s %-13s %-17s %-12s %s${CLAUDII_CLR_RESET}\n" \
+    "$_sep_seg" '─────────────' '─────────────────' '────────────' '──────────────────'
+
+  while IFS=$'\t' read -r _name _cp _cr _opcp _opcr _opcd _avgp _avgr; do
+    [[ -z "$_name" ]] && continue
+    [[ "$attr_kind" == "mcp" ]] && _name="${_name#mcp__}"
+    if (( ${#_name} > _col_name_w )); then _name="${_name:0:$(( _col_name_w - 1 ))}…"; fi
+    local _opcp_i _opcr_i _opcd_i _avgp_f _avgr_f
+    _opcp_i=$(awk -v v="$_opcp" 'BEGIN{printf "%.0f", v}')
+    _opcr_i=$(awk -v v="$_opcr" 'BEGIN{printf "%.0f", v}')
+    _opcd_i=$(awk -v v="$_opcd" 'BEGIN{printf "%+.0f", v}')
+    _avgp_f=$(awk -v v="$_avgp" 'BEGIN{printf "%.4f", v}')
+    _avgr_f=$(awk -v v="$_avgr" 'BEGIN{printf "%.4f", v}')
+    # Δ arrow: less output after the edit (↓) is the desired direction.
+    local _arrow
+    if   awk -v v="$_opcd" 'BEGIN{exit !(v < -0.5)}'; then _arrow="${CLAUDII_CLR_GREEN}↓${CLAUDII_CLR_RESET}"
+    elif awk -v v="$_opcd" 'BEGIN{exit !(v >  0.5)}'; then _arrow="${CLAUDII_CLR_YELLOW}↑${CLAUDII_CLR_RESET}"
+    else _arrow="${CLAUDII_CLR_DIM}·${CLAUDII_CLR_RESET}"; fi
+    printf "%-${_col_name_w}s %-13s %-17s %b %-10s ${CLAUDII_CLR_DIM}\$%s → \$%s${CLAUDII_CLR_RESET}\n" \
+      "$_name" "${_cp} → ${_cr}" "${_opcp_i} → ${_opcr_i}" "$_arrow" "$_opcd_i" "$_avgp_f" "$_avgr_f"
+  done < <(jq -r '.[] | [.name, (.calls_prior|tostring), (.calls_recent|tostring),
+                          (.out_per_call_prior|tostring), (.out_per_call_recent|tostring), (.out_per_call_delta|tostring),
+                          (.avg_usd_prior|tostring), (.avg_usd_recent|tostring)] | @tsv' <<< "$_rows_json")
+
+  printf '\n'
+  printf "${CLAUDII_CLR_DIM}out/call is the context-robust signal (output tokens don't scale with session size).${CLAUDII_CLR_RESET}\n"
+  printf "${CLAUDII_CLR_DIM}\$/call is confounded by per-call context size — don't read it as edit impact.${CLAUDII_CLR_RESET}\n"
+  printf '\n'
+}
+
 _cmd_skills_cost() {
   _cfg_init
 
-  local days=30 attr_kind="skill" fmt="${_FORMAT:-}"
+  local days=30 attr_kind="skill" fmt="${_FORMAT:-}" compare=""
   # Parse flags
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --days|-d)   shift; days="${1:-30}" ;;
+      --compare)   shift; compare="${1:-}" ;;
       --plugins)   attr_kind="plugin" ;;
       --mcp)       attr_kind="mcp" ;;
       --json)      fmt="json" ;;
       -h|--help)
-        printf 'Usage: claudii skills-cost [--days N] [--plugins] [--mcp] [--json]\n'
+        printf 'Usage: claudii skills-cost [--days N] [--compare BEFORE:AFTER] [--plugins] [--mcp] [--json]\n'
         return 0
         ;;
     esac
@@ -51,6 +194,21 @@ _cmd_skills_cost() {
     "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.000001,  "cc":0.0000125}
   }'
 
+  # Resolve the attribution block key for the chosen kind.
+  local attr_key="attribution_skills"
+  local section_label="Skill"
+  case "$attr_kind" in
+    plugin) attr_key="attribution_plugins"; section_label="Plugin" ;;
+    mcp)    attr_key="attribution_mcp";     section_label="MCP Tool" ;;
+  esac
+
+  # --compare BEFORE:AFTER → two-window trend comparison (own renderer + merge
+  # windows), so session-close Phase 2.7 can ask "did the SKILL.md edit help?".
+  if [[ -n "$compare" ]]; then
+    _skills_cost_compare "$compare" "$attr_kind" "$attr_key" "$section_label" "$fmt" "$_rates"
+    return $?
+  fi
+
   # Aggregate via `claudii-insights merge` (through the shared helper) — the
   # --days cutoff and cross-session summing live there, single source of truth.
   # This function used to re-implement both against the raw cache files.
@@ -60,14 +218,6 @@ _cmd_skills_cost() {
     printf 'No skill attribution data yet — run some sessions or `claudii-insights aggregate --force`.\n'
     return 0
   fi
-
-  # Extract the right attribution block key.
-  local attr_key="attribution_skills"
-  local section_label="Skill"
-  case "$attr_kind" in
-    plugin) attr_key="attribution_plugins"; section_label="Plugin" ;;
-    mcp)    attr_key="attribution_mcp";     section_label="MCP Tool" ;;
-  esac
 
   # Price each row at real per-model rates: every per-model token bucket in
   # attribution_models is priced at its own tier, and any residual not covered by

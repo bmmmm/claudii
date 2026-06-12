@@ -14,9 +14,18 @@ _insights_run() {
 
 _insights_refresh() { _insights_run aggregate >/dev/null 2>&1; }
 
+# Merge the per-session caches into one aggregated JSON.
+# Args: [days] [until_days]. `until_days` bounds the window from above
+# (last_seen < now-until_days) — used by `skills-cost --compare` for the prior
+# period; omit it for the usual "last N days" view.
 _insights_merged_json() {
   local days="${1:-7}"
-  _insights_run merge --days "$days" 2>/dev/null
+  local until_days="${2:-}"
+  if [[ -n "$until_days" ]]; then
+    _insights_run merge --days "$days" --until-days "$until_days" 2>/dev/null
+  else
+    _insights_run merge --days "$days" 2>/dev/null
+  fi
 }
 
 # Render a 20-block bar coloured green-up-to-filled, dim-for-empty.

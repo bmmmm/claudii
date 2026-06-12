@@ -120,6 +120,7 @@ _claudii() {
           local -a sc_opts
           sc_opts=(
             '--days:Rolling window in days (default 30)'
+            '--compare:Trend compare two windows BEFORE:AFTER (e.g. 30:30), out-tokens/call metric'
             '--plugins:Show attribution_plugins instead of attribution_skills'
             '--mcp:Show attribution_mcp (per-MCP-tool, cost split per message)'
             '--json:JSON output (rows + meta)'

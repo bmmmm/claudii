@@ -50,11 +50,12 @@ Drei verifizierte Probleme am `skills-cost`-Output (Stand 2026-06-12):
   (Skalar-tolerant), `SCHEMA_VERSION=5` in `bin/claudii-insights`, Tests
   (attribution/merge/skills-cost), CLAUDE.md Pricing-Note. `--json` rows[]-Contract
   unverändert (tot_usd nur präziser).
-- [ ] **Welle C — Trend-Vergleich:** Zeitfenster-Vergleich (z.B.
-  `--compare 30:30` oder vorher/nachher um einen Edit-Zeitstempel), damit
-  Phase 2.7 Skill-Edits auf Wirkung prüfen kann. Design offen: Kontext-
-  Konfundierung (Problem 3) mindestens dokumentieren, idealerweise
-  out-Tokens/Call als kontextrobustere Vergleichsmetrik anbieten.
+- [x] **Welle C — shipped 2026-06-12:** `skills-cost --compare BEFORE:AFTER`
+  (z.B. `30:30`) vergleicht prior `[now-(B+A), now-A)` vs recent `[now-A, now]`.
+  Headline-Metrik **out-Tokens/Call** (kontextrobust — Output skaliert nicht mit
+  Kontextgröße); `$/call` zusätzlich, aber als kontext-konfundiert markiert.
+  Merge um `--until-days M` (obere Window-Grenze) erweitert. `--json` mit
+  Window-/Metrik-Metadaten. Tests + Docs (man/completions/CHANGELOG).
 
 ---
 

@@ -381,6 +381,23 @@ Subagent usage counts toward the skill that spawned the agent.
 Rolling window (default 30). Passed to
 .BR "claudii-insights merge" .
 .TP
+.BI "\-\-compare " BEFORE : AFTER
+Trend comparison of two windows: the prior period
+.RI "[now\-(" BEFORE + AFTER "), now\-" AFTER ")"
+against the recent
+.RI "[now\-" AFTER ", now]"
+\(em e.g.
+.B "\-\-compare 30:30"
+is the previous 30 days vs the last 30.
+The headline metric is
+.BR out-tokens/call ,
+which (unlike $/call) does not scale with session context size, so it isolates
+whether a skill talks less after a
+.I SKILL.md
+edit; $/call is shown but flagged context-confounded.
+Honors
+.BR \-\-json .
+.TP
 .B \-\-plugins
 Show
 .B attribution_plugins

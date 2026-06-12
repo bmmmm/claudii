@@ -165,23 +165,31 @@ _cmd_aggregate() {
 # Merge all (or filtered) cache files into one aggregated JSON on stdout.
 # Filters:
 #   --days N         only include sessions whose last_seen is within N days
+#   --until-days M   only include sessions older than M days (last_seen < now-M)
+#                    — combine with --days for a bounded window [now-N, now-M),
+#                    used by `skills-cost --compare` for the prior period.
 #   --project PATH   only include sessions for that project working dir
 _cmd_merge() {
-  local days="" project=""
+  local days="" until_days="" project=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --days)    shift; days="${1:-}" ;;
-      --project) shift; project="${1:-}" ;;
+      --days)       shift; days="${1:-}" ;;
+      --until-days) shift; until_days="${1:-}" ;;
+      --project)    shift; project="${1:-}" ;;
     esac
     shift
   done
 
-  # --days, when given, must be a positive integer. A non-numeric value makes the
-  # `date -v "-${days}d"` below fail → empty cutoff → silently "no cutoff" (all sessions).
-  # Validate BEFORE the empty-cache early-return so the error fires regardless of cache
-  # state. Sibling guard already shipped in lib/cmd/skills-cost.sh.
+  # --days / --until-days, when given, must be a positive integer. A non-numeric
+  # value makes the `date -v "-${days}d"` below fail → empty cutoff → silently
+  # "no cutoff" (all sessions). Validate BEFORE the empty-cache early-return so the
+  # error fires regardless of cache state. Sibling guard in lib/cmd/skills-cost.sh.
   if [[ -n "$days" ]] && { ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; }; then
     printf 'merge: --days must be a positive integer (got: %s)\n' "$days" >&2
+    exit 1
+  fi
+  if [[ -n "$until_days" ]] && { ! [[ "$until_days" =~ ^[0-9]+$ ]] || [[ "$until_days" -lt 1 ]]; }; then
+    printf 'merge: --until-days must be a positive integer (got: %s)\n' "$until_days" >&2
     exit 1
   fi
 
@@ -193,18 +201,22 @@ _cmd_merge() {
     return 0
   fi
 
-  local cutoff_iso=""
+  # ISO 8601 cutoffs in UTC (python-free date math). _bsd_date detects BSD vs GNU.
+  local _bsd_date=0
+  date -v -1d +%Y-%m-%d >/dev/null 2>&1 && _bsd_date=1
+  local cutoff_iso="" until_iso=""
   if [[ -n "$days" ]]; then
-    # ISO 8601 cutoff in UTC. Use python-free date math.
-    if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-      cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
-    else
-      cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
-    fi
+    if (( _bsd_date )); then cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+    else cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ); fi
+  fi
+  if [[ -n "$until_days" ]]; then
+    if (( _bsd_date )); then until_iso=$(date -u -v "-${until_days}d" +%Y-%m-%dT%H:%M:%SZ)
+    else until_iso=$(date -u -d "${until_days} days ago" +%Y-%m-%dT%H:%M:%SZ); fi
   fi
 
   jq -n \
     --arg cutoff "$cutoff_iso" \
+    --arg until "$until_iso" \
     --arg project "$project" \
     '
       def add_obj(a; b): reduce (b // {} | to_entries[]) as $e (a; .[$e.key] = ((.[$e.key] // 0) + $e.value));
@@ -229,6 +241,7 @@ _cmd_merge() {
 
       [inputs
         | select(($cutoff == "") or ((.last_seen // "") >= $cutoff))
+        | select(($until == "")  or ((.last_seen // "") <  $until))
       ] as $all
       | reduce $all[] as $s (
           {

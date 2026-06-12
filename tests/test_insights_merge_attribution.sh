@@ -241,4 +241,13 @@ assert_eq       "merge --days 0: rejected (exit 1)"     "1"                "$_md
 _md_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 >/dev/null 2>&1; echo $?)
 assert_eq       "merge --days 7: accepted (exit 0)"     "0"                "$_md_ok_rc"
 
+# --until-days guard (same validation as --days; powers skills-cost --compare's
+# prior window). Window behavior is covered E2E in test_skills_cost.sh Test 13.
+_mu_abc_out=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --until-days abc 2>&1; echo "rc=$?")
+assert_contains "merge --until-days abc: actionable error" "positive integer" "$_mu_abc_out"
+assert_contains "merge --until-days abc: exit 1"           "rc=1"             "$_mu_abc_out"
+_mu_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 60 --until-days 30 >/dev/null 2>&1; echo $?)
+assert_eq       "merge --days 60 --until-days 30: accepted (exit 0)" "0"      "$_mu_ok_rc"
+unset _mu_abc_out _mu_ok_rc
+
 unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache _session3_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json mcp_calls mcp_in_tok am_opus am_opus_in am_opus_cc am_sonnet am_mcp
