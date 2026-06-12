@@ -44,6 +44,9 @@
   "cost": {
     "week_start": "monday"
   },
+  "display": {
+    "timezone": ""
+  },
   "overview": {
     "sections": ["account", "sessions", "activity", "agents", "services", "commands"]
   },

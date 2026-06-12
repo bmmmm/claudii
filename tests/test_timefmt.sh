@@ -36,3 +36,31 @@ _tfm_sete=$(CLAUDII_HOME="$CLAUDII_HOME" /bin/bash -c '
 assert_eq "timefmt: zero/negative input survives set -eu" "survived" "$_tfm_sete"
 
 unset _tfm_script _tfm_expect _tfm_bash _tfm_out _tfm_sete
+
+# ── _fmt_abs: absolute timestamps honoring _CLAUDII_TZ ───────────────────────
+_abs_script='
+  source "$CLAUDII_HOME/lib/timefmt.sh"
+  out=""
+  _CLAUDII_TZ="UTC";           _fmt_abs 0;                       out+="${_ABS_FMT};"
+  _CLAUDII_TZ="Europe/Berlin"; _fmt_abs 0;                       out+="${_ABS_FMT};"
+  _CLAUDII_TZ="Europe/Berlin"; _fmt_abs 1765532400 "%H:%M %Z";   out+="${_ABS_FMT};"
+  _CLAUDII_TZ="UTC";           _fmt_abs "not-a-number";          out+="${_ABS_FMT};"
+  _CLAUDII_TZ="UTC";           _fmt_abs "";                      out+="${_ABS_FMT};"
+  printf "%s" "$out"
+'
+# 1765532400 = 2025-12-12 10:40 CET (winter → CET, not CEST)
+_abs_expect='1970-01-01 00:00;1970-01-01 01:00;10:40 CET;;;'
+for _abs_bash in /bin/bash bash; do
+  _abs_out=$(CLAUDII_HOME="$CLAUDII_HOME" "$_abs_bash" -c "$_abs_script" 2>&1)
+  assert_eq "timefmt ($_abs_bash): _fmt_abs TZ conversion + invalid input" \
+    "$_abs_expect" "$_abs_out"
+done
+
+# Empty _CLAUDII_TZ → system local, must not crash under set -eu
+_abs_local=$(CLAUDII_HOME="$CLAUDII_HOME" /bin/bash -c '
+  set -eu
+  source "$CLAUDII_HOME/lib/timefmt.sh"
+  _fmt_abs 0
+  [[ -n "$_ABS_FMT" ]] && echo "ok"
+')
+assert_eq "timefmt: _fmt_abs system-local fallback under set -eu" "ok" "$_abs_local"

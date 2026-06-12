@@ -219,6 +219,72 @@ else
   assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "no suffix"
 fi
 
+# ── Transition log: state changes land in status-history.tsv ─────────────────
+_tr_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_tr.XXXXXX")
+mkdir -p "$_tr_dir/srv"
+cat > "$_tr_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Elevated errors on Claude Opus","status":"investigating","impact":"minor",
+  "incident_updates":[{"body":"Investigating elevated errors on Opus."}],
+  "components":[{"name":"Claude Opus"}]
+}]}
+JSON
+cat > "$_tr_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_tr_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_tr_dir/curl"
+
+# Reset models (an earlier section appended "testmodel" — it would log an
+# extra unknown→ok transition and break the exact-count assert below)
+bash "$CLAUDII_HOME/bin/claudii" config set statusline.models "opus,sonnet,haiku" >/dev/null 2>&1
+
+# First run with NO previous cache → no transitions logged
+rm -f "$CLAUDII_CACHE_DIR"/status-models "$CLAUDII_CACHE_DIR"/status-unresolved.json "$CLAUDII_CACHE_DIR"/status-history.tsv
+PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+assert_eq "transition log: first run logs nothing" "false" "$([[ -s "$CLAUDII_CACHE_DIR/status-history.tsv" ]] && echo true || echo false)"
+
+# Previous cache all-ok, incident flags opus → exactly the opus transition logged
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+touch -t 200001010000 "$CLAUDII_CACHE_DIR/status-models"   # force stale
+PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_tr_log=$(cat "$CLAUDII_CACHE_DIR/status-history.tsv" 2>/dev/null || true)
+assert_contains "transition log: opus ok→degraded logged" "$(printf 'opus\tok\tdegraded')" "$_tr_log"
+assert_eq "transition log: only changed model logged" "1" "$(printf '%s\n' "$_tr_log" | grep -c . || true)"
+if printf '%s' "$_tr_log" | head -1 | grep -qE '^[0-9]+	'; then
+  assert_eq "transition log: epoch first column" "true" "true"
+else
+  assert_eq "transition log: epoch first column" "epoch<TAB>..." "$_tr_log"
+fi
+
+# Internal _incident= keys must never appear as models in the log
+assert_eq "transition log: no _-keys logged" "false" "$(printf '%s' "$_tr_log" | grep -q '	_' && echo true || echo false)"
+
+# claudii status renders the Recent changes section from the log
+# (ANSI-stripped — the new state is color-wrapped, "ok → degraded" would
+# otherwise never match literally; mock curl keeps any refetch deterministic)
+_tr_out=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "claudii status: Recent changes section shown" "Recent changes" "$_tr_out"
+assert_contains "claudii status: transition rendered" "ok → degraded" "$_tr_out"
+
+# display.timezone drives the rendered timestamp (zone suffix via %Z)
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "UTC" >/dev/null 2>&1
+_tr_utc=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | grep -A2 "Recent changes" || true)
+assert_contains "claudii status: UTC timestamp suffix" "UTC" "$_tr_utc"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+_tr_de=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | grep -A2 "Recent changes" || true)
+if printf '%s' "$_tr_de" | grep -qE 'CET|CEST'; then
+  assert_eq "claudii status: Europe/Berlin timestamp suffix" "true" "true"
+else
+  assert_eq "claudii status: Europe/Berlin timestamp suffix" "CET|CEST" "$_tr_de"
+fi
+rm -rf "$_tr_dir"
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

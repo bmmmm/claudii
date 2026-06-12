@@ -167,6 +167,9 @@ _cmd_status() {
         fi
       else
         # Per-model status display
+        # Configured display timezone (display.timezone, e.g. Europe/Berlin)
+        # drives every absolute timestamp below via _fmt_abs.
+        _CLAUDII_TZ=$(_cfgget display.timezone)
         printf '\n'
         models_cfg=$(_cfgget statusline.models)
         models_cfg="${models_cfg:-opus,sonnet,haiku}"
@@ -243,14 +246,40 @@ _cmd_status() {
               printf '\n'
               printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
             done
-            jq -r '.incidents[] | .incident_updates[0:3][] | [.status, .created_at, .body] | @tsv' \
+            jq -r '.incidents[] | .incident_updates[0:3][] |
+                   [.status,
+                    ((.created_at // "") | if . == "" then "" else
+                      (try (sub("\\.[0-9]+Z$"; "Z") | fromdate | tostring) catch .) end),
+                    .body] | @tsv' \
               "$_inc_cache" 2>/dev/null | \
             while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
-              _ts="${_upd_time%%.*}"; _ts="${_ts/T/ }"; [[ -z "$_ts" ]] && _ts="$_upd_time"
-              printf "    ${CLAUDII_CLR_DIM}%-20s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
+              # _upd_time is epoch (or raw ISO if jq could not parse it)
+              _fmt_abs "$_upd_time" '%Y-%m-%d %H:%M %Z'
+              _ts="${_ABS_FMT:-${_upd_time%%.*}}"; _ts="${_ts/T/ }"
+              printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
                 "$_ts" "$_upd_status" "$_upd_body"
             done
           fi
+        fi
+
+        # Recent model-state transitions (logged by claudii-status on change)
+        _hist_file="${cache_file%/*}/status-history.tsv"
+        if [[ -s "$_hist_file" ]]; then
+          printf '\n'
+          printf "  ${CLAUDII_CLR_DIM}Recent changes:${CLAUDII_CLR_RESET}\n"
+          tail -5 "$_hist_file" | sort -rn | \
+          while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+            _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
+            _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
+            case "$_h_new" in
+              ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
+              degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
+              down)     _h_clr="$CLAUDII_CLR_RED" ;;
+              *)        _h_clr="$CLAUDII_CLR_DIM" ;;
+            esac
+            printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
+              "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
+          done
         fi
         printf '\n'
       fi

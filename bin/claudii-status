@@ -22,6 +22,7 @@ CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 CACHE_STATUS="$CACHE_DIR/status-models"
 CACHE_INCIDENTS="$CACHE_DIR/status-unresolved.json"
+CACHE_HISTORY="$CACHE_DIR/status-history.tsv"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
 _cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
@@ -99,8 +100,34 @@ fi
 
 # ── Helper: write cache + output + exit ──────────────────────────────────────
 
+# _log_transitions <new-status-file> — append one TSV line per model whose
+# state changed vs. the current cache: epoch<TAB>model<TAB>old<TAB>new.
+# Skipped entirely on first run (no previous cache → no transition).
+# Internal _* keys (_incident=, _api=) are not models and never logged.
+_log_transitions() {
+  local _new="$1" _ts _m _new_state _old_state
+  [[ -f "$CACHE_STATUS" ]] || return 0
+  _ts=$(date +%s)
+  while IFS='=' read -r _m _new_state; do
+    [[ -z "$_m" || "$_m" == _* ]] && continue
+    _old_state=$(grep "^${_m}=" "$CACHE_STATUS" 2>/dev/null | head -1 | cut -d= -f2)
+    _old_state="${_old_state:-unknown}"
+    if [[ "$_old_state" != "$_new_state" ]]; then
+      printf '%s\t%s\t%s\t%s\n' "$_ts" "$_m" "$_old_state" "$_new_state" >> "$CACHE_HISTORY"
+      _claudii_log info "Transition: ${_m} ${_old_state} → ${_new_state}"
+    fi
+  done < "$_new"
+  # Keep the log bounded: trim to the newest 500 lines once it passes 1000.
+  if [[ -f "$CACHE_HISTORY" ]] && (( $(wc -l < "$CACHE_HISTORY") > 1000 )); then
+    tail -500 "$CACHE_HISTORY" > "${CACHE_HISTORY}.tmp" && mv -f "${CACHE_HISTORY}.tmp" "$CACHE_HISTORY"
+  fi
+  return 0
+}
+
 _write_all_ok() {
-  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  printf '%s=ok\n' "${MODELS[@]}" > "$_tmp_status" \
+    && _log_transitions "$_tmp_status" \
+    && mv -f "$_tmp_status" "$CACHE_STATUS"
   printf '{"incidents":[]}\n' > "$_tmp_incidents" && mv -f "$_tmp_incidents" "$CACHE_INCIDENTS"
   _claudii_log info "Status: all ok"
   exit 0
@@ -126,7 +153,9 @@ _write_incidents() {
     [[ -n "$incident_status" ]] && printf '_incident=%s\n' "$incident_status"
     [[ -n "$incident_started" && "$incident_started" =~ ^[0-9]+$ ]] && printf '_incident_started=%s\n' "$incident_started"
     : # ensure block exits 0 — trailing optional printfs above must not gate the mv
-  } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  } > "$_tmp_status" \
+    && _log_transitions "$_tmp_status" \
+    && mv -f "$_tmp_status" "$CACHE_STATUS"
 
   local summary="" any_issue=false
   for m in "${MODELS[@]}"; do
@@ -229,7 +258,9 @@ rss=$(curl -sf --max-time 5 --connect-timeout 3 --max-filesize 1048576 "$RSS_URL
 if [[ -z "$rss" ]]; then
   $quiet || echo -e "${CLAUDII_CLR_YELLOW}claudii: Status API unreachable${CLAUDII_CLR_RESET}" >&2
   _claudii_log warn "All status sources unreachable — writing all-ok fallback"
-  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" && mv -f "$_tmp_status" "$CACHE_STATUS"
+  { printf '%s=ok\n' "${MODELS[@]}"; echo "_api=unreachable"; } > "$_tmp_status" \
+    && _log_transitions "$_tmp_status" \
+    && mv -f "$_tmp_status" "$CACHE_STATUS"
   exit 0
 fi
 

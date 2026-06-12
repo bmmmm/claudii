@@ -266,7 +266,10 @@ Aliases:
 .TP
 .B status
 Live model health check (bypasses cache).
-Per-model status table with icons, last-check time, and active incidents.
+Per-model status table with icons, last-check time, active incidents, and
+recent state transitions (from the status history log).
+Absolute timestamps honor
+.BR display.timezone .
 Supports
 .BR \-\-json .
 Alias:
@@ -811,6 +814,7 @@ aliases.clq.model	sonnet	Model for \fBclq\fR / search
 fallback.enabled	true	Auto-fallback on outage
 fallback.opus.model	sonnet	Fallback when opus is down
 status.cache_ttl	300	Status cache TTL in seconds
+display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku	Models to monitor
 statusline.lines	(5-line default)	CC-Statusline layout — array of segment-ID arrays
@@ -849,6 +853,14 @@ haiku=ok
 Refreshed automatically in the background when older than
 .B status.cache_ttl
 seconds.
+.PP
+Every state transition (e.g. opus ok\(->degraded) is appended to
+.I status-history.tsv
+in the same directory as a tab-separated line:
+epoch, model, old state, new state.
+The newest entries appear under \(lqRecent changes\(rq in
+.BR "claudii status" ;
+the log is trimmed to the newest 500 lines once it exceeds 1000.
 .
 .SH ENVIRONMENT
 .TP

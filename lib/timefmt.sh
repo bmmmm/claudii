@@ -27,6 +27,25 @@ _fmt_rel() {
   return 0
 }
 
+# _fmt_abs <epoch> [strftime-fmt] — absolute timestamp into _ABS_FMT.
+# Honors the configured display timezone via the _CLAUDII_TZ global (set from
+# config key display.timezone, e.g. "Europe/Berlin"); empty = system local.
+# Portable across BSD (`date -r`) and GNU (`date -d @`). Non-numeric input
+# or a failing date → empty _ABS_FMT (caller decides the fallback).
+_fmt_abs() {
+  local _e=${1:-} _fmt="${2:-%Y-%m-%d %H:%M}"
+  _ABS_FMT=""
+  [[ "$_e" =~ ^[0-9]+$ ]] || return 0
+  if [[ -n "${_CLAUDII_TZ:-}" ]]; then
+    _ABS_FMT=$(TZ="$_CLAUDII_TZ" date -r "$_e" "+$_fmt" 2>/dev/null \
+      || TZ="$_CLAUDII_TZ" date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
+  else
+    _ABS_FMT=$(date -r "$_e" "+$_fmt" 2>/dev/null \
+      || date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
+  fi
+  return 0
+}
+
 # _fmt_brief <seconds> — single-unit age into _BRIEF_FMT ("Xs"/"Xm"/"Xh"/"Xd").
 # Negative input clamps to 0s.
 _fmt_brief() {
