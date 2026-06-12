@@ -27,7 +27,7 @@ _rl_out() {
 
 # ── 86% used, reset in 150min → window-scoped wording + _fmt_rel ──
 
-printf 'model=Opus 4.8\nrate_5h=86.0\nreset_5h=%s\n' "$(( _NOW + 9000 ))" \
+printf 'model=Opus 4.8\nrate_5h=86.0\nreset_5h=%s\n' "$(( _NOW + 9030 ))" \
   > "$TEST_TMP/cache/session-aaaa1111"
 out=$(_rl_out)
 assert_contains "rl_warn: names the 5h window, not the model" "5h limit" "$out"
@@ -45,10 +45,10 @@ jq '.statusline.rate_display = "used"' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CF
 
 # ── newest sample wins (account-wide limit, stalest file must not warn) ──
 
-printf 'model=Opus 4.8\nrate_5h=95.0\nreset_5h=%s\n' "$(( _NOW + 9000 ))" \
+printf 'model=Opus 4.8\nrate_5h=95.0\nreset_5h=%s\n' "$(( _NOW + 9030 ))" \
   > "$TEST_TMP/cache/session-bbbb2222"
 sleep 1
-printf 'model=Opus 4.8\nrate_5h=86.0\nreset_5h=%s\n' "$(( _NOW + 9000 ))" \
+printf 'model=Opus 4.8\nrate_5h=86.0\nreset_5h=%s\n' "$(( _NOW + 9030 ))" \
   > "$TEST_TMP/cache/session-aaaa1111"
 out=$(_rl_out)
 assert_contains "rl_warn: newest sample wins" "86% used" "$out"
@@ -57,7 +57,7 @@ assert_eq "rl_warn: older sample ignored" "" "$(echo "$out" | grep -o '95% used'
 # ── below 80% → silent ──
 
 rm -f "$TEST_TMP/cache"/session-*
-printf 'model=Opus 4.8\nrate_5h=42.0\nreset_5h=%s\n' "$(( _NOW + 9000 ))" \
+printf 'model=Opus 4.8\nrate_5h=42.0\nreset_5h=%s\n' "$(( _NOW + 9030 ))" \
   > "$TEST_TMP/cache/session-aaaa1111"
 out=$(_rl_out)
 assert_eq "rl_warn: below threshold is silent" "" "$out"
