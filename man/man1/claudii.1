@@ -381,6 +381,13 @@ tools it invokes, so totals stay comparable with the skills table.
 .TP
 .B \-\-json
 Emit rows + outlier flag as JSON to stdout (parseable, no color codes).
+Each row carries the token split
+.RB ( in_tok ", " out_tok ", " cache_read ", " cache_create )
+\(em the signal that separates \(lqskill talks too much\(rq (out-heavy)
+from \(lqskill runs in fat sessions\(rq (cache_read-heavy).
+.B meta.pricing
+documents the flat-Sonnet-rate caveat: absolute USD are approximate and
+cross-model rankings distorted until per-model pricing ships.
 .RE
 .TP
 .B trends

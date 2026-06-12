@@ -150,6 +150,11 @@ _sc_has_median=$(jq -e '.meta.median_avg_usd' <<< "$_sc_json_out" >/dev/null 2>&
 assert_eq "skills-cost --json: meta has median_avg_usd" "0" "$_sc_has_median"
 _sc_has_days=$(jq -e '.meta.days' <<< "$_sc_json_out" >/dev/null 2>&1; echo $?)
 assert_eq "skills-cost --json: meta has days" "0" "$_sc_has_days"
+# Token split per row (judgment signal: out-heavy vs cache_read-heavy) + pricing caveat
+_sc_split=$(jq -r '.rows[] | select(.name=="explore") | [.in_tok, .out_tok, .cache_read, .cache_create] | @csv' <<< "$_sc_json_out" 2>/dev/null)
+assert_eq "skills-cost --json: row carries token split" "3000,800,40000,5000" "$_sc_split"
+_sc_has_pricing=$(jq -e '.meta.pricing | test("flat Sonnet rates")' <<< "$_sc_json_out" >/dev/null 2>&1; echo $?)
+assert_eq "skills-cost --json: meta.pricing caveat present" "0" "$_sc_has_pricing"
 
 # ── Test 6: --days is passed through (reflected in days window) ───────────────
 _sc_json_7d=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \

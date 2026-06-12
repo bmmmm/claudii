@@ -107,7 +107,8 @@ _cmd_skills_cost() {
       )})
     | sort_by(-.tot_usd)
     | .[]
-    | [.name, (.calls | tostring), (.tot_usd | tostring), (.avg_usd | tostring), .model]
+    | [.name, (.calls | tostring), (.tot_usd | tostring), (.avg_usd | tostring), .model,
+       (.in_tok | tostring), (.out_tok | tostring), (.cache_read | tostring), (.cache_create | tostring)]
     | @tsv
     ' <<< "$merged" 2>/dev/null)
 
@@ -118,14 +119,19 @@ _cmd_skills_cost() {
 
   # Load rows into parallel arrays (bash 3.2 compatible — no declare -A)
   local _sc_names=() _sc_calls=() _sc_tot=() _sc_avg=() _sc_model=()
+  local _sc_in=() _sc_out=() _sc_cr=() _sc_cc=()
   local _sc_count=0
-  while IFS=$'\t' read -r _rname _rcalls _rtot _ravg _rmodel; do
+  while IFS=$'\t' read -r _rname _rcalls _rtot _ravg _rmodel _rin _rout _rcr _rcc; do
     [[ -z "$_rname" ]] && continue
     _sc_names[$_sc_count]="$_rname"
     _sc_calls[$_sc_count]="$_rcalls"
     _sc_tot[$_sc_count]="$_rtot"
     _sc_avg[$_sc_count]="$_ravg"
     _sc_model[$_sc_count]="${_rmodel:-mixed}"
+    _sc_in[$_sc_count]="${_rin:-0}"
+    _sc_out[$_sc_count]="${_rout:-0}"
+    _sc_cr[$_sc_count]="${_rcr:-0}"
+    _sc_cc[$_sc_count]="${_rcc:-0}"
     (( ++_sc_count ))
   done <<< "$rows_tsv"
 
@@ -162,20 +168,29 @@ _cmd_skills_cost() {
       _outlier=$(awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="${_sc_calls[$_i]}" -v mc="$_outlier_min_calls" \
         'BEGIN { print (a+0 >= t+0 && c+0 >= mc+0) ? "true" : "false" }')
       [[ "$_first" -eq 0 ]] && _json_rows+=","
+      # Token split per row: the judgment signal consumers need — out-heavy
+      # ("skill talks too much" → reply-cap helps) vs cache_read-heavy ("runs
+      # in fat sessions" → SKILL.md edits won't move the needle).
       _json_rows+=$(jq -n \
         --arg name "${_sc_names[$_i]}" \
         --arg calls "${_sc_calls[$_i]}" \
         --arg tot "${_sc_tot[$_i]}" \
         --arg avg "${_sc_avg[$_i]}" \
         --arg model "${_sc_model[$_i]}" \
+        --arg itok "${_sc_in[$_i]}" \
+        --arg otok "${_sc_out[$_i]}" \
+        --arg cr "${_sc_cr[$_i]}" \
+        --arg cc "${_sc_cc[$_i]}" \
         --argjson outlier "$_outlier" \
-        '{name:$name, calls:($calls|tonumber), tot_usd:($tot|tonumber), avg_usd:($avg|tonumber), model:$model, outlier:$outlier}')
+        '{name:$name, calls:($calls|tonumber), tot_usd:($tot|tonumber), avg_usd:($avg|tonumber), model:$model, outlier:$outlier,
+          in_tok:($itok|tonumber), out_tok:($otok|tonumber), cache_read:($cr|tonumber), cache_create:($cc|tonumber)}')
       _first=0
     done
     _json_rows+="]"
     local _meta
     _meta=$(jq -n --arg med "$_median_avg" --arg d "$days" --arg mc "$_outlier_min_calls" \
-      '{median_avg_usd:($med|tonumber),days:($d|tonumber),outlier_rule:("avg >= 2x median, calls >= " + $mc)}')
+      '{median_avg_usd:($med|tonumber),days:($d|tonumber),outlier_rule:("avg >= 2x median, calls >= " + $mc),
+        pricing:"flat Sonnet rates across all models (in $3/M, out $15/M, cache_read $0.30/M, cache_create $3.75/M) — absolute USD approximate, cross-model rankings distorted"}')
     printf '%s\n' "{\"rows\":${_json_rows},\"meta\":${_meta}}"
     return 0
   fi
