@@ -62,7 +62,7 @@ usage() {
   printf "    %-33s $d %s\n" "resume <session-id>"             "resume a session by ID"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
-  printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin cost breakdown"
+  printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin / per-MCP-tool cost breakdown"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Activity & Insights${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "vibemap [grid|strip|status]"     "activity heatmap (opt-in)"

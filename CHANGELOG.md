@@ -7,6 +7,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Subagent costs are attributed to the spawning skill** (insights schema v4). Subagent transcripts (`<session>/subagents/agent-*.jsonl`) were invisible to the aggregator (`find -maxdepth 3` never reached them) — skill costs only counted main-thread messages. `lib/insights.jq` now ingests them after the parent file and chains `Agent` tool_use → `toolUseResult.agentId` → the skill active at spawn time, so e.g. `/orchestrate` waves carry their agents' real cost (on live data: orchestrate 380 → 1568 attributed calls). Staleness checks and the marker-based scan in `bin/claudii-insights` consider subagent file mtimes too.
+- **`skills-cost` model column shows the dominant model** instead of a hardcoded `mixed`. The new flat `attribution_models` map (`kind|name|model` → calls) tracks which model served each attributed message; a row shows the friendly label when one model covers ≥80% of its calls, otherwise `mixed`.
+- **`skills-cost --mcp`** — per-MCP-tool cost table from the new `attribution_mcp` block. A message's usage is split evenly across the MCP tools it invokes (totals stay comparable with the skills table); the name column widens and drops the `mcp__` prefix for display.
+
+### Changed
+- **Outlier flag rule: ≥2× median with ≥10 calls** (was ≥3× median, no calls floor). The 3× threshold never fired on real data (max observed 2.1×); the calls floor keeps rarely-used skills from tripping the flag on noise. JSON output documents the rule in `meta.outlier_rule`.
+
+### Fixed
+- **`claudii-insights aggregate` no longer force-rebuilds every run once orphaned caches exist.** The schema gate took the minimum `schema_version` across all cache files — caches whose source JSONL Claude Code already deleted could never be upgraded, so every run since the v3 bump rebuilt all live sessions (~390 orphans × every invocation). The gate now compares a `.schema` marker written after the last successful rebuild; orphaned caches keep contributing history and merge tolerates their older shape.
+
 ---
 
 ## [v0.22.0] — 2026-06-12

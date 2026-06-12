@@ -31,7 +31,7 @@ _claudii() {
         'unpin:Remove GC protection from a session'
         'config:Read or write config values'
         'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
-        'skills-cost:Per-skill and per-plugin cost breakdown from attribution data'
+        'skills-cost:Per-skill, per-plugin and per-MCP-tool cost breakdown from attribution data'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
         'cache:Prompt-cache hit rate per day and per model (7d default)'
         'explain:Components, symbols & data flow'
@@ -110,6 +110,7 @@ _claudii() {
           sc_opts=(
             '--days:Rolling window in days (default 30)'
             '--plugins:Show attribution_plugins instead of attribution_skills'
+            '--mcp:Show attribution_mcp (per-MCP-tool, cost split per message)'
             '--json:JSON output (rows + meta)'
           )
           _describe 'skills-cost option' sc_opts

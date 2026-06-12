@@ -336,11 +336,16 @@ Alias:
 .BR c .
 .TP
 .B skills-cost
-Per-skill (or per-plugin) cost breakdown using attribution data from
+Per-skill (or per-plugin, per-MCP-tool) cost breakdown using attribution data
+from
 .BR claudii-insights .
-Shows calls, total cost, average cost per call, and an outlier flag
+Shows calls, total cost, average cost per call, the dominant model
+(the model behind \[>=]80% of a row's attributed calls, otherwise
+.BR mixed ),
+and an outlier flag
 .RB ( ! )
-when a skill's average is \[>=]3\[mu] the median.
+when a row's average is \[>=]2\[mu] the median with at least 10 calls.
+Subagent usage counts toward the skill that spawned the agent.
 .RS
 .TP
 .BI "\-\-days " N
@@ -353,6 +358,12 @@ Show
 instead of
 .B attribution_skills
 (same column layout).
+.TP
+.B \-\-mcp
+Show
+.B attribution_mcp
+\(em per-MCP-tool costs. A message's usage is split evenly across the MCP
+tools it invokes, so totals stay comparable with the skills table.
 .TP
 .B \-\-json
 Emit rows + outlier flag as JSON to stdout (parseable, no color codes).

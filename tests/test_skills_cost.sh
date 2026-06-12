@@ -10,8 +10,8 @@ _SC_TMPDIRS=()
 trap 'rm -rf "${_SC_TMPDIRS[@]}" 2>/dev/null' EXIT
 
 # Helper: create a per-session JSON fixture with attribution data.
-# Args: out_file, skills_json_inline, plugins_json_inline
-# Both skill/plugin args are inlined directly into the jq expression (must be valid JSON).
+# Args: out_file, skills_json_inline, plugins_json_inline, [mcp_json_inline], [models_json_inline]
+# All JSON args are inlined directly into the jq expression (must be valid JSON).
 # last_seen is computed at load time (recent) so the --days cutoff window always
 # contains the fixture. A hardcoded date (was 2026-05-27) silently went stale: once
 # wall-clock passed fixture+7d the `--days 7` cutoff filtered every row out and the
@@ -21,12 +21,16 @@ _sc_write_fixture() {
   local out_file="$1"
   local skills_json="${2:-{\}}"
   local plugins_json="${3:-{\}}"
+  local mcp_json="${4:-{\}}"
+  local models_json="${5:-{\}}"
   # Write JSON by constructing it with jq, using heredoc to avoid --argjson multiline issues
   jq -n \
     --argjson s "${skills_json}" \
     --argjson p "${plugins_json}" \
+    --argjson m "${mcp_json}" \
+    --argjson am "${models_json}" \
     --arg ls "$_SC_LAST_SEEN" \
-    '{schema_version:3,sessionId:"test-session-01",last_seen:$ls,messages:5,assistant_messages:3,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_skills:$s,attribution_plugins:$p}' \
+    '{schema_version:4,sessionId:"test-session-01",last_seen:$ls,messages:5,assistant_messages:3,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_skills:$s,attribution_plugins:$p,attribution_mcp:$m,attribution_models:$am}' \
     > "$out_file"
 }
 
@@ -63,22 +67,21 @@ assert_contains "skills-cost fixture: shows column header"     "Calls"          
 assert_contains "skills-cost fixture: shows median line"       "Median cost/call"  "$_sc_out"
 assert_contains "skills-cost fixture: shows model mixed"       "mixed"             "$_sc_out"
 
-# ── Test 3: Outlier flag math ─────────────────────────────────────────────────
-# 3 skills: cheap (avg ~$0.01), mid (avg ~$0.02), expensive (avg ~$0.10 = 5× median $0.02)
-# Median of [0.01, 0.02, 0.10] = 0.02. Threshold = 0.06. expensive triggers !
+# ── Test 3: Outlier flag math (rule: avg ≥ 2× median AND ≥ 10 calls) ──────────
 _SC_OUTLIER_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_OUTLIER_CACHE")
 mkdir -p "$_SC_OUTLIER_CACHE/insights"
 
-# To get ~$0.01 avg: calls=10, out_tok=666 → 666 * 0.000015 = ~$0.01
-# To get ~$0.02 avg: calls=5, out_tok=667 → 667 * 0.000015 = ~$0.01/call → need bigger toks
-# Simplify: use just out_tok pricing ($0.000015/tok)
-#   cheap:     calls=10, out_tok=667   → 667*0.000015=$0.010005 total, avg=$0.0010005
-#   mid:       calls=1,  out_tok=1333  → 1333*0.000015=$0.019995 total, avg=$0.019995
-#   expensive: calls=1,  out_tok=10000 → 10000*0.000015=$0.15 total, avg=$0.15
-# sorted avgs: 0.00100, 0.01999, 0.15 → median=0.01999, threshold=0.05997
-# expensive (0.15) >= 0.05997 → flagged !
+# Only out_tok pricing ($0.000015/tok) for easy math. Five skills:
+#   cheap:          calls=10, out_tok=667    → avg $0.0010005
+#   mid:            calls=1,  out_tok=1333   → avg $0.019995
+#   mid2:           calls=1,  out_tok=1334   → avg $0.02001
+#   expensive:      calls=10, out_tok=100000 → avg $0.15
+#   rare-expensive: calls=2,  out_tok=40000  → avg $0.30 (over threshold but < 10 calls)
+# sorted avgs: 0.0010005, 0.019995, 0.02001, 0.15, 0.30 → median=0.02001,
+# threshold (2×)=0.04002 → expensive flagged; rare-expensive blocked by the
+# calls floor; cheap/mid/mid2 under threshold. Exactly 1 flag.
 _sc_write_fixture "$_SC_OUTLIER_CACHE/insights/sess-outlier.json" \
-  '{"cheap-skill":{"calls":10,"in_tok":0,"out_tok":667,"cache_read":0,"cache_create":0},"mid-skill":{"calls":1,"in_tok":0,"out_tok":1333,"cache_read":0,"cache_create":0},"expensive-skill":{"calls":1,"in_tok":0,"out_tok":10000,"cache_read":0,"cache_create":0}}' \
+  '{"cheap-skill":{"calls":10,"in_tok":0,"out_tok":667,"cache_read":0,"cache_create":0},"mid-skill":{"calls":1,"in_tok":0,"out_tok":1333,"cache_read":0,"cache_create":0},"mid2-skill":{"calls":1,"in_tok":0,"out_tok":1334,"cache_read":0,"cache_create":0},"expensive-skill":{"calls":10,"in_tok":0,"out_tok":100000,"cache_read":0,"cache_create":0},"rare-expensive":{"calls":2,"in_tok":0,"out_tok":40000,"cache_read":0,"cache_create":0}}' \
   '{}'
 
 _sc_outlier_out=$(CLAUDII_CACHE_DIR="$_SC_OUTLIER_CACHE" \
@@ -89,7 +92,9 @@ _sc_outlier_rc=$(CLAUDII_CACHE_DIR="$_SC_OUTLIER_CACHE" \
 assert_eq "skills-cost outlier: exit 0" "0" "$_sc_outlier_rc"
 assert_contains "skills-cost outlier: expensive-skill present"  "expensive-skill" "$_sc_outlier_out"
 assert_contains "skills-cost outlier: flag ! present"           "!"               "$_sc_outlier_out"
-# cheap and mid should NOT have a flag — only 1 data row should carry an outlier flag.
+assert_contains "skills-cost outlier: footer states calls floor" "10 calls"       "$_sc_outlier_out"
+# Only expensive-skill may carry the flag: rare-expensive is over the cost
+# threshold but under the calls floor; cheap/mid/mid2 are under the threshold.
 # Count data rows with '!' by excluding header/footer lines (Skill, ──, Median).
 _sc_flag_count=$(printf '%s\n' "$_sc_outlier_out" \
   | grep -v 'Skill\|───\|Median\|skills-cost\|days' \
@@ -167,7 +172,60 @@ _sc_zero_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --days 0 2>&1; echo "rc=$?")
 assert_contains "skills-cost --days 0: rejected (exit 1)" "rc=1" "$_sc_zero_out"
 
+# ── Test 9: --mcp flag renders attribution_mcp with stripped prefix ───────────
+_SC_MCP_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_MCP_CACHE")
+mkdir -p "$_SC_MCP_CACHE/insights"
+
+_sc_write_fixture "$_SC_MCP_CACHE/insights/sess-mcp.json" \
+  '{}' '{}' \
+  '{"mcp__srv__browser_navigate":{"calls":4,"in_tok":100.5,"out_tok":250,"cache_read":20000,"cache_create":1000}}' \
+  '{"mcp|mcp__srv__browser_navigate|claude-sonnet-4-6":4}'
+
+_sc_mcp_out=$(CLAUDII_CACHE_DIR="$_SC_MCP_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --mcp 2>&1)
+_sc_mcp_rc=$(CLAUDII_CACHE_DIR="$_SC_MCP_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --mcp >/dev/null 2>&1; echo $?)
+
+assert_eq "skills-cost --mcp: exit 0" "0" "$_sc_mcp_rc"
+assert_contains "skills-cost --mcp: shows MCP Tool label" "MCP Tool" "$_sc_mcp_out"
+assert_contains "skills-cost --mcp: shows tool name"      "srv__browser_navigate" "$_sc_mcp_out"
+# Display drops the mcp__ prefix; the data key keeps it
+_sc_mcp_prefix=$(printf '%s\n' "$_sc_mcp_out" | grep -c 'mcp__srv' || true)
+assert_eq "skills-cost --mcp: mcp__ prefix stripped in table" "0" "$_sc_mcp_prefix"
+# 4/4 calls on sonnet-4-6 → dominant model label rendered
+assert_contains "skills-cost --mcp: dominant model label" "Sonnet 4.6" "$_sc_mcp_out"
+# skills mode on the same cache → no data (skills block empty)
+_sc_mcp_skills=$(CLAUDII_CACHE_DIR="$_SC_MCP_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost 2>&1)
+assert_contains "skills-cost --mcp cache: skills mode shows no-data" "No skill attribution data" "$_sc_mcp_skills"
+
+# ── Test 10: dominant model column (≥80% of calls → label, else mixed) ────────
+_SC_MODEL_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_MODEL_CACHE")
+mkdir -p "$_SC_MODEL_CACHE/insights"
+
+# dominant-skill: 9/10 calls opus-4-7 (90% ≥ 80%) → "Opus 4.7"
+# split-skill: 5/10 + 5/10 → "mixed"
+_sc_write_fixture "$_SC_MODEL_CACHE/insights/sess-model.json" \
+  '{"dominant-skill":{"calls":10,"in_tok":1000,"out_tok":500,"cache_read":0,"cache_create":0},"split-skill":{"calls":10,"in_tok":1000,"out_tok":400,"cache_read":0,"cache_create":0}}' \
+  '{}' '{}' \
+  '{"skill|dominant-skill|claude-opus-4-7":9,"skill|dominant-skill|claude-haiku-4-5":1,"skill|split-skill|claude-opus-4-7":5,"skill|split-skill|claude-sonnet-4-6":5}'
+
+_sc_model_out=$(CLAUDII_CACHE_DIR="$_SC_MODEL_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost 2>&1)
+assert_contains "skills-cost model: dominant row shows label" "Opus 4.7" "$_sc_model_out"
+_sc_model_split=$(printf '%s\n' "$_sc_model_out" | grep 'split-skill' || true)
+assert_contains "skills-cost model: split row shows mixed" "mixed" "$_sc_model_split"
+
+# JSON mode carries the raw dominant model id (machine-readable, not the label)
+_sc_model_json=$(CLAUDII_CACHE_DIR="$_SC_MODEL_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_model_dom=$(jq -r '.rows[] | select(.name == "dominant-skill") | .model' <<< "$_sc_model_json" 2>/dev/null)
+assert_eq "skills-cost --json: dominant model is raw id" "claude-opus-4-7" "$_sc_model_dom"
+_sc_model_mix=$(jq -r '.rows[] | select(.name == "split-skill") | .model' <<< "$_sc_model_json" 2>/dev/null)
+assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
+
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc \
-      _sc_bad_out _sc_zero_out
+      _sc_bad_out _sc_zero_out _sc_mcp_out _sc_mcp_rc _sc_mcp_prefix _sc_mcp_skills \
+      _sc_model_out _sc_model_split _sc_model_json _sc_model_dom _sc_model_mix

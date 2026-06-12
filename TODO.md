@@ -6,17 +6,16 @@
 
 ## Pending
 
-### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning (Wave 2+)
+### Self-Improvement Loop — `/usage` Per-Category Auto-Tuning (Wave 3+)
 
-**Wave 1 shipped 2026-05-27** — `attribution_skills` / `attribution_plugins` accumulated by `lib/insights.jq` (schema_version 3), aggregated by `bin/claudii-insights merge`, surfaced by `claudii skills-cost [--days N] [--plugins] [--json]`. First real data on `bin/claudii`: top spenders are `memory-gc` ($95.88 / 746 calls) and `orchestrate` ($35.93 / 325 calls) across 30d.
+**Wave 1 shipped 2026-05-27** — `attribution_skills` / `attribution_plugins` accumulated by `lib/insights.jq` (schema_version 3), aggregated by `bin/claudii-insights merge`, surfaced by `claudii skills-cost [--days N] [--plugins] [--json]`.
 
-**Wave 2 candidates (manual iteration after looking at real tables):**
-- **Subagent attribution** — needs `isSidechain` + `parentUuid` chain design after seeing real data
-- **MCP-tool attribution** — design decision: anteilig vs full-row cost
-- **`model` column** currently shows `mixed` always — surface dominant model per skill from `.models` correlation
-- **Outlier heuristics** beyond simple 3× median — none flagged on real data, threshold may need tuning or per-skill-category bands
+**Wave 2 shipped 2026-06-12** (insights schema v4) — subagent attribution (Agent tool_use → `toolUseResult.agentId` → skill chain; subagent transcripts were invisible to the aggregator before: orchestrate 380 → 1568 attributed calls on real data), MCP-tool attribution (`skills-cost --mcp`, message cost split evenly across its MCP tools), dominant-model column (≥80% of attributed calls via flat `attribution_models`, else `mixed`), outlier rule 2× median + ≥10 calls (3× never fired on real data).
+
+**Wave 3 candidates:**
 - **Skill-edit auto-suggestion** (`claudii self-improve`) — judgment-LLM-call, not mechanical transform
 - **Auto-apply** (`--apply`) — last, after suggestions are trusted
+- **Per-skill-category outlier bands** — only if the 2×-median rule flags too much/little over time
 
 ---
 
