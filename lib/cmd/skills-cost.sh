@@ -33,14 +33,23 @@ _cmd_skills_cost() {
     return 1
   fi
 
-  # Pricing constants (per-token, in USD).
-  # Skills run across mixed models; we use Sonnet rates as a conservative blended rate.
-  # The model column shows the dominant model (≥80%% of attributed calls) or "mixed".
-  # Rates: Sonnet 4.x — in=$3/M out=$15/M cache_read=$0.3/M cache_create=$3.75/M
-  local _P_IN="0.000003"      # $3/M input
-  local _P_OUT="0.000015"     # $15/M output
-  local _P_CR="0.0000003"     # $0.3/M cache_read
-  local _P_CC="0.00000375"    # $3.75/M cache_create
+  # Per-token pricing (USD), per model tier. These are the only hardcoded rates
+  # in claudii (`claudii cost` reads costUSD from history instead). Per MTok:
+  # Opus $5/$25, Sonnet $3/$15, Haiku $1/$5, Fable $10/$50; cache_read = 0.1×
+  # input, cache_create (5m TTL) = 1.25× input. On a tier price change, update
+  # this table AND the bare-tier fallback in the jq `tier()` def below.
+  #
+  # tot_usd uses real per-model token attribution (schema v5, attribution_models).
+  # Pre-v5 / orphaned caches carry no per-model token split; their residual
+  # tokens (aggregate minus per-model-covered) are priced at the flat Sonnet rate
+  # — matching the old behavior, so old data degrades gracefully rather than
+  # vanishing from the dollar totals.
+  local _rates='{
+    "opus":   {"in":0.000005, "out":0.000025, "cr":0.0000005, "cc":0.00000625},
+    "sonnet": {"in":0.000003, "out":0.000015, "cr":0.0000003, "cc":0.00000375},
+    "haiku":  {"in":0.000001, "out":0.000005, "cr":0.0000001, "cc":0.00000125},
+    "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.000001,  "cc":0.0000125}
+  }'
 
   # Aggregate via `claudii-insights merge` (through the shared helper) — the
   # --days cutoff and cross-session summing live there, single source of truth.
@@ -60,24 +69,38 @@ _cmd_skills_cost() {
     mcp)    attr_key="attribution_mcp";     section_label="MCP Tool" ;;
   esac
 
-  # Price the pre-summed attribution block. The dominant model per row comes
-  # from the flat attribution_models map ("kind|name|model" → calls): the top
-  # model needs ≥80% of the row's attributed calls, otherwise "mixed".
-  # Output: TSV — name\tcalls\ttot_usd\tavg_usd\tmodel
+  # Price each row at real per-model rates: every per-model token bucket in
+  # attribution_models is priced at its own tier, and any residual not covered by
+  # per-model data (pre-v5 orphans) is priced at the flat Sonnet rate. The
+  # dominant model per row comes from the per-model call counts: the top model
+  # needs ≥80% of the row's attributed calls, otherwise "mixed".
+  # Output: TSV — name\tcalls\ttot_usd\tavg_usd\tmodel\tin\tout\tcr\tcc
   local rows_tsv
   rows_tsv=$(jq -r \
     --arg k "$attr_key" \
     --arg kind "$attr_kind" \
-    --arg pin "$_P_IN" \
-    --arg pout "$_P_OUT" \
-    --arg pcr "$_P_CR" \
-    --arg pcc "$_P_CC" \
+    --argjson rates "$_rates" \
     '
-    (.attribution_models // {} | to_entries
-      | map((.key | split("|")) as $p
-          | select($p[0] == $kind)
-          | {name: ($p[1] // ""), model: ($p[2] // "unknown"), n: .value})
-    ) as $am
+    # Map a raw model id to a rate-table tier (most-specific first; unknown →
+    # sonnet, the historical blended default). Keep in sync with the rate table.
+    def tier($m):
+      ($m // "" | ascii_downcase) as $l
+      | if   ($l | test("fable|mythos")) then "fable"
+        elif ($l | test("opus"))         then "opus"
+        elif ($l | test("haiku"))        then "haiku"
+        elif ($l | test("sonnet"))       then "sonnet"
+        else "sonnet" end;
+    ($rates.sonnet) as $sonnet
+    | (.attribution_models // {} | to_entries
+        | map((.key | split("|")) as $p
+            | select($p[0] == $kind)
+            | {name: ($p[1] // ""), model: ($p[2] // "unknown"),
+               calls:        (.value.calls        // 0),
+               in_tok:       (.value.in_tok       // 0),
+               out_tok:      (.value.out_tok      // 0),
+               cache_read:   (.value.cache_read   // 0),
+               cache_create: (.value.cache_create // 0)})
+      ) as $am
     | .[$k] // {}
     | to_entries
     | map({
@@ -88,21 +111,27 @@ _cmd_skills_cost() {
         cache_read:   (.value.cache_read   // 0),
         cache_create: (.value.cache_create // 0)
       })
-    | map(. + {
-        tot_usd: (
-          (.in_tok       | tonumber) * ($pin  | tonumber)
-          + (.out_tok    | tonumber) * ($pout | tonumber)
-          + (.cache_read | tonumber) * ($pcr  | tonumber)
-          + (.cache_create | tonumber) * ($pcc | tonumber)
-        )
-      })
+    | map(. as $row
+        | ([$am[] | select(.name == $row.name)]) as $cand
+        # per-model priced cost (schema-v5 token attribution)
+        | ($cand | map(($rates[tier(.model)]) as $r
+            | (.in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr + .cache_create * $r.cc)
+          ) | add // 0) as $model_usd
+        # residual = aggregate − per-model-covered tokens (pre-v5 orphans), flat Sonnet
+        | (([$row.in_tok       - ($cand | map(.in_tok)       | add // 0), 0] | max)) as $res_in
+        | (([$row.out_tok      - ($cand | map(.out_tok)      | add // 0), 0] | max)) as $res_out
+        | (([$row.cache_read   - ($cand | map(.cache_read)   | add // 0), 0] | max)) as $res_cr
+        | (([$row.cache_create - ($cand | map(.cache_create) | add // 0), 0] | max)) as $res_cc
+        | ($res_in * $sonnet.in + $res_out * $sonnet.out + $res_cr * $sonnet.cr + $res_cc * $sonnet.cc) as $res_usd
+        | $row + {tot_usd: ($model_usd + $res_usd)}
+      )
     | map(. + {avg_usd: (if .calls > 0 then .tot_usd / .calls else 0 end)})
     | map(. as $row | $row + {model: (
         [$am[] | select(.name == $row.name)] as $cand
-        | ($cand | map(.n) | add // 0) as $tot
+        | ($cand | map(.calls) | add // 0) as $tot
         | if $tot <= 0 then "mixed"
-          else ($cand | max_by(.n)) as $top
-            | (if ($top.n / $tot) >= 0.8 then $top.model else "mixed" end)
+          else ($cand | max_by(.calls)) as $top
+            | (if ($top.calls / $tot) >= 0.8 then $top.model else "mixed" end)
           end
       )})
     | sort_by(-.tot_usd)
@@ -190,7 +219,7 @@ _cmd_skills_cost() {
     local _meta
     _meta=$(jq -n --arg med "$_median_avg" --arg d "$days" --arg mc "$_outlier_min_calls" \
       '{median_avg_usd:($med|tonumber),days:($d|tonumber),outlier_rule:("avg >= 2x median, calls >= " + $mc),
-        pricing:"flat Sonnet rates across all models (in $3/M, out $15/M, cache_read $0.30/M, cache_create $3.75/M) — absolute USD approximate, cross-model rankings distorted"}')
+        pricing:"per-model rates from schema-v5 token attribution (Opus $5/$25/M, Sonnet $3/$15/M, Haiku $1/$5/M, Fable $10/$50/M; cache_read 0.1x, cache_create 1.25x input). Pre-v5 / orphaned caches lack the per-model token split; their residual tokens are priced at the flat Sonnet rate"}')
     printf '%s\n' "{\"rows\":${_json_rows},\"meta\":${_meta}}"
     return 0
   fi

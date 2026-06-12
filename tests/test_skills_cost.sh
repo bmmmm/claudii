@@ -153,7 +153,7 @@ assert_eq "skills-cost --json: meta has days" "0" "$_sc_has_days"
 # Token split per row (judgment signal: out-heavy vs cache_read-heavy) + pricing caveat
 _sc_split=$(jq -r '.rows[] | select(.name=="explore") | [.in_tok, .out_tok, .cache_read, .cache_create] | @csv' <<< "$_sc_json_out" 2>/dev/null)
 assert_eq "skills-cost --json: row carries token split" "3000,800,40000,5000" "$_sc_split"
-_sc_has_pricing=$(jq -e '.meta.pricing | test("flat Sonnet rates")' <<< "$_sc_json_out" >/dev/null 2>&1; echo $?)
+_sc_has_pricing=$(jq -e '.meta.pricing | test("per-model rates")' <<< "$_sc_json_out" >/dev/null 2>&1; echo $?)
 assert_eq "skills-cost --json: meta.pricing caveat present" "0" "$_sc_has_pricing"
 
 # ── Test 6: --days is passed through (reflected in days window) ───────────────
@@ -229,6 +229,48 @@ assert_eq "skills-cost --json: dominant model is raw id" "claude-opus-4-7" "$_sc
 _sc_model_mix=$(jq -r '.rows[] | select(.name == "split-skill") | .model' <<< "$_sc_model_json" 2>/dev/null)
 assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
 
+# ── Test 11: per-model pricing (schema v5) — opus costs 5×, haiku ⅓ of sonnet ─
+# Each skill runs 1M input tokens on exactly one model. Priced at that model's
+# own input rate (Opus $5/M, Sonnet $3/M, Haiku $1/M, Fable $10/M), 1M tokens
+# costs exactly the per-MTok price. attribution_models carries the v5 per-model
+# token objects; attribution_skills aggregate matches (residual = 0).
+_SC_PM_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_PM_CACHE")
+mkdir -p "$_SC_PM_CACHE/insights"
+_sc_write_fixture "$_SC_PM_CACHE/insights/sess-pm.json" \
+  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}' \
+  '{}' '{}' \
+  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}'
+
+_sc_pm_json=$(CLAUDII_CACHE_DIR="$_SC_PM_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_pm_opus=$(jq -r '.rows[] | select(.name=="opus-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_sonnet=$(jq -r '.rows[] | select(.name=="sonnet-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_haiku=$(jq -r '.rows[] | select(.name=="haiku-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_fable=$(jq -r '.rows[] | select(.name=="fable-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+# 1M input tokens → exactly the per-MTok input price (compare rounded to cents)
+assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(awk -v v="$_sc_pm_opus"   'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: sonnet-skill priced at \$3/M" "3.00"  "$(awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
+
+# ── Test 12: residual pricing — pre-v5 tokens (no per-model split) → Sonnet ───
+# Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
+# a 400K residual with no per-model attribution (the orphaned-v4 case). Cost =
+# 600K×$5/M (opus) + 400K×$3/M (sonnet residual) = $3.00 + $1.20 = $4.20.
+_SC_RES_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_RES_CACHE")
+mkdir -p "$_SC_RES_CACHE/insights"
+_sc_write_fixture "$_SC_RES_CACHE/insights/sess-res.json" \
+  '{"mixed-skill":{"calls":2,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}' \
+  '{}' '{}' \
+  '{"skill|mixed-skill|claude-opus-4-8":{"calls":1,"in_tok":600000,"out_tok":0,"cache_read":0,"cache_create":0}}'
+
+_sc_res_json=$(CLAUDII_CACHE_DIR="$_SC_RES_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_res_tot=$(jq -r '.rows[] | select(.name=="mixed-skill") | .tot_usd' <<< "$_sc_res_json" 2>/dev/null)
+assert_eq "skills-cost residual: 600K opus + 400K sonnet residual == \$4.20" "4.20" \
+  "$(awk -v v="$_sc_res_tot" 'BEGIN{printf "%.2f", v}')"
+
+unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_haiku _sc_pm_fable _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc \

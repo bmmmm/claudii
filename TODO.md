@@ -43,24 +43,18 @@ Drei verifizierte Probleme am `skills-cost`-Output (Stand 2026-06-12):
   absolut) in den `--json`-Rows + `meta.pricing`-Caveat. Per-Call-Werte bewusst
   weggelassen — trivial ableitbar (`tok/calls`), Konsument rechnet selbst.
   Contract-Erweiterung additiv (session-close 2.7 liest `rows[]`-Felder).
-- [ ] **Welle B — Schema v5: per-Modell-Tokens.** `attribution_models` von
-  Calls-only auf Token-Zähler pro Modell erweitern; `skills-cost` rechnet
-  dann echte per-Modell-Raten. Consumer-Sweep pflicht (merge, skills-cost,
-  Tests — vgl. lesson "Schema-Bumps brauchen Consumer-Sweep").
+- [x] **Welle B — shipped 2026-06-12:** Schema v5, `attribution_models` von
+  Calls-only auf `{calls,in/out/cache_read/cache_create}` pro Modell erweitert;
+  `skills-cost` preist jeden per-Modell-Token-Bucket zu seiner Tier-Rate, Residual
+  (pre-v5 Orphans ohne Split) flat-Sonnet. Consumer-Sweep: merge `add_models`
+  (Skalar-tolerant), `SCHEMA_VERSION=5` in `bin/claudii-insights`, Tests
+  (attribution/merge/skills-cost), CLAUDE.md Pricing-Note. `--json` rows[]-Contract
+  unverändert (tot_usd nur präziser).
 - [ ] **Welle C — Trend-Vergleich:** Zeitfenster-Vergleich (z.B.
   `--compare 30:30` oder vorher/nachher um einen Edit-Zeitstempel), damit
   Phase 2.7 Skill-Edits auf Wirkung prüfen kann. Design offen: Kontext-
   Konfundierung (Problem 3) mindestens dokumentieren, idealerweise
   out-Tokens/Call als kontextrobustere Vergleichsmetrik anbieten.
-
----
-
-### `claudii status --history`
-
-**Type: Feature** · **Complexity: Small** · **Touches: `lib/cmd/system.sh`, man, completions, tests**
-Transition-Log (`status-history.tsv`, seit 2026-06-12) voll anzeigen statt nur
-der letzten 5 im Status-Output: `claudii status --history [--days N]`, Zeiten
-via `display.timezone`/`_fmt_abs`.
 
 ---
 

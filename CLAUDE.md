@@ -125,13 +125,19 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
    version-agnostic (matches bare `fable`/`opus`/`sonnet`/`haiku`) — no change
    for version bumps within a tier. A **new tier** (e.g. Fable in 2026-06)
    needs a new branch in BOTH files, most-capable-first, plus a bare-tier
-   fallback case in `_insights_model_label()`.
+   fallback case in `_insights_model_label()`, plus a `tier()` branch + `_rates`
+   entry in `lib/cmd/skills-cost.sh` (see pricing note below).
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
-If the new model also changes **pricing**, update the per-token constants in
-`lib/cmd/skills-cost.sh` (`_P_IN`/`_P_OUT`/`_P_CR`/`_P_CC`) — those are the only hardcoded
-rates (`claudii cost` itself reads `costUSD` from history, not these). Verify
-`claudii skills-cost` totals afterwards.
+If the new model also changes **pricing**, update the per-model `_rates` table in
+`lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc; cache_read = 0.1×
+input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
+(`claudii cost` itself reads `costUSD` from history, not these). The jq `tier()`
+def maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/`sonnet`, unknown
+→ sonnet) — keep it in sync with the table. `claudii skills-cost` prices each
+per-model token bucket (schema-v5 `attribution_models`) at its tier; pre-v5 /
+orphaned caches have no per-model split, so their residual tokens fall back to the
+flat Sonnet rate. Verify `claudii skills-cost` totals afterwards.
 
 ## Project skills
 

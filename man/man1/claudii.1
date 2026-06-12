@@ -400,9 +400,13 @@ Each row carries the token split
 .RB ( in_tok ", " out_tok ", " cache_read ", " cache_create )
 \(em the signal that separates \(lqskill talks too much\(rq (out-heavy)
 from \(lqskill runs in fat sessions\(rq (cache_read-heavy).
+Costs are priced per model: each per-model token bucket
+.RB ( attribution_models ", "
+schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
+0.1\(mu, cache_create 1.25\(mu input). Pre-v5 / orphaned caches carry no
+per-model split \(em their residual tokens fall back to the flat Sonnet rate.
 .B meta.pricing
-documents the flat-Sonnet-rate caveat: absolute USD are approximate and
-cross-model rankings distorted until per-model pricing ships.
+documents the rates and the residual fallback.
 .RE
 .TP
 .B trends

@@ -86,7 +86,9 @@ _is_stale() {
   return 1
 }
 
-SCHEMA_VERSION=4
+# Must match `schema_version` in lib/insights.jq — bump both together on any
+# breaking change to the per-session cache shape (drives the rebuild gate below).
+SCHEMA_VERSION=5
 
 # Schema gate: compare the .schema marker written after the last successful
 # rebuild. The previous approach (min schema_version across ALL cache files)
@@ -212,6 +214,18 @@ _cmd_merge() {
             reduce ($e.value | to_entries[]) as $f ((.[$e.key] // {}); .[$f.key] = ((.[$f.key] // 0) + $f.value))
           )
         );
+      # attribution_models merge — tolerant of the pre-v5 shape where each value
+      # was a bare calls count: coerce a scalar to {calls: N} before summing, so
+      # orphaned v4 caches (source JSONL gone, can never be re-aggregated) keep
+      # contributing their call counts alongside the per-model token objects v5
+      # writes.
+      def add_models(a; b):
+        reduce (b // {} | to_entries[]) as $e (a;
+          ($e.value | if type == "object" then . else {calls: .} end) as $v
+          | .[$e.key] = (
+              reduce ($v | to_entries[]) as $f ((.[$e.key] // {}); .[$f.key] = ((.[$f.key] // 0) + $f.value))
+            )
+        );
 
       [inputs
         | select(($cutoff == "") or ((.last_seen // "") >= $cutoff))
@@ -260,7 +274,7 @@ _cmd_merge() {
           | .attribution_skills = add_obj_nested(.attribution_skills; $s.attribution_skills)
           | .attribution_plugins = add_obj_nested(.attribution_plugins; $s.attribution_plugins)
           | .attribution_mcp = add_obj_nested(.attribution_mcp; $s.attribution_mcp)
-          | .attribution_models = add_obj(.attribution_models; $s.attribution_models)
+          | .attribution_models = add_models(.attribution_models; $s.attribution_models)
         )
     ' "${files[@]}"
 }

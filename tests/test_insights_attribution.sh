@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 4" "4" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 5" "5" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -97,19 +97,38 @@ assert_eq "insights attribution: mcp beta out_tok == 30 (split)" "30" "$_MCP_BET
 _MCP_BASH=$(echo "$_RESULT" | jq '.attribution_mcp | has("Bash")' 2>/dev/null)
 assert_eq "insights attribution: Bash not in attribution_mcp" "false" "$_MCP_BASH"
 
-# ── Per-attribution model tracking (schema v4) ───────────────────────────────
+# ── Per-attribution model tracking (schema v5: {calls, tokens} per model) ─────
 
-_AM_EXPLORE_OPUS=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-opus-4-7"] // empty' 2>/dev/null)
-assert_eq "insights attribution: models skill|explore|opus-4-7 == 1" "1" "$_AM_EXPLORE_OPUS"
+_AM_EXPLORE_OPUS=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-opus-4-7"].calls // empty' 2>/dev/null)
+assert_eq "insights attribution: models skill|explore|opus-4-7 calls == 1" "1" "$_AM_EXPLORE_OPUS"
 
-_AM_EXPLORE_SONNET=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-sonnet-4-6"] // empty' 2>/dev/null)
-assert_eq "insights attribution: models skill|explore|sonnet-4-6 == 1" "1" "$_AM_EXPLORE_SONNET"
+# Per-model tokens land on the right model bucket: explore on opus-4-7 is fixture
+# row 2 (in 100, out 50, cr 0, cc 10).
+_AM_EXPLORE_OPUS_IN=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-opus-4-7"].in_tok // empty' 2>/dev/null)
+assert_eq "insights attribution: models skill|explore|opus-4-7 in_tok == 100" "100" "$_AM_EXPLORE_OPUS_IN"
+_AM_EXPLORE_OPUS_CC=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-opus-4-7"].cache_create // empty' 2>/dev/null)
+assert_eq "insights attribution: models skill|explore|opus-4-7 cache_create == 10" "10" "$_AM_EXPLORE_OPUS_CC"
 
-_AM_PLUGIN=$(echo "$_RESULT" | jq '.attribution_models["plugin|commit-commands|claude-opus-4-7"] // empty' 2>/dev/null)
-assert_eq "insights attribution: models plugin|commit-commands|opus-4-7 == 1" "1" "$_AM_PLUGIN"
+_AM_EXPLORE_SONNET=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-sonnet-4-6"].calls // empty' 2>/dev/null)
+assert_eq "insights attribution: models skill|explore|sonnet-4-6 calls == 1" "1" "$_AM_EXPLORE_SONNET"
+# explore on sonnet-4-6 is fixture row 3 (in 80, out 60, cr 20, cc 5)
+_AM_EXPLORE_SONNET_OUT=$(echo "$_RESULT" | jq '.attribution_models["skill|explore|claude-sonnet-4-6"].out_tok // empty' 2>/dev/null)
+assert_eq "insights attribution: models skill|explore|sonnet-4-6 out_tok == 60" "60" "$_AM_EXPLORE_SONNET_OUT"
 
-_AM_MCP=$(echo "$_RESULT" | jq '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"] // empty' 2>/dev/null)
-assert_eq "insights attribution: models mcp|alpha|sonnet-4-6 == 1" "1" "$_AM_MCP"
+# Per-model token sum across models equals the flat aggregate (consistency
+# invariant skills-cost relies on for the residual calculation):
+# explore in_tok 100 + 80 == attribution_skills.explore.in_tok 180
+_AM_EXPLORE_SUM_IN=$(echo "$_RESULT" | jq '[.attribution_models | to_entries[] | select(.key | startswith("skill|explore|")) | .value.in_tok] | add' 2>/dev/null)
+assert_eq "insights attribution: per-model in_tok sums to aggregate (180)" "180" "$_AM_EXPLORE_SUM_IN"
+
+_AM_PLUGIN=$(echo "$_RESULT" | jq '.attribution_models["plugin|commit-commands|claude-opus-4-7"].calls // empty' 2>/dev/null)
+assert_eq "insights attribution: models plugin|commit-commands|opus-4-7 calls == 1" "1" "$_AM_PLUGIN"
+
+# MCP per-model tokens carry the even-split (in 50, the half of row 6's 100)
+_AM_MCP=$(echo "$_RESULT" | jq '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"].calls // empty' 2>/dev/null)
+assert_eq "insights attribution: models mcp|alpha|sonnet-4-6 calls == 1" "1" "$_AM_MCP"
+_AM_MCP_IN=$(echo "$_RESULT" | jq '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"].in_tok // empty' 2>/dev/null)
+assert_eq "insights attribution: models mcp|alpha|sonnet-4-6 in_tok == 50 (split)" "50" "$_AM_MCP_IN"
 
 # ── Subagent attribution (schema v4) ─────────────────────────────────────────
 
@@ -131,8 +150,8 @@ _INNER_OUT=$(echo "$_RESULT_SUB" | jq '.attribution_skills.inner.out_tok // empt
 assert_eq "insights subagent: own attributionSkill wins (inner out_tok == 10)" "10" "$_INNER_OUT"
 
 # Subagent model lands in attribution_models under the spawning skill
-_AM_DEPLOY_HAIKU=$(echo "$_RESULT_SUB" | jq '.attribution_models["skill|deploy|claude-haiku-4-5"] // empty' 2>/dev/null)
-assert_eq "insights subagent: models skill|deploy|haiku == 1" "1" "$_AM_DEPLOY_HAIKU"
+_AM_DEPLOY_HAIKU=$(echo "$_RESULT_SUB" | jq '.attribution_models["skill|deploy|claude-haiku-4-5"].calls // empty' 2>/dev/null)
+assert_eq "insights subagent: models skill|deploy|haiku calls == 1" "1" "$_AM_DEPLOY_HAIKU"
 
 # Subagent usage counts toward session models/days totals
 # (fixture row 5 is also haiku with in_tok 50 → 50 + 10 + 5)
@@ -158,5 +177,5 @@ unset _EXPLORE_CALLS _EXPLORE_IN _EXPLORE_OUT _EXPLORE_CACHE_READ _EXPLORE_CACHE
 unset _COMMIT_CALLS _COMMIT_IN _COMMIT_OUT _COMMIT_CACHE_READ _COMMIT_CACHE_CREATE
 unset _NONEXIST _NULL_KEY_SKILL _NULL_KEY_PLUGIN _TOTAL_MSGS _ASST_MSGS
 unset _MCP_ALPHA_CALLS _MCP_ALPHA_IN _MCP_BETA_OUT _MCP_BASH
-unset _AM_EXPLORE_OPUS _AM_EXPLORE_SONNET _AM_PLUGIN _AM_MCP
+unset _AM_EXPLORE_OPUS _AM_EXPLORE_OPUS_IN _AM_EXPLORE_OPUS_CC _AM_EXPLORE_SONNET _AM_EXPLORE_SONNET_OUT _AM_EXPLORE_SUM_IN _AM_PLUGIN _AM_MCP _AM_MCP_IN
 unset _RESULT_SUB _DEPLOY_CALLS _DEPLOY_OUT _INNER_OUT _AM_DEPLOY_HAIKU _HAIKU_TOTAL _TRANSIENT

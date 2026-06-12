@@ -129,6 +129,32 @@ cat > "$_session2_cache" <<'JSON'
 }
 JSON
 
+# Create a third cache in the NEW v5 shape: attribution_models values are
+# {calls, tokens} objects. It shares the opus key with sessions 1 & 2 (scalar),
+# so the merge must sum a coerced scalar {calls:3} with a real object {calls:2,
+# in_tok:600,...} → {calls:5, in_tok:600,...} — the mixed-schema path that
+# happens for real once a v5 session lands among orphaned v4 caches.
+# attribution_skills is left empty on purpose so the explore aggregate asserts
+# above stay isolated from this fixture; this row exercises only add_models.
+_session3_cache="$_insights_cache_dir/session-3.json"
+cat > "$_session3_cache" <<'JSON'
+{
+  "schema_version": 5,
+  "sessionId": "session-3",
+  "first_seen": "2026-06-12T10:00:00Z",
+  "last_seen": "2026-06-12T11:00:00Z",
+  "messages": 4, "assistant_messages": 2, "sidechain_msgs": 0, "thinking_blocks": 0,
+  "limit_hits": [], "snapshots": 0, "days": {}, "models": {}, "tools": {},
+  "tool_errors": {}, "stop_reasons": {}, "subagent_types": {}, "permission_modes": {}, "service_tier": {},
+  "attribution_skills": {},
+  "attribution_plugins": {},
+  "attribution_mcp": {},
+  "attribution_models": {
+    "skill|explore|claude-opus-4-7": { "calls": 2, "in_tok": 600, "out_tok": 300, "cache_read": 40, "cache_create": 10 }
+  }
+}
+JSON
+
 # Run merge with cache dir override
 merged_output=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge 2>&1)
 
@@ -182,13 +208,22 @@ assert_eq "merge: attribution_mcp.alpha.calls == 3" "3" "$mcp_calls"
 mcp_in_tok=$(printf '%s\n' "$merged_output" | jq -r '.attribution_mcp["mcp__srv__alpha"].in_tok')
 assert_eq "merge: attribution_mcp.alpha.in_tok == 75 (50.5+24.5)" "75" "$mcp_in_tok"
 
-# ── attribution_models: flat key sums ────────────────────────────────────────
-am_opus=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-opus-4-7"]')
-assert_eq "merge: attribution_models skill|explore|opus == 3 (2+1)" "3" "$am_opus"
-am_sonnet=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-sonnet-4-6"]')
-assert_eq "merge: attribution_models skill|explore|sonnet == 1 (one session)" "1" "$am_sonnet"
-am_mcp=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"]')
-assert_eq "merge: attribution_models mcp key == 2" "2" "$am_mcp"
+# ── attribution_models: per-model {calls, tokens} objects ────────────────────
+# Sessions 1 & 2 carry the pre-v5 SCALAR shape (bare calls count). add_models
+# coerces a scalar to {calls: N} before summing, so orphaned v4 caches keep
+# contributing their calls. The merged value is therefore an OBJECT here.
+am_opus=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-opus-4-7"].calls')
+assert_eq "merge: attribution_models skill|explore|opus calls == 5 (scalar 2+1 coerced + object 2)" "5" "$am_opus"
+# Only session-3 (v5) carried per-model tokens for this key; the coerced scalars
+# add 0 to in_tok. Mixed-schema sum must surface session-3's tokens intact.
+am_opus_in=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-opus-4-7"].in_tok')
+assert_eq "merge: attribution_models opus in_tok == 600 (v5 object only)" "600" "$am_opus_in"
+am_opus_cc=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-opus-4-7"].cache_create')
+assert_eq "merge: attribution_models opus cache_create == 10 (v5 object only)" "10" "$am_opus_cc"
+am_sonnet=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-sonnet-4-6"].calls')
+assert_eq "merge: attribution_models skill|explore|sonnet calls == 1 (one session)" "1" "$am_sonnet"
+am_mcp=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"].calls')
+assert_eq "merge: attribution_models mcp key calls == 2" "2" "$am_mcp"
 
 # Verify merged output is valid JSON
 is_valid_json=$(printf '%s\n' "$merged_output" | jq . >/dev/null 2>&1; echo $?)
@@ -206,4 +241,4 @@ assert_eq       "merge --days 0: rejected (exit 1)"     "1"                "$_md
 _md_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 >/dev/null 2>&1; echo $?)
 assert_eq       "merge --days 7: accepted (exit 0)"     "0"                "$_md_ok_rc"
 
-unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json mcp_calls mcp_in_tok am_opus am_sonnet am_mcp
+unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache _session3_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json mcp_calls mcp_in_tok am_opus am_opus_in am_opus_cc am_sonnet am_mcp
