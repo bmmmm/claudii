@@ -290,13 +290,32 @@ if [[ -n "$model" ]]; then
   [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${ACCENT}▲${RST}"
 fi
 
-# Context bar: usable % = raw / 0.8 (80% practical window). >200k flag, 1M label, cache hit %.
+# Context bar: usable % = raw scaled to the auto-compact window. >200k flag, 1M label, cache hit %.
+# used_percentage is pre-calculated against the FULL context_window_size, but
+# auto-compact fires well before 100% — the default 80% practical-window scale
+# compensates. When CLAUDE_CODE_AUTO_COMPACT_WINDOW is set (inherited from
+# Claude Code), derive the scale from it instead: a value > 1 is a token count
+# (fraction = value / window size), a value in (0,1] is the fraction itself.
+# Clamped to [50,100]%; unset/garbage/missing window size → the 80% default.
+_ac_scale_pct=80
+_ac_env="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}"
+if [[ "$_ac_env" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  _ac_scale_pct=$(awk -v v="$_ac_env" -v w="${ctx_size:-0}" 'BEGIN {
+    f = 0.8
+    if (v > 1)      { if (w + 0 >= 1) f = v / w }
+    else if (v > 0) { f = v }
+    if (f < 0.5) f = 0.5
+    if (f > 1.0) f = 1.0
+    printf "%d", f * 100 + 0.5
+  }')
+  [[ "$_ac_scale_pct" =~ ^[0-9]+$ ]] || _ac_scale_pct=80
+fi
 _seg_context=""
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
   (( local_pct > 100 )) && local_pct=100
-  (( _usable_pct = local_pct * 100 / 80 ))
+  (( _usable_pct = local_pct * 100 / _ac_scale_pct ))
   (( _usable_pct > 100 )) && _usable_pct=100
   filled=$(( _usable_pct / 10 ))
   empty=$(( 10 - filled ))

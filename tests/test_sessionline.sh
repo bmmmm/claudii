@@ -9,6 +9,9 @@ _SL_TMPDIRS=()
 _SL_ISOLATED_CFG=$(mktemp -d "${TMPDIR:-/tmp}/claudii-sl-cfg.XXXXXX")
 _SL_TMPDIRS+=("$_SL_ISOLATED_CFG")
 export XDG_CONFIG_HOME="$_SL_ISOLATED_CFG"
+# Tests may run inside a Claude Code session that sets the auto-compact window —
+# unset it so the context-bar asserts see the default 80% scale.
+unset CLAUDE_CODE_AUTO_COMPACT_WINDOW
 trap 'rm -rf "${_SL_TMPDIRS[@]}" 2>/dev/null' EXIT
 
 # Full data (all fields)
@@ -657,3 +660,29 @@ _ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
 assert_contains "insomnii env: corrupt config falls back to shame=true" "shame=true" "$_ins_env"
 assert_contains "insomnii env: corrupt config falls back to rainbow=true" "rainbow=true" "$_ins_env"
 unset _ins_dir _ins_env
+
+# ── Auto-compact aware context bar (CLAUDE_CODE_AUTO_COMPACT_WINDOW) ─────────
+# Default (unset, see top of file): 42% raw → 42*100/80 = 52%.
+_ac_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"total_input_tokens":1000,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.10}}'
+
+# Fraction form: 0.9 → scale 90 → 40*100/90 = 44%
+output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=0.9 bash "$SL" 2>&1)
+assert_contains "auto-compact fraction 0.9 scales bar" "44%" "$output"
+
+# Token-count form: 100000 of 200000 → fraction 0.5 → 40*100/50 = 80%
+output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
+assert_contains "auto-compact token count scales bar" "80%" "$output"
+
+# Garbage value → default 80% scale → 40*100/80 = 50%
+output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=banana bash "$SL" 2>&1)
+assert_contains "auto-compact garbage falls back to 80" "50%" "$output"
+
+# Clamp: fraction 0.2 clamps to 0.5 → 40*100/50 = 80%
+output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=0.2 bash "$SL" 2>&1)
+assert_contains "auto-compact low fraction clamps to 0.5" "80%" "$output"
+
+# Token count without window size → default 80% scale → 50%
+_ac_nown='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"total_input_tokens":1000,"total_output_tokens":100},"cost":{"total_cost_usd":0.10}}'
+output=$(echo "$_ac_nown" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
+assert_contains "auto-compact token count w/o window size falls back" "50%" "$output"
+unset _ac_json _ac_nown
