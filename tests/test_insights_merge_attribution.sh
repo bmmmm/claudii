@@ -49,6 +49,19 @@ cat > "$_session1_cache" <<'JSON'
       "cache_read": 0,
       "cache_create": 20
     }
+  },
+  "attribution_mcp": {
+    "mcp__srv__alpha": {
+      "calls": 2,
+      "in_tok": 50.5,
+      "out_tok": 25,
+      "cache_read": 10,
+      "cache_create": 0
+    }
+  },
+  "attribution_models": {
+    "skill|explore|claude-opus-4-7": 2,
+    "mcp|mcp__srv__alpha|claude-sonnet-4-6": 2
   }
 }
 JSON
@@ -99,6 +112,19 @@ cat > "$_session2_cache" <<'JSON'
       "cache_read": 5,
       "cache_create": 10
     }
+  },
+  "attribution_mcp": {
+    "mcp__srv__alpha": {
+      "calls": 1,
+      "in_tok": 24.5,
+      "out_tok": 5,
+      "cache_read": 0,
+      "cache_create": 2
+    }
+  },
+  "attribution_models": {
+    "skill|explore|claude-opus-4-7": 1,
+    "skill|explore|claude-sonnet-4-6": 1
   }
 }
 JSON
@@ -150,6 +176,20 @@ assert_eq "merge: attribution_plugins.email.cache_read == 5" "5" "$email_cache_r
 email_cache_create=$(printf '%s\n' "$merged_output" | jq -r '.attribution_plugins.email.cache_create')
 assert_eq "merge: attribution_plugins.email.cache_create == 30" "30" "$email_cache_create"
 
+# ── attribution_mcp: nested sums incl. fractional token shares ───────────────
+mcp_calls=$(printf '%s\n' "$merged_output" | jq -r '.attribution_mcp["mcp__srv__alpha"].calls')
+assert_eq "merge: attribution_mcp.alpha.calls == 3" "3" "$mcp_calls"
+mcp_in_tok=$(printf '%s\n' "$merged_output" | jq -r '.attribution_mcp["mcp__srv__alpha"].in_tok')
+assert_eq "merge: attribution_mcp.alpha.in_tok == 75 (50.5+24.5)" "75" "$mcp_in_tok"
+
+# ── attribution_models: flat key sums ────────────────────────────────────────
+am_opus=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-opus-4-7"]')
+assert_eq "merge: attribution_models skill|explore|opus == 3 (2+1)" "3" "$am_opus"
+am_sonnet=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["skill|explore|claude-sonnet-4-6"]')
+assert_eq "merge: attribution_models skill|explore|sonnet == 1 (one session)" "1" "$am_sonnet"
+am_mcp=$(printf '%s\n' "$merged_output" | jq -r '.attribution_models["mcp|mcp__srv__alpha|claude-sonnet-4-6"]')
+assert_eq "merge: attribution_models mcp key == 2" "2" "$am_mcp"
+
 # Verify merged output is valid JSON
 is_valid_json=$(printf '%s\n' "$merged_output" | jq . >/dev/null 2>&1; echo $?)
 assert_eq "merge: output is valid JSON" "0" "$is_valid_json"
@@ -166,4 +206,4 @@ assert_eq       "merge --days 0: rejected (exit 1)"     "1"                "$_md
 _md_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 >/dev/null 2>&1; echo $?)
 assert_eq       "merge --days 7: accepted (exit 0)"     "0"                "$_md_ok_rc"
 
-unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json
+unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json mcp_calls mcp_in_tok am_opus am_sonnet am_mcp

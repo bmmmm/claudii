@@ -113,3 +113,57 @@ assert_contains "cache --days foo: exit 1" "rc=1" "$_dv_out"
 assert_not_contains "cache --days foo: no misleading no-data message" "No insight data" "$_dv_out"
 rm -rf "$_dv_base"
 unset _dv_base _dv_out
+
+# ── Schema gate: orphaned old-schema caches must not force eternal rebuilds ──
+# Regression: the gate took the min schema_version across ALL cache files;
+# orphans (source JSONL deleted) could never be upgraded → every aggregate
+# run since the v3 bump force-rebuilt all live sessions. The gate now uses a
+# .schema marker written after the last successful rebuild.
+_sg_base=$(mktemp -d "${TMPDIR:-/tmp}/claudii_schema_gate.XXXXXX")
+mkdir -p "$_sg_base/proj/projA" "$_sg_base/cache/insights"
+printf '{"type":"assistant","timestamp":"2026-06-01T10:00:00Z","message":{"role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
+  > "$_sg_base/proj/projA/sess-live.jsonl"
+# Orphan: cache entry with an old schema and no source JSONL
+printf '{"schema_version":2,"sessionId":"sess-orphan","last_seen":"2026-01-01T00:00:00Z"}\n' \
+  > "$_sg_base/cache/insights/sess-orphan.json"
+
+_sg_run1=$(CLAUDE_PROJECTS_DIR="$_sg_base/proj" CLAUDII_CACHE_DIR="$_sg_base/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate 2>&1)
+_sg_run2=$(CLAUDE_PROJECTS_DIR="$_sg_base/proj" CLAUDII_CACHE_DIR="$_sg_base/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate 2>&1)
+assert_contains     "schema gate: first run rebuilds (no marker yet)" "schema bump" "$_sg_run1"
+assert_not_contains "schema gate: second run skips rebuild despite orphan" "schema bump" "$_sg_run2"
+assert_contains     "schema gate: second run processes 0" "0 processed" "$_sg_run2"
+rm -rf "$_sg_base"
+unset _sg_base _sg_run1 _sg_run2
+
+# ── Subagent ingestion through the aggregate path ────────────────────────────
+# <proj>/<sid>/subagents/agent-*.jsonl must be fed into the parent's cache
+# (attribution chain itself is covered in test_insights_attribution.sh) and a
+# subagent-only mtime change must re-aggregate the parent.
+_sa_base=$(mktemp -d "${TMPDIR:-/tmp}/claudii_subagent.XXXXXX")
+mkdir -p "$_sa_base/proj/projA/sess-sub/subagents" "$_sa_base/cache/insights"
+printf '%s\n' \
+  '{"type":"assistant","timestamp":"2026-06-01T10:00:00Z","attributionSkill":"deploy","message":{"role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":30,"output_tokens":15,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"tu1","name":"Agent","input":{"subagent_type":"Explore"}}]}}' \
+  '{"type":"user","timestamp":"2026-06-01T10:01:00Z","toolUseResult":{"agentId":"subX","agentType":"Explore"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"done"}]}}' \
+  > "$_sa_base/proj/projA/sess-sub.jsonl"
+printf '{"type":"assistant","timestamp":"2026-06-01T10:00:30Z","agentId":"subX","isSidechain":true,"message":{"role":"assistant","model":"claude-haiku-4-5","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}\n' \
+  > "$_sa_base/proj/projA/sess-sub/subagents/agent-subX.jsonl"
+
+CLAUDE_PROJECTS_DIR="$_sa_base/proj" CLAUDII_CACHE_DIR="$_sa_base/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+_sa_deploy_out=$(jq -r '.attribution_skills.deploy.out_tok // "missing"' \
+  "$_sa_base/cache/insights/sess-sub.json" 2>/dev/null)
+assert_eq "subagent aggregate: deploy includes subagent out_tok (15+20)" "35" "$_sa_deploy_out"
+
+# Subagent-only update → parent must re-aggregate on next run
+sleep 1
+printf '{"type":"assistant","timestamp":"2026-06-01T10:02:00Z","agentId":"subX","isSidechain":true,"message":{"role":"assistant","model":"claude-haiku-4-5","usage":{"input_tokens":1,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}\n' \
+  >> "$_sa_base/proj/projA/sess-sub/subagents/agent-subX.jsonl"
+CLAUDE_PROJECTS_DIR="$_sa_base/proj" CLAUDII_CACHE_DIR="$_sa_base/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+_sa_deploy_out2=$(jq -r '.attribution_skills.deploy.out_tok // "missing"' \
+  "$_sa_base/cache/insights/sess-sub.json" 2>/dev/null)
+assert_eq "subagent aggregate: subagent-only update re-aggregates parent (35+7)" "42" "$_sa_deploy_out2"
+rm -rf "$_sa_base"
+unset _sa_base _sa_deploy_out _sa_deploy_out2

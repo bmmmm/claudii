@@ -1,20 +1,27 @@
 # insights.jq — aggregates one Claude Code JSONL transcript
-# Input: JSONL session file (via -R -n -f, with `--arg sid <session-id>`)
+# Input: JSONL session file (via -R -n -f, with `--arg sid <session-id>`),
+# optionally followed by the session's subagents/*.jsonl files — the parent
+# file must come first so the agentId→skill map is complete before subagent
+# lines stream in.
 # Output: single JSON object with per-day, per-model and global counters
 #
 # Reads streaming via `inputs | fromjson?` so it handles multi-MB files in
 # constant memory and silently skips malformed JSON lines.
 #
 # Tool error tracking is in-band: `pending_tools[id] = name` is set on every
-# `tool_use`, looked up on the matching `tool_result`, then deleted. Both the
-# pending_tools and last_assistant_model fields are transient bookkeeping —
-# stripped from the final output.
+# `tool_use`, looked up on the matching `tool_result`, then deleted.
+# Subagent attribution is two-step in-band: an assistant `Agent` tool_use
+# stores the message's attributionSkill under the tool_use id
+# (`pending_agent_skill`), the matching tool_result carries
+# `toolUseResult.agentId` and promotes it to `agent_skill_map[agentId]`.
+# Subagent records (top-level `.agentId`) then attribute their usage to that
+# skill. All transient maps are stripped from the final output.
 #
 # Schema versioning: bump `schema_version` on every breaking change to the
 # output shape so `claudii-insights` can detect stale caches and force-rebuild.
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 3,
+  schema_version: 4,
   sessionId: $sid,
   first_seen: null,
   last_seen: null,
@@ -24,6 +31,8 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   models: {},              # model -> {in_tok, cache_read, cache_create}
   attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create}
   attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create}
+  attribution_mcp: {},     # mcp_tool_name -> {calls, in_tok, out_tok, cache_read, cache_create} (cost split evenly across the message's MCP tools — values may be fractional)
+  attribution_models: {},  # "kind|name|model" -> calls (kind: skill|plugin|mcp)
   tools: {},               # tool_name -> count
   tool_errors: {},         # tool_name -> error count
   stop_reasons: {},        # reason -> count (assistant only)
@@ -35,6 +44,8 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   limit_hits: [],          # [{timestamp, model}]
   snapshots: 0,
   pending_tools: {},       # transient: tool_use_id -> tool_name
+  pending_agent_skill: {}, # transient: tool_use_id -> attributionSkill at Agent spawn
+  agent_skill_map: {},     # transient: agentId -> attributionSkill at spawn
   last_assistant_model: null
 };
   .messages += 1
@@ -49,6 +60,10 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       | ($r.message.model // "unknown") as $model
       | .last_assistant_model = $model
       | ($day + "|" + $model) as $key
+      # Effective skill: the record's own attributionSkill wins; subagent
+      # records (top-level .agentId) fall back to the skill active when the
+      # Agent tool spawned them. "" (spawned outside any skill) → null.
+      | (($r.attributionSkill // .agent_skill_map[$r.agentId // ""] // "") | if . == "" then null else . end) as $skill
       | .days[$key].in_tok       = ((.days[$key].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
       | .days[$key].out_tok      = ((.days[$key].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
       | .days[$key].cache_read   = ((.days[$key].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
@@ -56,12 +71,13 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       | .models[$model].in_tok       = ((.models[$model].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
       | .models[$model].cache_read   = ((.models[$model].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
       | .models[$model].cache_create = ((.models[$model].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-      | (if ($r.attributionSkill // null) != null then
-          .attribution_skills[$r.attributionSkill].calls       = ((.attribution_skills[$r.attributionSkill].calls       // 0) + 1)
-          | .attribution_skills[$r.attributionSkill].in_tok     = ((.attribution_skills[$r.attributionSkill].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
-          | .attribution_skills[$r.attributionSkill].out_tok    = ((.attribution_skills[$r.attributionSkill].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
-          | .attribution_skills[$r.attributionSkill].cache_read = ((.attribution_skills[$r.attributionSkill].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-          | .attribution_skills[$r.attributionSkill].cache_create = ((.attribution_skills[$r.attributionSkill].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+      | (if $skill != null then
+          .attribution_skills[$skill].calls       = ((.attribution_skills[$skill].calls       // 0) + 1)
+          | .attribution_skills[$skill].in_tok     = ((.attribution_skills[$skill].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
+          | .attribution_skills[$skill].out_tok    = ((.attribution_skills[$skill].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
+          | .attribution_skills[$skill].cache_read = ((.attribution_skills[$skill].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
+          | .attribution_skills[$skill].cache_create = ((.attribution_skills[$skill].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_models["skill|" + $skill + "|" + $model] = ((.attribution_models["skill|" + $skill + "|" + $model] // 0) + 1)
         else . end)
       | (if ($r.attributionPlugin // null) != null then
           .attribution_plugins[$r.attributionPlugin].calls       = ((.attribution_plugins[$r.attributionPlugin].calls       // 0) + 1)
@@ -69,6 +85,22 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           | .attribution_plugins[$r.attributionPlugin].out_tok    = ((.attribution_plugins[$r.attributionPlugin].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
           | .attribution_plugins[$r.attributionPlugin].cache_read = ((.attribution_plugins[$r.attributionPlugin].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
           | .attribution_plugins[$r.attributionPlugin].cache_create = ((.attribution_plugins[$r.attributionPlugin].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_models["plugin|" + $r.attributionPlugin + "|" + $model] = ((.attribution_models["plugin|" + $r.attributionPlugin + "|" + $model] // 0) + 1)
+        else . end)
+      # MCP attribution: the message's usage is split evenly across all MCP
+      # tool_use entries in it (values may be fractional). calls counts whole
+      # invocations per tool.
+      | ([$r.message.content[]? | select(.type == "tool_use" and ((.name // "") | startswith("mcp__"))) | .name]) as $mcp
+      | (if ($mcp | length) > 0 then
+          ($mcp | length) as $n
+          | reduce $mcp[] as $mt (.;
+              .attribution_mcp[$mt].calls       = ((.attribution_mcp[$mt].calls       // 0) + 1)
+              | .attribution_mcp[$mt].in_tok     = ((.attribution_mcp[$mt].in_tok     // 0) + (($r.message.usage.input_tokens               // 0) / $n))
+              | .attribution_mcp[$mt].out_tok    = ((.attribution_mcp[$mt].out_tok    // 0) + (($r.message.usage.output_tokens              // 0) / $n))
+              | .attribution_mcp[$mt].cache_read = ((.attribution_mcp[$mt].cache_read // 0) + (($r.message.usage.cache_read_input_tokens    // 0) / $n))
+              | .attribution_mcp[$mt].cache_create = ((.attribution_mcp[$mt].cache_create // 0) + (($r.message.usage.cache_creation_input_tokens // 0) / $n))
+              | .attribution_models["mcp|" + $mt + "|" + $model] = ((.attribution_models["mcp|" + $mt + "|" + $model] // 0) + 1)
+            )
         else . end)
       | (if $r.message.usage.service_tier then .service_tier[$r.message.usage.service_tier] = ((.service_tier[$r.message.usage.service_tier] // 0) + 1) else . end)
       | (if $r.message.stop_reason then .stop_reasons[$r.message.stop_reason] = ((.stop_reasons[$r.message.stop_reason] // 0) + 1) else . end)
@@ -80,6 +112,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
                 | (if ($c.id // "") != "" then .pending_tools[$c.id] = $c.name else . end)
                 | (if $c.name == "Agent" then
                     .subagent_types[($c.input.subagent_type // "unknown")] = ((.subagent_types[($c.input.subagent_type // "unknown")] // 0) + 1)
+                    | (if ($c.id // "") != "" then .pending_agent_skill[$c.id] = ($r.attributionSkill // "") else . end)
                   else . end)
               else . end)
           )
@@ -96,10 +129,19 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           | (if (($c.content // "") | tostring | contains("hit your limit")) then
               .limit_hits += [{timestamp: ($r.timestamp // ""), model: (.last_assistant_model // "unknown")}]
             else . end)
+          # Agent tool_result: promote the skill recorded at spawn to the
+          # agentId so subagent transcript lines can attribute to it.
+          | (($r.toolUseResult // null | if type == "object" then (.agentId // null) else null end)) as $aid
+          | (if $aid != null then
+              .agent_skill_map[$aid] = (.pending_agent_skill[$tid] // "")
+              | del(.pending_agent_skill[$tid])
+            else . end)
           | (if $tid != "" then del(.pending_tools[$tid]) else . end)
         else . end)
       )
     else . end)
 )
 | del(.pending_tools)
+| del(.pending_agent_skill)
+| del(.agent_skill_map)
 | del(.last_assistant_model)

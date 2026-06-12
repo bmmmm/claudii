@@ -15,7 +15,7 @@
 #   claudii-insights cache-dir         # print insights cache directory
 #   claudii-insights merge [--days N] [--project PATH]
 #                                      # stream merged stats to stdout (jq-able)
-#                                      # includes per-skill and per-plugin attribution
+#                                      # includes per-skill, per-plugin and per-MCP-tool attribution
 
 set -uo pipefail
 
@@ -33,13 +33,31 @@ mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 
+# List a session's subagent transcripts (<proj>/<sid>/subagents/*.jsonl).
+# Prints nothing when the session has none.
+_subagent_files() {
+  local jsonl="$1"
+  local sdir="${jsonl%.jsonl}/subagents"
+  [[ -d "$sdir" ]] || return 0
+  local f
+  for f in "$sdir"/*.jsonl; do
+    [[ -f "$f" ]] && printf '%s\n' "$f"
+  done
+}
+
 # Aggregate one JSONL into its cache file. Returns 0 on success.
+# Subagent transcripts are appended after the parent file so insights.jq has
+# the agentId→skill map complete before subagent lines stream in.
 _aggregate_one() {
   local jsonl="$1"
   local sid; sid="$(basename "$jsonl" .jsonl)"
   local out="$CACHE_DIR/$sid.json"
+  local files=("$jsonl")
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] && files+=("$sub")
+  done < <(_subagent_files "$jsonl")
   local tmp; tmp=$(mktemp "$out.XXXXXX") || return 1
-  if jq -R -n --arg sid "$sid" -f "$JQ_PROGRAM" "$jsonl" > "$tmp" 2>/dev/null; then
+  if jq -R -n --arg sid "$sid" -f "$JQ_PROGRAM" "${files[@]}" > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$out"
     return 0
   else
@@ -48,32 +66,34 @@ _aggregate_one() {
   fi
 }
 
-# Decide whether a JSONL needs reaggregation.
+# Decide whether a JSONL needs reaggregation. Subagent transcripts count:
+# a session is stale when its parent OR any subagent file outdates the cache.
 _is_stale() {
   local jsonl="$1" force="$2"
   local sid; sid="$(basename "$jsonl" .jsonl)"
   local cache="$CACHE_DIR/$sid.json"
   [[ "$force" == "1" ]] && return 0
   [[ ! -s "$cache" ]] && return 0
-  local jm cm
+  local jm cm sub
   jm=$(_mtime "$jsonl"); cm=$(_mtime "$cache")
-  (( jm > cm ))
+  (( jm > cm )) && return 0
+  while IFS= read -r sub; do
+    [[ -z "$sub" ]] && continue
+    (( $(_mtime "$sub") > cm )) && return 0
+  done < <(_subagent_files "$jsonl")
+  return 1
 }
 
-SCHEMA_VERSION=3
+SCHEMA_VERSION=4
 
-# Spot-check one cache file's schema_version. Returns 0 if matches current,
-# 1 if any sample shows an older/missing version.
+# Schema gate: compare the .schema marker written after the last successful
+# rebuild. The previous approach (min schema_version across ALL cache files)
+# looped forever once orphaned caches existed — sessions whose JSONL Claude
+# Code already deleted can never be re-aggregated, so their old version kept
+# forcing a full rebuild on every run. Orphans are tolerated at merge time
+# (missing keys default via // 0 and // {}).
 _schema_ok() {
-  shopt -s nullglob
-  local samples=("$CACHE_DIR"/*.json)
-  shopt -u nullglob
-  (( ${#samples[@]} == 0 )) && return 0   # empty cache is not a mismatch
-  # Check the MIN schema_version across ALL caches, not just samples[0] — a mixed
-  # v2/v3 dir (cross-machine ~/.cache sync, interrupted rebuild) must still trigger a
-  # rebuild. Streams one version per file (no slurp); runs rarely (per aggregate gate).
-  local v; v=$(jq -r '.schema_version // 1' "${samples[@]}" 2>/dev/null | sort -n | head -1)
-  [[ "$v" == "$SCHEMA_VERSION" ]]
+  [[ "$(cat "$CACHE_DIR/.schema" 2>/dev/null)" == "$SCHEMA_VERSION" ]]
 }
 
 _cmd_aggregate() {
@@ -100,8 +120,11 @@ _cmd_aggregate() {
 
   # Use a marker file to skip the per-file stat loop. find -newer is O(1) for
   # the unchanged majority. On --force or first run, scan all files.
+  # maxdepth 4 reaches <proj>/<sid>/subagents/agent-*.jsonl — those map back
+  # to their parent session file (sort -u dedups multi-agent sessions) so a
+  # subagent-only update still re-aggregates the parent.
   local marker="$CACHE_DIR/.last-scan"
-  local find_args=("$PROJECTS_DIR" -maxdepth 3 -name "*.jsonl" -type f)
+  local find_args=("$PROJECTS_DIR" -maxdepth 4 -name "*.jsonl" -type f)
   if [[ "$force" != "1" && -f "$marker" ]]; then
     find_args+=(-newer "$marker")
   fi
@@ -112,6 +135,7 @@ _cmd_aggregate() {
   local processed=0 failed=0
   while IFS= read -r jsonl; do
     [[ -z "$jsonl" ]] && continue
+    [[ -f "$jsonl" ]] || continue   # mapped parent of orphaned subagent dir
     # When using -newer the file is by definition stale — still check cache
     # absence for the first-run case (no marker yet, every file is "new").
     local sid; sid="$(basename "$jsonl" .jsonl)"
@@ -122,9 +146,11 @@ _cmd_aggregate() {
         (( ++failed ))
       fi
     fi
-  done < <(find "${find_args[@]}" 2>/dev/null)
+  done < <(find "${find_args[@]}" 2>/dev/null \
+             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u)
 
   mv -f "$marker.next" "$marker"
+  printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
 
   shopt -s nullglob
   local cached_total=("$CACHE_DIR"/*.json)
@@ -208,7 +234,9 @@ _cmd_merge() {
             permission_modes: {},
             service_tier: {},
             attribution_skills: {},
-            attribution_plugins: {}
+            attribution_plugins: {},
+            attribution_mcp: {},
+            attribution_models: {}
           };
           .sessions += 1
           | .messages += ($s.messages // 0)
@@ -229,6 +257,8 @@ _cmd_merge() {
           | .service_tier = add_obj(.service_tier; $s.service_tier)
           | .attribution_skills = add_obj_nested(.attribution_skills; $s.attribution_skills)
           | .attribution_plugins = add_obj_nested(.attribution_plugins; $s.attribution_plugins)
+          | .attribution_mcp = add_obj_nested(.attribution_mcp; $s.attribution_mcp)
+          | .attribution_models = add_obj(.attribution_models; $s.attribution_models)
         )
     ' "${files[@]}"
 }
@@ -245,7 +275,7 @@ claudii-insights — aggregate JSONL transcripts to JSON cache
 Usage:
   claudii-insights aggregate [--force | <jsonl>]
   claudii-insights merge [--days N] [--project PATH]
-                         # includes per-skill and per-plugin attribution
+                         # includes per-skill, per-plugin and per-MCP-tool attribution
   claudii-insights cache-dir
 EOF
     ;;
