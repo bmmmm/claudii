@@ -57,7 +57,7 @@ ${_epoch_awk}
     IFS= read -r _week_days; } <<< "$_bnd" || true
 
   # Show spinner for pretty output (not JSON/TSV — those are piped)
-  _spinner_start "${_hist_dir/#$HOME/\~}/history-*.tsv"
+  _spinner_start "${_hist_dir/#$HOME/~}/history-*.tsv"
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
   # Shared epoch_to_date from lib/epoch_to_date.awk (read above).

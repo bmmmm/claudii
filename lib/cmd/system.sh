@@ -143,6 +143,202 @@ _cmd_session_dashboard() {
   esac
 }
 
+# One colored transition row: "<timestamp>  <Model>  old → new".
+# Shared by the bare-status "Recent changes" footer and `status --history`
+# (the case ladder used to be duplicated in both branches).
+# Args: ts model old new — honors _CLAUDII_TZ via _fmt_abs.
+_status_print_transition() {
+  local _h_ts="$1" _h_model="$2" _h_old="$3" _h_new="$4" _h_label _h_clr
+  _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
+  _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
+  case "$_h_new" in
+    ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
+    degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
+    down)     _h_clr="$CLAUDII_CLR_RED" ;;
+    *)        _h_clr="$CLAUDII_CLR_DIM" ;;
+  esac
+  printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
+    "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
+}
+
+# Bare `claudii status` render: per-model state, cache age + adaptive TTL,
+# current incidents, last-5 transitions. Reads $cache_file from the caller.
+_status_render() {
+  if [[ "$_FORMAT" == "json" ]]; then
+    if [[ -f "$cache_file" ]]; then
+      jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
+    else
+      echo "[]"
+    fi
+    return 0
+  fi
+
+  # Per-model status display
+  # Configured display timezone (display.timezone, e.g. Europe/Berlin)
+  # drives every absolute timestamp below via _fmt_abs.
+  _CLAUDII_TZ=$(_cfgget display.timezone)
+  printf '\n'
+  models_cfg=$(_cfgget statusline.models)
+  models_cfg="${models_cfg:-opus,sonnet,haiku}"
+  IFS=',' read -ra _status_models <<< "$models_cfg"
+
+  if [[ ! -f "$cache_file" ]]; then
+    printf '  no cache — run: claudii status 5m\n'
+  else
+    _status_any_issue=false
+    for _sm in "${_status_models[@]}"; do
+      _sm="${_sm// /}"
+      _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
+      _sm_label="$(tr '[:lower:]' '[:upper:]' <<< "${_sm:0:1}")${_sm:1}"
+      case "${_sm_state:-unknown}" in
+        ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
+        degraded) _sm_icon="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
+        down)     _sm_icon="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
+        *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
+      esac
+      printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
+    done
+
+    printf '\n'
+    _cache_mtime=$(_mtime "$cache_file")
+    _now=$(date +%s)
+    _cache_age=$(( _now - _cache_mtime ))
+    if (( _cache_age < 60 )); then
+      _age_str="just now"
+    else
+      _age_str="$(( _cache_age / 60 ))m ago"
+    fi
+    _ttl_val=$(_cfgget status.cache_ttl)
+    _ttl_val="${_ttl_val:-900}"
+    # Mirror the adaptive RPROMPT TTL (lib/statusline.zsh): healthy → 2×
+    # base, degraded/down → base÷5 (min 60s), API unreachable → base.
+    # Display the effective interval — the bare config value promised
+    # "every 15m" while the healthy-state refresh actually ran at 30m.
+    _eff_ttl=$_ttl_val
+    if ! grep -q '^_api=unreachable$' "$cache_file" 2>/dev/null; then
+      if grep -q '=down\|=degraded' "$cache_file" 2>/dev/null; then
+        _eff_ttl=$(( _ttl_val / 5 ))
+        (( _eff_ttl < 60 )) && _eff_ttl=60
+      else
+        _eff_ttl=$(( _ttl_val * 2 ))
+      fi
+    fi
+    _ttl_min=$(( _ttl_val / 60 ))
+    _eff_min=$(( _eff_ttl / 60 )); (( _eff_min < 1 )) && _eff_min=1
+    if (( _eff_ttl == _ttl_val )); then
+      printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
+    else
+      printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm (adaptive, base %sm)${CLAUDII_CLR_RESET}\n" "$_age_str" "$_eff_min" "$_ttl_min"
+    fi
+  fi
+
+  _status_render_incidents
+
+  # Recent model-state transitions (logged by claudii-status on change)
+  _hist_file="${cache_file%/*}/status-history.tsv"
+  if [[ -s "$_hist_file" ]]; then
+    printf '\n'
+    printf "  ${CLAUDII_CLR_DIM}Recent changes:${CLAUDII_CLR_RESET}\n"
+    tail -5 "$_hist_file" | sort -rn | \
+    while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+      _status_print_transition "$_h_ts" "$_h_model" "$_h_old" "$_h_new"
+    done
+  fi
+  printf '\n'
+}
+
+# Current-incident section from status-unresolved.json (cached by
+# claudii-status): per-incident state line + up to 3 timestamped updates.
+_status_render_incidents() {
+  _inc_cache="${cache_file%/*}/status-unresolved.json"
+  [[ -f "$_inc_cache" ]] || return 0
+  _inc_count=$(jq -r '.incidents | length' "$_inc_cache" 2>/dev/null || echo "0")
+  if [[ "$_inc_count" == "0" ]]; then
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} No active incidents${CLAUDII_CLR_RESET}\n"
+    return 0
+  fi
+  jq -r '.incidents[] | [.name, .status, (.incident_updates // [] | .[0:3][] | [.status, .body, .created_at] | @tsv)] | @tsv' \
+    "$_inc_cache" 2>/dev/null | \
+  while IFS=$'\t' read -r _name _status _upd_status _upd_body _upd_time; do
+    _status_lc=$(echo "$_status" | tr '[:upper:]' '[:lower:]')
+    case "$_status_lc" in
+      resolved)      _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                       ;;
+      monitoring)    _ic="${CLAUDII_CLR_CYAN}"   ; _is="${CLAUDII_SYM_MONITORING} Monitoring"              ;;
+      identified)    _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_IDENTIFIED} Identified"              ;;
+      investigating) _ic="${CLAUDII_CLR_RED}"    ; _is="${CLAUDII_SYM_INVESTIGATING} Investigating"        ;;
+      *)             _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"               ;;
+    esac
+    printf '\n'
+    printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
+  done
+  jq -r '.incidents[] | .incident_updates[0:3][] |
+         [.status,
+          ((.created_at // "") | if . == "" then "" else
+            (try (sub("\\.[0-9]+Z$"; "Z") | fromdate | tostring) catch .) end),
+          .body] | @tsv' \
+    "$_inc_cache" 2>/dev/null | \
+  while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
+    # _upd_time is epoch (or raw ISO if jq could not parse it)
+    _fmt_abs "$_upd_time" '%Y-%m-%d %H:%M %Z'
+    _ts="${_ABS_FMT:-${_upd_time%%.*}}"; _ts="${_ts/T/ }"
+    printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
+      "$_ts" "$_upd_status" "$_upd_body"
+  done
+}
+
+# `claudii status --history [--days N]` — full transition log (vs. the last-5
+# shown by bare `claudii status`), newest-first. Args: the option words after
+# --history (i.e. "$3" "$4" from _cmd_status).
+_status_history() {
+  cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+  _hist_file="${cache_file%/*}/status-history.tsv"
+  _days=""
+  if [[ "${1:-}" == "--days" ]]; then
+    _days="${2:-}"
+    [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${2:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; exit 1; }
+  elif [[ -n "${1:-}" ]]; then
+    echo "Unknown status --history option: ${1} — use: claudii status --history [--days N]" >&2; exit 1
+  fi
+  _cutoff=0
+  if [[ -n "$_days" ]]; then
+    _cutoff=$(( $(date +%s) - _days * 86400 ))
+  fi
+  if [[ "$_FORMAT" == "json" ]]; then
+    if [[ -s "$_hist_file" ]]; then
+      awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn | \
+        jq -Rn '[inputs | select(length > 0) | split("\t") | {ts: (.[0]|tonumber), model: .[1], from: .[2], to: .[3]}]'
+    else
+      echo "[]"
+    fi
+    return 0
+  fi
+  _CLAUDII_TZ=$(_cfgget display.timezone)
+  printf '\n'
+  if [[ ! -s "$_hist_file" ]]; then
+    printf '  no transition history yet\n\n'
+    return 0
+  fi
+  if [[ -n "$_days" ]]; then
+    printf "  ${CLAUDII_CLR_DIM}Status transitions (last %s day%s):${CLAUDII_CLR_RESET}\n" "$_days" "$([[ "$_days" -eq 1 ]] && echo '' || echo s)"
+  else
+    printf "  ${CLAUDII_CLR_DIM}Status transitions (full log):${CLAUDII_CLR_RESET}\n"
+  fi
+  printf '\n'
+  _hist_count=0
+  while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+    [[ -z "$_h_ts" ]] && continue
+    _status_print_transition "$_h_ts" "$_h_model" "$_h_old" "$_h_new"
+    (( ++_hist_count ))
+  done < <(awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn)
+  printf '\n'
+  if (( _hist_count == 0 )); then
+    printf "  ${CLAUDII_CLR_DIM}no transitions in window${CLAUDII_CLR_RESET}\n"
+  else
+    printf "  ${CLAUDII_CLR_DIM}%d transition%s${CLAUDII_CLR_RESET}\n" "$_hist_count" "$([[ "$_hist_count" -eq 1 ]] && echo '' || echo s)"
+  fi
+  printf '\n'
+}
+
 _cmd_status() {
   _cfg_init
   case "${2:-}" in
@@ -159,190 +355,10 @@ _cmd_status() {
     "")
       cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
       "$CLAUDII_HOME/bin/claudii-status" --quiet || true
-      if [[ "$_FORMAT" == "json" ]]; then
-        if [[ -f "$cache_file" ]]; then
-          jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
-        else
-          echo "[]"
-        fi
-      else
-        # Per-model status display
-        # Configured display timezone (display.timezone, e.g. Europe/Berlin)
-        # drives every absolute timestamp below via _fmt_abs.
-        _CLAUDII_TZ=$(_cfgget display.timezone)
-        printf '\n'
-        models_cfg=$(_cfgget statusline.models)
-        models_cfg="${models_cfg:-opus,sonnet,haiku}"
-        IFS=',' read -ra _status_models <<< "$models_cfg"
-
-        if [[ ! -f "$cache_file" ]]; then
-          printf '  no cache — run: claudii status 5m\n'
-        else
-          _status_any_issue=false
-          for _sm in "${_status_models[@]}"; do
-            _sm="${_sm// /}"
-            _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
-            _sm_label="$(tr '[:lower:]' '[:upper:]' <<< "${_sm:0:1}")${_sm:1}"
-            case "${_sm_state:-unknown}" in
-              ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
-              degraded) _sm_icon="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
-              down)     _sm_icon="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
-              *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
-            esac
-            printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
-          done
-
-          printf '\n'
-          _cache_mtime=$(_mtime "$cache_file")
-          _now=$(date +%s)
-          _cache_age=$(( _now - _cache_mtime ))
-          if (( _cache_age < 60 )); then
-            _age_str="just now"
-          else
-            _age_str="$(( _cache_age / 60 ))m ago"
-          fi
-          _ttl_val=$(_cfgget status.cache_ttl)
-          _ttl_val="${_ttl_val:-900}"
-          # Mirror the adaptive RPROMPT TTL (lib/statusline.zsh): healthy → 2×
-          # base, degraded/down → base÷5 (min 60s), API unreachable → base.
-          # Display the effective interval — the bare config value promised
-          # "every 15m" while the healthy-state refresh actually ran at 30m.
-          _eff_ttl=$_ttl_val
-          if ! grep -q '^_api=unreachable$' "$cache_file" 2>/dev/null; then
-            if grep -q '=down\|=degraded' "$cache_file" 2>/dev/null; then
-              _eff_ttl=$(( _ttl_val / 5 ))
-              (( _eff_ttl < 60 )) && _eff_ttl=60
-            else
-              _eff_ttl=$(( _ttl_val * 2 ))
-            fi
-          fi
-          _ttl_min=$(( _ttl_val / 60 ))
-          _eff_min=$(( _eff_ttl / 60 )); (( _eff_min < 1 )) && _eff_min=1
-          if (( _eff_ttl == _ttl_val )); then
-            printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
-          else
-            printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm (adaptive, base %sm)${CLAUDII_CLR_RESET}\n" "$_age_str" "$_eff_min" "$_ttl_min"
-          fi
-        fi
-
-        # Current incidents from unresolved.json (cached by claudii-status).
-        _inc_cache="${cache_file%/*}/status-unresolved.json"
-        if [[ -f "$_inc_cache" ]]; then
-          _inc_count=$(jq -r '.incidents | length' "$_inc_cache" 2>/dev/null || echo "0")
-          if [[ "$_inc_count" == "0" ]]; then
-            printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} No active incidents${CLAUDII_CLR_RESET}\n"
-          else
-            jq -r '.incidents[] | [.name, .status, (.incident_updates // [] | .[0:3][] | [.status, .body, .created_at] | @tsv)] | @tsv' \
-              "$_inc_cache" 2>/dev/null | \
-            while IFS=$'\t' read -r _name _status _upd_status _upd_body _upd_time; do
-              _status_lc=$(echo "$_status" | tr '[:upper:]' '[:lower:]')
-              case "$_status_lc" in
-                resolved)      _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                       ;;
-                monitoring)    _ic="${CLAUDII_CLR_CYAN}"   ; _is="${CLAUDII_SYM_MONITORING} Monitoring"              ;;
-                identified)    _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_IDENTIFIED} Identified"              ;;
-                investigating) _ic="${CLAUDII_CLR_RED}"    ; _is="${CLAUDII_SYM_INVESTIGATING} Investigating"        ;;
-                *)             _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"               ;;
-              esac
-              printf '\n'
-              printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
-            done
-            jq -r '.incidents[] | .incident_updates[0:3][] |
-                   [.status,
-                    ((.created_at // "") | if . == "" then "" else
-                      (try (sub("\\.[0-9]+Z$"; "Z") | fromdate | tostring) catch .) end),
-                    .body] | @tsv' \
-              "$_inc_cache" 2>/dev/null | \
-            while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
-              # _upd_time is epoch (or raw ISO if jq could not parse it)
-              _fmt_abs "$_upd_time" '%Y-%m-%d %H:%M %Z'
-              _ts="${_ABS_FMT:-${_upd_time%%.*}}"; _ts="${_ts/T/ }"
-              printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
-                "$_ts" "$_upd_status" "$_upd_body"
-            done
-          fi
-        fi
-
-        # Recent model-state transitions (logged by claudii-status on change)
-        _hist_file="${cache_file%/*}/status-history.tsv"
-        if [[ -s "$_hist_file" ]]; then
-          printf '\n'
-          printf "  ${CLAUDII_CLR_DIM}Recent changes:${CLAUDII_CLR_RESET}\n"
-          tail -5 "$_hist_file" | sort -rn | \
-          while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
-            _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
-            _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
-            case "$_h_new" in
-              ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
-              degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
-              down)     _h_clr="$CLAUDII_CLR_RED" ;;
-              *)        _h_clr="$CLAUDII_CLR_DIM" ;;
-            esac
-            printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
-              "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
-          done
-        fi
-        printf '\n'
-      fi
+      _status_render
       ;;
     --history)
-      # Full transition log from status-history.tsv (vs. the last-5 shown by
-      # bare `claudii status`). Optional --days N window; newest-first.
-      cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-      _hist_file="${cache_file%/*}/status-history.tsv"
-      _days=""
-      if [[ "${3:-}" == "--days" ]]; then
-        _days="${4:-}"
-        [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${4:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; exit 1; }
-      elif [[ -n "${3:-}" ]]; then
-        echo "Unknown status --history option: ${3} — use: claudii status --history [--days N]" >&2; exit 1
-      fi
-      _cutoff=0
-      if [[ -n "$_days" ]]; then
-        _cutoff=$(( $(date +%s) - _days * 86400 ))
-      fi
-      if [[ "$_FORMAT" == "json" ]]; then
-        if [[ -s "$_hist_file" ]]; then
-          awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn | \
-            jq -Rn '[inputs | select(length > 0) | split("\t") | {ts: (.[0]|tonumber), model: .[1], from: .[2], to: .[3]}]'
-        else
-          echo "[]"
-        fi
-      else
-        _CLAUDII_TZ=$(_cfgget display.timezone)
-        printf '\n'
-        if [[ ! -s "$_hist_file" ]]; then
-          printf '  no transition history yet\n\n'
-        else
-          if [[ -n "$_days" ]]; then
-            printf "  ${CLAUDII_CLR_DIM}Status transitions (last %s day%s):${CLAUDII_CLR_RESET}\n" "$_days" "$([[ "$_days" -eq 1 ]] && echo '' || echo s)"
-          else
-            printf "  ${CLAUDII_CLR_DIM}Status transitions (full log):${CLAUDII_CLR_RESET}\n"
-          fi
-          printf '\n'
-          _hist_count=0
-          while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
-            [[ -z "$_h_ts" ]] && continue
-            _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
-            _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
-            case "$_h_new" in
-              ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
-              degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
-              down)     _h_clr="$CLAUDII_CLR_RED" ;;
-              *)        _h_clr="$CLAUDII_CLR_DIM" ;;
-            esac
-            printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
-              "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
-            (( ++_hist_count ))
-          done < <(awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn)
-          printf '\n'
-          if (( _hist_count == 0 )); then
-            printf "  ${CLAUDII_CLR_DIM}no transitions in window${CLAUDII_CLR_RESET}\n"
-          else
-            printf "  ${CLAUDII_CLR_DIM}%d transition%s${CLAUDII_CLR_RESET}\n" "$_hist_count" "$([[ "$_hist_count" -eq 1 ]] && echo '' || echo s)"
-          fi
-          printf '\n'
-        fi
-      fi
+      _status_history "${3:-}" "${4:-}"
       ;;
     *)
       echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; exit 1

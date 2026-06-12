@@ -114,7 +114,9 @@ _session_toggle_pin() {
   local found=0
   _session_files "$cache_dir"
   for f in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
-    local sid line
+    # sid reset per file — a cache without a session_id line must not inherit
+    # the previous iteration's sid and false-match the needle.
+    local sid="" line
     while IFS= read -r line; do sid="${line#*=}"; break; done < <(grep '^session_id=' "$f" 2>/dev/null)
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
       local _tmp="${f}.pin.$$"
@@ -165,6 +167,107 @@ _rate_pct_disp() {
   else printf '%s' "$_u"; fi
 }
 
+# Batch-lsof fallback for active sessions still missing a project path after
+# JSONL resolution. Collects the ppids needing resolution, issues ONE lsof
+# call, assigns cwds back into _sf_projpath. Reads/writes the _sf_* arrays of
+# the calling _cmd_sessions via bash dynamic scoping. No-op for json/tsv
+# output (no path rendered there).
+_sessions_lsof_fallback() {
+  [[ "$_FORMAT" == "json" || "$_FORMAT" == "tsv" ]] && return 0
+  _lsof_ppids=()
+  _lsof_idx=()
+  for (( _i=0; _i<_sf_count; _i++ )); do
+    if [[ -z "${_sf_projpath[$_i]}" && "${_sf_is_active[$_i]}" -eq 1 \
+          && -n "${_sf_ppid[$_i]}" ]]; then
+      _lsof_ppids+=("${_sf_ppid[$_i]}")
+      _lsof_idx+=("$_i")
+    fi
+  done
+  if [[ ${#_lsof_ppids[@]} -gt 0 ]]; then
+    # Build pid→cwd map from a single lsof invocation.
+    # Output format: pPID\nnPATH\npPID\nnPATH...
+    _lsof_pids_map=()
+    _lsof_cwd_map=()
+    _lsof_cur_pid=""
+    printf -v _lsof_pid_list '%s,' "${_lsof_ppids[@]}"
+    _lsof_pid_list="${_lsof_pid_list%,}"
+    while IFS= read -r _lsof_line; do
+      case "$_lsof_line" in
+        p*) _lsof_cur_pid="${_lsof_line#p}" ;;
+        n*) _lsof_pids_map+=("$_lsof_cur_pid")
+            _lsof_cwd_map+=("${_lsof_line#n}")
+            ;;
+      esac
+    done < <(lsof -p "$_lsof_pid_list" -d cwd -Fn 2>/dev/null || true)
+    # Assign resolved paths back to the session array
+    for (( _j=0; _j<${#_lsof_idx[@]}; _j++ )); do
+      _target_pid="${_sf_ppid[${_lsof_idx[$_j]}]}"
+      for (( _k=0; _k<${#_lsof_pids_map[@]}; _k++ )); do
+        if [[ "${_lsof_pids_map[$_k]}" == "$_target_pid" ]]; then
+          _raw_cwd="${_lsof_cwd_map[$_k]}"
+          _short_cwd="${_raw_cwd/#$HOME/~}"
+          (( ${#_short_cwd} > 40 )) && _short_cwd="...${_short_cwd: -37}"
+          _sf_projpath[${_lsof_idx[$_j]}]="$_short_cwd"
+          break
+        fi
+      done
+    done
+    unset _lsof_pids_map _lsof_cwd_map _lsof_pid_list _lsof_cur_pid \
+          _lsof_line _target_pid _raw_cwd _short_cwd _j _k
+  fi
+  unset _lsof_ppids _lsof_idx
+  return 0
+}
+
+# Cross-session file→color map from the collected fingerprints: every unique
+# filename gets a stable palette color so the same file lines up visually
+# across sessions. Fills _fp_names/_fp_colors/_fp_count (declared local in
+# the calling _cmd_sessions — dynamic scoping).
+_sessions_fp_colormap() {
+  local _palette_size=${#CLAUDII_FP_PALETTE[@]}
+  for (( _i=0; _i<_sf_count; _i++ )); do
+    local _fp="${_sf_fingerprint[$_i]}"
+    [[ -z "$_fp" ]] && continue
+    # Parse "file1(N) file2(N) ..." — extract bare filenames
+    local _word _fp_words=()
+    IFS=' ' read -ra _fp_words <<< "$_fp"
+    for _word in "${_fp_words[@]}"; do
+      local _fname="${_word%%(*}"
+      [[ -z "$_fname" ]] && continue
+      # Check if already in map
+      local _found=0
+      for (( _k=0; _k<_fp_count; _k++ )); do
+        [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _found=1; break; }
+      done
+      if [[ $_found -eq 0 ]]; then
+        _fp_names[$_fp_count]="$_fname"
+        _fp_colors[$_fp_count]="${CLAUDII_FP_PALETTE[$(( _fp_count % _palette_size ))]}"
+        (( ++_fp_count ))
+      fi
+    done
+  done
+  return 0
+}
+
+# Colorize a fingerprint string using the file→color map built by
+# _sessions_fp_colormap (reads _fp_names/_fp_colors/_fp_count via dynamic scope).
+_colorize_fingerprint() {
+  local _fp="$1" _out="" _word _fname _count_part _fp_words=()
+  IFS=' ' read -ra _fp_words <<< "$_fp"
+  for _word in "${_fp_words[@]}"; do
+    _fname="${_word%%(*}"
+    _count_part="(${_word#*(}"
+    [[ "$_count_part" == "($_fname" ]] && _count_part=""  # no parens found
+    local _clr="$CLAUDII_CLR_DIM"
+    for (( _k=0; _k<_fp_count; _k++ )); do
+      [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _clr="${_fp_colors[$_k]}"; break; }
+    done
+    [[ -n "$_out" ]] && _out+=" "
+    _out+="${_clr}${_fname}${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}${_count_part}${CLAUDII_CLR_RESET}"
+  done
+  printf '%s' "$_out"
+}
+
 _cmd_sessions() {
   _cfg_init
   _live_pids_init
@@ -189,7 +292,7 @@ _cmd_sessions() {
 
   _session_files "$cache_dir"
   for sf in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
-    [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/\~}" > "$CLAUDII_SPINNER_LABEL_FILE"
+    [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]] && printf '%s' "${sf/#$HOME/~}" > "$CLAUDII_SPINNER_LABEL_FILE"
     _parse_session_cache "$sf"
 
     # Track freshest rate limits — use mtime to pick the most recently updated session
@@ -230,13 +333,13 @@ _cmd_sessions() {
       # Shorten the resolved cwd ($HOME→~, cap 40) — matches old _session_project_path.
       _sf_projpath[$_sf_count]=""
       if [[ -n "$_res_cwd" ]]; then
-        _ppath="${_res_cwd/#$HOME/\~}"
+        _ppath="${_res_cwd/#$HOME/~}"
         (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
         _sf_projpath[$_sf_count]="$_ppath"
       fi
       # Fallback: project_path written directly by sessionline (agents without session_id)
       if [[ -z "${_sf_projpath[$_sf_count]}" && -n "$_PSC_project_path" ]]; then
-        _ppath="${_PSC_project_path/#$HOME/\~}"
+        _ppath="${_PSC_project_path/#$HOME/~}"
         (( ${#_ppath} > 40 )) && _ppath="...${_ppath: -37}"
         _sf_projpath[$_sf_count]="$_ppath"
       fi
@@ -258,52 +361,7 @@ _cmd_sessions() {
   _spinner_stop
 
   # Fallback 2 — batch lsof for active sessions still missing a project path.
-  # Collects all ppids that need resolution, issues a single lsof call, then
-  # assigns results back. Skipped for json/tsv output (no path needed there).
-  if [[ "$_FORMAT" != "json" && "$_FORMAT" != "tsv" ]]; then
-    _lsof_ppids=()
-    _lsof_idx=()
-    for (( _i=0; _i<_sf_count; _i++ )); do
-      if [[ -z "${_sf_projpath[$_i]}" && "${_sf_is_active[$_i]}" -eq 1 \
-            && -n "${_sf_ppid[$_i]}" ]]; then
-        _lsof_ppids+=("${_sf_ppid[$_i]}")
-        _lsof_idx+=("$_i")
-      fi
-    done
-    if [[ ${#_lsof_ppids[@]} -gt 0 ]]; then
-      # Build pid→cwd map from a single lsof invocation.
-      # Output format: pPID\nnPATH\npPID\nnPATH...
-      _lsof_pids_map=()
-      _lsof_cwd_map=()
-      _lsof_cur_pid=""
-      printf -v _lsof_pid_list '%s,' "${_lsof_ppids[@]}"
-      _lsof_pid_list="${_lsof_pid_list%,}"
-      while IFS= read -r _lsof_line; do
-        case "$_lsof_line" in
-          p*) _lsof_cur_pid="${_lsof_line#p}" ;;
-          n*) _lsof_pids_map+=("$_lsof_cur_pid")
-              _lsof_cwd_map+=("${_lsof_line#n}")
-              ;;
-        esac
-      done < <(lsof -p "$_lsof_pid_list" -d cwd -Fn 2>/dev/null || true)
-      # Assign resolved paths back to the session array
-      for (( _j=0; _j<${#_lsof_idx[@]}; _j++ )); do
-        _target_pid="${_sf_ppid[${_lsof_idx[$_j]}]}"
-        for (( _k=0; _k<${#_lsof_pids_map[@]}; _k++ )); do
-          if [[ "${_lsof_pids_map[$_k]}" == "$_target_pid" ]]; then
-            _raw_cwd="${_lsof_cwd_map[$_k]}"
-            _short_cwd="${_raw_cwd/#$HOME/\~}"
-            (( ${#_short_cwd} > 40 )) && _short_cwd="...${_short_cwd: -37}"
-            _sf_projpath[${_lsof_idx[$_j]}]="$_short_cwd"
-            break
-          fi
-        done
-      done
-      unset _lsof_pids_map _lsof_cwd_map _lsof_pid_list _lsof_cur_pid \
-            _lsof_line _target_pid _raw_cwd _short_cwd _j _k
-    fi
-    unset _lsof_ppids _lsof_idx
-  fi
+  _sessions_lsof_fallback
 
   if [[ "$_FORMAT" == "json" ]]; then
     # Build JSON array from collected data
@@ -342,49 +400,11 @@ _cmd_sessions() {
     exit 0
   fi
 
-  # ── Build cross-session file→color map ──────────────────────────────────────
-  # Collect all unique filenames from fingerprints, assign consistent colors.
+  # ── Build cross-session file→color map (see _sessions_fp_colormap) ─────────
+  # _fp_* stay local here so _sessions_fp_colormap and _colorize_fingerprint
+  # share them via dynamic scoping.
   local _fp_names=() _fp_colors=() _fp_count=0
-  local _palette_size=${#CLAUDII_FP_PALETTE[@]}
-  for (( _i=0; _i<_sf_count; _i++ )); do
-    local _fp="${_sf_fingerprint[$_i]}"
-    [[ -z "$_fp" ]] && continue
-    # Parse "file1(N) file2(N) ..." — extract bare filenames
-    local _word _fp_words=()
-    IFS=' ' read -ra _fp_words <<< "$_fp"
-    for _word in "${_fp_words[@]}"; do
-      local _fname="${_word%%(*}"
-      [[ -z "$_fname" ]] && continue
-      # Check if already in map
-      local _found=0
-      for (( _k=0; _k<_fp_count; _k++ )); do
-        [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _found=1; break; }
-      done
-      if [[ $_found -eq 0 ]]; then
-        _fp_names[$_fp_count]="$_fname"
-        _fp_colors[$_fp_count]="${CLAUDII_FP_PALETTE[$(( _fp_count % _palette_size ))]}"
-        (( ++_fp_count ))
-      fi
-    done
-  done
-
-  # Helper: colorize a fingerprint string using the file→color map
-  _colorize_fingerprint() {
-    local _fp="$1" _out="" _word _fname _count_part _fp_words=()
-    IFS=' ' read -ra _fp_words <<< "$_fp"
-    for _word in "${_fp_words[@]}"; do
-      _fname="${_word%%(*}"
-      _count_part="(${_word#*(}"
-      [[ "$_count_part" == "($_fname" ]] && _count_part=""  # no parens found
-      local _clr="$CLAUDII_CLR_DIM"
-      for (( _k=0; _k<_fp_count; _k++ )); do
-        [[ "${_fp_names[$_k]}" == "$_fname" ]] && { _clr="${_fp_colors[$_k]}"; break; }
-      done
-      [[ -n "$_out" ]] && _out+=" "
-      _out+="${_clr}${_fname}${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}${_count_part}${CLAUDII_CLR_RESET}"
-    done
-    printf '%s' "$_out"
-  }
+  _sessions_fp_colormap
 
   # ── Pretty output ────────────────────────────────────────────────────────────
   printf '\n'

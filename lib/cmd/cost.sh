@@ -405,7 +405,7 @@ _cmd_cost() {
     return 0
   fi
   today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
-  _spinner_start "${cache_dir/#$HOME/\~}/history-*.tsv"
+  _spinner_start "${cache_dir/#$HOME/~}/history-*.tsv"
   _cmd_cost_from_history "${_HIST_FILES[@]}" "$today_str"
   _spinner_stop
 }

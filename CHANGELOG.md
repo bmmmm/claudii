@@ -28,6 +28,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **Outlier flag rule: ≥2× median with ≥10 calls** (was ≥3× median, no calls floor). The 3× threshold never fired on real data (max observed 2.1×); the calls floor keeps rarely-used skills from tripping the flag on noise. JSON output documents the rule in `meta.outlier_rule`.
 
 ### Fixed
+- **Project paths render `~/…` instead of `\~/…`.** Six `${var/#$HOME/\~}` substitutions (session rows, spinner labels) printed a literal backslash before the tilde — bash keeps the backslash in a replacement string; the unescaped `~` inside a double-quoted expansion was always safe from tilde-expansion.
+- **`claudii pin/unpin` no longer false-matches a session cache that lacks a `session_id=` line** — the match variable now resets per file instead of inheriting the previous file's id.
 - **`claudii explain` recognizes wrapper-chain statusLine configs.** The CC-Statusline status read `.statusLine` (a jq object dump) and substring-matched `*claudii*` — the exact string-matching pattern the project rule bans. It now reads `.statusLine.command` and resolves through `_cc_statusline_connected`, so a wrapper chain like `cc-insomnii --after=<user-wrap>` reports `active` instead of `not configured`.
 - **`claudii-insights aggregate` no longer force-rebuilds every run once orphaned caches exist.** The schema gate took the minimum `schema_version` across all cache files — caches whose source JSONL Claude Code already deleted could never be upgraded, so every run since the v3 bump rebuilt all live sessions (~390 orphans × every invocation). The gate now compares a `.schema` marker written after the last successful rebuild; orphaned caches keep contributing history and merge tolerates their older shape.
 
