@@ -280,7 +280,15 @@ _status_render_incidents() {
   while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
     # _upd_time is epoch (or raw ISO if jq could not parse it)
     _fmt_abs "$_upd_time" '%Y-%m-%d %H:%M %Z'
-    _ts="${_ABS_FMT:-${_upd_time%%.*}}"; _ts="${_ts/T/ }"
+    if [[ -n "$_ABS_FMT" ]]; then
+      # Already "YYYY-MM-DD HH:MM ZONE" — must NOT run the T→space swap here:
+      # it would eat the T in the zone abbreviation (CEST→"CES ", CET→"CE ",
+      # GMT→"GM "). The swap is only for the raw-ISO fallback below.
+      _ts="$_ABS_FMT"
+    else
+      # Fallback: raw ISO like "2026-06-13T00:50:00Z" → swap the date/time T.
+      _ts="${_upd_time%%.*}"; _ts="${_ts/T/ }"
+    fi
     printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
       "$_ts" "$_upd_status" "$_upd_body"
   done

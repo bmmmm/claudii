@@ -106,6 +106,38 @@ else
 fi
 rm -rf "$_stub_home"
 
+# Regression: the incident-update timestamp must not mangle the timezone
+# abbreviation. The render did `_ts="$_ABS_FMT"; _ts="${_ts/T/ }"` — the
+# T→space swap (meant only for the raw-ISO fallback) ate the T in the zone
+# name, so CEST printed as "CES ", CET as "CE ", GMT as "GM ".
+_tz_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_tz.XXXXXX")
+mkdir -p "$_tz_inc_dir/srv"
+cat > "$_tz_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Timezone render check","status":"monitoring","impact":"minor",
+  "incident_updates":[{"status":"monitoring","body":"Watching.","created_at":"2026-06-13T00:50:00.000Z"}],
+  "components":[{"name":"claude.ai"}]
+}]}
+JSON
+cat > "$_tz_inc_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_tz_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_tz_inc_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+PATH="$_tz_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_tz_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+# June in Europe/Berlin is CEST (UTC+2): 00:50 UTC → 02:50 CEST. The full
+# 4-char zone must survive (the bug truncated it to "CES").
+assert_contains "incident update: full CEST zone (not mangled to CES)" "02:50 CEST" "$_tz_out"
+rm -rf "$_tz_inc_dir"
+
 # ANSI guard: claudii status output must not contain literal ESC sequences as \033 text
 _status_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
 if printf '%s' "$_status_out" | grep -qF '\033'; then
