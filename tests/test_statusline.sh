@@ -171,6 +171,45 @@ zsh_out=$(
 )
 assert_contains "zsh: opus down → ↓ in RPROMPT" "↓" "$zsh_out"
 
+# Incident present but NO tracked model affected → neutral note glyph (ⓘ),
+# models stay ✓. Regression for the Mythos/Fable false-cascade: a status note
+# about untracked models must not paint Opus/Sonnet/Haiku amber.
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_incident=monitoring\n' > "$ZSH_TMP/status-models"
+zsh_out=$(
+  CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: incident, no model affected → ⓘ note glyph" "ⓘ" "$zsh_out"
+assert_contains "zsh: incident, no model affected → models still ✓" "✓" "$zsh_out"
+if printf '%s' "$zsh_out" | grep -q "◎"; then
+  assert_eq "zsh: unaffected incident shows note not stage icon" "note" "stage icon ◎"
+else
+  assert_eq "zsh: unaffected incident shows note not stage icon" "note" "note"
+fi
+
+# Incident WITH a tracked model affected → stage-colored icon (◎), not the note.
+printf 'opus=degraded\nsonnet=ok\nhaiku=ok\n_incident=monitoring\n' > "$ZSH_TMP/status-models"
+zsh_out=$(
+  CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _claudii_statusline
+    printf '%s' \"\$RPROMPT\"
+  " 2>/dev/null
+)
+assert_contains "zsh: incident + model affected → ◎ stage icon" "◎" "$zsh_out"
+if printf '%s' "$zsh_out" | grep -q "ⓘ"; then
+  assert_eq "zsh: affected incident shows stage not note icon" "stage" "note ⓘ"
+else
+  assert_eq "zsh: affected incident shows stage not note icon" "stage" "stage"
+fi
+
 # Stale cache → ⟳ indicator
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/status-models"
 touch -t 202001010000 "$ZSH_TMP/status-models"   # set mtime far in the past

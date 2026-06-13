@@ -151,12 +151,29 @@ function _claudii_statusline_render {
   (( age > effective_ttl )) && refreshing=" %F{8}⟳%f"
   [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
 
-  local incident_sym=""
+  # Incident indicator — when an incident exists but no tracked model is
+  # actually affected (the per-model glyphs are all ✓), show a neutral note
+  # glyph instead of the stage-colored alarm; otherwise the stage color
+  # reflects the incident stage. Kept in sync with bin/claudii-cc-statusline
+  # and lib/cmd/overview.sh.
+  local incident_sym="" _models_affected=0 _incident_stage=""
+  if [[ $'\n'"$cache_content" == *$'\n'*"=down"* || $'\n'"$cache_content" == *$'\n'*"=degraded"* ]]; then
+    _models_affected=1
+  fi
   if [[ $'\n'"$cache_content" == *$'\n'"_incident=investigating"* ]]; then
-    incident_sym=" %F{red}${CLAUDII_SYM_INVESTIGATING}%f"
+    _incident_stage="investigating"
   elif [[ $'\n'"$cache_content" == *$'\n'"_incident=identified"* ]]; then
-    incident_sym=" %F{yellow}${CLAUDII_SYM_IDENTIFIED}%f"
+    _incident_stage="identified"
   elif [[ $'\n'"$cache_content" == *$'\n'"_incident=monitoring"* ]]; then
+    _incident_stage="monitoring"
+  fi
+  if [[ -n "$_incident_stage" && $_models_affected -eq 0 ]]; then
+    incident_sym=" %F{8}${CLAUDII_SYM_NOTE}%f"
+  elif [[ "$_incident_stage" == "investigating" ]]; then
+    incident_sym=" %F{red}${CLAUDII_SYM_INVESTIGATING}%f"
+  elif [[ "$_incident_stage" == "identified" ]]; then
+    incident_sym=" %F{yellow}${CLAUDII_SYM_IDENTIFIED}%f"
+  elif [[ "$_incident_stage" == "monitoring" ]]; then
     incident_sym=" %F{cyan}${CLAUDII_SYM_MONITORING}%f"
   fi
 

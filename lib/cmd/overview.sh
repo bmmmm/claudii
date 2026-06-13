@@ -383,16 +383,32 @@ _ov_render_services() {
     _ov_status_cache="$cache_dir/status-models"
     if [[ -f "$_ov_status_cache" ]]; then
       _ov_health_str=""
+      _ov_affected=0
       while IFS='=' read -r _om _os; do
         [[ -z "$_om" || "$_om" == _* ]] && continue
         _om_cap=$(_norm_model_short "$_om")
         case "$_os" in
           ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} " ;;
-          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
-          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} " ;;
+          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} "; _ov_affected=1 ;;
+          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} "; _ov_affected=1 ;;
         esac
       done < "$_ov_status_cache"
-      [[ -n "$_ov_health_str" ]] && _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
+      if [[ -n "$_ov_health_str" ]]; then
+        _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
+        # Incident indicator — neutral note glyph when an incident exists but
+        # no tracked model is affected; stage-colored otherwise. In sync with
+        # bin/claudii-cc-statusline and lib/statusline.zsh.
+        _ov_inc=$(grep -E '^_incident=' "$_ov_status_cache" 2>/dev/null | head -1 | cut -d= -f2)
+        if [[ -n "$_ov_inc" && $_ov_affected -eq 0 ]]; then
+          _ov_model_health+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_NOTE}${CLAUDII_CLR_RESET}"
+        else
+          case "$_ov_inc" in
+            investigating) _ov_model_health+=" ${CLAUDII_CLR_RED}${CLAUDII_SYM_INVESTIGATING}${CLAUDII_CLR_RESET}" ;;
+            identified)    _ov_model_health+=" ${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_IDENTIFIED}${CLAUDII_CLR_RESET}" ;;
+            monitoring)    _ov_model_health+=" ${CLAUDII_CLR_CYAN}${CLAUDII_SYM_MONITORING}${CLAUDII_CLR_RESET}" ;;
+          esac
+        fi
+      fi
     fi
     printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ClaudeStatus%s\n" "$_ov_model_health"
   else

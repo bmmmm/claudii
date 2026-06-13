@@ -193,6 +193,40 @@ else
 fi
 rm -rf "$_api_inc_dir"
 
+# Regression: incident that names specific models we do NOT track (a real
+# Mythos/Fable feature-access suspension) lists the "API" component because
+# model access flows through it — but it must NOT cascade onto opus/sonnet/
+# haiku. The model-scope check suppresses the broad-API fallback; the
+# _incident marker is still persisted so consumers show the note indicator.
+_mythos_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_mythos.XXXXXX")
+mkdir -p "$_mythos_dir/srv"
+cat > "$_mythos_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"We have suspended access to Claude Mythos 5 and Claude Fable 5",
+  "status":"monitoring","impact":"minor",
+  "incident_updates":[{"body":"Learn more here: https://anthropic.com/news/fable-mythos-access"}],
+  "components":[{"name":"claude.ai"},{"name":"Claude API (api.anthropic.com)"},{"name":"Claude Code"},{"name":"Claude Cowork"}]
+}]}
+JSON
+cat > "$_mythos_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_mythos_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_mythos_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_mythos_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_my_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "untracked-model incident: opus stays ok" "opus=ok" "$_my_cache"
+assert_contains "untracked-model incident: sonnet stays ok" "sonnet=ok" "$_my_cache"
+assert_contains "untracked-model incident: haiku stays ok" "haiku=ok" "$_my_cache"
+assert_contains "untracked-model incident: note indicator preserved" "_incident=monitoring" "$_my_cache"
+rm -rf "$_mythos_dir"
+
 # Regression: multiline incident name must be flattened to single line
 # (bin/claudii-status does `jq -r .incidents[0].name | tr '\n' ' ' | sed 's/ *$//'`
 #  to prevent multi-line names from breaking RPROMPT/stderr layout)

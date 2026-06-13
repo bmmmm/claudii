@@ -598,11 +598,24 @@ if [[ -f "$_status_cache" ]]; then
       _seg_claude_status+=" ${DIM}${_BRIEF_FMT}${RST}"
     fi
 
-    if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _seg_claude_status+=" ${RED}‼${RST}"
-    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]];    then _seg_claude_status+=" ${YELLOW}⚐${RST}"
-    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]];    then _seg_claude_status+=" ${CYAN}◎${RST}"
-    elif [[ "${_sc_worst:-}" == "down" ]];                           then _seg_claude_status+=" ${RED}⚠${RST}"
-    elif [[ "${_sc_worst:-}" == "degraded" ]];                       then _seg_claude_status+=" ${YELLOW}⚠${RST}"
+    # Incident indicator. When a status incident exists but NONE of the tracked
+    # models are actually affected (e.g. a feature-access note naming only
+    # Mythos/Fable), show a neutral note glyph instead of the stage-colored
+    # alarm — your models are fine, this is informational. When a tracked model
+    # IS affected, the stage color (‼/⚐/◎) reflects the incident stage; absent
+    # an incident marker, a bare model outage falls back to ⚠.
+    # Kept in sync with lib/statusline.zsh (RPROMPT) and lib/cmd/overview.sh.
+    _sc_incident=""
+    if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _sc_incident="investigating"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]];    then _sc_incident="identified"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]];    then _sc_incident="monitoring"
+    fi
+    if   [[ -n "$_sc_incident" && -z "${_sc_worst:-}" ]];  then _seg_claude_status+=" ${DIM}ⓘ${RST}"
+    elif [[ "$_sc_incident" == "investigating" ]];        then _seg_claude_status+=" ${RED}‼${RST}"
+    elif [[ "$_sc_incident" == "identified" ]];           then _seg_claude_status+=" ${YELLOW}⚐${RST}"
+    elif [[ "$_sc_incident" == "monitoring" ]];           then _seg_claude_status+=" ${CYAN}◎${RST}"
+    elif [[ "${_sc_worst:-}" == "down" ]];                then _seg_claude_status+=" ${RED}⚠${RST}"
+    elif [[ "${_sc_worst:-}" == "degraded" ]];            then _seg_claude_status+=" ${YELLOW}⚠${RST}"
     fi
   fi
 fi

@@ -227,17 +227,31 @@ if [[ -n "$unresolved" ]]; then
       echo "$_search_text" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
     done
 
-    # No specific model mentioned: broad-API outage check. If components
-    # list contains the bare "API" entry, treat as affecting all models
-    # (the inference plane itself is degraded). Otherwise leave models as
-    # ok — _incident=<status> still gets persisted so cc-statusline shows
-    # the indicator without the false "Opus ↓ Sonnet ↓ Haiku ↓" cascade.
-    if [[ "$down_models" == " " ]] && \
+    # Model-scope detection. An incident that names a specific Claude model —
+    # even one we don't surface (e.g. Mythos, Fable) — is scoped to those
+    # models, NOT a plane-wide outage. Such incidents still list the "API"
+    # component (model access flows through it), so the broad-API check below
+    # would otherwise cascade onto opus/sonnet/haiku. _KNOWN_MODEL_FAMILIES is
+    # the superset of tracked + untracked families; extend it when a new model
+    # family ships (see CLAUDE.md "When a new Claude model ships").
+    _KNOWN_MODEL_FAMILIES="${CLAUDII_KNOWN_MODELS:-opus sonnet haiku fable mythos}"
+    _model_scoped=false
+    for _km in $_KNOWN_MODEL_FAMILIES; do
+      echo "$_search_text" | grep -qiE "(^|[^a-zA-Z])${_km}([^a-zA-Z]|$)" && { _model_scoped=true; break; }
+    done
+
+    # No tracked model named: broad-API outage check. Only when the incident is
+    # NOT scoped to a specific model AND the components list contains the bare
+    # "API" entry do we treat it as affecting all models (the inference plane
+    # itself is degraded). Otherwise leave models ok — _incident=<status> still
+    # gets persisted so consumers show the note indicator without the false
+    # "Opus ↓ Sonnet ↓ Haiku ↓" cascade.
+    if [[ "$down_models" == " " ]] && ! $_model_scoped && \
        echo "$incident_components" | grep -qiE '(^|[^a-zA-Z])API([^a-zA-Z]|$)'; then
       for m in "${MODELS[@]}"; do
         down_models="$down_models$m "
       done
-      _claudii_log debug "Components include API → flagging all models"
+      _claudii_log debug "Components include API, no model scope → flagging all models"
     fi
 
     _claudii_log debug "Incidents: name='$incident_names' components='$incident_components' → service=$service_level down=[${down_models}]"

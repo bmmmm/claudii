@@ -148,6 +148,12 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
    `lib/tier.jq` (covers both skills-cost programs), a `_rates` entry in
    `lib/cmd/skills-cost.sh`, plus a bare-tier fallback case in
    `_insights_model_label()` (see pricing note below).
+   Also add the family keyword to `_KNOWN_MODEL_FAMILIES` in
+   `bin/claudii-status` — an incident that names only the new family (and
+   lists the `API` component) would otherwise cascade `degraded` onto
+   opus/sonnet/haiku via the broad-API fallback. The list is the superset of
+   tracked + untracked families; only **new families** need adding (version
+   bumps within `opus`/`sonnet`/`haiku`/`fable` already match).
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
 If the new model also changes **pricing**, update the per-model `_rates` table in

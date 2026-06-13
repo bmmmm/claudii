@@ -135,6 +135,18 @@ Indicators:
 = loading,
 .B \(rn
 = refreshing.
+.br
+A trailing incident glyph mirrors status.claude.com:
+.B \[u203C]
+investigating,
+.B \[u2690]
+identified,
+.B \[u25CE]
+monitoring \(em stage-colored when a tracked model is actually affected.
+When an incident exists but none of your tracked models are affected (e.g. a
+note about models you don't use), it shows a neutral
+.B \[u24D8]
+instead of an alarm.
 .TP
 .B Session Dashboard (above prompt)
 Per-session summary lines above the prompt, rendered via the precmd hook.
