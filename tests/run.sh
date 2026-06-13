@@ -39,7 +39,10 @@ assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
   # Use grep on here-string — avoids SIGPIPE broken pipe with pipefail on large input (Ubuntu CI)
   # -F: treat needle as literal string (not regex) — use assert_matches for regex
-  if grep -qF "$needle" <<< "$haystack"; then
+  # --: a needle starting with '-' (e.g. "-it-4bit") would otherwise be parsed as
+  #     grep flags — on BSD grep that prints "invalid option -- t" and the match
+  #     silently fails (false ✗ for contains, accidental ✓ for not_contains).
+  if grep -qF -- "$needle" <<< "$haystack"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     (( ++PASS ))
   else
@@ -53,7 +56,7 @@ assert_contains() {
 
 assert_not_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if grep -qF "$needle" <<< "$haystack"; then
+  if grep -qF -- "$needle" <<< "$haystack"; then
     echo -e "  ${RED}✗${NC} $desc"
     echo -e "    Expected NOT to contain: ${RED}$needle${NC}"
     echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
@@ -116,7 +119,7 @@ hist_row() {
 
 assert_matches() {
   local desc="$1" needle="$2" haystack="$3"
-  if grep -qE "$needle" <<< "$haystack"; then
+  if grep -qE -- "$needle" <<< "$haystack"; then
     echo -e "  ${GREEN}✓${NC} $desc"
     (( ++PASS ))
   else

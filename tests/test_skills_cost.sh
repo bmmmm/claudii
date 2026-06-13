@@ -19,10 +19,15 @@ trap 'rm -rf "${_SC_TMPDIRS[@]}" 2>/dev/null' EXIT
 _SC_LAST_SEEN="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 _sc_write_fixture() {
   local out_file="$1"
-  local skills_json="${2:-{\}}"
-  local plugins_json="${3:-{\}}"
-  local mcp_json="${4:-{\}}"
-  local models_json="${5:-{\}}"
+  # Defaults must NOT inline a brace in the default-word (${n:-{\}}): macOS
+  # /bin/bash 3.2 — what CI macos-latest runs — keeps the backslash literally
+  # ({\}), so jq below gets invalid JSON and the fixture comes out empty;
+  # homebrew bash 5.x strips it ({}), so it passed locally and only CI went red.
+  # Resolve the default as a plain quoted literal instead — unambiguous on 3.2+.
+  local skills_json="${2:-}";  [[ -n "$skills_json"  ]] || skills_json='{}'
+  local plugins_json="${3:-}"; [[ -n "$plugins_json" ]] || plugins_json='{}'
+  local mcp_json="${4:-}";     [[ -n "$mcp_json"     ]] || mcp_json='{}'
+  local models_json="${5:-}";  [[ -n "$models_json"  ]] || models_json='{}'
   # Write JSON by constructing it with jq, using heredoc to avoid --argjson multiline issues
   jq -n \
     --argjson s "${skills_json}" \
@@ -33,6 +38,25 @@ _sc_write_fixture() {
     '{schema_version:4,sessionId:"test-session-01",last_seen:$ls,messages:5,assistant_messages:3,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_skills:$s,attribution_plugins:$p,attribution_mcp:$m,attribution_models:$am}' \
     > "$out_file"
 }
+
+# ── bash 3.2 portability guard ───────────────────────────────────────────────
+# CI macos-latest runs /bin/bash 3.2; local `bash tests/run.sh` uses homebrew
+# bash 5.x. Default-arg quirks (see _sc_write_fixture) therefore pass locally and
+# only surface on CI — that exact gap shipped this file red. Re-run the REAL
+# helper under /bin/bash with mcp/models omitted (the default path) so a
+# 3.2-only regression fails here too. `declare -f` emits portable function text.
+if [[ -x /bin/bash ]]; then
+  _SC_B32_OUT="$(mktemp)"; _SC_TMPDIRS+=("$_SC_B32_OUT")
+  {
+    printf '%s\n' '_SC_LAST_SEEN="2026-01-01T00:00:00Z"'
+    declare -f _sc_write_fixture
+    printf '%s\n' "_sc_write_fixture \"$_SC_B32_OUT\" '{\"x\":{\"calls\":1,\"in_tok\":1,\"out_tok\":1,\"cache_read\":0,\"cache_create\":0}}' '{}'"
+  } | /bin/bash 2>/dev/null
+  _sc_b32_rc=$(jq -e '.attribution_mcp == {} and .attribution_models == {} and .attribution_skills.x.calls == 1' \
+    "$_SC_B32_OUT" >/dev/null 2>&1; echo $?)
+  assert_eq "skills-cost fixture: omitted args build valid JSON under /bin/bash 3.2" "0" "$_sc_b32_rc"
+  unset _SC_B32_OUT _sc_b32_rc
+fi
 
 # ── Test 1: Empty cache dir → "no data" message, exit 0 ─────────────────────
 _SC_EMPTY_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_EMPTY_CACHE")
