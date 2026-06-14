@@ -146,6 +146,9 @@ _cmd_changelog() {
 _cmd_explain() {
   local_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _cfg_init
+  # 56-column rule built char-aware (_rep). `%.56s` truncates the multibyte ─ at
+  # byte 56 under LC_ALL=C (mid-codepoint → garbled glyph in the CI locale).
+  local _rule; _rule=$(_rep '─' 56)
 
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii explain${CLAUDII_CLR_RESET}\n"
@@ -163,7 +166,7 @@ _cmd_explain() {
     cs_state="${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
   fi
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '  Model health indicators from status.claude.com\n'
   printf "  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n"
   printf '\n'
@@ -186,7 +189,7 @@ _cmd_explain() {
     sb_count=$((sb_count + 1))
   done 2>/dev/null
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '  Session data from cache (model, context, tokens, rate limits)\n'
   printf "  Example (overview account line):\n"
   printf "    5h:51%% ${CLAUDII_CLR_DIM}reset 158min │${CLAUDII_CLR_RESET} 7d:92%% ${CLAUDII_CLR_DIM}(+18%%) │${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}5.2M tok${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}today (2 sessions)${CLAUDII_CLR_RESET}\n"
@@ -211,7 +214,7 @@ _cmd_explain() {
     sl_state="${CLAUDII_CLR_DIM}~/.claude/settings.json not found${CLAUDII_CLR_RESET}"
   fi
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '  Info-dense status line rendered inside Claude Code CLI\n'
   printf '  Shows model, context bar, tokens, cache ratio, rate limits, cost (dim), lines\n'
   printf '\n'
@@ -232,7 +235,7 @@ _cmd_explain() {
     _ins_state="${CLAUDII_CLR_DIM}not installed${CLAUDII_CLR_RESET}"
   fi
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Clock${CLAUDII_CLR_RESET}                                      CC-Statusline clock segment\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '  Bedtime nudge / shame / motivation rendering is delegated to the\n'
   printf '  standalone cc-insomnii(1) plugin. claudii pipes the upstream JSON to it\n'
   printf '  and forwards statusline.bedtime as CC_INSOMNII_BEDTIME.\n'
@@ -244,14 +247,14 @@ _cmd_explain() {
 
   # Data flow
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Data Flow${CLAUDII_CLR_RESET}\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf "  Claude Code ${CLAUDII_CLR_DIM}─JSON→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}CC-Statusline${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}─cache→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}Dashboard${CLAUDII_CLR_RESET}\n"
   printf "  status.claude.com ${CLAUDII_CLR_DIM}─bg→${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}ClaudeStatus${CLAUDII_CLR_RESET} (RPROMPT)\n"
   printf '\n'
 
   # Symbol & field reference
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Symbols & Fields${CLAUDII_CLR_RESET}\n"
-  printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
+  printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '\n'
   printf '  Session Dashboard\n'
   printf '  %-4s %-20s %s\n' "●"   "active"           "session or service is active"

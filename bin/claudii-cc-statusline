@@ -421,9 +421,14 @@ _mk_rate_seg() {
   [[ "$_rate_display" == "remaining" ]] && disp=$(( 100 - pct ))
   _rlc "$rate"; out="${_CLR}${label}${_rate_mark}:${disp}%${RST}"
   if [[ -n "$reset_at" && "$reset_at" != "null" ]]; then
+    # resets_at is an epoch int in real CC payloads; guard the arithmetic so a
+    # non-numeric value (format drift / ISO) drops ↺ instead of leaking a
+    # "value too great for base" error to stderr (no set -e here, but noisy).
     reset_at="${reset_at%.*}"
-    _fmt_reset $(( reset_at - _now )) "$pct"
-    [[ -n "$_reset_fmt" ]] && out+=" ${_reset_color}↺${_reset_fmt}${RST}"
+    if [[ "$reset_at" =~ ^[0-9]+$ ]]; then
+      _fmt_reset $(( reset_at - _now )) "$pct"
+      [[ -n "$_reset_fmt" ]] && out+=" ${_reset_color}↺${_reset_fmt}${RST}"
+    fi
   fi
   printf '%s' "$out"
 }

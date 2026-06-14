@@ -101,7 +101,7 @@ _cmd_cache() {
         return 0
         ;;
     esac
-    shift
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
 
   # Validate here — claudii-insights merge also validates, but its stderr is
@@ -251,7 +251,7 @@ _cmd_tokens() {
         return 0
         ;;
     esac
-    shift
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
 
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
@@ -641,7 +641,7 @@ _cmd_tools() {
         return 0
         ;;
     esac
-    shift
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
     printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
@@ -771,7 +771,7 @@ _cmd_limits() {
         return 0
         ;;
     esac
-    shift
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
     printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2

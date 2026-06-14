@@ -354,6 +354,18 @@ assert_eq "skills-cost --compare --json empty: rows is []" "0" \
 _sc_cmpe_txt=$(CLAUDII_CACHE_DIR="$_SC_CMPE_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 2>&1)
 assert_contains "skills-cost --compare empty: no-comparable-activity line" "No comparable" "$_sc_cmpe_txt"
 
+# ── Flag robustness: a value-flag as the LAST arg must not silently exit ──────
+# `--compare` with no window consumed $@, then the loop's final `shift` tripped
+# exit 1 under set -e — a silent failure with no output. Now: actionable message
+# + exit 1. `--days` with no value falls back to its default instead of crashing.
+_sc_cmp_noarg=$(bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 2>&1 || true)
+assert_contains "skills-cost --compare (no arg): actionable message" "needs BEFORE:AFTER" "$_sc_cmp_noarg"
+bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare >/dev/null 2>&1 && _sc_cmp_narc=0 || _sc_cmp_narc=$?
+assert_eq "skills-cost --compare (no arg): exits non-zero (not a silent crash)" "1" "$_sc_cmp_narc"
+CLAUDII_CACHE_DIR="$_SC_CMPE_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --days >/dev/null 2>&1 && _sc_d_narc=0 || _sc_d_narc=$?
+assert_eq "skills-cost --days (no value): falls back, no silent crash" "0" "$_sc_d_narc"
+unset _sc_cmp_noarg _sc_cmp_narc _sc_d_narc
+
 unset _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
 unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_haiku _sc_pm_fable _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \

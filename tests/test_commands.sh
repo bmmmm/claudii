@@ -1,4 +1,4 @@
-# touches: lib/cmd/config.sh lib/cmd/system.sh bin/claudii
+# touches: lib/cmd/config.sh lib/cmd/system.sh lib/cmd/display.sh bin/claudii
 # test_commands.sh — coverage for config, agents, claudestatus, cc-statusline, layers
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -334,3 +334,18 @@ assert_eq "auto colors: CLAUDII_FORCE_COLOR=1 restores ANSI" "1" "$_ac_has"
 
 rm -rf "$_AC_BASE"
 unset _AC_BASE _AC_XDG _AC_CACHE _ac_out _ac_has
+
+# ── explain: separator rules are valid UTF-8 under LC_ALL=C ───────────────────
+# `%.56s` truncated the multibyte ─ rule at byte 56 (mid-codepoint) under the C
+# locale CI runs the suite in; _rep '─' 56 builds it char-aware. A raw grep for
+# U+FFFD misses it (the broken stream carries partial E2 94 bytes, not FFFD),
+# so iconv is the correct detector — it rejects the truncated codepoint.
+if command -v iconv >/dev/null 2>&1; then
+  _make_cfg_tmp _EX
+  LC_ALL=C XDG_CONFIG_HOME="$_EX_XDG" CLAUDII_CACHE_DIR="$_EX_CACHE" \
+    bash "$CLAUDII_HOME/bin/claudii" explain 2>/dev/null \
+    | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 && _ex_valid=0 || _ex_valid=$?
+  assert_eq "explain: rules are valid UTF-8 under LC_ALL=C (no mid-codepoint cut)" "0" "$_ex_valid"
+  rm -rf "$_EX_BASE"
+  unset _EX_BASE _EX_XDG _EX_CACHE _ex_valid
+fi

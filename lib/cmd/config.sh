@@ -20,7 +20,8 @@ _cmd_config() {
 
   case "${2:-}" in
     get)
-      key="${3:?Usage: claudii config get <key>}"
+      key="${3:-}"
+      [[ -z "$key" ]] && { echo "Usage: claudii config get <key>" >&2; exit 1; }
       _validate_key "$key" || exit 1
       jq_path=$(_build_jq_path "$key")
       val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
@@ -28,9 +29,11 @@ _cmd_config() {
       echo "$val"
       ;;
     set)
-      key="${3:?Usage: claudii config set <key> <value>}"
+      key="${3:-}"
+      [[ -z "$key" ]] && { echo "Usage: claudii config set <key> <value>" >&2; exit 1; }
       _validate_key "$key" || exit 1
-      value="${4:?Usage: claudii config set <key> <value>}"
+      value="${4:-}"
+      [[ -z "$value" ]] && { echo "Usage: claudii config set <key> <value>" >&2; exit 1; }
       if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
         _jq_update "$CONFIG" --arg k "$key" --argjson v "$value" \
           'setpath($k | split("."); $v)'
@@ -54,7 +57,8 @@ _cmd_config() {
       fi
       ;;
     import)
-      file="${3:?Usage: claudii config import <file>}"
+      file="${3:-}"
+      [[ -z "$file" ]] && { echo "Usage: claudii config import <file>" >&2; exit 1; }
       [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; exit 1; }
       jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
       jq -e 'type == "object"' "$file" >/dev/null 2>&1 || { echo "config import: $file is not a JSON object — aborting" >&2; exit 1; }

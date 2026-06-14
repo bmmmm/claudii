@@ -118,7 +118,8 @@ _cmd_skills_cost() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --days|-d)   shift; days="${1:-30}" ;;
-      --compare)   shift; compare="${1:-}" ;;
+      --compare)   shift; compare="${1:-}"
+                   [[ -z "$compare" ]] && { printf 'claudii: --compare needs BEFORE:AFTER (e.g. --compare 30:30)\n' >&2; return 1; } ;;
       --plugins)   attr_kind="plugin" ;;
       --mcp)       attr_kind="mcp" ;;
       --json)      fmt="json" ;;
@@ -131,7 +132,7 @@ _cmd_skills_cost() {
         return 1
         ;;
     esac
-    shift
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
 
   # --days must be a positive integer. A non-numeric value previously slipped the

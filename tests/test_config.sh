@@ -119,6 +119,20 @@ bash "$CLAUDII_HOME/bin/claudii" config set session-dashboard.enabled on >/dev/n
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)
 assert_eq "config get/set hyphenated key (session-dashboard.enabled)" "on" "$output"
 
+# ── No-argument usage: clean Usage line, not a bash ${N:?} parameter-error leak ──
+# get/set/import used ${3:?...}, which leaks "config.sh: line 23: 3: Usage..." to
+# stderr. A plain guard prints the Usage line cleanly; the discriminating assert
+# is the ABSENCE of the bash "config.sh: line" prefix (the Usage text appeared in
+# the broken output too, so asserting only its presence would be vacuous).
+for _cmd in get set import; do
+  _na_out=$(bash "$CLAUDII_HOME/bin/claudii" config "$_cmd" 2>&1 || true)
+  assert_contains "config $_cmd (no arg): prints Usage" "Usage: claudii config $_cmd" "$_na_out"
+  assert_not_contains "config $_cmd (no arg): no bash parameter-error leak" "config.sh: line" "$_na_out"
+  bash "$CLAUDII_HOME/bin/claudii" config "$_cmd" >/dev/null 2>&1 && _na_rc=0 || _na_rc=$?
+  assert_eq "config $_cmd (no arg): exits non-zero" "1" "$_na_rc"
+done
+unset _cmd _na_out _na_rc
+
 # Reset config to clean state for theme tests
 bash "$CLAUDII_HOME/bin/claudii" config reset >/dev/null 2>&1
 

@@ -172,7 +172,7 @@ _ov_render_account() {
   fi
   _ov_acct_line="    5h${_rate_mark}: ${_ov_5h_clr}${_ov_5h_disp}%${CLAUDII_CLR_RESET}"
   # Reset countdown with urgency color
-  if [[ -n "$_ov_acct_reset" && "$_ov_acct_reset" != "0" ]]; then
+  if [[ "$_ov_acct_reset" =~ ^[0-9]+$ && "$_ov_acct_reset" != "0" ]]; then
     _ov_remaining=$(( _ov_acct_reset - now ))
     if (( _ov_remaining > 0 )); then
       _ov_rem_min=$(( _ov_remaining / 60 ))
@@ -221,7 +221,7 @@ _ov_render_account() {
       fi
     fi
     # 7d reset countdown (shared cascade: m / h+m / d+h, zero units suppressed)
-    if [[ -n "$_ov_acct_reset_7d" && "$_ov_acct_reset_7d" != "0" ]]; then
+    if [[ "$_ov_acct_reset_7d" =~ ^[0-9]+$ && "$_ov_acct_reset_7d" != "0" ]]; then
       _fmt_rel $(( _ov_acct_reset_7d - now ))
       [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
     fi
