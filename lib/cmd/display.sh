@@ -61,7 +61,7 @@ ${_epoch_awk}
 
   # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
   # Shared epoch_to_date from lib/epoch_to_date.awk (read above).
-  _trends_augmented=$(awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
+  _trends_augmented=$(LC_ALL=C awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
 $(<"$CLAUDII_HOME/lib/model_tier.awk")
 "'
@@ -85,13 +85,12 @@ $(<"$CLAUDII_HOME/lib/model_tier.awk")
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   # (daily API totals are folded into trends.awk's main pass — field 7 = api_dur_ms)
   #
-  # JSON costs are printed via awk printf %.2f (LC_NUMERIC-sensitive) — a comma
-  # locale would emit "0,00" and break jq. Force LC_ALL=C for json/tsv only; the
-  # pretty branch prints UTF-8 bars/box chars and formats $ via the locale-immune
-  # fmt_usd, so it stays in the user locale.
-  local -a _lc=()
-  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _lc=(env LC_ALL=C)
-  echo "$_trends_augmented" | ${_lc[@]+"${_lc[@]}"} awk -F'\t' \
+  # Both awk stages run under LC_ALL=C, unconditionally. Step 1 already parses the
+  # history cost ($3) and step 2 re-parses it from the pipe; a comma locale
+  # truncates "12.34"+0 to 12 at the radix (onetrueawk), corrupting pretty AND
+  # json totals. trends.awk emits ASCII / UTF-8 bars via octal escapes and
+  # length() is byte-based, so C is safe in the pretty branch too.
+  echo "$_trends_augmented" | LC_ALL=C awk -F'\t' \
     -v today="$today_str" \
     -v week_start="$week_start_str" \
     -v last_mon="$last_monday_str" \

@@ -44,13 +44,13 @@ _cmd_cost_from_history() {
   # intermediate through the shell twice; the pipe also runs both concurrently.
   # The empty-input case (no valid rows) is handled in stage 2's END block.
   #
-  # JSON/TSV stage 2 emits costs via awk printf %.4f, which honors LC_NUMERIC —
-  # a comma locale ("12,3456") breaks jq and the TSV number column. Force
-  # LC_ALL=C there only; the pretty branch prints UTF-8 box chars (LC_ALL=C would
-  # mangle them) and is already locale-immune ($ via fmt_usd).
-  local -a _lc=()
-  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _lc=(env LC_ALL=C)
-  awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
+  # Both awk stages run under LC_ALL=C, unconditionally. Stage 1 PARSES the
+  # history cost ($3, a dot-decimal); under a comma locale onetrueawk truncates
+  # "12.34"+0 to 12 at the radix — corrupting pretty AND json totals (not just
+  # the output separator), so a json-only guard misses it. Both stages emit
+  # ASCII / UTF-8 box chars via octal escapes, and length() is byte-based on
+  # onetrueawk+mawk, so forcing C does not shift the pretty alignment math.
+  LC_ALL=C awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
 ${_tier_awk}
 "'
@@ -65,7 +65,7 @@ ${_tier_awk}
       model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
       print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
-  ' "${_history_files[@]}" | ${_lc[@]+"${_lc[@]}"} awk -F'\t' \
+  ' "${_history_files[@]}" | LC_ALL=C awk -F'\t' \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
     -v cols="$_cost_cols" \
@@ -457,16 +457,13 @@ _cmd_cost_forecast() {
   local -a _in=(${_HIST_FILES[@]+"${_HIST_FILES[@]}"})
   [[ ${#_in[@]} -eq 0 ]] && _in=(/dev/null)
 
-  # JSON/TSV are ASCII-only and carry decimals (%.Nf in awk honors LC_NUMERIC —
-  # a comma locale would emit "0,5" and break jq). Force LC_ALL=C there. Pretty
-  # output stays in the user locale (it prints UTF-8 box chars, which LC_ALL=C
-  # would mangle) and is already locale-immune: $ via fmt_usd, burn via integer
-  # tenths, everything else %d.
-  local -a _envp=()
-  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _envp=(env LC_ALL=C)
-
+  # Run awk under LC_ALL=C, unconditionally. The pretty branch also PARSES the
+  # live rate_now (a dot-decimal) and history cost; a comma locale truncates
+  # them at the radix (onetrueawk: "45.2"+0 == 45), skewing the burn slope and
+  # month projection — not just the json separator. Output is ASCII / UTF-8 box
+  # chars via octal escapes (byte-based length()), so C is safe in pretty too.
   _spinner_start "forecast"
-  ${_envp[@]+"${_envp[@]}"} awk -F'\t' \
+  LC_ALL=C awk -F'\t' \
     -v now="$_now" \
     -v tz_offset="${_tz_offset:-0}" \
     -v reset5h="$_reset5h" \

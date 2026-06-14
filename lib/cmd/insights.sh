@@ -154,7 +154,7 @@ _cmd_cache() {
       local filled=$(( (pct_int * 20 + 50) / 100 ))
       local label; label=$(_insights_day_label "$day")
       local bar;   bar=$(_insights_bar "$filled")
-      local pct_str; pct_str=$(awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
+      local pct_str; pct_str=$(LC_ALL=C awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
       local creads_h; creads_h=$(_fmt_tok "$creads")
       local total_h;  total_h=$(_fmt_tok "$total")
       printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
@@ -197,7 +197,7 @@ _cmd_cache() {
       local filled=$(( (pct_int * 20 + 50) / 100 ))
       local label; label=$(_insights_model_label "$model")
       local bar;   bar=$(_insights_bar "$filled")
-      local pct_str; pct_str=$(awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
+      local pct_str; pct_str=$(LC_ALL=C awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
       local total_h; total_h=$(_fmt_tok "$total")
       printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
         "$label" \
@@ -220,7 +220,7 @@ _cmd_cache() {
   ' <<< "$merged")
   IFS=$'\t' read -r tot_r tot_c tot_i tot_all <<< "$totals"
   if (( tot_all > 0 )); then
-    local hit_pct; hit_pct=$(awk -v r="$tot_r" -v t="$tot_all" 'BEGIN{printf "%.1f", 100*r/t}')
+    local hit_pct; hit_pct=$(LC_ALL=C awk -v r="$tot_r" -v t="$tot_all" 'BEGIN{printf "%.1f", 100*r/t}')
     local saved_h; saved_h=$(_fmt_tok "$tot_r")
     printf '  %s●%s Saved: %s%s%s tokens cached · %s%s%%%s hit rate (%dd)\n' \
       "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
@@ -664,7 +664,7 @@ _cmd_tools() {
     [ ([.tools[]? ] | add // 0), ([.tool_errors[]? ] | add // 0) ] | @tsv
   ' <<< "$merged")
   (( totcalls == 0 )) && { printf '  No tool calls recorded in the last %dd.\n\n' "$days"; return 0; }
-  local okpct; okpct=$(awk -v c="$totcalls" -v e="$toterrs" 'BEGIN{printf "%.1f", 100*(c-e)/c}')
+  local okpct; okpct=$(LC_ALL=C awk -v c="$totcalls" -v e="$toterrs" 'BEGIN{printf "%.1f", 100*(c-e)/c}')
 
   local note hpad; printf -v note 'last %d days · %s calls · %s%% ok' "$days" "$totcalls" "$okpct"
   hpad=$(( RW - 13 - ${#note} )); (( hpad < 1 )) && hpad=1
@@ -691,8 +691,8 @@ _cmd_tools() {
       bf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
       share=$(( cnt * 100 / totcalls ))
       if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
-        local erate hi=""; erate=$(awk -v e="$ec" -v n="$cnt" 'BEGIN{printf "%.1f", 100*e/n}')
-        awk -v e="$ec" -v n="$cnt" 'BEGIN{exit !(100*e/n > 5)}' && hi=" ${yellow}⚠${reset}"
+        local erate hi=""; erate=$(LC_ALL=C awk -v e="$ec" -v n="$cnt" 'BEGIN{printf "%.1f", 100*e/n}')
+        LC_ALL=C awk -v e="$ec" -v n="$cnt" 'BEGIN{exit !(100*e/n > 5)}' && hi=" ${yellow}⚠${reset}"
         printf -v err_str '%s%d err · %s%%%s%s' "$dim" "$ec" "$erate" "$reset" "$hi"
       else
         printf -v err_str '%s—%s' "$dim" "$reset"

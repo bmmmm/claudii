@@ -177,12 +177,12 @@ if _isset "$duration_ms"; then
   _rate_5h_int=${rate_5h%.*}
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    _burn_eta=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
+    _burn_eta=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" \
       'BEGIN { m=dur/60000; r=rat+0; print (r>0)?int((100-r)/(r/m)+0.5):0 }')
     # Pace tri-state: compare actual rate_5h against linear burn expectation.
     # Linear burn = session_min / 300 * 100 (hits 100% exactly at 5h mark).
     # Thresholds: ±15% tolerance band around linear.
-    _pace_state=$(awk -v dur="$duration_ms" -v rat="$rate_5h" \
+    _pace_state=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" \
       'BEGIN {
         m = dur / 60000
         linear = m / 300 * 100
@@ -328,7 +328,7 @@ fi
 _ac_scale_pct=80
 _ac_env="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}"
 if [[ "$_ac_env" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-  _ac_scale_pct=$(awk -v v="$_ac_env" -v w="${ctx_size:-0}" 'BEGIN {
+  _ac_scale_pct=$(LC_ALL=C awk -v v="$_ac_env" -v w="${ctx_size:-0}" 'BEGIN {
     f = 0.8
     if (v > 1)      { if (w + 0 >= 1) f = v / w }
     else if (v > 0) { f = v }
@@ -370,7 +370,10 @@ _seg_cost=""
 if _isset "$cost"; then
   # Cost demoted to a dim segment — token throughput is the primary signal now
   # (full $ detail lives in `claudii cost`).
-  _seg_cost="${DIM}\$$(LC_NUMERIC=C printf '%.2f' "$cost")${RST}"
+  # env LC_ALL=C printf (external): a bare "LC_ALL=C printf" is inert on macOS
+  # /bin/bash 3.2 — the prefix does not re-setlocale the printf BUILTIN, so a
+  # comma locale still prints "$0,55" + an "invalid number" warning to stderr.
+  _seg_cost="${DIM}\$$(env LC_ALL=C printf '%.2f' "$cost")${RST}"
 fi
 
 # Reset countdown formatter — sets _reset_fmt + _reset_color.

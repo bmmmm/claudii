@@ -48,9 +48,12 @@ _omlx_probe_server() {
   local n gb _omlx_jq
   _omlx_jq=$(jq -r '[.loaded_count // 0, ((.current_model_memory // 0) / 1073741824)] | join("\t")' <<< "$resp" 2>/dev/null) || return 1
   IFS=$'\t' read -r n gb <<< "$_omlx_jq"
-  # LC_NUMERIC=C so %.1f always uses a dot — a locale with comma decimals would
-  # render "1,5 GB" (cosmetic, but the segment is display-only either way).
-  LC_NUMERIC=C printf '%s loaded models, %.1f GB' "$n" "$gb"
+  # env LC_ALL=C printf (external), NOT a bash-builtin "LC_ALL=C printf": under
+  # macOS /bin/bash 3.2 a var-assignment prefix does not re-setlocale the printf
+  # BUILTIN, so a comma locale still renders "1,5 GB" + an "invalid number"
+  # warning; routing through external /usr/bin/printf via env applies the locale.
+  # (env LC_ALL=C also beats an inherited LC_ALL that would override LC_NUMERIC=C.)
+  env LC_ALL=C printf '%s loaded models, %.1f GB' "$n" "$gb"
   return 0
 }
 

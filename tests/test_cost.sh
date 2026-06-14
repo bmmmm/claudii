@@ -142,7 +142,7 @@ _md_sessions=$(printf '%s\n' "$cost_multiday_out" | awk -F'\t' '$1=="alltime" &&
 assert_eq "cost (multiday): 1 SID across 3 days counts as 1 session (not 3)" "1" "$_md_sessions"
 _md_cost=$(printf '%s\n' "$cost_multiday_out" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
 assert_eq "cost (multiday): cumulative cost delta = 3.00 (1+1+1)" "1" \
-  "$(awk "BEGIN{print (\"$_md_cost\"+0 > 2.99 && \"$_md_cost\"+0 < 3.01) ? 1 : 0}")"
+  "$(LC_ALL=C awk "BEGIN{print (\"$_md_cost\"+0 > 2.99 && \"$_md_cost\"+0 < 3.01) ? 1 : 0}")"
 
 unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out _md_sessions _md_cost
 
@@ -170,7 +170,7 @@ cost_reset_out=$(CLAUDII_CACHE_DIR="$_COST_RESET_TMP" bash "$CLAUDII_HOME/bin/cl
 # Combined alltime Opus should be in 14-16 range, definitely not 25+
 _cost_alltime=$(printf '%s\n' "$cost_reset_out" | awk -F'\t' '$1=="alltime" && $2=="Opus" {print $3}')
 assert_eq "cost (reset threshold): alltime Opus in range (no false reset)" "1" \
-  "$(awk "BEGIN{print (\"$_cost_alltime\"+0 < 17) ? 1 : 0}")"
+  "$(LC_ALL=C awk "BEGIN{print (\"$_cost_alltime\"+0 < 17) ? 1 : 0}")"
 
 unset _COST_RESET_TMP _now_ts _base cost_reset_out _cost_alltime
 
@@ -206,9 +206,9 @@ _mm_opus=$(printf '%s\n' "$cost_mixmodel_out" | awk -F'\t' '$1=="alltime" && $2=
 _mm_sonnet=$(printf '%s\n' "$cost_mixmodel_out" | awk -F'\t' '$1=="alltime" && $2=="Sonnet" {print $3}')
 
 assert_eq "cost (mixed-model day): Opus credited its 1.00 increment" "1" \
-  "$(awk "BEGIN{print (\"$_mm_opus\"+0 > 0.99 && \"$_mm_opus\"+0 < 1.01) ? 1 : 0}")"
+  "$(LC_ALL=C awk "BEGIN{print (\"$_mm_opus\"+0 > 0.99 && \"$_mm_opus\"+0 < 1.01) ? 1 : 0}")"
 assert_eq "cost (mixed-model day): Sonnet credited only its 0.50 increment (not 1.50)" "1" \
-  "$(awk "BEGIN{print (\"$_mm_sonnet\"+0 > 0.49 && \"$_mm_sonnet\"+0 < 0.51) ? 1 : 0}")"
+  "$(LC_ALL=C awk "BEGIN{print (\"$_mm_sonnet\"+0 > 0.49 && \"$_mm_sonnet\"+0 < 0.51) ? 1 : 0}")"
 
 unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet
 
@@ -315,7 +315,27 @@ if [[ "$_have_de_locale" == *de_DE.UTF-8* || "$_have_de_locale" == *de_DE.utf8* 
     "$(echo "$_cost_loc_json" | jq . >/dev/null 2>&1; echo $?)"
   _cost_loc_tsv=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_FC_LOC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
   assert_not_contains "cost --tsv: no comma decimal under de_DE locale" ',0000' "$_cost_loc_tsv"
+
+  # Value correctness, not just validity: a FRACTIONAL cost must survive the
+  # comma locale. Stage-1 parses the history cost ($3) and onetrueawk truncates
+  # "12.34"+0 -> 12 at the radix — corrupting the total even when the output is
+  # later dot-formatted. The integer-valued fixture above cannot expose that
+  # (12.00 -> 12 is unchanged), so use a cents value and pin both the exact json
+  # number and a byte-identical C-vs-de_DE pretty render (any truncation/comma
+  # makes them differ).
+  _LOC_FRAC_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_LOC_FRAC_TMP")
+  hist_row "$_LOC_FRAC_TMP/history.tsv" "$_now_ts" "claude-opus-4-8" "12.34" "50" "64" "frac-sid" "100" "50" "0"
+  _frac_c=$(LC_ALL=C            CLAUDII_CACHE_DIR="$_LOC_FRAC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+  _frac_de=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_LOC_FRAC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+  assert_eq "cost pretty: byte-identical C vs de_DE (no truncation/comma drift)" "$_frac_c" "$_frac_de"
+  _frac_json=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_LOC_FRAC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
+  # Numeric compare (jq 1.7 preserves the literal "12.3400" from awk %.4f) — a
+  # parse-truncated total would be 12, not == 12.34.
+  assert_eq "cost --json: fractional cost not truncated under de_DE (== 12.34, not 12)" "true" \
+    "$(echo "$_frac_json" | jq -r '.today.Opus.cost == 12.34')"
+
   unset _FC_LOC_TMP _now_ts _fc_loc_json _cost_loc_json _cost_loc_tsv
+  unset _LOC_FRAC_TMP _frac_c _frac_de _frac_json
 fi
 unset _have_de_locale
 

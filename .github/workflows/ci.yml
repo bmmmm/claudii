@@ -11,7 +11,18 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
+        locale: [C, de_DE.UTF-8]
+        # de_DE.UTF-8 (comma decimals) guards the awk LC_NUMERIC class: under a
+        # comma locale onetrueawk both truncates "12.34"+0 -> 12 at the radix AND
+        # prints %.Nf as "12,34". macOS ships the locale and uses onetrueawk (the
+        # strictest); Ubuntu would need locale-gen and its mawk is radix-agnostic
+        # (the bug barely manifests), so the comma run lives on macOS only.
+        exclude:
+          - os: ubuntu-latest
+            locale: de_DE.UTF-8
     runs-on: ${{ matrix.os }}
+    env:
+      LC_ALL: ${{ matrix.locale }}
     steps:
       - uses: actions/checkout@v6
 

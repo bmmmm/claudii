@@ -43,7 +43,9 @@ if [[ -n "$_session_id" ]]; then
   if [[ -f "$_session_file" ]]; then
     _cost=$(grep -m1 '^cost=' "$_session_file" 2>/dev/null | cut -d= -f2)
     if [[ "$_cost" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-      _body="session ended, cost \$$(LC_NUMERIC=C printf '%.2f' "$_cost")"
+      # env LC_ALL=C printf (external): bare "LC_ALL=C printf" is inert on the
+      # printf builtin under macOS /bin/bash 3.2 (comma locale → "0,55" + warning).
+      _body="session ended, cost \$$(env LC_ALL=C printf '%.2f' "$_cost")"
     fi
   fi
 fi

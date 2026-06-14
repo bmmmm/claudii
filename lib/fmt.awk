@@ -12,10 +12,17 @@
 # Token / large-number short form: K/M/B. One decimal for M/B, rounded K, "" for 0.
 # The empty-string-for-zero is load-bearing: trends/cost render "" (no "tok"
 # suffix) for days/periods that carry no token data.
-function fmt_tok(t) {
-  if (t >= 1000000000) return sprintf("%.1fB", t / 1000000000)
-  if (t >= 1000000)    return sprintf("%.1fM", t / 1000000)
-  if (t >= 1000)       return sprintf("%.0fK", t / 1000)
+#
+# Integer/string math, no printf %f — the M/B/K branches are immune to
+# LC_NUMERIC (a comma locale would otherwise sprintf "5.2M" as "5,2M", breaking
+# jq and the awk==bash parity with _fmt_tok in lib/render.sh). Token counts are
+# integers, so the sub-1000 passthrough (t "") is exact too (awk converts an
+# integral value via %d, not the locale-sensitive CONVFMT). Rounding mirrors
+# _fmt_tok exactly (tenths, half-up): keep the two in lockstep.
+function fmt_tok(t,   x) {
+  if (t >= 1000000000) { x = int((t + 50000000) / 100000000); return int(x / 10) "." (x % 10) "B" }
+  if (t >= 1000000)    { x = int((t + 50000) / 100000);       return int(x / 10) "." (x % 10) "M" }
+  if (t >= 1000)       return int((t + 500) / 1000) "K"
   if (t > 0)           return t ""
   return ""
 }

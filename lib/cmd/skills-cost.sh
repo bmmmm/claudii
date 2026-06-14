@@ -88,15 +88,15 @@ _skills_cost_compare() {
     [[ "$attr_kind" == "mcp" ]] && _name="${_name#mcp__}"
     if (( ${#_name} > _col_name_w )); then _name="${_name:0:$(( _col_name_w - 1 ))}…"; fi
     local _opcp_i _opcr_i _opcd_i _avgp_f _avgr_f
-    _opcp_i=$(awk -v v="$_opcp" 'BEGIN{printf "%.0f", v}')
-    _opcr_i=$(awk -v v="$_opcr" 'BEGIN{printf "%.0f", v}')
-    _opcd_i=$(awk -v v="$_opcd" 'BEGIN{printf "%+.0f", v}')
-    _avgp_f=$(awk -v v="$_avgp" 'BEGIN{printf "%.4f", v}')
-    _avgr_f=$(awk -v v="$_avgr" 'BEGIN{printf "%.4f", v}')
+    _opcp_i=$(LC_ALL=C awk -v v="$_opcp" 'BEGIN{printf "%.0f", v}')
+    _opcr_i=$(LC_ALL=C awk -v v="$_opcr" 'BEGIN{printf "%.0f", v}')
+    _opcd_i=$(LC_ALL=C awk -v v="$_opcd" 'BEGIN{printf "%+.0f", v}')
+    _avgp_f=$(LC_ALL=C awk -v v="$_avgp" 'BEGIN{printf "%.4f", v}')
+    _avgr_f=$(LC_ALL=C awk -v v="$_avgr" 'BEGIN{printf "%.4f", v}')
     # Δ arrow: less output after the edit (↓) is the desired direction.
     local _arrow
-    if   awk -v v="$_opcd" 'BEGIN{exit !(v < -0.5)}'; then _arrow="${CLAUDII_CLR_GREEN}↓${CLAUDII_CLR_RESET}"
-    elif awk -v v="$_opcd" 'BEGIN{exit !(v >  0.5)}'; then _arrow="${CLAUDII_CLR_YELLOW}↑${CLAUDII_CLR_RESET}"
+    if   LC_ALL=C awk -v v="$_opcd" 'BEGIN{exit !(v < -0.5)}'; then _arrow="${CLAUDII_CLR_GREEN}↓${CLAUDII_CLR_RESET}"
+    elif LC_ALL=C awk -v v="$_opcd" 'BEGIN{exit !(v >  0.5)}'; then _arrow="${CLAUDII_CLR_YELLOW}↑${CLAUDII_CLR_RESET}"
     else _arrow="${CLAUDII_CLR_DIM}·${CLAUDII_CLR_RESET}"; fi
     printf "%-${_col_name_w}s %-13s %-17s %b %-10s ${CLAUDII_CLR_DIM}\$%s → \$%s${CLAUDII_CLR_RESET}\n" \
       "$_name" "${_cp} → ${_cr}" "${_opcp_i} → ${_opcr_i}" "$_arrow" "$_opcd_i" "$_avgp_f" "$_avgr_f"
@@ -231,7 +231,7 @@ _cmd_skills_cost() {
 
   # Compute median avg_usd (sort numerically, pick middle)
   local _median_avg
-  _median_avg=$(printf '%s\n' "${_sc_avg[@]}" | sort -n | awk '
+  _median_avg=$(printf '%s\n' "${_sc_avg[@]}" | LC_ALL=C sort -n | LC_ALL=C awk '
     { vals[NR] = $1 }
     END {
       n = NR
@@ -246,7 +246,7 @@ _cmd_skills_cost() {
   # rarely-used skills from tripping the flag on noise.
   local _outlier_min_calls=10
   local _threshold
-  _threshold=$(awk -v m="$_median_avg" 'BEGIN { printf "%.10f", m * 2 }')
+  _threshold=$(LC_ALL=C awk -v m="$_median_avg" 'BEGIN { printf "%.10f", m * 2 }')
 
   # JSON output mode
   if [[ "$fmt" == "json" ]]; then
@@ -254,7 +254,7 @@ _cmd_skills_cost() {
     local _first=1
     for (( _i=0; _i<_sc_count; _i++ )); do
       local _outlier="false"
-      _outlier=$(awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="${_sc_calls[$_i]}" -v mc="$_outlier_min_calls" \
+      _outlier=$(LC_ALL=C awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="${_sc_calls[$_i]}" -v mc="$_outlier_min_calls" \
         'BEGIN { print (a+0 >= t+0 && c+0 >= mc+0) ? "true" : "false" }')
       [[ "$_first" -eq 0 ]] && _json_rows+=","
       # Token split per row: the judgment signal consumers need — out-heavy
@@ -308,8 +308,8 @@ _cmd_skills_cost() {
     local _calls="${_sc_calls[$_i]}"
     local _tot_fmt _avg_fmt _flag=""
 
-    _tot_fmt=$(awk -v v="${_sc_tot[$_i]}" 'BEGIN { printf "%.4f", v+0 }')
-    _avg_fmt=$(awk -v v="${_sc_avg[$_i]}" 'BEGIN { printf "%.4f", v+0 }')
+    _tot_fmt=$(LC_ALL=C awk -v v="${_sc_tot[$_i]}" 'BEGIN { printf "%.4f", v+0 }')
+    _avg_fmt=$(LC_ALL=C awk -v v="${_sc_avg[$_i]}" 'BEGIN { printf "%.4f", v+0 }')
 
     # Calls may be fractional-free but MCP rows can carry float token sums;
     # the calls column itself is always an integer count.
@@ -326,7 +326,7 @@ _cmd_skills_cost() {
 
     # Outlier flag
     local _is_outlier
-    _is_outlier=$(awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="$_calls" -v mc="$_outlier_min_calls" \
+    _is_outlier=$(LC_ALL=C awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="$_calls" -v mc="$_outlier_min_calls" \
       'BEGIN { print (a+0 >= t+0 && c+0 >= mc+0) ? "1" : "0" }')
     [[ "$_is_outlier" == "1" ]] && _flag="${CLAUDII_CLR_YELLOW}!${CLAUDII_CLR_RESET}"
 
@@ -341,7 +341,7 @@ _cmd_skills_cost() {
 
   printf '\n'
   local _med_fmt
-  _med_fmt=$(awk -v v="$_median_avg" 'BEGIN { printf "%.4f", v+0 }')
+  _med_fmt=$(LC_ALL=C awk -v v="$_median_avg" 'BEGIN { printf "%.4f", v+0 }')
   printf "${CLAUDII_CLR_DIM}Median cost/call: \$%s — rows flagged (!) are ≥2× median with ≥%d calls${CLAUDII_CLR_RESET}\n" "$_med_fmt" "$_outlier_min_calls"
   printf '\n'
 }

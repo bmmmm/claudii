@@ -61,6 +61,21 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "cost segment shows value" "0.55" "$output"
 
+# Regression: the cost segment formats $cost via printf '%.2f'. A bare
+# "LC_ALL=C printf" is inert on the printf BUILTIN under macOS /bin/bash 3.2 —
+# a comma locale rendered "$0,55" + an "invalid number" warning; the fix routes
+# through external printf (env LC_ALL=C printf). Run via /bin/bash explicitly
+# under a comma locale so a revert to the builtin form is caught here, not only
+# on a German user's machine. Guarded on the locale being installed.
+_have_de_sl=$(locale -a 2>/dev/null || true)
+if [[ "$_have_de_sl" == *de_DE.UTF-8* || "$_have_de_sl" == *de_DE.utf8* ]]; then
+  output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.55}}' \
+    | LANG=de_DE.UTF-8 LC_ALL=de_DE.UTF-8 XDG_CONFIG_HOME="$_test_cfg_dir" /bin/bash "$SL" 2>/dev/null)
+  assert_contains    "cost segment: dot decimal on /bin/bash 3.2 + de_DE"  "0.55" "$output"
+  assert_not_contains "cost segment: no comma decimal on /bin/bash 3.2 + de_DE" "0,55" "$output"
+fi
+unset _have_de_sl
+
 # No rate limits — should not leak other fields into rate display
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":50,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.10,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')

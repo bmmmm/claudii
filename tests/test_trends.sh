@@ -158,7 +158,7 @@ _noise_day_cost=$(echo "$trends_noise_json" | jq -r --arg d "$_noise_day" '
 ')
 
 assert_eq "trends (noise reset): small cost decrease not treated as reset" "0" \
-  "$(awk "BEGIN { print (\"$_noise_day_cost\" + 0 > 15) ? 1 : 0 }")"
+  "$(LC_ALL=C awk "BEGIN { print (\"$_noise_day_cost\" + 0 > 15) ? 1 : 0 }")"
 
 unset _TRENDS_NOISE_TMP _now_ts trends_noise_json _noise_day _noise_day_cost
 
@@ -281,10 +281,12 @@ trends_wd_json=$(CLAUDII_CACHE_DIR="$_TRENDS_WD_TMP" bash "$CLAUDII_HOME/bin/cla
 _wd_mismatch=0
 while IFS=' ' read -r _wd_date _wd_name; do
   [[ -z "$_wd_date" ]] && continue
-  if date -j -f '%Y-%m-%d' "$_wd_date" '+%a' >/dev/null 2>&1; then
-    _wd_ref=$(date -j -f '%Y-%m-%d' "$_wd_date" '+%a')
+  # date '+%a' is localized — force C so the reference matches the code's
+  # hardcoded English weekday table (CLI output is English by design).
+  if LC_ALL=C date -j -f '%Y-%m-%d' "$_wd_date" '+%a' >/dev/null 2>&1; then
+    _wd_ref=$(LC_ALL=C date -j -f '%Y-%m-%d' "$_wd_date" '+%a')
   else
-    _wd_ref=$(date -d "$_wd_date" '+%a' 2>/dev/null)
+    _wd_ref=$(LC_ALL=C date -d "$_wd_date" '+%a' 2>/dev/null)
   fi
   [[ "$_wd_name" != "$_wd_ref" ]] && _wd_mismatch=1
 done < <(echo "$trends_wd_json" | jq -r '.this_week[] | "\(.date) \(.day)"')

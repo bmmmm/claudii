@@ -272,10 +272,10 @@ _sc_pm_sonnet=$(jq -r '.rows[] | select(.name=="sonnet-skill") | .tot_usd' <<< "
 _sc_pm_haiku=$(jq -r '.rows[] | select(.name=="haiku-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_fable=$(jq -r '.rows[] | select(.name=="fable-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 # 1M input tokens → exactly the per-MTok input price (compare rounded to cents)
-assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(awk -v v="$_sc_pm_opus"   'BEGIN{printf "%.2f", v}')"
-assert_eq "skills-cost per-model: sonnet-skill priced at \$3/M" "3.00"  "$(awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
-assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
-assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(LC_ALL=C awk -v v="$_sc_pm_opus"   'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: sonnet-skill priced at \$3/M" "3.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(LC_ALL=C awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(LC_ALL=C awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
 
 # ── Test 12: residual pricing — pre-v5 tokens (no per-model split) → Sonnet ───
 # Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
@@ -292,7 +292,7 @@ _sc_res_json=$(CLAUDII_CACHE_DIR="$_SC_RES_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
 _sc_res_tot=$(jq -r '.rows[] | select(.name=="mixed-skill") | .tot_usd' <<< "$_sc_res_json" 2>/dev/null)
 assert_eq "skills-cost residual: 600K opus + 400K sonnet residual == \$4.20" "4.20" \
-  "$(awk -v v="$_sc_res_tot" 'BEGIN{printf "%.2f", v}')"
+  "$(LC_ALL=C awk -v v="$_sc_res_tot" 'BEGIN{printf "%.2f", v}')"
 
 # ── Test 13: --compare BEFORE:AFTER trend view (two windows) ──────────────────
 # Prior window [now-60, now-30): explore 10 calls @ 1200 out/call. Recent window
