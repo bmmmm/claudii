@@ -183,21 +183,41 @@ function _claudii_statusline_render {
   _claudii_session_dashboard
 }
 
-typeset -ga _CLAUDII_SDASH_MODELS _CLAUDII_SDASH_CTXS _CLAUDII_SDASH_COSTS
+typeset -ga _CLAUDII_SDASH_MODELS _CLAUDII_SDASH_CTXS _CLAUDII_SDASH_TOKS
 typeset -ga _CLAUDII_SDASH_5HS _CLAUDII_SDASH_R5HS
 typeset -gi _CLAUDII_SDASH_COUNT=0
+
+# Token short-form (K/M/B) for the dashboard — mirrors lib/render.sh _fmt_tok
+# (and bin/claudii-cc-statusline's _tok rounding). Echoes "" for empty / zero /
+# non-numeric input so the caller can skip the segment.
+function _claudii_fmt_tok {
+  local n=${1%.*} t
+  [[ "$n" == <-> ]] || { printf ''; return; }
+  (( n == 0 )) && { printf ''; return; }
+  if (( n >= 1000000000 )); then
+    t=$(( (n + 50000000) / 100000000 ))
+    printf '%d.%dB' $(( t / 10 )) $(( t % 10 ))
+  elif (( n >= 1000000 )); then
+    t=$(( (n + 50000) / 100000 ))
+    printf '%d.%dM' $(( t / 10 )) $(( t % 10 ))
+  elif (( n >= 1000 )); then
+    printf '%dK' $(( (n + 500) / 1000 ))
+  else
+    printf '%d' "$n"
+  fi
+}
 
 # Iterates session cache files, populates _CLAUDII_DASH_* arrays.
 # Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  _CLAUDII_SDASH_MODELS=() _CLAUDII_SDASH_CTXS=() _CLAUDII_SDASH_COSTS=()
+  _CLAUDII_SDASH_MODELS=() _CLAUDII_SDASH_CTXS=() _CLAUDII_SDASH_TOKS=()
   _CLAUDII_SDASH_5HS=() _CLAUDII_SDASH_R5HS=()
   _CLAUDII_SDASH_COUNT=0
 
   local -A _sfst
   local _sf_mt _sf_age sc s_ppid
-  local s_model s_ctx s_cost s_5h s_r5h _best_r5h=""
+  local s_model s_ctx s_tok s_5h s_r5h _best_r5h=""
   for _sf in "$_cache_base"/session-*(N); do
     [[ "$_sf" == *.tmp.* ]] && continue
     _sf_mt=0
@@ -226,17 +246,17 @@ function _claudii_collect_sessions {
       (( _sf_age >= 300 )) && continue
     fi
 
-    s_model="" s_ctx="" s_cost="" s_5h="" s_r5h=""
+    s_model="" s_ctx="" s_tok="" s_5h="" s_r5h=""
     [[ "$_sc_nl" == *$'\n'model=* ]]    && s_model="${${_sc_nl#*$'\n'model=}%%$'\n'*}"
     [[ "$_sc_nl" == *$'\n'ctx_pct=* ]]  && s_ctx="${${_sc_nl#*$'\n'ctx_pct=}%%$'\n'*}"
-    [[ "$_sc_nl" == *$'\n'cost=* ]]     && s_cost="${${_sc_nl#*$'\n'cost=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'tok=* ]]      && s_tok="${${_sc_nl#*$'\n'tok=}%%$'\n'*}"
     [[ "$_sc_nl" == *$'\n'rate_5h=* ]]  && s_5h="${${_sc_nl#*$'\n'rate_5h=}%%$'\n'*}"
     [[ "$_sc_nl" == *$'\n'reset_5h=* ]] && s_r5h="${${_sc_nl#*$'\n'reset_5h=}%%$'\n'*}"
     [[ -z "$s_model" ]] && continue
 
     _CLAUDII_SDASH_MODELS+=("$s_model")
     _CLAUDII_SDASH_CTXS+=("$s_ctx")
-    _CLAUDII_SDASH_COSTS+=("$s_cost")
+    _CLAUDII_SDASH_TOKS+=("$s_tok")
     _CLAUDII_SDASH_5HS+=("$s_5h")
     _CLAUDII_SDASH_R5HS+=("$s_r5h")
     [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && _best_r5h="$s_r5h"
@@ -288,14 +308,15 @@ function _claudii_session_dashboard {
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
-  local _di _line _ctx _cost _cf _r5h _r5h_int _r5h_disp _r5h_clr _rst _rem
+  local _di _line _ctx _tok _tf _r5h _r5h_int _r5h_disp _r5h_clr _rst _rem
   for (( _di=1; _di<=_CLAUDII_SDASH_COUNT; _di++ )); do
     _line="  %F{8}${_CLAUDII_SDASH_MODELS[$_di]}"
     _ctx="${_CLAUDII_SDASH_CTXS[$_di]%.*}"
     [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
-    _cost="${_CLAUDII_SDASH_COSTS[$_di]}"
-    if [[ -n "$_cost" && "$_cost" != "0" && "$_cost" != "null" ]]; then
-      _cf=$(printf '%.2f' "$_cost" 2>/dev/null) && _line+="  \${_CLAUDII_DOLLAR}${_cf}"
+    # Token throughput replaces the old $cost (no $ to PROMPT_SUBST-escape).
+    _tok="${_CLAUDII_SDASH_TOKS[$_di]}"
+    if [[ -n "$_tok" && "$_tok" != "0" && "$_tok" != "null" ]]; then
+      _tf=$(_claudii_fmt_tok "$_tok") && [[ -n "$_tf" ]] && _line+="  ${_tf} tok"
     fi
     _r5h="${_CLAUDII_SDASH_5HS[$_di]}"
     if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then

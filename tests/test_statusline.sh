@@ -389,7 +389,7 @@ mkdir -p "$COND_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$COND_TMP/config/claudii/config.json"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$COND_TMP/status-models"
 _live_pid=$$
-printf 'model=Sonnet\nctx_pct=76\ncost=0.66\nrate_5h=28\nreset_5h=\nppid=%s\n' "$_live_pid" \
+printf 'model=Sonnet\nctx_pct=76\ncost=0.66\ntok=1300000\nrate_5h=28\nreset_5h=\nppid=%s\n' "$_live_pid" \
   > "$COND_TMP/session-condtest"
 
 # 1. CMD_RAN=0 → no dashboard, plain PROMPT
@@ -419,7 +419,7 @@ cond_out=$(
 )
 assert_contains "conditional: CMD_RAN=1 → dashboard shown with model" "Sonnet" "$cond_out"
 
-# 3. Format test: model, ctx%, cost, 5h-rate all present
+# 3. Format test: model, ctx%, token throughput, 5h-rate all present
 format_out=$(
   CLAUDII_CACHE_DIR="$COND_TMP" XDG_CONFIG_HOME="$COND_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
@@ -433,7 +433,7 @@ format_out=$(
 )
 assert_contains "dashboard format: contains model name" "Sonnet" "$format_out"
 assert_contains "dashboard format: contains ctx%" "76%" "$format_out"
-assert_contains "dashboard format: contains cost" "\$0.66" "$format_out"
+assert_contains "dashboard format: contains token throughput" "1.3M tok" "$format_out"
 assert_contains "dashboard format: contains 5h rate" "5h:28%" "$format_out"
 
 # 4. dashboard off → plain PROMPT
@@ -748,7 +748,7 @@ fi
 rm -rf "$ATTL_TMP"
 unset ATTL_TMP attl_ok_out attl_ok_stale attl_deg_out attl_unr_out
 
-# ── history.tsv cost fallback ─────────────────────────────────────────────────
+# ── token-throughput display (from the session-* cache tok= field) ───────────
 
 HIST_TMP="$CLAUDII_HOME/tmp/test_statusline_hist"
 rm -rf "$HIST_TMP"
@@ -757,12 +757,11 @@ jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > 
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$HIST_TMP/status-models"
 _live_pid=$$
 
-# 1. cost=0 in cache → session shown but no dollar cost (history lookup removed for performance)
-printf 'model=Sonnet\nctx_pct=48\ncost=0\nrate_5h=31\nreset_5h=\nsession_id=histtest1\nppid=%s\n' "$_live_pid" \
+# 1. tok=0 in cache → session shown but no token amount
+printf 'model=Sonnet\nctx_pct=48\ncost=0\ntok=0\nrate_5h=31\nreset_5h=\nsession_id=histtest1\nppid=%s\n' "$_live_pid" \
   > "$HIST_TMP/session-histtest1"
-printf '1700000000\tsonnet\t12.34\t48\t31\thisttest1\n' > "$HIST_TMP/history.tsv"
 
-hist_cost_out=$(
+hist_tok_zero_out=$(
   CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -772,16 +771,18 @@ hist_cost_out=$(
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
-# Session is shown (model name present) but cost=0 means no dollar amount displayed
-assert_contains "history fallback removed: cost=0 → session shown" "Sonnet" "$hist_cost_out"
+assert_contains "dashboard: tok=0 → session shown" "Sonnet" "$hist_tok_zero_out"
+if printf '%s' "$hist_tok_zero_out" | grep -qF 'tok'; then
+  assert_eq "dashboard: tok=0 → no token amount shown" "no tok" "tok found"
+else
+  assert_eq "dashboard: tok=0 → no token amount shown" "no tok" "no tok"
+fi
 
-# 2. cost=0 in cache + no history.tsv entry → no cost shown, no crash
-rm -f "$HIST_TMP/history.tsv"
-# Remove session file and recreate (still cost=0, no history)
+# 2. tok absent from cache → session shown, no token amount, no crash
 printf 'model=Sonnet\nctx_pct=48\ncost=0\nrate_5h=31\nreset_5h=\nsession_id=histtest2\nppid=%s\n' "$_live_pid" \
   > "$HIST_TMP/session-histtest1"
 
-hist_nocost_out=$(
+hist_tok_absent_out=$(
   CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -791,20 +792,19 @@ hist_nocost_out=$(
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
-# Should show session (model name present) but no dollar cost
-assert_contains "history fallback: cost=0 no history → session shown" "Sonnet" "$hist_nocost_out"
-if printf '%s' "$hist_nocost_out" | grep -qF '$'; then
-  assert_eq "history fallback: cost=0 no history → no cost shown" "no dollar" "dollar found"
+assert_contains "dashboard: tok absent → session shown" "Sonnet" "$hist_tok_absent_out"
+if printf '%s' "$hist_tok_absent_out" | grep -qF 'tok'; then
+  assert_eq "dashboard: tok absent → no token amount shown" "no tok" "tok found"
 else
-  assert_eq "history fallback: cost=0 no history → no cost shown" "no dollar" "no dollar"
+  assert_eq "dashboard: tok absent → no token amount shown" "no tok" "no tok"
 fi
 
-# 3. cost=15.51 in cache → shows cost directly (regression guard, no history needed)
+# 3. tok=5.2M in cache → shows formatted throughput directly
 rm -f "$HIST_TMP/session-histtest1"
-printf 'model=Sonnet\nctx_pct=48\ncost=15.51\nrate_5h=31\nreset_5h=\nsession_id=histtest3\nppid=%s\n' "$_live_pid" \
+printf 'model=Sonnet\nctx_pct=48\ncost=15.51\ntok=5200000\nrate_5h=31\nreset_5h=\nsession_id=histtest3\nppid=%s\n' "$_live_pid" \
   > "$HIST_TMP/session-histtest3"
 
-hist_direct_out=$(
+hist_tok_out=$(
   CLAUDII_CACHE_DIR="$HIST_TMP" XDG_CONFIG_HOME="$HIST_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -814,7 +814,7 @@ hist_direct_out=$(
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
-assert_contains "history fallback: cost=15.51 in cache → shows cost directly" "\$15.51" "$hist_direct_out"
+assert_contains "dashboard: tok=5.2M in cache → shows throughput" "5.2M tok" "$hist_tok_out"
 
 rm -rf "$HIST_TMP"
-unset HIST_TMP hist_cost_out hist_nocost_out hist_direct_out
+unset HIST_TMP hist_tok_zero_out hist_tok_absent_out hist_tok_out

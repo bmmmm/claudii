@@ -181,11 +181,11 @@ _cmd_explain() {
   done 2>/dev/null
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}Dashboard${CLAUDII_CLR_RESET}                                  Shell, above prompt\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
-  printf '  Session data from cache (model, context, cost, rate limits)\n'
-  printf "  Example (global line):\n"
-  printf "    5h:51%% ${CLAUDII_CLR_DIM}reset 158min │${CLAUDII_CLR_RESET} 7d:92%% ${CLAUDII_CLR_DIM}(+18%%) │${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$24.73${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}today (2 sessions)${CLAUDII_CLR_RESET}\n"
+  printf '  Session data from cache (model, context, tokens, rate limits)\n'
+  printf "  Example (overview account line):\n"
+  printf "    5h:51%% ${CLAUDII_CLR_DIM}reset 158min │${CLAUDII_CLR_RESET} 7d:92%% ${CLAUDII_CLR_DIM}(+18%%) │${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}5.2M tok${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}today (2 sessions)${CLAUDII_CLR_RESET}\n"
   printf "  Example (session line):\n"
-  printf "    ${CLAUDII_CLR_BOLD}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}76%%${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}\$0.07${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}│ ⚡38%%${CLAUDII_CLR_RESET}\n"
+  printf "    ${CLAUDII_CLR_DIM}Opus${CLAUDII_CLR_RESET} ${CLAUDII_CLR_GREEN}████████${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM}░░ 76%%  5.2M tok  ${CLAUDII_CLR_RESET}${CLAUDII_CLR_GREEN}5h:28%%${CLAUDII_CLR_RESET}\n"
   printf '\n'
   printf '  Source:   CC-Statusline writes cache, Session Dashboard reads it\n'
   printf '  Sessions: %d cache file(s)\n' "$sb_count"
