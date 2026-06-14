@@ -454,6 +454,29 @@ Supports
 Alias:
 .BR t .
 .TP
+.B tokens
+Token breakdown for the rolling window (default: 7 days), aggregated from the
+JSONL transcripts under
+.IR ~/.claude/projects .
+Input+output is the primary figure; cache read/write and the cache-hit rate
+.RB ( cache_read " / (" cache_read " + " cache_create " + " input ))
+are shown alongside. Three sections:
+.B By type
+(throughput split across cache read / input / cache write / output, as share
+bars),
+.B By model
+(a per-model matrix of input / output / cache rd / cache wr / hit), and
+.B By day
+(in+output per calendar day, bars normalized to the busiest day, with the
+day-level hit rate). All three are floored to exactly
+.I N
+calendar days so the window matches the header.
+.RS
+.TP
+.BI "\-\-days " N
+Override the rolling window.
+.RE
+.TP
 .B cache
 Prompt-cache hit rate per day and per model (default: 7-day window).
 Aggregated from JSONL transcripts under

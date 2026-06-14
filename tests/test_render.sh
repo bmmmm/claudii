@@ -60,6 +60,37 @@ assert_eq "render: _bar_filled 50/100 w20 → 10" "10"    "$(_bar_filled 50 100 
 assert_eq "render: _bar_filled max0 → 0"       "0"      "$(_bar_filled 5 0 20)"
 assert_eq "render: _bar_filled clamps to width" "20"    "$(_bar_filled 999 100 20)"
 
+# ── composite renderers: _rep / _bar_c / _render_bar_row / _render_dgrid ──────
+assert_eq "render: _rep '-' 5 → -----"  "-----" "$(_rep '-' 5)"
+assert_eq "render: _rep x 0 → empty"    ""      "$(_rep x 0)"
+assert_eq "render: _rep ─ 3 (multibyte)" "───"  "$(_rep '─' 3)"
+
+_bc=$(_bar_c 3 5)
+assert_contains "render: _bar_c full blocks"  "███" "$_bc"
+assert_contains "render: _bar_c empty blocks" "░░"  "$_bc"
+
+_br=$(_render_bar_row "input" 11 "15.2M" 7 5 20 "9%")
+assert_contains "render: _render_bar_row label"  "input" "$_br"
+assert_contains "render: _render_bar_row value"  "15.2M" "$_br"
+assert_contains "render: _render_bar_row bar"    "█"     "$_br"
+assert_contains "render: _render_bar_row suffix" "9%"    "$_br"
+
+# _render_dgrid: column widths track the widest cell so │/┼ line up.
+_dg=$(printf '%s' $'Opus 4.8\x1f11.0M\x1f96%\nHaiku 4.5\x1f600K\x1f90%\n' \
+  | _render_dgrid "Model" $'tokens\x1fhit')
+assert_contains "render: _render_dgrid vertical rule" "│"         "$_dg"
+assert_contains "render: _render_dgrid cross rule"    "┼"         "$_dg"
+assert_contains "render: _render_dgrid label header"  "Model"     "$_dg"
+assert_contains "render: _render_dgrid column header" "tokens"    "$_dg"
+assert_contains "render: _render_dgrid row label"     "Haiku 4.5" "$_dg"
+assert_contains "render: _render_dgrid cell value"    "11.0M"     "$_dg"
+
+# A final row without a trailing newline must survive (shared-renderer robustness
+# — future consumers may pipe an unterminated stream).
+_dgnt=$(printf '%s' $'A\x1f1\nB\x1f22' | _render_dgrid "L" "C")
+assert_contains "render: _render_dgrid keeps unterminated final row" "22" "$_dgnt"
+unset _bc _br _dg _dgnt
+
 # ── awk ↔ bash parity (non-boundary values; 0 differs by design: awk "" / bash 0) ──
 for _v in 500 1000 5000 250000 5200000 140000000 2300000000; do
   _a=$(_fmtawk "print fmt_tok($_v)")
@@ -80,4 +111,20 @@ if [[ -x /bin/bash ]]; then
   ' 2>&1)
   assert_eq "render: works under /bin/bash 3.2" "5.2M|███░░|95" "$_r32"
   unset _r32
+
+  # _render_dgrid uses arrays + IFS=$'\x1f' read -a + flattened indices — all
+  # 3.2-safe in theory; assert it under the CI shell. The 0x1f-delimited input
+  # is written by THIS (5.x) shell into a temp file so /bin/bash never has to
+  # printf \x1f itself.
+  _dgfile="$(mktemp)"
+  printf '%s' $'Opus\x1f11.0M\nHaiku\x1f600K\n' > "$_dgfile"
+  _r32d=$(/bin/bash -c '
+    source "'"$CLAUDII_HOME"'/lib/visual.sh"
+    source "'"$CLAUDII_HOME"'/lib/render.sh"
+    _render_dgrid "Model" "tokens" < "'"$_dgfile"'"
+  ' 2>&1)
+  assert_contains "render: _render_dgrid under /bin/bash 3.2 (┼ rule)" "┼"     "$_r32d"
+  assert_contains "render: _render_dgrid 3.2 widest cell aligned"      "11.0M" "$_r32d"
+  rm -f "$_dgfile"
+  unset _r32d _dgfile
 fi

@@ -33,6 +33,7 @@ _claudii() {
         'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
         'skills-cost:Per-skill, per-plugin and per-MCP-tool cost breakdown from attribution data'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
+        'tokens:Token usage breakdown by type, model and day (7d default)'
         'cache:Prompt-cache hit rate per day and per model (7d default)'
         'explain:Components, symbols & data flow'
         'layers:Alias for explain'
