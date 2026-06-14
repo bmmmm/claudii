@@ -45,18 +45,8 @@ _insights_bar() {
     "${CLAUDII_CLR_RESET}"
 }
 
-# Convert byte-count style integer to short form (B/M/K).
-_insights_short_num() {
-  local n="${1:-0}"
-  awk -v n="$n" '
-    BEGIN {
-      if      (n >= 1e9) printf "%.1fB", n/1e9
-      else if (n >= 1e6) printf "%.1fM", n/1e6
-      else if (n >= 1e3) printf "%.0fK", n/1e3
-      else               printf "%d", n
-    }
-  '
-}
+# Short-number formatting (B/M/K) now lives in lib/render.sh as _fmt_tok
+# (pure bash, no per-call awk fork). Call sites below use it directly.
 
 # Map full model id to short label.
 # When a new model ships, add its versioned case ABOVE the bare fallback
@@ -165,8 +155,8 @@ _cmd_cache() {
       local label; label=$(_insights_day_label "$day")
       local bar;   bar=$(_insights_bar "$filled")
       local pct_str; pct_str=$(awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
-      local creads_h; creads_h=$(_insights_short_num "$creads")
-      local total_h;  total_h=$(_insights_short_num "$total")
+      local creads_h; creads_h=$(_fmt_tok "$creads")
+      local total_h;  total_h=$(_fmt_tok "$total")
       printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
         "$label" \
         "$bar" \
@@ -208,7 +198,7 @@ _cmd_cache() {
       local label; label=$(_insights_model_label "$model")
       local bar;   bar=$(_insights_bar "$filled")
       local pct_str; pct_str=$(awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
-      local total_h; total_h=$(_insights_short_num "$total")
+      local total_h; total_h=$(_fmt_tok "$total")
       printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
         "$label" \
         "$bar" \
@@ -231,7 +221,7 @@ _cmd_cache() {
   IFS=$'\t' read -r tot_r tot_c tot_i tot_all <<< "$totals"
   if (( tot_all > 0 )); then
     local hit_pct; hit_pct=$(awk -v r="$tot_r" -v t="$tot_all" 'BEGIN{printf "%.1f", 100*r/t}')
-    local saved_h; saved_h=$(_insights_short_num "$tot_r")
+    local saved_h; saved_h=$(_fmt_tok "$tot_r")
     printf '  %s●%s Saved: %s%s%s tokens cached · %s%s%%%s hit rate (%dd)\n' \
       "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
       "${CLAUDII_CLR_CYAN}"  "$saved_h" "${CLAUDII_CLR_RESET}" \

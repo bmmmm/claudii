@@ -10,10 +10,11 @@ _cmd_cost_from_history() {
   local _date_cmd="$_DATE_CMD" _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
 
   # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
-  local _epoch_awk _attr_awk _tier_awk
+  local _epoch_awk _attr_awk _tier_awk _fmt_awk
   _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
   _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
   _tier_awk=$(<"$CLAUDII_HOME/lib/model_tier.awk")
+  _fmt_awk=$(<"$CLAUDII_HOME/lib/fmt.awk")   # fmt_tok / rep / bar (shared)
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -68,14 +69,8 @@ ${_tier_awk}
     -v reset="$CLAUDII_CLR_RESET" \
     "
 ${_attr_awk}
+${_fmt_awk}
 "'
-    function fmt_tok(t) {
-      if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
-      if (t >= 1000)    return sprintf("%.0fK", t / 1000)
-      if (t > 0)        return t ""
-      return ""
-    }
-    function rep(c, n,   s, i) { s = ""; for (i = 0; i < n; i++) s = s c; return s }
     # Look up one model/period cost cell ("" when the model had no spend there).
     function cell_cost(kind, m, pk,   k) {
       k = m SUBSEP pk

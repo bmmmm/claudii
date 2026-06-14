@@ -97,6 +97,7 @@ $(<"$CLAUDII_HOME/lib/model_tier.awk")
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
     -f "$CLAUDII_HOME/lib/attribution.awk" \
+    -f "$CLAUDII_HOME/lib/fmt.awk" \
     -f "$CLAUDII_HOME/lib/trends.awk"
 }
 

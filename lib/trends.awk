@@ -1,17 +1,11 @@
 # trends.awk — claudii trends aggregation and formatting
 # Standalone awk program, called via -f from _cmd_trends().
-# Requires lib/attribution.awk loaded first (awk -f attribution.awk -f trends.awk)
-# for the shared attr_delta() per-session delta heuristic.
+# Requires lib/attribution.awk AND lib/fmt.awk loaded first
+# (awk -f attribution.awk -f fmt.awk -f trends.awk): attribution.awk supplies
+# attr_delta(), fmt.awk supplies fmt_tok()/rep()/bar().
 # Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
 # Variables (passed via -v): today, week_start, last_mon, last_sun, thirty,
 #   week_days, fmt, cyan, dim, pink, reset
-
-function fmt_tok(t) {
-  if (t >= 1000000) return sprintf("%.1fM", t / 1000000)
-  if (t >= 1000)    return sprintf("%.0fK", t / 1000)
-  if (t > 0)        return t ""
-  return ""
-}
 
 {
   day = $1; model = $2; cost = $3 + 0; sid = $4
