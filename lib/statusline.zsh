@@ -188,8 +188,9 @@ typeset -ga _CLAUDII_SDASH_5HS _CLAUDII_SDASH_R5HS
 typeset -gi _CLAUDII_SDASH_COUNT=0
 
 # Token short-form (K/M/B) for the dashboard — mirrors lib/render.sh _fmt_tok
-# (and bin/claudii-cc-statusline's _tok rounding). Echoes "" for empty / zero /
-# non-numeric input so the caller can skip the segment.
+# (whole-K rounding + B branch). bin/claudii-cc-statusline's _tok deliberately
+# differs (one-decimal K, no B branch) for the live per-call ↑/↓ counts. Echoes
+# "" for empty / zero / non-numeric input so the caller can skip the segment.
 function _claudii_fmt_tok {
   local n=${1%.*} t
   [[ "$n" == <-> ]] || { printf ''; return; }

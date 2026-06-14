@@ -171,16 +171,17 @@ _rate_pct_disp() {
 
 # Token-throughput + cache-hit segment for a session detail line. Args: tok cache_pct.
 # Echoes " │ 5.2M tok ⚡84%" (cyan tok, cache-hit colour-keyed like cc-statusline:
-# ≥60 green, <30 yellow, else dim). Empty when no token data — the cache only
-# carries tok= for sessions whose cc-statusline ran after the token-first shift,
-# so older/ended sessions degrade to no segment. Always exits 0 (callers capture
-# it via $(…) under set -e). The $ is intentionally gone from this default line.
+# ≥60 green, <30 yellow, else dim; omitted at 0/absent, matching cc-statusline's
+# _isset gate). Empty when no token data — the cache only carries tok= for
+# sessions whose cc-statusline ran after the token-first shift, so older/ended
+# sessions degrade to no segment. Always exits 0 (callers capture it via $(…)
+# under set -e). The $ is intentionally gone from this default line.
 _session_tok_seg() {
   local _tok="${1:-}" _cp="${2:-}" _out="" _tf _cc
   if [[ "$_tok" =~ ^[0-9]+$ && "$_tok" != "0" ]]; then
     _tf=$(_fmt_tok "$_tok")
     _out=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}${_tf} tok${CLAUDII_CLR_RESET}"
-    if [[ "$_cp" =~ ^[0-9]+$ ]]; then
+    if [[ "$_cp" =~ ^[0-9]+$ ]] && (( _cp > 0 )); then
       if   (( _cp >= 60 )); then _cc="$CLAUDII_CLR_GREEN"
       elif (( _cp < 30 )); then _cc="$CLAUDII_CLR_YELLOW"
       else                       _cc="$CLAUDII_CLR_DIM"
