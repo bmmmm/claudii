@@ -64,3 +64,24 @@ _abs_local=$(CLAUDII_HOME="$CLAUDII_HOME" /bin/bash -c '
   [[ -n "$_ABS_FMT" ]] && echo "ok"
 ')
 assert_eq "timefmt: _fmt_abs system-local fallback under set -eu" "ok" "$_abs_local"
+
+# ── _iso_epoch: ISO-8601 UTC → epoch (round-trips through _fmt_abs under UTC) ──
+# Validates the Z-strip + fractional-strip + BSD/GNU parse. A round-trip back to
+# the same string under TZ=UTC proves the epoch is right without hardcoding it.
+_iso_script='
+  source "$CLAUDII_HOME/lib/timefmt.sh"
+  _CLAUDII_TZ="UTC"
+  out=""
+  _iso_epoch "2026-06-10T10:30:00Z";     _fmt_abs "$_EPOCH" "%Y-%m-%dT%H:%M:%SZ"; out+="${_ABS_FMT};"
+  _iso_epoch "2026-06-10T10:30:00.999Z"; _fmt_abs "$_EPOCH" "%Y-%m-%dT%H:%M:%SZ"; out+="${_ABS_FMT};"
+  _iso_epoch ""        ; out+="[${_EPOCH}];"
+  _iso_epoch "garbage" ; out+="[${_EPOCH}];"
+  printf "%s" "$out"
+'
+_iso_expect='2026-06-10T10:30:00Z;2026-06-10T10:30:00Z;[];[];'
+for _iso_bash in /bin/bash bash; do
+  _iso_out=$(CLAUDII_HOME="$CLAUDII_HOME" "$_iso_bash" -c "$_iso_script" 2>&1)
+  assert_eq "timefmt ($_iso_bash): _iso_epoch parse + round-trip + invalid" \
+    "$_iso_expect" "$_iso_out"
+done
+unset _iso_script _iso_expect _iso_bash _iso_out

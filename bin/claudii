@@ -69,6 +69,7 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
   printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
+  printf "    %-33s $d %s\n" "session <session-id>"            "per-session token / tool drilldown"
   printf "    %-33s $d %s\n" "pin / unpin <session-id>"        "protect session from GC"
   printf "    %-33s $d %s\n" "gc (g)"                          "clean up stale session caches"
   printf "    %-33s $d %s\n" "resume <session-id>"             "resume a session by ID"
@@ -172,6 +173,7 @@ case "${1:-}" in
   trends)              _cmd_trends            ;;
   cache)               _cmd_cache "$@"        ;;
   tokens)              _cmd_tokens "$@"       ;;
+  session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;
   layers|components)   exec "$0" explain "${@:2}" ;;
   version)             _cmd_version           ;;

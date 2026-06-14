@@ -334,7 +334,16 @@ Shows badges: pinned, stale, or idle.
 Alias:
 .BR si .
 .TP
-.BI "pin " session-id
+.BI "session " session-id
+Per-session drilldown from the insights cache, matched by session-id substring
+(first match wins). Shows the token split (input / output / cache write as share
+bars, plus cache read with its hit rate and the thinking-block count), the
+top tools with per-tool error markers, and compact lines for subagents, stop
+reasons, and rate-limit hits (account-wide). Live context %, model, and project
+come from the
+.I session-*
+cache when one still exists; for ended sessions the model is inferred from the
+token data and the context bar is omitted.
 Protect an inactive session from garbage collection.
 Matches by session ID substring (first match wins).
 .TP

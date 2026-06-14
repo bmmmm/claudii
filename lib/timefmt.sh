@@ -46,6 +46,21 @@ _fmt_abs() {
   return 0
 }
 
+# _iso_epoch <iso8601-utc> — parse an ISO-8601 UTC timestamp (e.g.
+# "2026-06-07T23:09:27.107Z") to epoch seconds into _EPOCH (empty on failure).
+# Strips the trailing Z and any fractional seconds. Portable across BSD
+# (`date -j -f`) and GNU (`date -d`). Used for insights timestamps
+# (first_seen/last_seen, limit_hits[].timestamp) which are always Z-suffixed UTC.
+_iso_epoch() {
+  local _iso="${1:-}"
+  _EPOCH=""
+  [[ -z "$_iso" ]] && return 0
+  _iso="${_iso%Z}"; _iso="${_iso%%.*}"   # drop trailing Z, then fractional secs
+  _EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "$_iso" +%s 2>/dev/null \
+    || date -u -d "${_iso/T/ }" +%s 2>/dev/null) || _EPOCH=""
+  return 0
+}
+
 # _fmt_brief <seconds> — single-unit age into _BRIEF_FMT ("Xs"/"Xm"/"Xh"/"Xd").
 # Negative input clamps to 0s.
 _fmt_brief() {

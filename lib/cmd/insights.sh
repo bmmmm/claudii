@@ -403,3 +403,219 @@ _cmd_tokens() {
   fi
   echo
 }
+
+# ── claudii session <id> ─────────────────────────────────────────────────────
+# Per-session drilldown: token split, tools, subagents, stop reasons, limit hits
+# from the per-session insights cache (keyed by sessionId, substring match like
+# pin). Live ctx%/model/project come from the session-* cache when one still
+# exists — ended sessions keep only the insights cache, so those degrade
+# gracefully (dominant model from the token data, no ctx bar, repo basename).
+
+_cmd_session() {
+  _cfg_init
+  _insights_refresh
+
+  local needle="${1:-}"
+  case "$needle" in
+    ''|-h|--help)
+      printf 'Usage: claudii session <id>\n\n'
+      printf 'Per-session token / tool / subagent drilldown. <id> is a session-id\n'
+      printf 'substring (first match wins); list ids with: claudii se\n'
+      [[ -z "$needle" ]] && return 1 || return 0
+      ;;
+  esac
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
+  local cdir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local idir="$cdir/insights"
+
+  # Match insights cache by sessionId substring (first wins).
+  local jf="" sid="" f
+  for f in "$idir"/*"$needle"*.json; do
+    [[ -e "$f" ]] || continue
+    jf="$f"; sid="${f##*/}"; sid="${sid%.json}"; break
+  done
+  if [[ -z "$jf" ]]; then
+    printf 'claudii: no session matching %s — list ids with: claudii se\n' "$needle" >&2
+    return 1
+  fi
+
+  # Enrichment: live session-* cache for ctx%/model/project (often absent).
+  local have_live=0 sf s2 ln
+  for sf in "$cdir"/session-*; do
+    [[ -e "$sf" ]] || continue
+    s2=""; while IFS= read -r ln; do s2="${ln#*=}"; break; done < <(grep '^session_id=' "$sf" 2>/dev/null)
+    if [[ "$s2" == "$sid" ]]; then _parse_session_cache "$sf"; have_live=1; break; fi
+  done
+
+  # Scalars: first_seen, last_seen, thinking blocks, total tool calls + errors.
+  # first_seen/last_seen can be "" (a degenerate cache may lack them), so the
+  # fields are US-joined (0x1f), NOT tab — a leading empty tab-field collapses
+  # under IFS-whitespace and shifts every column left (the CLAUDE.md IFS trap).
+  local meta; meta=$(jq -r '
+    [ (.first_seen // ""),
+      (.last_seen // ""),
+      ((.thinking_blocks // 0) | tostring),
+      (([.tools[]?] | add // 0) | tostring),
+      (([.tool_errors[]?] | add // 0) | tostring) ] | join([31] | implode)
+  ' "$jf")
+  local first_seen last_seen think tcalls terrs
+  IFS=$'\x1f' read -r first_seen last_seen think tcalls terrs <<< "$meta"
+
+  # Duration = last_seen - first_seen.
+  local dur="—" e0 e1
+  if [[ -n "$first_seen" && -n "$last_seen" ]]; then
+    _iso_epoch "$first_seen"; e0="$_EPOCH"
+    _iso_epoch "$last_seen";  e1="$_EPOCH"
+    if [[ "$e0" =~ ^[0-9]+$ && "$e1" =~ ^[0-9]+$ ]] && (( e1 >= e0 )); then
+      _fmt_rel $(( e1 - e0 )); [[ -n "$_REL_FMT" ]] && dur="$_REL_FMT"
+    fi
+  fi
+
+  # Model: live (stripped) else the dominant model by in+out tokens.
+  local model_lbl
+  if (( have_live )) && [[ -n "${_PSC_model:-}" ]]; then
+    model_lbl=$(_strip_model_name "$_PSC_model")
+  else
+    local dom; dom=$(jq -r '
+      [ .days | to_entries[] | (.key|split("|")) as $p
+        | select($p[1] != "<synthetic>")
+        | {m: $p[1], t: ((.value.in_tok // 0) + (.value.out_tok // 0))} ]
+      | group_by(.m) | map({m: .[0].m, t: ([.[].t] | add)})
+      | (max_by(.t).m) // "" ' "$jf")
+    model_lbl=$(_insights_model_label "$dom")
+  fi
+
+  # Project: live path (shortened) else the repo basename from the transcript dir.
+  local proj="" pdir d enc
+  if (( have_live )) && [[ -n "${_PSC_project_path:-}" ]]; then
+    proj="${_PSC_project_path/#$HOME/~}"
+  else
+    pdir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+    for d in "$pdir"/*/; do
+      if [[ -e "$d$sid.jsonl" ]]; then enc="${d%/}"; enc="${enc##*/}"; proj="${enc##*-}"; break; fi
+    done
+  fi
+
+  # ── Header ──
+  printf '\n  %sclaudii session%s  %s%s%s' \
+    "$cyan" "$reset" "$accent" "${sid:0:8}" "$reset"
+  [[ -n "$proj" ]] && printf '  %s·  %s%s' "$dim" "$proj" "$reset"
+  printf '\n\n'
+
+  # ── Status: ● model · duration [· ctx bar] ──
+  printf '  %s●%s %s%s%s   %s·%s   %s%s%s' \
+    "$green" "$reset" "$accent" "$model_lbl" "$reset" \
+    "$dim" "$reset" "$cyan" "$dur" "$reset"
+  if (( have_live )) && [[ "${_PSC_ctx_pct:-}" =~ ^[0-9]+$ ]]; then
+    local cf; cf=$(_bar_filled "$_PSC_ctx_pct" 100 16)
+    printf '   %s·%s   %s  %s%d%% ctx%s' \
+      "$dim" "$reset" "$(_bar_c "$cf" 16)" "$cyan" "$_PSC_ctx_pct" "$reset"
+  fi
+  printf '\n\n'
+
+  local RW=66 BAR_W=34
+
+  # ── Tokens (share over input+output+cache-write; cache read shown separately) ──
+  local toks; toks=$(jq -r '
+    [ .days | to_entries[] | select((.key|split("|")[1]) != "<synthetic>") | .value ] as $v
+    | [ ([$v[].in_tok//0]|add//0), ([$v[].out_tok//0]|add//0),
+        ([$v[].cache_read//0]|add//0), ([$v[].cache_create//0]|add//0) ] | @tsv
+  ' "$jf")
+  local t_in t_out t_cr t_cw
+  IFS=$'\t' read -r t_in t_out t_cr t_cw <<< "$toks"
+  local work=$(( t_in + t_out + t_cw ))
+
+  _render_shead "Tokens" "share" "$RW"
+  if (( work == 0 )); then
+    printf '    %s(no token data)%s\n' "$dim" "$reset"
+  else
+    local pair _sl _sv bf pct suf
+    for pair in "input:$t_in" "output:$t_out" "cache write:$t_cw"; do
+      _sl="${pair%%:*}"; _sv="${pair##*:}"
+      bf=$(_bar_filled "$_sv" "$work" "$BAR_W")
+      pct=$(( _sv * 100 / work ))
+      printf -v suf '%s%3d%%%s' "$cyan" "$pct" "$reset"
+      _render_bar_row "$_sl" 11 "$(_fmt_tok "$_sv")" 7 "$bf" "$BAR_W" "$suf"
+    done
+    printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
+    local hit; hit=$(_cache_hit_pct "$t_cr" $(( t_in + t_cw )))
+    printf '  %-11s  %s%7s%s   %s%d%% hit%s\n' \
+      "cache read" "$cyan" "$(_fmt_tok "$t_cr")" "$reset" "$dim" "$hit" "$reset"
+    if [[ "$think" =~ ^[0-9]+$ ]] && (( think > 0 )); then
+      printf '  %-11s  %sin %d blocks%s\n' "thinking" "$dim" "$think" "$reset"
+    fi
+  fi
+  echo
+
+  # ── Tools (top 8 by count, normalized bars, error markers) ──
+  local tnote="${tcalls} calls"
+  [[ "$terrs" =~ ^[0-9]+$ ]] && (( terrs > 0 )) && tnote="$tnote · $terrs err"
+  _render_shead "Tools" "$tnote" "$RW"
+  local toolrows; toolrows=$(jq -r '
+    (.tool_errors // {}) as $e
+    | (.tools // {}) | to_entries
+    | map({name: .key, n: .value, e: ($e[.key] // 0)})
+    | sort_by(-.n) | .[:8]
+    | .[] | [.name, .n, .e] | @tsv
+  ' "$jf")
+  if [[ -z "$toolrows" ]]; then
+    printf '    %s(no tool calls)%s\n' "$dim" "$reset"
+  else
+    local maxn=0 nm cnt ec
+    while IFS=$'\t' read -r nm cnt ec; do
+      [[ -z "$nm" ]] && continue
+      (( cnt > maxn )) && maxn=$cnt
+    done <<< "$toolrows"
+    while IFS=$'\t' read -r nm cnt ec; do
+      [[ -z "$nm" ]] && continue
+      local tbf tsuf=""
+      tbf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
+      if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
+        printf -v tsuf '%s⚠ %d err%s' "$yellow" "$ec" "$reset"
+      fi
+      _render_bar_row "$nm" 16 "$cnt" 5 "$tbf" "$BAR_W" "$tsuf"
+    done <<< "$toolrows"
+  fi
+  echo
+
+  # ── Subagents / Stop reasons / Limit hits (compact one-liners) ──
+  local sub_tot sub_str
+  IFS=$'\t' read -r sub_tot sub_str < <(jq -r '
+    .subagent_types // {} | to_entries | sort_by(-.value)
+    | ((map(.value) | add // 0) | tostring) + "\t"
+      + ((map("\(.key) ×\(.value)")) | join(" · "))
+  ' "$jf")
+  if [[ "$sub_tot" =~ ^[0-9]+$ ]] && (( sub_tot > 0 )); then
+    printf '  %s%-12s%s %s%3d%s   %s%s%s\n' \
+      "$accent" "Subagents" "$reset" "$cyan" "$sub_tot" "$reset" "$dim" "$sub_str" "$reset"
+  fi
+
+  local stop_str; stop_str=$(jq -r '
+    .stop_reasons // {} | to_entries | sort_by(-.value)
+    | (map("\(.key) ×\(.value)")) | join(" · ")
+  ' "$jf")
+  if [[ -n "$stop_str" ]]; then
+    printf '  %s%-12s%s     %s%s%s\n' \
+      "$accent" "Stop reasons" "$reset" "$dim" "$stop_str" "$reset"
+  fi
+
+  local lh; lh=$(jq -r '.limit_hits // [] | .[] | [(.timestamp // ""), (.model // "")] | @tsv' "$jf")
+  if [[ -n "$lh" ]]; then
+    local lcount=0 lt lm last_ts="" last_m=""
+    while IFS=$'\t' read -r lt lm; do
+      [[ -z "$lt" ]] && continue
+      last_ts="$lt"; last_m="$lm"; (( ++lcount ))
+    done <<< "$lh"
+    local labs="—"; _iso_epoch "$last_ts"
+    if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then _fmt_abs "$_EPOCH" '%a %H:%M'; [[ -n "$_ABS_FMT" ]] && labs="$_ABS_FMT"; fi
+    # The model is "what ran when the cap hit", not "what is to blame" (the 5h
+    # budget is account-wide). Drop the clause when it did not resolve.
+    local during=""
+    [[ -n "$last_m" && "$last_m" != "unknown" ]] && during=" · during $(_insights_model_label "$last_m")"
+    printf '  %s⚠ Limit hits%s %s%3d%s   %s5h budget reached %s%s  (account-wide)%s\n' \
+      "$yellow" "$reset" "$cyan" "$lcount" "$reset" "$dim" "$labs" "$during" "$reset"
+  fi
+  echo
+}

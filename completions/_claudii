@@ -27,6 +27,7 @@ _claudii() {
         'se:Shorthand for sessions'
         'sessions-inactive:Inactive sessions with age, context and rate limits'
         'si:Shorthand for sessions-inactive'
+        'session:Per-session token / tool / subagent drilldown (by session-id substring)'
         'pin:Protect a session from GC (by session ID)'
         'unpin:Remove GC protection from a session'
         'config:Read or write config values'
