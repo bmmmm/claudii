@@ -77,73 +77,113 @@ ${_fmt_awk}
       if (kind == "month") return (k in month_cost) ? month_cost[k] : ""
       return (k in year_cost) ? year_cost[k] : ""
     }
-    # Render a set of periods (months or years) as fixed-width tiles laid out
-    # side-by-side, as many per row as the terminal width allows. Each tile:
-    #   <period>
-    #     <Model>   $cost
-    #     ────────────────
-    #     Total     $cost     (only when the period has >1 model)
-    # Padding is computed from a tracked visible width (cell_vis), so ANSI color
-    # escapes never throw off column alignment or the vertical │ separators.
-    function render_grid(pkeys, np, kind,
-                         LW, VW, TW, dashw, sepvis, sepcol, perrow,
-                         i, pk, mi2, m, c, valstr, tot,
-                         start, end, ncols, ci, rr, nmod, dstr, tval,
-                         maxrows, r, line_out, cell, vis, pad) {
+    # B-style per-model bar section (Today / Week): each present tier as
+    # $amount + share bar + percent, sorted by amount descending (Bug 3: was
+    # hash-order). `costs` is the per-model cost map for the period; `extra` is a
+    # dim qualifier after the title (the Week date range) or ""; `period_tok` is
+    # the token total for the period (shown in the header — Bug 5). Only canonical
+    # tiers (tier_order[]) are shown, so leaked local/test models stay out of
+    # the view (Bug 4).
+    function render_bars(title, extra, costs, period_tok,
+                         LBL_W, AMT_W, BAR_W, SECT_W,
+                         i, j, mx, m, v, n, tot, hdr, hdr_vis, _t, lvis, lpad,
+                         tmpn, tmpv, nf, pct) {
+      LBL_W = 9; AMT_W = 11; BAR_W = 35
+      SECT_W = 2 + LBL_W + 1 + AMT_W + 3 + BAR_W + 2 + 6
+      n = 0; tot = 0
+      for (i = 1; i <= n_tiers; i++) {
+        m = tier_order[i]
+        if ((m in costs) && costs[m] > 0) { n++; bn[n] = m; bv[n] = costs[m]; tot += costs[m] }
+      }
+      # Header: title (+ extra) left, "$total · Ntok" right (token suffix only > 0)
+      hdr = (tot > 0) ? fmt_usd(tot) : "$0.00"; hdr_vis = length(hdr)
+      if (period_tok > 0) { _t = fmt_tok(period_tok); hdr = hdr " \302\267 " _t " tok"; hdr_vis += 3 + length(_t) + 4 }
+      lvis = length(title) + (extra != "" ? 2 + length(extra) : 0)
+      lpad = SECT_W - 2 - lvis - hdr_vis; if (lpad < 2) lpad = 2
+      printf "  %s%s%s", pink, title, reset
+      if (extra != "") printf "  %s%s%s", dim, extra, reset
+      printf "%s%s%s%s\n", rep(" ", lpad), dim, hdr, reset
+      printf "  %s%s%s\n", dim, rep("\342\224\200", SECT_W - 2), reset
+      if (n == 0) { printf "  %s(none)%s\n\n", dim, reset; return }
+      for (i = 1; i <= n; i++) {                       # selection sort, amount desc
+        mx = i
+        for (j = i + 1; j <= n; j++) if (bv[j] > bv[mx]) mx = j
+        if (mx != i) { tmpn = bn[i]; bn[i] = bn[mx]; bn[mx] = tmpn; tmpv = bv[i]; bv[i] = bv[mx]; bv[mx] = tmpv }
+      }
+      for (i = 1; i <= n; i++) {
+        m = bn[i]; v = bv[i]
+        nf = bar_filled(v, tot, BAR_W)
+        pct = (tot > 0) ? (v * 100 / tot) : 0
+        printf "  %-*s %s%*s%s   %s%s%s%s%s   %s%5.1f%%%s\n", \
+          LBL_W, m, cyan, AMT_W, fmt_usd(v), reset, \
+          cyan, rep("\342\226\210", nf), dim, rep("\342\226\221", BAR_W - nf), reset, \
+          cyan, pct, reset
+      }
+      printf "\n"
+    }
+
+    # D-style matrix (Months / Years): one period per row, canonical tiers as
+    # columns separated by │ (no outer frame), with a bottom Total row. Column
+    # widths track the widest formatted value so the │ rules line up; empty cells
+    # render a right-aligned "-". $-only (cost stays the dollar menu).
+    function render_dgrid(pkeys, np, kind, label_hdr,
+                          i, j, m, pk, c, v, ncol, any, lblw, totw,
+                          rowtot, grandtot, row, rule, val, cellv) {
       if (np == 0) { printf "    (none)\n\n"; return }
-      LW = 5; VW = 5                            # min widths: "Total", "$0.00"
-      for (i = 1; i <= np; i++) {
-        pk = pkeys[i]; tot = 0
-        for (mi2 = 1; mi2 <= n_ordered; mi2++) {
-          m = ordered_models[mi2]; c = cell_cost(kind, m, pk)
-          if (c == "") continue
-          if (length(m) > LW) LW = length(m)
-          valstr = sprintf("$%.2f", c + 0); if (length(valstr) > VW) VW = length(valstr)
-          tot += c
-        }
-        valstr = sprintf("$%.2f", tot); if (length(valstr) > VW) VW = length(valstr)
+      ncol = 0
+      for (i = 1; i <= n_tiers; i++) {
+        m = tier_order[i]; any = 0
+        for (j = 1; j <= np; j++) if (cell_cost(kind, m, pkeys[j]) != "") { any = 1; break }
+        if (any) { ncol++; gc[ncol] = m; gw[ncol] = length(m); gt[ncol] = 0 }
       }
-      TW = 2 + LW + 1 + VW; dashw = LW + 1 + VW
-      sepvis = 5; sepcol = sprintf("%s  \342\224\202  %s", dim, reset)
-      perrow = int((cols - 2 + sepvis) / (TW + sepvis))
-      if (perrow < 1) perrow = 1
-      if (perrow > 6) perrow = 6                # cap — avoid a wall of tiles on ultra-wide terminals
-      for (start = 1; start <= np; start += perrow) {
-        end = start + perrow - 1; if (end > np) end = np
-        ncols = end - start + 1; maxrows = 0
-        for (ci = 1; ci <= ncols; ci++) {
-          pk = pkeys[start + ci - 1]; rr = 0; tot = 0; nmod = 0
-          rr++; cell_str[ci, rr] = pk; cell_vis[ci, rr] = length(pk)
-          for (mi2 = 1; mi2 <= n_ordered; mi2++) {
-            m = ordered_models[mi2]; c = cell_cost(kind, m, pk)
-            if (c == "") continue
-            valstr = sprintf("%*s", VW, sprintf("$%.2f", c + 0))
-            rr++; cell_str[ci, rr] = sprintf("  %-*s %s%s%s", LW, m, cyan, valstr, reset)
-            cell_vis[ci, rr] = 2 + LW + 1 + VW
-            tot += c; nmod++
-          }
-          if (nmod > 1) {
-            dstr = rep("\342\224\200", dashw)
-            rr++; cell_str[ci, rr] = sprintf("  %s%s%s", dim, dstr, reset); cell_vis[ci, rr] = 2 + dashw
-            tval = sprintf("%*s", VW, sprintf("$%.2f", tot))
-            rr++; cell_str[ci, rr] = sprintf("  %s%-*s%s %s%s%s", pink, LW, "Total", reset, cyan, tval, reset)
-            cell_vis[ci, rr] = 2 + LW + 1 + VW
-          }
-          col_nrows[ci] = rr; if (rr > maxrows) maxrows = rr
+      if (ncol == 0) { printf "    (none)\n\n"; return }
+      lblw = length(label_hdr); if (length("Total") > lblw) lblw = length("Total")
+      for (j = 1; j <= np; j++) if (length(pkeys[j]) > lblw) lblw = length(pkeys[j])
+      totw = length("Total"); grandtot = 0
+      for (j = 1; j <= np; j++) {
+        pk = pkeys[j]; rowtot = 0
+        for (i = 1; i <= ncol; i++) {
+          c = cell_cost(kind, gc[i], pk)
+          if (c != "") { v = fmt_usd(c + 0); if (length(v) > gw[i]) gw[i] = length(v); rowtot += c + 0; gt[i] += c + 0 }
         }
-        for (r = 1; r <= maxrows; r++) {
-          line_out = "  "
-          for (ci = 1; ci <= ncols; ci++) {
-            if (r <= col_nrows[ci]) { cell = cell_str[ci, r]; vis = cell_vis[ci, r] }
-            else { cell = ""; vis = 0 }
-            pad = TW - vis; if (pad < 0) pad = 0
-            line_out = line_out cell rep(" ", pad)
-            if (ci < ncols) line_out = line_out sepcol
-          }
-          print line_out
-        }
-        printf "\n"
+        ptot[j] = rowtot; v = fmt_usd(rowtot); if (length(v) > totw) totw = length(v)
       }
+      for (i = 1; i <= ncol; i++) { grandtot += gt[i]; v = fmt_usd(gt[i]); if (length(v) > gw[i]) gw[i] = length(v) }
+      v = fmt_usd(grandtot); if (length(v) > totw) totw = length(v)
+
+      # Header row + rule (label column carries a trailing space before the │)
+      row = sprintf("  %s%-*s%s ", dim, lblw, label_hdr, reset)
+      rule = "  " rep("\342\224\200", lblw + 1)
+      for (i = 1; i <= ncol; i++) {
+        row = row dim "\342\224\202" reset sprintf(" %s%*s%s ", pink, gw[i], gc[i], reset)
+        rule = rule "\342\224\274" rep("\342\224\200", gw[i] + 2)
+      }
+      row = row dim "\342\224\202" reset sprintf(" %s%*s%s", pink, totw, "Total", reset)
+      rule = rule "\342\224\274" rep("\342\224\200", totw + 1)
+      print row; print rule
+
+      # Data rows
+      for (j = 1; j <= np; j++) {
+        pk = pkeys[j]
+        row = sprintf("  %s%-*s%s ", dim, lblw, pk, reset)
+        for (i = 1; i <= ncol; i++) {
+          c = cell_cost(kind, gc[i], pk)
+          if (c == "") cellv = rep(" ", gw[i] - 1) "-"          # right-aligned ASCII dash (width-safe)
+          else         cellv = sprintf("%s%*s%s", cyan, gw[i], fmt_usd(c + 0), reset)
+          row = row dim "\342\224\202" reset " " cellv " "
+        }
+        row = row dim "\342\224\202" reset sprintf(" %s%*s%s", cyan, totw, fmt_usd(ptot[j]), reset)
+        print row
+      }
+
+      # Bottom Total row
+      print rule
+      row = sprintf("  %s%-*s%s ", pink, lblw, "Total", reset)
+      for (i = 1; i <= ncol; i++)
+        row = row dim "\342\224\202" reset sprintf(" %s%*s%s ", cyan, gw[i], fmt_usd(gt[i]), reset)
+      row = row dim "\342\224\202" reset sprintf(" %s%*s%s", cyan, totw, fmt_usd(grandtot), reset)
+      print row
+      printf "\n"
     }
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
@@ -315,71 +355,35 @@ ${_fmt_awk}
       }
 
       # --- Pretty output ---
-      line = "  \342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
+      # Canonical tier order for the legend, bar sections and D-grid columns.
+      # Only these tiers are shown (the $-relevant Claude models) so leaked
+      # local/test models stay out of the curated view (Bug 4). A new TIER is
+      # added here (see "When a new Claude model ships" in CLAUDE.md).
+      n_tiers = split("Opus Sonnet Haiku Fable", _to, " ")
+      for (i = 1; i <= n_tiers; i++) tier_order[i] = _to[i]
 
-      # Fixed display order for all per-model loops below
-      split("Opus Sonnet Haiku", _mo, " ")
-
-      # Legend: show which model families appear in the data, with abbreviation and version
-      legend = ""
-      for (mi = 1; mi <= 3; mi++) {
-        m = _mo[mi]
+      # Legend: present tiers, friendly (versioned) labels. Track visible width
+      # separately — the "·" separators are 2 bytes but 1 column each.
+      legend = ""; legend_vis = 0
+      for (i = 1; i <= n_tiers; i++) {
+        m = tier_order[i]
         if (m in all_models) {
           disp = (m in model_display) ? model_display[m] : m
-          if (legend != "") legend = legend "  \302\267  "
-          legend = legend "(" substr(m, 1, 1) ") " disp
-        }
-      }
-      for (m in all_models) {
-        if (m != "Opus" && m != "Sonnet" && m != "Haiku") {
-          disp = (m in model_display) ? model_display[m] : m
-          if (legend != "") legend = legend "  \302\267  "
-          legend = legend "(" substr(m, 1, 1) ") " disp
+          if (legend != "") { legend = legend "  \302\267  "; legend_vis += 5 }
+          legend = legend disp; legend_vis += length(disp)
         }
       }
 
-      # Ordered model list for the tile renderer: canonical tiers first, extras
-      # after (stable iteration order so tile rows align across all periods).
-      n_ordered = 0
-      for (mi = 1; mi <= 3; mi++) if (_mo[mi] in all_models) ordered_models[++n_ordered] = _mo[mi]
-      for (m in all_models)
-        if (m != "Opus" && m != "Sonnet" && m != "Haiku" && m != "") ordered_models[++n_ordered] = m
-
       printf "\n"
-      if (legend != "") { printf "  %s%s%s\n\n", dim, legend, reset }
-      printf "  %sToday%s\n", pink, reset
-      total = 0; has = 0
-      for (m in all_models) {
-        if (!(m in today_cost) || today_sessions[m] == 0) continue
-        printf "    %-10s %s$%.2f%s\n", m, cyan, today_cost[m], reset
-        total += today_cost[m]; has = 1
-      }
-      if (has) {
-        printf "%s\n", line
-        printf "    %s%-10s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
-        printf "\n"
-      } else { printf "    (none)\n" }
+      _gap = 68 - 2 - length("claudii cost") - legend_vis; if (_gap < 2) _gap = 2
+      printf "  %sclaudii cost%s%s%s%s%s\n\n", cyan, reset, rep(" ", _gap), dim, legend, reset
 
-      printf "\n"
-      printf "  %sWeek%s  %s(%s \342\200\223 %s)%s\n", pink, reset, dim, week_start, today, reset
-      total = 0; has = 0
-      for (m in all_models) {
-        if (!(m in week_cost) || week_sessions[m] == 0) continue
-        printf "    %-10s %s$%.2f%s\n", m, cyan, week_cost[m], reset
-        total += week_cost[m]; has = 1
-      }
-      if (has) {
-        printf "%s\n", line
-        printf "    %s%-10s%s %s$%.2f%s\n", pink, "Total", reset, cyan, total, reset
-        printf "\n"
-      } else { printf "    (none)\n" }
-
-      printf "\n"
+      render_bars("Today", "", today_cost, today_tok)
+      render_bars("Week", sprintf("(%s - %s)", week_start, today), week_cost, week_tok)
       printf "  %sMonths%s\n", pink, reset
-      render_grid(mon_keys, n_mon, "month")
-
+      render_dgrid(mon_keys, n_mon, "month", "Month")
       printf "  %sYears%s\n", pink, reset
-      render_grid(yr_keys, n_yr, "year")
+      render_dgrid(yr_keys, n_yr, "year", "Year")
     }
     '
 }

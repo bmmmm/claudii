@@ -212,29 +212,30 @@ assert_eq "cost (mixed-model day): Sonnet credited only its 0.50 increment (not 
 
 unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet
 
-# ── cost: Months render as side-by-side tiles separated by │ ──────────────────
-# Two distinct calendar months must appear on the SAME pretty-output line,
-# separated by the vertical bar, when the terminal is wide enough. Padding is
-# tracked via visible width, so the column alignment survives ANSI color codes.
-_COST_TILES_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_TILES_TMP")
+# ── cost: Months render as a D-grid (period rows, model columns split by │) ──
+# Each calendar month is its OWN row; the │/┼ separators delimit per-tier MODEL
+# columns (not side-by-side month tiles). Column widths track the widest value
+# via fmt_usd, so alignment survives ANSI color codes.
+_COST_GRID_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_GRID_TMP")
 _now_ts=$(date +%s)
 
 # One session ~5 days ago (this month) and one ~40 days ago (a prior month).
-hist_row "$_COST_TILES_TMP/history.tsv" "$(( _now_ts - 5*86400 ))"  "claude-opus-4-6" "12.00" "0" "0" "tile-a" "5000" "1000" "0"
-hist_row "$_COST_TILES_TMP/history.tsv" "$(( _now_ts - 40*86400 ))" "claude-opus-4-6" "34.00" "0" "0" "tile-b" "5000" "1000" "0"
+hist_row "$_COST_GRID_TMP/history.tsv" "$(( _now_ts - 5*86400 ))"  "claude-opus-4-6" "12.00" "0" "0" "tile-a" "5000" "1000" "0"
+hist_row "$_COST_GRID_TMP/history.tsv" "$(( _now_ts - 40*86400 ))" "claude-opus-4-6" "34.00" "0" "0" "tile-b" "5000" "1000" "0"
 
-cost_tiles_out=$(COLUMNS=120 CLAUDII_CACHE_DIR="$_COST_TILES_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
-# Strip ANSI, then find a header line that holds two YYYY-MM tiles split by │.
-_tiles_line=$(printf '%s\n' "$cost_tiles_out" \
-  | sed $'s/\033\\[[0-9;]*m//g' \
-  | grep '│' \
-  | grep -E '20[0-9][0-9]-[0-9][0-9].+20[0-9][0-9]-[0-9][0-9]')
-[ -n "$_tiles_line" ] && _ok=1 || _ok=0
-assert_eq "cost (tiles): two month headers share a line with a │ separator" "1" "$_ok"
-assert_no_literal_ansi "cost (tiles): no literal \\033 in tile output" "$cost_tiles_out"
+cost_grid_out=$(COLUMNS=120 CLAUDII_CACHE_DIR="$_COST_GRID_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+_grid_plain=$(printf '%s\n' "$cost_grid_out" | sed $'s/\033\\[[0-9;]*m//g')
+assert_contains "cost (D-grid): Month column header" "Month" "$_grid_plain"
+assert_contains "cost (D-grid): header rule has ┼ crossing" $'\342\224\274' "$_grid_plain"
+assert_contains "cost (D-grid): rows carry the │ column separator" $'\342\224\202' "$_grid_plain"
+# Two distinct months each render as their own data row.
+_grid_month_rows=$(printf '%s\n' "$_grid_plain" | grep -cE '^  20[0-9][0-9]-[0-9][0-9] ')
+assert_eq "cost (D-grid): two months render as separate rows" "1" \
+  "$([ "${_grid_month_rows:-0}" -ge 2 ] && echo 1 || echo 0)"
+assert_no_literal_ansi "cost (D-grid): no literal \\033 in output" "$cost_grid_out"
 
-# Narrow terminal must still render (perrow floors to 1, never divide-by-zero).
-cost_tiles_narrow=$(COLUMNS=20 CLAUDII_CACHE_DIR="$_COST_TILES_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
-assert_contains "cost (tiles): narrow terminal still shows a month" "Months" "$cost_tiles_narrow"
+# Narrow terminal still renders the section (fixed-width table, no reflow).
+cost_grid_narrow=$(COLUMNS=20 CLAUDII_CACHE_DIR="$_COST_GRID_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>&1)
+assert_contains "cost (D-grid): narrow terminal still shows Months" "Months" "$cost_grid_narrow"
 
-unset _COST_TILES_TMP _now_ts cost_tiles_out _tiles_line cost_tiles_narrow _ok
+unset _COST_GRID_TMP _now_ts cost_grid_out _grid_plain _grid_month_rows cost_grid_narrow

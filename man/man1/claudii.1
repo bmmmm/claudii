@@ -369,8 +369,12 @@ Use
 to list IDs.
 .TP
 .B cost
-Costs per period (today, week, month, year, all-time), with per-model breakdown.
-Falls back to session cache files when no history exists yet.
+The dollar view (token throughput lives in the other commands). Per-period spend
+with a per-tier breakdown: Today and Week show share bars sorted by amount plus
+the period token total; Months and Years render as a column matrix (model tiers
+\(mu periods) with row and column totals. Reads from
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+(written by the CC-Statusline handler).
 Supports
 .BR \-\-json " and " \-\-tsv .
 Alias:
