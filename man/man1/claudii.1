@@ -486,6 +486,38 @@ calendar days so the window matches the header.
 Override the rolling window.
 .RE
 .TP
+.B tools
+Tool / efficiency lens over the rolling window (default: 7 days): a table of the
+top tools by call count with share bars and per-tool error rate (a
+.B \(rq
+flag marks rates above 5%), the subagent types spawned, total thinking-block
+volume, and a one-line callout of the highest-error-rate tool. The
+throughput/reliability companion to
+.B skills-cost
+(which is cost-focused). MCP tool names are shortened to their tool segment and
+the long tail is folded into a
+.B +N more
+line.
+.RS
+.TP
+.BI "\-\-days " N
+Override the rolling window.
+.RE
+.TP
+.B limits
+Rate-limit hits in the rolling window (default: 7 days) from the insights
+.IR limit_hits .
+Lists each hit (date, time, and the model that was running) newest-first, an
+hour strip showing when hits cluster, and a per-model tally. Time and model only
+\(em the data carries no percentage, and the 5h budget is account-wide, so the
+model is \(lqwhat ran\(rq, not \(lqwhat is to blame\(rq. With no hits it reports
+clear runway.
+.RS
+.TP
+.BI "\-\-days " N
+Override the rolling window.
+.RE
+.TP
 .B cache
 Prompt-cache hit rate per day and per model (default: 7-day window).
 Aggregated from JSONL transcripts under

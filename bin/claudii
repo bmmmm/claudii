@@ -80,6 +80,8 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Activity & Insights${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "vibemap [grid|strip|status]"     "activity heatmap (opt-in)"
   printf "    %-33s $d %s\n" "tokens [--days N]"               "token usage by type / model / day"
+  printf "    %-33s $d %s\n" "tools [--days N]"                "tool call counts, error rates, subagents"
+  printf "    %-33s $d %s\n" "limits [--days N]"               "rate-limit hits — when + which model"
   printf "    %-33s $d %s\n" "cache [--days N]"                "prompt-cache hit-rate insights"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Config & Integrations${CLAUDII_CLR_RESET}\n"
@@ -173,6 +175,8 @@ case "${1:-}" in
   trends)              _cmd_trends            ;;
   cache)               _cmd_cache "$@"        ;;
   tokens)              _cmd_tokens "$@"       ;;
+  tools)               _cmd_tools "$@"        ;;
+  limits)              _cmd_limits "$@"       ;;
   session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;
   layers|components)   exec "$0" explain "${@:2}" ;;

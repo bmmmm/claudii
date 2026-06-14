@@ -556,7 +556,7 @@ _cmd_session() {
   local toolrows; toolrows=$(jq -r '
     (.tool_errors // {}) as $e
     | (.tools // {}) | to_entries
-    | map({name: .key, n: .value, e: ($e[.key] // 0)})
+    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
     | sort_by(-.n) | .[:8]
     | .[] | [.name, .n, .e] | @tsv
   ' "$jf")
@@ -616,6 +616,250 @@ _cmd_session() {
     [[ -n "$last_m" && "$last_m" != "unknown" ]] && during=" · during $(_insights_model_label "$last_m")"
     printf '  %s⚠ Limit hits%s %s%3d%s   %s5h budget reached %s%s  (account-wide)%s\n' \
       "$yellow" "$reset" "$cyan" "$lcount" "$reset" "$dim" "$labs" "$during" "$reset"
+  fi
+  echo
+}
+
+# ── claudii tools ────────────────────────────────────────────────────────────
+# Tool / efficiency lens over the rolling window: call counts + error rates,
+# subagents spawned, thinking volume. The throughput/reliability companion to
+# skills-cost (which is $-focused). MCP tool names are shortened to their tool
+# segment; the long tail is folded into a "+N more" line.
+
+_cmd_tools() {
+  _cfg_init
+  _insights_refresh
+
+  local days=7
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days|-d) shift; days="${1:-7}" ;;
+      -h|--help)
+        printf 'Usage: claudii tools [--days N]\n\n'
+        printf 'Tool call counts, error rates, subagents and thinking volume\n'
+        printf 'for the rolling window.\n'
+        return 0
+        ;;
+    esac
+    shift
+  done
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
+    return 1
+  fi
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" yellow="${CLAUDII_CLR_YELLOW}"
+  local RW=66 BAR_W=28
+
+  # Totals (both always numeric → @tsv safe).
+  local totcalls toterrs
+  IFS=$'\t' read -r totcalls toterrs < <(jq -r '
+    [ ([.tools[]? ] | add // 0), ([.tool_errors[]? ] | add // 0) ] | @tsv
+  ' <<< "$merged")
+  (( totcalls == 0 )) && { printf '  No tool calls recorded in the last %dd.\n\n' "$days"; return 0; }
+  local okpct; okpct=$(awk -v c="$totcalls" -v e="$toterrs" 'BEGIN{printf "%.1f", 100*(c-e)/c}')
+
+  local note hpad; printf -v note 'last %d days · %s calls · %s%% ok' "$days" "$totcalls" "$okpct"
+  hpad=$(( RW - 13 - ${#note} )); (( hpad < 1 )) && hpad=1
+  printf '\n  %sclaudii tools%s%*s%s%s%s\n\n' \
+    "$cyan" "$reset" "$hpad" "" "$dim" "$note" "$reset"
+
+  # ── Tool table (top 15 by calls; rest folded) ──
+  _render_shead "Tool" "calls · share · errors" "$RW"
+  local toolrows; toolrows=$(jq -r '
+    (.tool_errors // {}) as $e
+    | (.tools // {}) | to_entries
+    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
+    | sort_by(-.n) | .[] | [.name, .n, .e] | @tsv
+  ' <<< "$merged")
+  local maxn=0 idx=0 rest_n=0 rest_c=0 nm cnt ec
+  while IFS=$'\t' read -r nm cnt ec; do
+    [[ -z "$nm" ]] && continue
+    (( idx == 0 )) && maxn=$cnt
+    if (( idx < 15 )); then
+      local disp="$nm"
+      case "$nm" in mcp__*) disp="${nm##*__}"; [[ -z "$disp" ]] && disp="$nm" ;; esac
+      (( ${#disp} > 18 )) && disp="${disp:0:18}"
+      local bf share suf err_str
+      bf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
+      share=$(( cnt * 100 / totcalls ))
+      if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
+        local erate hi=""; erate=$(awk -v e="$ec" -v n="$cnt" 'BEGIN{printf "%.1f", 100*e/n}')
+        awk -v e="$ec" -v n="$cnt" 'BEGIN{exit !(100*e/n > 5)}' && hi=" ${yellow}⚠${reset}"
+        printf -v err_str '%s%d err · %s%%%s%s' "$dim" "$ec" "$erate" "$reset" "$hi"
+      else
+        printf -v err_str '%s—%s' "$dim" "$reset"
+      fi
+      printf -v suf '%s%3d%%%s   %s' "$cyan" "$share" "$reset" "$err_str"
+      _render_bar_row "$disp" 18 "$cnt" 6 "$bf" "$BAR_W" "$suf"
+    else
+      (( ++rest_n )); rest_c=$(( rest_c + cnt ))
+    fi
+    (( ++idx ))
+  done <<< "$toolrows"
+  if (( rest_n > 0 )); then
+    printf '  %s+%d more tools · %s calls%s\n' "$dim" "$rest_n" "$(_fmt_tok "$rest_c")" "$reset"
+  fi
+  echo
+
+  # ── Subagents (spawned types) ──
+  local subrows; subrows=$(jq -r '
+    .subagent_types // {} | to_entries | map(select(.key != "")) | sort_by(-.value)
+    | .[] | [.key, .value] | @tsv
+  ' <<< "$merged")
+  if [[ -n "$subrows" ]]; then
+    local subtot; subtot=$(jq -r '[.subagent_types[]?] | add // 0' <<< "$merged")
+    _render_shead "Subagents" "$subtot spawned" "$RW"
+    local smax=0 sidx=0 stype scnt
+    while IFS=$'\t' read -r stype scnt; do
+      [[ -z "$stype" ]] && continue
+      (( sidx == 0 )) && smax=$scnt
+      local sbf; sbf=$(_bar_filled "$scnt" "$smax" "$BAR_W")
+      _render_bar_row "$stype" 18 "$scnt" 6 "$sbf" "$BAR_W" ""
+      (( ++sidx ))
+    done <<< "$subrows"
+    echo
+  fi
+
+  # ── Thinking volume + error-rate warning ──
+  local think; think=$(jq -r '.thinking_blocks // 0' <<< "$merged")
+  if [[ "$think" =~ ^[0-9]+$ ]] && (( think > 0 )); then
+    printf '  %sThinking%s     %s%s blocks%s\n' "$accent" "$reset" "$cyan" "$(_fmt_tok "$think")" "$reset"
+  fi
+  local worst; worst=$(jq -r '
+    (.tool_errors // {}) as $e
+    | (.tools // {}) | to_entries
+    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
+    | map(select(.n >= 20)) | map(. + {rate: (.e * 100 / .n)})
+    | (max_by(.rate) // empty) | select(.rate > 5)
+    | [.name, (.rate | floor)] | @tsv
+  ' <<< "$merged")
+  if [[ -n "$worst" ]]; then
+    local wname wrate _w; IFS=$'\t' read -r wname wrate <<< "$worst"
+    case "$wname" in mcp__*) _w="${wname##*__}"; [[ -n "$_w" ]] && wname="$_w" ;; esac
+    printf '  %s⚠ %s has the highest error rate (%s%%) — worth a look%s\n' \
+      "$yellow" "$wname" "$wrate" "$reset"
+  fi
+  echo
+}
+
+# ── claudii limits ───────────────────────────────────────────────────────────
+# Rate-limit hits over the rolling window from limit_hits[]. Time + model only
+# (the data carries no %, and the budget is account-wide — the model is "what
+# ran when the cap hit", not "what is to blame"). An hour strip shows when hits
+# cluster, since pacing total throughput across time is the only lever.
+
+_cmd_limits() {
+  _cfg_init
+  _insights_refresh
+
+  local days=7
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days|-d) shift; days="${1:-7}" ;;
+      -h|--help)
+        printf 'Usage: claudii limits [--days N]\n\n'
+        printf 'Rate-limit hits in the rolling window: when they happened and\n'
+        printf 'which model was running (the 5h budget is account-wide).\n'
+        return 0
+        ;;
+    esac
+    shift
+  done
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
+    return 1
+  fi
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" yellow="${CLAUDII_CLR_YELLOW}" green="${CLAUDII_CLR_GREEN}"
+  local RW=66
+
+  # Most-recent-first; timestamp is always present (leading field) → @tsv safe.
+  local hits; hits=$(jq -r '
+    .limit_hits // [] | sort_by(.timestamp) | reverse
+    | .[] | [(.timestamp // ""), (.model // "")] | @tsv
+  ' <<< "$merged")
+
+  if [[ -z "$hits" ]]; then
+    printf '\n  %s●%s %sNo rate-limit hits in the last %d days%s — clear runway.\n\n' \
+      "$green" "$reset" "$dim" "$days" "$reset"
+    return 0
+  fi
+
+  # Single pass: count, hour buckets, model tally, recent list.
+  local total=0 ts model labs lH lhour modacc="" listed=0 list=""
+  local -a hours
+  while IFS=$'\t' read -r ts model; do
+    [[ -z "$ts" ]] && continue
+    (( ++total ))
+    _iso_epoch "$ts"
+    if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
+      _fmt_abs "$_EPOCH" '%H'; lhour="$_ABS_FMT"
+      # Assignment form (not (( ++x ))): incrementing an unset array element
+      # trips set -u; the ${x:-0} default keeps it bound and exit-0.
+      if [[ "$lhour" =~ ^[0-9]+$ ]]; then
+        local _hb=$(( 10#$lhour )); hours[_hb]=$(( ${hours[_hb]:-0} + 1 ))
+      fi
+    fi
+    modacc+="$(_insights_model_label "$model")"$'\n'
+    if (( listed < 10 )); then
+      labs="?"; lH=""
+      if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
+        _fmt_abs "$_EPOCH" '%a %d %b'; labs="$_ABS_FMT"
+        _fmt_abs "$_EPOCH" '%H:%M';    lH="$_ABS_FMT"
+      fi
+      printf -v list '%s  %s%-10s%s  %s%5s%s   %s%s%s\n' "$list" \
+        "$dim" "$labs" "$reset" "$cyan" "$lH" "$reset" \
+        "$accent" "$(_insights_model_label "$model")" "$reset"
+      (( ++listed ))
+    fi
+  done <<< "$hits"
+
+  printf '\n  %s⚠ Rate limits%s   %s%d×%s %s· last %d days · 5h budget (account-wide)%s\n' \
+    "$yellow" "$reset" "$cyan" "$total" "$reset" "$dim" "$days" "$reset"
+  printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
+  printf '%s' "$list"
+  (( total > listed )) && printf '  %s+%d earlier%s\n' "$dim" "$(( total - listed ))" "$reset"
+  echo
+
+  # Hour strip (00..23): accent block where a hit landed, dim otherwise.
+  local strip="" h busiest=0 busiest_n=0
+  for (( h=0; h<24; h++ )); do
+    if (( ${hours[h]:-0} > 0 )); then
+      strip+="${accent}${CLAUDII_SYM_BAR_FULL}"
+      (( ${hours[h]:-0} > busiest_n )) && { busiest_n=${hours[h]:-0}; busiest=$h; }
+    else
+      strip+="${dim}${CLAUDII_SYM_BAR_EMPTY}"
+    fi
+  done
+  strip+="$reset"
+  printf '  %swhen%s   %s\n' "$accent" "$reset" "$strip"
+  printf '         %s%s%s\n' "$dim" "0     6     12    18  23" "$reset"
+
+  # Model tally (sorted desc) — "N× Label · ...".
+  local tally; tally=$(printf '%s' "$modacc" | sort | uniq -c | sort -rn \
+    | awk '{c=$1; $1=""; sub(/^ +/,""); printf "%s\303\227 %s \302\267 ", c, $0}')
+  tally="${tally% · }"
+  [[ -n "$tally" ]] && printf '  %smodels%s %s%s%s\n' "$accent" "$reset" "$dim" "$tally" "$reset"
+
+  # Insight: clustering note when the busiest hour holds 2+ hits.
+  if (( busiest_n >= 2 )); then
+    printf '  %s→ hits cluster around %02d:00 — the 5h budget is account-wide, so pacing total throughput helps most%s\n' \
+      "$dim" "$busiest" "$reset"
   fi
   echo
 }
