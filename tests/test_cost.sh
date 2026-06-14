@@ -308,7 +308,14 @@ if [[ "$_have_de_locale" == *de_DE.UTF-8* || "$_have_de_locale" == *de_DE.utf8* 
   assert_eq "cost --forecast --json: valid under de_DE comma locale" "0" \
     "$(echo "$_fc_loc_json" | jq . >/dev/null 2>&1; echo $?)"
   assert_contains "cost --forecast --json: dot decimal under comma locale" '64.0' "$_fc_loc_json"
-  unset _FC_LOC_TMP _now_ts _fc_loc_json
+  # Same locale class: cost --json / --tsv print costs via awk %.4f, forced to
+  # LC_ALL=C so a comma locale still yields parseable dot decimals.
+  _cost_loc_json=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_FC_LOC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>&1)
+  assert_eq "cost --json: valid under de_DE comma locale" "0" \
+    "$(echo "$_cost_loc_json" | jq . >/dev/null 2>&1; echo $?)"
+  _cost_loc_tsv=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_FC_LOC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+  assert_not_contains "cost --tsv: no comma decimal under de_DE locale" ',0000' "$_cost_loc_tsv"
+  unset _FC_LOC_TMP _now_ts _fc_loc_json _cost_loc_json _cost_loc_tsv
 fi
 unset _have_de_locale
 

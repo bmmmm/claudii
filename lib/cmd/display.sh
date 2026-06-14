@@ -84,7 +84,14 @@ $(<"$CLAUDII_HOME/lib/model_tier.awk")
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
   # (daily API totals are folded into trends.awk's main pass — field 7 = api_dur_ms)
-  echo "$_trends_augmented" | awk -F'\t' \
+  #
+  # JSON costs are printed via awk printf %.2f (LC_NUMERIC-sensitive) — a comma
+  # locale would emit "0,00" and break jq. Force LC_ALL=C for json/tsv only; the
+  # pretty branch prints UTF-8 bars/box chars and formats $ via the locale-immune
+  # fmt_usd, so it stays in the user locale.
+  local -a _lc=()
+  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _lc=(env LC_ALL=C)
+  echo "$_trends_augmented" | ${_lc[@]+"${_lc[@]}"} awk -F'\t' \
     -v today="$today_str" \
     -v week_start="$week_start_str" \
     -v last_mon="$last_monday_str" \

@@ -290,3 +290,21 @@ while IFS=' ' read -r _wd_date _wd_name; do
 done < <(echo "$trends_wd_json" | jq -r '.this_week[] | "\(.date) \(.day)"')
 assert_eq "trends: 7-day window weekday names match date (no off-by-one)" "0" "$_wd_mismatch"
 unset _TRENDS_WD_TMP _now_ts trends_wd_json _wd_mismatch _wd_date _wd_name _wd_ref
+
+# ── trends --json: valid under a comma-decimal locale ─────────────────────────
+# Regression (locale class): trends.awk prints costs via printf %.2f, which
+# honors LC_NUMERIC — a de_DE (comma) locale emitted "cost":0,00 and broke jq.
+# The json/tsv awk now runs under LC_ALL=C. Guarded on the locale being present
+# (CI runners often lack it) so it skips rather than passing vacuously.
+_have_de_locale=$(locale -a 2>/dev/null || true)
+if [[ "$_have_de_locale" == *de_DE.UTF-8* || "$_have_de_locale" == *de_DE.utf8* ]]; then
+  _TRENDS_LOC_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_LOC_TMP")
+  _now_ts=$(date +%s)
+  hist_row "$_TRENDS_LOC_TMP/history.tsv" "$_now_ts"            "claude-opus-4-8"   "12.3456" "50" "30" "tl1" "1500000" "300000" "0"
+  hist_row "$_TRENDS_LOC_TMP/history.tsv" "$(( _now_ts - 60 ))" "claude-sonnet-4-6" "5.6789"  "40" "20" "tl2" "800000"  "160000" "0"
+  _trends_loc_json=$(LC_ALL=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_TRENDS_LOC_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+  assert_eq "trends --json: valid under de_DE comma locale" "0" \
+    "$(echo "$_trends_loc_json" | jq . >/dev/null 2>&1; echo $?)"
+  unset _TRENDS_LOC_TMP _now_ts _trends_loc_json
+fi
+unset _have_de_locale

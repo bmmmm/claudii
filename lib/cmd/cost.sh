@@ -43,6 +43,13 @@ _cmd_cost_from_history() {
   # directly — capturing stage 1 into a shell variable copied a multi-MB
   # intermediate through the shell twice; the pipe also runs both concurrently.
   # The empty-input case (no valid rows) is handled in stage 2's END block.
+  #
+  # JSON/TSV stage 2 emits costs via awk printf %.4f, which honors LC_NUMERIC —
+  # a comma locale ("12,3456") breaks jq and the TSV number column. Force
+  # LC_ALL=C there only; the pretty branch prints UTF-8 box chars (LC_ALL=C would
+  # mangle them) and is already locale-immune ($ via fmt_usd).
+  local -a _lc=()
+  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _lc=(env LC_ALL=C)
   awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
 ${_epoch_awk}
 ${_tier_awk}
@@ -58,7 +65,7 @@ ${_tier_awk}
       model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
       print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
     }
-  ' "${_history_files[@]}" | awk -F'\t' \
+  ' "${_history_files[@]}" | ${_lc[@]+"${_lc[@]}"} awk -F'\t' \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
     -v cols="$_cost_cols" \
