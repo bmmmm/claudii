@@ -467,21 +467,21 @@ assert_matches "cost (no history): shows no-data message" "No cost history" "$_c
 rm -rf "$_COST_NOHIST_TMP"
 unset _COST_NOHIST_TMP _cost_nohist_out
 
-# ── overview: today's cost comes from history deltas, not session-cache sums ──
-# A session cache holding cumulative cost=99.00 (fresh mtime) must NOT drive the
+# ── overview: today's tokens come from history deltas, not session-cache sums ──
+# A session cache holding cumulative tok=99M (fresh mtime) must NOT drive the
 # overview's "today" figure when history exists: the history rows say the
-# session's spend today is 1.00 -> 3.00 cumulative = 3.00 in deltas. The old
-# mtime-keyed sum showed 99.00 and disagreed with `claudii cost`.
+# session's throughput today is (5000+1000) -> (6000+1200) cumulative in+out =
+# 6000 + delta 1200 = 7200 tokens. The mtime-keyed cache sum would show 99.0M.
 _OV_HIST_TMP="$(mktemp -d)"
-printf 'model=Sonnet\nctx_pct=50\ncost=99.00\nrate_5h=30\nrate_7d=20\nsession_id=ovhist-sid\nppid=%s\n' "$$" \
+printf 'model=Sonnet\nctx_pct=50\ncost=99.00\ntok=99000000\nrate_5h=30\nrate_7d=20\nsession_id=ovhist-sid\nppid=%s\n' "$$" \
   > "$_OV_HIST_TMP/session-ovhist"
 _ov_now=$(date +%s)
 hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$(( _ov_now - 120 ))" "claude-sonnet-4-6" "1.00" "50" "30" "ovhist-sid" "5000" "1000" "0"
 hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$_ov_now"             "claude-sonnet-4-6" "3.00" "50" "30" "ovhist-sid" "6000" "1200" "0"
 _ov_hist_out=$(CLAUDII_CACHE_DIR="$_OV_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" 2>/dev/null \
   | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "overview (history): today cost = history delta sum" '$3.00 today (1 session)' "$_ov_hist_out"
-assert_not_contains "overview (history): cumulative session-cache cost not used" '$99' "$_ov_hist_out"
+assert_contains "overview (history): today tokens = history delta sum" '7K tok today (1 session)' "$_ov_hist_out"
+assert_not_contains "overview (history): cumulative session-cache tok not used" '99.0M' "$_ov_hist_out"
 rm -rf "$_OV_HIST_TMP"
 unset _OV_HIST_TMP _ov_now _ov_hist_out
 

@@ -45,7 +45,7 @@ _ov_gather() {
   _ov_files=("${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}")
 
   _ov_acct_5h="" _ov_acct_7d="" _ov_acct_reset="" _ov_acct_7d_start="" _ov_acct_reset_7d="" _ov_acct_mt=0
-  _ov_today_cost=0 _ov_today_count=0 _ov_stale=0
+  _ov_today_tok=0 _ov_today_count=0 _ov_stale=0
   _ov_next_cron=0 _ov_total_bg=0
   # Calendar-midnight cutoff for "today" (not rolling 24h) — see _midnight_epoch.
   _ov_cutoff=$(_midnight_epoch)
@@ -70,12 +70,13 @@ _ov_gather() {
         _ov_acct_7d_start="$_PSC_rate_7d_start"
       fi
 
-      # Today's cost accumulation — fallback only, used when no history exists
-      # (overridden by the history-delta computation after this loop).
+      # Today's token throughput — fallback only, used when no history exists
+      # (overridden by the history-delta computation after this loop). Sums the
+      # per-session cumulative in+out (tok=) the sessionline wrote to the cache.
       if (( _PSC_mtime >= _ov_cutoff )); then
         _ov_today_count=$(( _ov_today_count + 1 ))
-        if [[ -n "$_PSC_cost" && "$_PSC_cost" != "0" ]]; then
-          _ov_today_cost=$(awk -v a="$_ov_today_cost" -v b="$_PSC_cost" 'BEGIN{print a+b}')
+        if [[ "$_PSC_tok" =~ ^[0-9]+$ && "$_PSC_tok" != "0" ]]; then
+          _ov_today_tok=$(( _ov_today_tok + _PSC_tok ))
         fi
       fi
 
@@ -108,14 +109,15 @@ _ov_gather() {
     done
   fi
 
-  # ── Today's cost from history deltas ──────────────────────────────
-  # Same per-session increment attribution as `claudii cost`, so the overview
-  # and the cost command agree (the session-cache sum above double-counts
-  # multi-day sessions: cumulative cost keyed by file mtime). Only the files
-  # that can hold today's rows are scanned (legacy history.tsv + current
-  # month) — a session spanning a month boundary loses its prior-month
-  # baseline on the 1st, which matches first-row-counts-as-spend semantics.
-  # Session count = distinct SIDs with spend today (matches `claudii cost`).
+  # ── Today's tokens from history deltas ──────────────────────────────
+  # Same per-session increment attribution as `claudii cost`/`trends`, so the
+  # overview agrees with them (the session-cache sum above double-counts
+  # multi-day sessions: cumulative tok= keyed by file mtime). in+out token
+  # deltas (9-col history: in=$7, out=$8). Only the files that can hold today's
+  # rows are scanned (legacy history.tsv + current month) — a session spanning a
+  # month boundary loses its prior-month baseline on the 1st, which matches
+  # first-row-counts-as-throughput semantics. Session count = distinct SIDs with
+  # token activity today.
   _ov_hist_files=()
   [[ -s "$cache_dir/history.tsv" ]] && _ov_hist_files+=("$cache_dir/history.tsv")
   _ov_hist_month="$cache_dir/history-$(date '+%Y-%m').tsv"
@@ -130,14 +132,15 @@ $(<"$CLAUDII_HOME/lib/attribution.awk")
       $1 == "timestamp" || $1 == "" || $6 == "" { next }
       {
         ts = $1 + 0; if (ts == 0) next
-        cost = $3 + 0; sid = $6
-        cinc = attr_delta(base, sid, cost)
-        if (cinc > 0 && epoch_to_date(ts) == today) { total += cinc; seen[sid] = 1 }
+        sid = $6
+        tok = ($7 == "" ? 0 : $7 + 0) + ($8 == "" ? 0 : $8 + 0)
+        tinc = attr_delta(base, sid, tok)
+        if (tinc > 0 && epoch_to_date(ts) == today) { total += tinc; seen[sid] = 1 }
       }
-      END { n = 0; for (s in seen) n++; printf "%.4f %d", total, n }
+      END { n = 0; for (s in seen) n++; printf "%d %d", total, n }
     ' "${_ov_hist_files[@]}" 2>/dev/null)
     if [[ "$_ov_today_hist" == *" "* ]]; then
-      _ov_today_cost="${_ov_today_hist% *}"
+      _ov_today_tok="${_ov_today_hist% *}"
       _ov_today_count="${_ov_today_hist##* }"
     fi
   fi
@@ -223,11 +226,12 @@ _ov_render_account() {
       [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
     fi
   fi
-  # Today's cost with accent color, and session count
+  # Today's token throughput with accent color, and session count.
+  # ($ is no longer shown here — the dollar view lives in `claudii cost`.)
   if (( _ov_today_count > 0 )); then
-    _ov_today_fmt=$(printf '%.2f' "$_ov_today_cost")
+    _ov_today_fmt=$(_fmt_tok "$_ov_today_tok")
     _ov_s=""; (( _ov_today_count != 1 )) && _ov_s="s"
-    _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}\$${_ov_today_fmt}${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
+    _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}${_ov_today_fmt} tok${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
   fi
   printf '%s\n' "$_ov_acct_line"
 }

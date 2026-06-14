@@ -10,20 +10,20 @@ mkdir -p "$_tf_cache"
 printf 'model=Sonnet\nctx_pct=50\ncost=5.00\ntok=5000000\ncache_pct=84\nrate_5h=10\nrate_7d=20\nreset_5h=0\nreset_7d=0\nsession_id=realtest\nppid=%s\n' "$$" \
   > "$_tf_cache/session-realtest"
 
-# Orphan tmp artifacts: cost=99 each — would inflate today's cost if parsed
-printf 'model=Opus\nctx_pct=80\ncost=99.00\n' > "$_tf_cache/session-realtest.tmp.11111"
-printf 'model=Opus\nctx_pct=80\ncost=99.00\n' > "$_tf_cache/session-unknown.tmp.22222"
+# Orphan tmp artifacts: tok=99M each — would inflate today's tokens if parsed
+printf 'model=Opus\nctx_pct=80\ncost=99.00\ntok=99000000\n' > "$_tf_cache/session-realtest.tmp.11111"
+printf 'model=Opus\nctx_pct=80\ncost=99.00\ntok=99000000\n' > "$_tf_cache/session-unknown.tmp.22222"
 
 # Overview must skip .tmp.* — without the filter the two orphans would be counted
-# as inactive sessions and surface a `claudii si` hint, AND their cost=99.00 would
-# inflate today's total to $203.00 instead of $5.00.
+# as inactive sessions and surface a `claudii si` hint, AND their tok=99M would
+# inflate today's total to 203.0M instead of 5.0M.
 _tf_out=$(CLAUDII_CACHE_DIR="$_tf_cache" bash "$CLAUDII_HOME/bin/claudii" 2>&1)
 assert_contains "overview: counts real session as active" "1 active session" "$_tf_out"
 assert_not_contains "overview: .tmp.PID artifacts not surfaced as inactive sessions" "inactive" "$_tf_out"
-# Strip ANSI before matching — accent color wraps the dollar amount, splitting "$5.00 today"
+# Strip ANSI before matching — accent color wraps the token amount.
 _tf_plain=$(printf '%s' "$_tf_out" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "overview: today's cost reflects only real sessions" '$5.00 today (1 session)' "$_tf_plain"
-assert_not_contains "overview: today's cost not inflated by tmp.PID cost values" '$203' "$_tf_plain"
+assert_contains "overview: today's tokens reflect only real sessions" '5.0M tok today (1 session)' "$_tf_plain"
+assert_not_contains "overview: today's tokens not inflated by tmp.PID values" '203.0M' "$_tf_plain"
 
 # claudii se must show only the one real row (header lines aside)
 _tf_se_out=$(CLAUDII_CACHE_DIR="$_tf_cache" bash "$CLAUDII_HOME/bin/claudii" se 2>&1)
