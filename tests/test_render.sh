@@ -22,6 +22,13 @@ assert_eq "fmt.awk: fmt_tok 2300000000 → 2.3B" "2.3B"  "$(_fmtawk 'print fmt_t
 assert_eq "fmt.awk: rep('-',4) → ----"        "----"   "$(_fmtawk 'print rep("-",4)')"
 assert_eq "fmt.awk: rep('x',0) → empty"       ""       "$(_fmtawk 'print rep("x",0)')"
 
+assert_eq "fmt.awk: fmt_usd 375.51 → \$375.51"     '$375.51'   "$(_fmtawk 'print fmt_usd(375.51)')"
+assert_eq "fmt.awk: fmt_usd 2367.44 → \$2,367.44"  '$2,367.44' "$(_fmtawk 'print fmt_usd(2367.44)')"
+assert_eq "fmt.awk: fmt_usd 13036.07 → \$13,036.07" '$13,036.07' "$(_fmtawk 'print fmt_usd(13036.07)')"
+assert_eq "fmt.awk: fmt_usd 0 → \$0.00"            '$0.00'     "$(_fmtawk 'print fmt_usd(0)')"
+assert_eq "fmt.awk: fmt_usd 0.555 rounds → \$0.56" '$0.56'     "$(_fmtawk 'print fmt_usd(0.555)')"
+assert_eq "fmt.awk: fmt_usd 1000000 → \$1,000,000.00" '$1,000,000.00' "$(_fmtawk 'print fmt_usd(1000000)')"
+
 assert_eq "fmt.awk: bar 3/5"                   "███░░"  "$(_fmtawk 'print bar(3,5)')"
 assert_eq "fmt.awk: bar clamps over width"     "█████"  "$(_fmtawk 'print bar(9,5)')"
 assert_eq "fmt.awk: bar 0/4 all empty"         "░░░░"   "$(_fmtawk 'print bar(0,4)')"

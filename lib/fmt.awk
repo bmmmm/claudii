@@ -23,6 +23,24 @@ function fmt_tok(t) {
 # Repeat string c, n times.
 function rep(c, n,   s, i) { s = ""; for (i = 0; i < n; i++) s = s c; return s }
 
+# Format a USD amount with thousands separators: 2367.4 → "$2,367.40".
+# Pure integer/string math — no printf %f, so it is immune to LC_NUMERIC
+# (a comma-decimal locale would otherwise turn the cents separator into a comma).
+function fmt_usd(v,   neg, dollars, cents, s, out, len, i, c) {
+  if (v < 0) { neg = 1; v = -v }
+  dollars = int(v)
+  cents = int((v - dollars) * 100 + 0.5)
+  if (cents >= 100) { dollars += 1; cents -= 100 }
+  s = dollars ""
+  len = length(s); out = ""
+  for (i = 1; i <= len; i++) {
+    c = substr(s, i, 1)
+    out = out c
+    if (((len - i) % 3) == 0 && i < len) out = out ","
+  }
+  return (neg ? "-" : "") "$" out sprintf(".%02d", cents)
+}
+
 # Bar of `width` cells, `filled` of them full. full/empty default to the
 # visual.sh block glyphs (█ / ░) when passed empty, so callers can write
 # bar(f, 24) and still override for a different palette.

@@ -25,15 +25,16 @@ assert_eq "trends (tokens): exit 0" "0" \
   "$(CLAUDII_CACHE_DIR="$_TRENDS_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends >/dev/null 2>&1; echo $?)"
 assert_eq "trends (tokens): produces output" "0" "$([ -z "$trends_tok_out" ] && echo 1 || echo 0)"
 assert_no_literal_ansi "trends (tokens): no literal \\033 in output" "$trends_tok_out"
-assert_contains "trends (tokens): shows tok in Today/Total row" "tok" "$trends_tok_out"
-assert_contains "trends (tokens): shows Last 7 days header" "Last 7 days" "$trends_tok_out"
+assert_contains "trends (tokens): shows tok" "tok" "$trends_tok_out"
+assert_contains "trends (tokens): Daily tokens header" "Daily tokens" "$trends_tok_out"
 assert_contains "trends (tokens): shows Today label" "Today" "$trends_tok_out"
-assert_contains "trends (tokens): Total line has sessions" "sessions" "$trends_tok_out"
-assert_contains "trends (tokens): Median line present" "Median:" "$trends_tok_out"
+assert_contains "trends (tokens): 7d total line" "7d total" "$trends_tok_out"
+assert_contains "trends (tokens): sessions column" "sessions" "$trends_tok_out"
 
-# Today should appear before any other weekday name in the output
+# Today should appear before any other weekday name in the output (token-primary
+# layout indents daily rows with 2 spaces, was 4)
 _tok_today_line=$(echo "$trends_tok_out" | grep -n "Today" | head -1 | cut -d: -f1)
-_tok_first_wdline=$(echo "$trends_tok_out" | grep -nE "^    (Mon|Tue|Wed|Thu|Fri|Sat|Sun)" | head -1 | cut -d: -f1)
+_tok_first_wdline=$(echo "$trends_tok_out" | grep -nE "^  (Mon|Tue|Wed|Thu|Fri|Sat|Sun) " | head -1 | cut -d: -f1)
 if [[ -n "$_tok_today_line" && -n "$_tok_first_wdline" ]]; then
   assert_eq "trends (tokens): Today appears before other weekday lines" "0" \
     "$([ "$_tok_today_line" -lt "$_tok_first_wdline" ] && echo 0 || echo 1)"
@@ -98,7 +99,9 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
   > "$_TRENDS_NOTOK_TMP/history.tsv"
 
 trends_notok_out=$(CLAUDII_CACHE_DIR="$_TRENDS_NOTOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
-assert_not_contains "trends (old format): no 'tok' bleed in output" "tok" "$trends_notok_out"
+# Token-primary layout always renders the token column; old-format (no token)
+# data shows zeros, not a phantom value. Just verify it renders without crashing.
+assert_contains "trends (old format): renders token layout (zeros, no crash)" "Daily tokens" "$trends_notok_out"
 
 unset _TRENDS_NOTOK_TMP _now_ts trends_notok_out
 
@@ -173,7 +176,7 @@ trends_empty_tok_out=$(CLAUDII_CACHE_DIR="$_TRENDS_EMPTY_TOK_TMP" bash "$CLAUDII
 trends_empty_tok_err=$(CLAUDII_CACHE_DIR="$_TRENDS_EMPTY_TOK_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1 >/dev/null)
 
 assert_eq "trends (empty tok cols): no errors on stderr" "" "$trends_empty_tok_err"
-assert_not_contains "trends (empty tok cols): no 'tok' in output" "tok" "$trends_empty_tok_out"
+assert_contains "trends (empty tok cols): renders without crash" "Daily tokens" "$trends_empty_tok_out"
 
 unset _TRENDS_EMPTY_TOK_TMP _now_ts trends_empty_tok_out trends_empty_tok_err
 
@@ -190,11 +193,12 @@ trends_new_out=$(CLAUDII_CACHE_DIR="$_TRENDS_NEW_TMP" bash "$CLAUDII_HOME/bin/cl
 
 assert_eq    "trends (new features): exit 0" "0" \
   "$(CLAUDII_CACHE_DIR="$_TRENDS_NEW_TMP" bash "$CLAUDII_HOME/bin/claudii" trends >/dev/null 2>&1; echo $?)"
-assert_contains "trends (new features): shows Last 7 days header"    "Last 7 days"  "$trends_new_out"
+assert_contains "trends (new features): Daily tokens header"         "Daily tokens" "$trends_new_out"
 assert_contains "trends (new features): shows Today label"           "Today"        "$trends_new_out"
-assert_contains "trends (new features): Total line has sessions"     "sessions"     "$trends_new_out"
-assert_contains "trends (new features): Median line present"         "Median:"      "$trends_new_out"
-assert_contains "trends (new features): Trend line present"          "Trend:"       "$trends_new_out"
+assert_contains "trends (new features): 7d total line"               "7d total"     "$trends_new_out"
+assert_contains "trends (new features): Model split header"          "Model split"  "$trends_new_out"
+assert_contains "trends (new features): Busiest line present"        "Busiest"      "$trends_new_out"
+assert_contains "trends (new features): Trend line present"          "Trend"        "$trends_new_out"
 assert_not_contains "trends (new features): no This week header"     "This week"    "$trends_new_out"
 assert_no_literal_ansi "trends (new features): no literal ANSI in output" "$trends_new_out"
 
@@ -204,7 +208,7 @@ assert_matches "trends (new features): Trend line has arrow" \
 
 # Today must be the first day label in the output
 _new_today_line=$(echo "$trends_new_out" | grep -n "Today" | head -1 | cut -d: -f1)
-_new_first_wdline=$(echo "$trends_new_out" | grep -nE "^    (Mon|Tue|Wed|Thu|Fri|Sat|Sun)" | head -1 | cut -d: -f1)
+_new_first_wdline=$(echo "$trends_new_out" | grep -nE "^  (Mon|Tue|Wed|Thu|Fri|Sat|Sun) " | head -1 | cut -d: -f1)
 if [[ -n "$_new_today_line" && -n "$_new_first_wdline" ]]; then
   assert_eq "trends (new features): Today appears before other weekday lines" "0" \
     "$([ "$_new_today_line" -lt "$_new_first_wdline" ] && echo 0 || echo 1)"
@@ -222,9 +226,9 @@ _now_ts=$(date +%s)
 hist_row "$_TRENDS_SPARSE_TMP/history.tsv" "$_now_ts"                   "claude-opus-4-5"   "5.00" "45" "30" "sp-sid1" "50000" "10000" "2000"
 hist_row "$_TRENDS_SPARSE_TMP/history.tsv" "$(( _now_ts - 2 * 86400 ))" "claude-sonnet-4-5" "2.00" "30" "20" "sp-sid2" "20000" "5000"  "1000"
 trends_sparse_out=$(CLAUDII_CACHE_DIR="$_TRENDS_SPARSE_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
-assert_not_contains "trends (sparse history): Trend line hidden (<30 days)" "Trend:" "$trends_sparse_out"
-# Median should still show (it's not gated)
-assert_contains "trends (sparse history): Median still shown" "Median:" "$trends_sparse_out"
+assert_not_contains "trends (sparse history): Trend line hidden (<30 days)" "Trend" "$trends_sparse_out"
+# Daily token layout still renders (only the 30d Trend line is gated)
+assert_contains "trends (sparse history): Daily tokens still shown" "Daily tokens" "$trends_sparse_out"
 unset _TRENDS_SPARSE_TMP _now_ts trends_sparse_out
 
 # ── trends: CRLF history (cross-platform sync) + short rows → no crash ────────

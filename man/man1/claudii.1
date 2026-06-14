@@ -439,7 +439,9 @@ documents the rates and the residual fallback.
 .RE
 .TP
 .B trends
-Rolling 7-day cost chart, 30-day model split, costliest day, and spend trend.
+Token-primary rolling 7-day chart: daily token bars (normalized to the busiest
+day) with spend as a dim side column, a 30-day model split by tokens, busiest
+day, average API duration per session, and the 7d-vs-30d token trend.
 Reads from
 .I ~/.cache/claudii/history-YYYY-MM.tsv
 (written by the CC-Statusline handler).
