@@ -403,13 +403,14 @@ _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
   _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
-  _PSC_rate_5h_start= _PSC_project_path=
+  _PSC_rate_5h_start= _PSC_project_path= _PSC_tok=
   _PSC_pinned= _PSC_kind= _PSC_pace= _PSC_cron= _PSC_bg_tasks=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
       ctx_pct)        _PSC_ctx_pct="$_v" ;;
       cost)           _PSC_cost="$_v" ;;
+      tok)            _PSC_tok="$_v" ;;
       rate_5h)        _PSC_rate_5h="$_v" ;;
       rate_7d)        _PSC_rate_7d="$_v" ;;
       reset_5h)       _PSC_reset_5h="$_v" ;;

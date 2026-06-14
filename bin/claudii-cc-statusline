@@ -128,6 +128,12 @@ if _isset "$cache_read"; then
   if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
 fi
 
+# Session-cumulative in+out tokens — persisted so the token-first dashboard and
+# `claudii se` (which read this cache, not the live JSON) can show throughput.
+_tok_total=0
+[[ "${input_tok%.*}"  =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${input_tok%.*} ))
+[[ "${output_tok%.*}" =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${output_tok%.*} ))
+
 # Existing per-session cache → 7d/5h baselines + previous duration.
 _sid="${session_id:+${session_id:0:8}}"
 _session_file="$_cache_dir/session-${_sid:-unknown}"
@@ -211,6 +217,7 @@ _tmp_session="${_session_file}.tmp.$$"
   "burn_eta=$_burn_eta" \
   "pace=$_pace_state" \
   "cache_pct=$_cache_pct" \
+  "tok=$_tok_total" \
   "ppid=$_ppid" \
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
@@ -361,7 +368,9 @@ fi
 
 _seg_cost=""
 if _isset "$cost"; then
-  _seg_cost="${CYAN}\$$(LC_NUMERIC=C printf '%.2f' "$cost")${RST}"
+  # Cost demoted to a dim segment — token throughput is the primary signal now
+  # (full $ detail lives in `claudii cost`).
+  _seg_cost="${DIM}\$$(LC_NUMERIC=C printf '%.2f' "$cost")${RST}"
 fi
 
 # Reset countdown formatter — sets _reset_fmt + _reset_color.
@@ -420,8 +429,9 @@ _seg_rate7d=$(_mk_rate_seg 7d "$rate_7d" "$reset_7d")
 
 _seg_tokens=""
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
-  _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${DIM}${_tok_result}↑${RST}"
-  _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${DIM}${_tok_result}↓${RST}"
+  # Tokens are the primary metric — rendered in the value colour (cyan), not dim.
+  _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${CYAN}${_tok_result}↑${RST}"
+  _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${CYAN}${_tok_result}↓${RST}"
 fi
 
 _seg_lines=""

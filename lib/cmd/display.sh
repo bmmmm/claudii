@@ -207,7 +207,7 @@ _cmd_explain() {
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}CC-Statusline${CLAUDII_CLR_RESET}                             Inside Claude Code\n"
   printf "  ${CLAUDII_CLR_DIM}%.56s${CLAUDII_CLR_RESET}\n" "────────────────────────────────────────────────────────"
   printf '  Info-dense status line rendered inside Claude Code CLI\n'
-  printf '  Shows model, context bar, cost, tokens, rate limits, lines, duration\n'
+  printf '  Shows model, context bar, tokens, cache ratio, rate limits, cost (dim), lines\n'
   printf '\n'
   printf '  Status:   %b\n' "$sl_state"
   printf '  API:      Claude Code statusLine (stdin JSON)\n'

@@ -120,6 +120,8 @@ assert_file_exists "worktree/agent: session cache file created" "$_test_session_
 _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
 assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_cache_contents"
 assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
+# tok= = cumulative input+output (1000 + 200) — read by the token-first dashboard / se.
+assert_contains "session cache has tok= (input+output)" "tok=1200" "$_cache_contents"
 
 # Worktree segment rendered: name + ⎇ branch in output (via custom config with worktree segment)
 mkdir -p "$CLAUDII_HOME/tmp"
