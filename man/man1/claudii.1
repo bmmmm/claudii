@@ -21,7 +21,7 @@ Quick start — enable everything at once:
 Live health check:
 .B claudii status
 .TP
-Show active sessions with cost and rate limits:
+Show active sessions with token throughput and rate limits:
 .B claudii se
 .TP
 Read a config value:
@@ -312,8 +312,10 @@ Supports
 .SS Sessions and Cost
 .TP
 .B sessions
-List active and recent sessions: model, context %, cost, rate limits,
-worktree, agent context, and a fingerprint of top-5 files accessed.
+List active and recent sessions: model, context %, token throughput with
+cache-hit rate, rate limits, worktree, agent context, and a fingerprint of
+top-5 files accessed. Cost is no longer in this view \(em see
+.BR cost .
 Background sessions
 .RB ( "claude --bg" )
 are marked

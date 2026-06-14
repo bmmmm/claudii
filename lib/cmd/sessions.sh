@@ -69,6 +69,8 @@ _cmd_sessions_inactive() {
         _render_ctx_bar "$_is_pct"
         _is_detail+="${_CTX_BAR} ${_is_pct}%"
       fi
+      # Token throughput + cache-hit (replaces the old $cost — see _session_tok_seg)
+      _is_detail+=$(_session_tok_seg "$_PSC_tok" "$_PSC_cache_pct")
       if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]]; then
         _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${_rate_mark}${CLAUDII_CLR_RESET} $(_rate_pct_disp "$_PSC_rate_5h")%"
       fi
@@ -165,6 +167,28 @@ _rate_pct_disp() {
   local _u=${1%.*}
   if [[ "${_RATE_DISP:-used}" == "remaining" ]]; then printf '%s' "$(( 100 - _u ))"
   else printf '%s' "$_u"; fi
+}
+
+# Token-throughput + cache-hit segment for a session detail line. Args: tok cache_pct.
+# Echoes " │ 5.2M tok ⚡84%" (cyan tok, cache-hit colour-keyed like cc-statusline:
+# ≥60 green, <30 yellow, else dim). Empty when no token data — the cache only
+# carries tok= for sessions whose cc-statusline ran after the token-first shift,
+# so older/ended sessions degrade to no segment. Always exits 0 (callers capture
+# it via $(…) under set -e). The $ is intentionally gone from this default line.
+_session_tok_seg() {
+  local _tok="${1:-}" _cp="${2:-}" _out="" _tf _cc
+  if [[ "$_tok" =~ ^[0-9]+$ && "$_tok" != "0" ]]; then
+    _tf=$(_fmt_tok "$_tok")
+    _out=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}${_tf} tok${CLAUDII_CLR_RESET}"
+    if [[ "$_cp" =~ ^[0-9]+$ ]]; then
+      if   (( _cp >= 60 )); then _cc="$CLAUDII_CLR_GREEN"
+      elif (( _cp < 30 )); then _cc="$CLAUDII_CLR_YELLOW"
+      else                       _cc="$CLAUDII_CLR_DIM"
+      fi
+      _out+=" ${_cc}⚡${_cp}%${CLAUDII_CLR_RESET}"
+    fi
+  fi
+  printf '%s' "$_out"
 }
 
 # Batch-lsof fallback for active sessions still missing a project path after
@@ -279,7 +303,7 @@ _cmd_sessions() {
 
   # Collect all session data into parallel arrays
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
-             _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_sid \
+             _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_tok _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
              _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron _sf_bgtasks
   _sf_count=0
@@ -312,6 +336,7 @@ _cmd_sessions() {
     _sf_worktree[$_sf_count]="$_PSC_worktree"
     _sf_agent[$_sf_count]="$_PSC_agent"
     _sf_cache[$_sf_count]="$_PSC_cache_pct"
+    _sf_tok[$_sf_count]="$_PSC_tok"
     _sf_age[$_sf_count]="$_PSC_age"
     _sf_is_active[$_sf_count]="$_PSC_is_active"
     _sf_kind[$_sf_count]="$_PSC_kind"
@@ -374,7 +399,7 @@ _cmd_sessions() {
       _json_rows+="${_sf_rate5h[$_i]}${_jd}${_sf_rate7d[$_i]}${_jd}${_sf_reset5h[$_i]}${_jd}"
       _json_rows+="${_sf_sid[$_i]}${_jd}${_sf_worktree[$_i]}${_jd}${_sf_agent[$_i]}${_jd}"
       _json_rows+="${_sf_age[$_i]}${_jd}${_sf_is_active[$_i]}${_jd}"
-      _json_rows+="${_sf_fingerprint[$_i]}${_jd}${_sf_last_msg[$_i]}"$'\n'
+      _json_rows+="${_sf_fingerprint[$_i]}${_jd}${_sf_last_msg[$_i]}${_jd}${_sf_tok[$_i]:-0}"$'\n'
     done
     printf '%s' "$_json_rows" | jq -Rs 'split("\n") | map(select(length > 0) | split("\u001f") | {
         model: .[0],
@@ -385,17 +410,18 @@ _cmd_sessions() {
         reset_5h: (.[5] | if . == "" then null else (tonumber? // null) end),
         session_id: .[6], worktree: .[7], agent: .[8],
         age_seconds: (.[9] | tonumber), status: .[10],
-        fingerprint: .[11], last_user_message: .[12]
+        fingerprint: .[11], last_user_message: .[12],
+        tok: (.[13] | tonumber? // 0)
       })'
     exit 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
-    printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\n"
+    printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\ttok\n"
     for (( _i=0; _i<_sf_count; _i++ )); do
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "${_sf_model[$_i]}" "${_sf_ctx[$_i]}" "${_sf_cost[$_i]:-0}" \
         "${_sf_rate5h[$_i]}" "${_sf_rate7d[$_i]}" "${_sf_reset5h[$_i]}" \
         "${_sf_sid[$_i]}" "${_sf_worktree[$_i]}" "${_sf_agent[$_i]}" \
-        "${_sf_age[$_i]}" "${_sf_is_active[$_i]}"
+        "${_sf_age[$_i]}" "${_sf_is_active[$_i]}" "${_sf_tok[$_i]:-0}"
     done
     exit 0
   fi
@@ -451,6 +477,8 @@ _cmd_sessions() {
       _render_ctx_bar "$_ctx_display"
       detail+="${_CTX_BAR} ${_ctx_display}%"
     fi
+    # Token throughput + cache-hit (replaces the old $cost — see _session_tok_seg)
+    detail+=$(_session_tok_seg "${_sf_tok[$_i]}" "${_sf_cache[$_i]}")
     if [[ -n "${_sf_rate5h[$_i]}" && "${_sf_rate5h[$_i]}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${_rate_mark}${CLAUDII_CLR_RESET} $(_rate_pct_disp "${_sf_rate5h[$_i]}")%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then

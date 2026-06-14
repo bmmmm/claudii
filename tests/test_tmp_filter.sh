@@ -6,8 +6,8 @@ _tf_cache="$CLAUDII_HOME/tmp/test_tmp_filter_cache"
 rm -rf "$_tf_cache"
 mkdir -p "$_tf_cache"
 
-# One real session: cost=5.00, fresh mtime, alive ppid
-printf 'model=Sonnet\nctx_pct=50\ncost=5.00\nrate_5h=10\nrate_7d=20\nreset_5h=0\nreset_7d=0\nsession_id=realtest\nppid=%s\n' "$$" \
+# One real session: cost=5.00, tok=5M (in+out), cache_pct=84, fresh mtime, alive ppid
+printf 'model=Sonnet\nctx_pct=50\ncost=5.00\ntok=5000000\ncache_pct=84\nrate_5h=10\nrate_7d=20\nreset_5h=0\nreset_7d=0\nsession_id=realtest\nppid=%s\n' "$$" \
   > "$_tf_cache/session-realtest"
 
 # Orphan tmp artifacts: cost=99 each — would inflate today's cost if parsed
@@ -31,6 +31,9 @@ _tf_real_rows=$(grep -c 'realtest' <<<"$_tf_se_out" || true)
 assert_eq "sessions: real-session row rendered" "1" "$_tf_real_rows"
 _tf_orphan_rows=$(grep -c 'tmp\.' <<<"$_tf_se_out" || true)
 assert_eq "sessions: .tmp.PID artifacts not rendered" "0" "$_tf_orphan_rows"
+# se shows token throughput + cache-hit (replaces the old $cost in the detail line)
+assert_contains "sessions: token throughput shown in se detail" "5.0M tok" "$_tf_se_out"
+assert_contains "sessions: cache-hit shown in se detail"        "⚡84%"     "$_tf_se_out"
 
 # gc must sweep .tmp.PID files older than 60s.
 # Force one tmp file's mtime to 5 minutes ago, leave the other fresh.
