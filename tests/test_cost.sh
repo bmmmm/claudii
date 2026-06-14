@@ -212,6 +212,106 @@ assert_eq "cost (mixed-model day): Sonnet credited only its 0.50 increment (not 
 
 unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet
 
+# ── cost --forecast: live 5h burn block + month projection ───────────────────
+# Session cache supplies the live account-wide 5h state (rate + future reset);
+# climbing rate_5h history rows give the burn slope; older cost deltas drive the
+# month projection.
+_FC_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_FC_TMP")
+_now_ts=$(date +%s)
+_fc_reset=$(( _now_ts + 10000 ))   # 5h window resets in ~2h47m (in the future)
+
+printf 'model=Opus 4.8\nctx_pct=50\ncost=12.00\nrate_5h=64\nrate_7d=22\nreset_5h=%d\nreset_7d=%d\nsession_id=fcast001\ntok=1500000\ncache_pct=80\nppid=%s\n' \
+  "$_fc_reset" "$(( _now_ts + 200000 ))" "$$" > "$_FC_TMP/session-fcast001"
+
+# rate_5h 58→60→62→64 across ~18 min within the current cycle (burn ~0.34%/min).
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 1080 ))" "claude-opus-4-8" "9.00"  "40" "58" "fcast001" "1000000" "200000" "0"
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 720 ))"  "claude-opus-4-8" "10.00" "44" "60" "fcast001" "1200000" "240000" "0"
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 360 ))"  "claude-opus-4-8" "11.00" "47" "62" "fcast001" "1350000" "270000" "0"
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 30 ))"   "claude-opus-4-8" "12.00" "50" "64" "fcast001" "1500000" "300000" "0"
+# Earlier spend this month (distinct sessions → first-seen counts as spend).
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 6*86400 ))" "claude-opus-4-8"   "40.00" "50" "10" "older-a" "5000000" "1000000" "0"
+hist_row "$_FC_TMP/history.tsv" "$(( _now_ts - 9*86400 ))" "claude-sonnet-4-6" "25.00" "50" "10" "older-b" "3000000" "600000"  "0"
+
+fc_out=$(CLAUDII_CACHE_DIR="$_FC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast 2>&1)
+fc_err=$(CLAUDII_CACHE_DIR="$_FC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast 2>&1 >/dev/null)
+
+assert_eq "cost --forecast: no errors on stderr" "" "$fc_err"
+assert_eq "cost --forecast: exit 0" "0" \
+  "$(CLAUDII_CACHE_DIR="$_FC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast >/dev/null 2>&1; echo $?)"
+assert_no_literal_ansi "cost --forecast: no literal \\033 in output" "$fc_out"
+assert_contains "cost --forecast: 5h budget block" "5h budget" "$fc_out"
+assert_contains "cost --forecast: Used now line" "Used now" "$fc_out"
+assert_contains "cost --forecast: shows current used %" "64%" "$fc_out"
+assert_contains "cost --forecast: Burn rate line" "Burn rate" "$fc_out"
+assert_contains "cost --forecast: Resets countdown" "Resets" "$fc_out"
+assert_contains "cost --forecast: This month block" "This month" "$fc_out"
+assert_contains "cost --forecast: Pace line" "Pace" "$fc_out"
+# Month spend = 12 (fcast first-seen delta) + 40 + 25 = 77.
+assert_contains "cost --forecast: month spent total" "\$77.00" "$fc_out"
+
+# JSON shape
+fc_json=$(CLAUDII_CACHE_DIR="$_FC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast --json 2>&1)
+assert_eq "cost --forecast --json: valid JSON" "0" \
+  "$(echo "$fc_json" | jq . >/dev/null 2>&1; echo $?)"
+assert_eq "cost --forecast --json: 5h available" "true" \
+  "$(echo "$fc_json" | jq -r '.five_hour.available')"
+assert_eq "cost --forecast --json: used_pct = 64" "64" \
+  "$(echo "$fc_json" | jq -r '.five_hour.used_pct | floor')"
+assert_eq "cost --forecast --json: burn rate is positive" "1" \
+  "$(echo "$fc_json" | jq -r 'if .five_hour.burn_pct_per_min > 0 then 1 else 0 end')"
+assert_eq "cost --forecast --json: month spent = 77" "77" \
+  "$(echo "$fc_json" | jq -r '.month.spent | floor')"
+assert_eq "cost --forecast --json: days_in_month is 28..31" "1" \
+  "$(echo "$fc_json" | jq -r 'if .month.days_in_month >= 28 and .month.days_in_month <= 31 then 1 else 0 end')"
+
+unset _FC_TMP _now_ts _fc_reset fc_out fc_err fc_json
+
+# ── cost --forecast: no live session → 5h block degrades, month still renders ─
+# History only (no session-* cache) → no future reset to anchor the 5h state.
+_FC_NO5H_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_FC_NO5H_TMP")
+_now_ts=$(date +%s)
+hist_row "$_FC_NO5H_TMP/history.tsv" "$(( _now_ts - 3600 ))" "claude-opus-4-8" "30.00" "50" "10" "lonely-sid" "5000000" "1000000" "0"
+
+fc_no5h_out=$(CLAUDII_CACHE_DIR="$_FC_NO5H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast 2>&1)
+assert_eq "cost --forecast (no session): exit 0" "0" \
+  "$(CLAUDII_CACHE_DIR="$_FC_NO5H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast >/dev/null 2>&1; echo $?)"
+assert_contains "cost --forecast (no session): 5h state unavailable" "unavailable" "$fc_no5h_out"
+assert_contains "cost --forecast (no session): month block still renders" "This month" "$fc_no5h_out"
+assert_eq "cost --forecast (no session): 5h not available in JSON" "false" \
+  "$(CLAUDII_CACHE_DIR="$_FC_NO5H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast --json 2>&1 | jq -r '.five_hour.available')"
+
+unset _FC_NO5H_TMP _now_ts fc_no5h_out
+
+# ── cost --forecast: empty cache → friendly no-data message, exit 0 ───────────
+_FC_EMPTY_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_FC_EMPTY_TMP")
+fc_empty_out=$(CLAUDII_CACHE_DIR="$_FC_EMPTY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast 2>&1)
+assert_eq "cost --forecast (empty): exit 0" "0" \
+  "$(CLAUDII_CACHE_DIR="$_FC_EMPTY_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast >/dev/null 2>&1; echo $?)"
+assert_contains "cost --forecast (empty): no-data hint" "No forecast data" "$fc_empty_out"
+
+unset _FC_EMPTY_TMP fc_empty_out
+
+# ── cost --forecast: JSON stays valid under a comma-decimal locale ────────────
+# Regression: awk %.Nf honors LC_NUMERIC — a de_DE (comma) locale would emit
+# "0,5" and break jq. The JSON/TSV path forces LC_ALL=C. Guarded on the locale
+# being installed (CI runners often lack it) so it skips rather than passes
+# vacuously where a comma can never be produced anyway.
+_have_de_locale=$(locale -a 2>/dev/null || true)
+if [[ "$_have_de_locale" == *de_DE.UTF-8* || "$_have_de_locale" == *de_DE.utf8* ]]; then
+  _FC_LOC_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_FC_LOC_TMP")
+  _now_ts=$(date +%s)
+  printf 'model=Opus 4.8\nctx_pct=50\ncost=12.00\nrate_5h=64\nrate_7d=22\nreset_5h=%d\nreset_7d=%d\nsession_id=floc0001\ntok=1500000\nppid=%s\n' \
+    "$(( _now_ts + 10000 ))" "$(( _now_ts + 200000 ))" "$$" > "$_FC_LOC_TMP/session-floc0001"
+  hist_row "$_FC_LOC_TMP/history.tsv" "$(( _now_ts - 600 ))" "claude-opus-4-8" "9.00"  "40" "60" "floc0001" "1000000" "200000" "0"
+  hist_row "$_FC_LOC_TMP/history.tsv" "$(( _now_ts - 30 ))"  "claude-opus-4-8" "12.00" "50" "64" "floc0001" "1500000" "300000" "0"
+  _fc_loc_json=$(LC_NUMERIC=de_DE.UTF-8 LANG=de_DE.UTF-8 CLAUDII_CACHE_DIR="$_FC_LOC_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --forecast --json 2>&1)
+  assert_eq "cost --forecast --json: valid under de_DE comma locale" "0" \
+    "$(echo "$_fc_loc_json" | jq . >/dev/null 2>&1; echo $?)"
+  assert_contains "cost --forecast --json: dot decimal under comma locale" '64.0' "$_fc_loc_json"
+  unset _FC_LOC_TMP _now_ts _fc_loc_json
+fi
+unset _have_de_locale
+
 # ── cost: Months render as a D-grid (period rows, model columns split by │) ──
 # Each calendar month is its OWN row; the │/┼ separators delimit per-tier MODEL
 # columns (not side-by-side month tiles). Column widths track the widest value

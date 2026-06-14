@@ -388,7 +388,113 @@ ${_fmt_awk}
     '
 }
 
+# claudii cost --forecast — 5h-budget burn rate + this-month $ projection.
+# The forecast lives under `cost` (it is the $-detail menu): the 5h block reads
+# the live account-wide rate-limit state from the newest fresh session cache
+# (history carries no reset timestamp), the month block projects from the same
+# cost-delta history `cost` itself aggregates. Rendering + math is lib/forecast.awk
+# (composed after epoch_to_date/attribution/fmt via -f).
+_cmd_cost_forecast() {
+  local cache_dir="$1"
+  _date_init
+  local _tz_offset="$_TZ_OFFSET" _date_cmd="$_DATE_CMD"
+  local _now today_str
+  _now=$(date '+%s')
+  today_str=$(date '+%Y-%m-%d')
+  local thismon="${today_str:0:7}"
+  local dom=$(( 10#${today_str:8:2} ))     # day-of-month, base-10 (08/09 not octal)
+  local monname; monname=$(date '+%b')
+
+  # Days-in-month + previous month. BSD needs -v BEFORE -f (flag order matters —
+  # -v after the date value is silently ignored); GNU uses relative date strings.
+  local ndays lastmon
+  if [[ "$_date_cmd" == "macos" ]]; then
+    ndays=$(date -j -v+1m -v-1d -f '%Y-%m-%d' "${thismon}-01" '+%d' 2>/dev/null)
+    lastmon=$(date -j -v-1d      -f '%Y-%m-%d' "${thismon}-01" '+%Y-%m' 2>/dev/null)
+  else
+    ndays=$(date -d "${thismon}-01 +1 month -1 day" '+%d' 2>/dev/null)
+    lastmon=$(date -d "${thismon}-01 -1 day" '+%Y-%m' 2>/dev/null)
+  fi
+  [[ "$ndays" =~ ^[0-9]+$ ]] && ndays=$(( 10#$ndays )) || ndays=30
+  (( ndays >= 28 )) || ndays=30
+  [[ -n "$lastmon" ]] || lastmon="0000-00"
+
+  # Newest fresh session cache → live account-wide 5h state. reset_5h must be in
+  # the future for the cached used% to still be current; an expired window means
+  # the cache predates a reset and its rate is stale (degrade to month-only).
+  local _rate_now="" _reset5h=0 _have5h=0 _best_age=0
+  _session_files "$cache_dir"
+  local _f _best="" _best_mt=0 _mt
+  for _f in ${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}; do
+    [[ -f "$_f" ]] || continue
+    _mt=$(_mtime "$_f")
+    (( _mt > _best_mt )) && { _best_mt=$_mt; _best="$_f"; }
+  done
+  if [[ -n "$_best" ]]; then
+    _parse_session_cache "$_best"
+    if [[ "$_PSC_rate_5h" =~ ^[0-9]+(\.[0-9]+)?$ && "$_PSC_reset_5h" =~ ^[0-9]+$ ]] \
+       && (( _PSC_reset_5h > _now )); then
+      _rate_now="$_PSC_rate_5h"; _reset5h="$_PSC_reset_5h"; _have5h=1
+      _best_age=$(( _now - _best_mt ))
+    fi
+  fi
+
+  if (( _have5h == 0 )) && [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
+    echo "  No forecast data yet — start a Claude session (for the live 5h budget)"
+    echo "  and let history accrue (for the month projection)."
+    return 0
+  fi
+
+  # forecast.awk needs at least one input file; the 5h-only case (no history)
+  # feeds /dev/null so the END block still renders from the -v session state.
+  local -a _in=(${_HIST_FILES[@]+"${_HIST_FILES[@]}"})
+  [[ ${#_in[@]} -eq 0 ]] && _in=(/dev/null)
+
+  # JSON/TSV are ASCII-only and carry decimals (%.Nf in awk honors LC_NUMERIC —
+  # a comma locale would emit "0,5" and break jq). Force LC_ALL=C there. Pretty
+  # output stays in the user locale (it prints UTF-8 box chars, which LC_ALL=C
+  # would mangle) and is already locale-immune: $ via fmt_usd, burn via integer
+  # tenths, everything else %d.
+  local -a _envp=()
+  [[ "${_FORMAT:-}" == "json" || "${_FORMAT:-}" == "tsv" ]] && _envp=(env LC_ALL=C)
+
+  _spinner_start "forecast"
+  ${_envp[@]+"${_envp[@]}"} awk -F'\t' \
+    -v now="$_now" \
+    -v tz_offset="${_tz_offset:-0}" \
+    -v reset5h="$_reset5h" \
+    -v rate_now="${_rate_now:-0}" \
+    -v have5h="$_have5h" \
+    -v age="$_best_age" \
+    -v today="$today_str" \
+    -v thismon="$thismon" \
+    -v lastmon="$lastmon" \
+    -v monname="$monname" \
+    -v dom="$dom" \
+    -v ndays="$ndays" \
+    -v burnwin="1200" \
+    -v fmt="${_FORMAT:-}" \
+    -v cyan="$CLAUDII_CLR_CYAN" \
+    -v dim="$CLAUDII_CLR_DIM" \
+    -v pink="$CLAUDII_CLR_ACCENT" \
+    -v reset="$CLAUDII_CLR_RESET" \
+    -v green="$CLAUDII_CLR_GREEN" \
+    -v yellow="$CLAUDII_CLR_YELLOW" \
+    -v red="$CLAUDII_CLR_RED" \
+    -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
+    -f "$CLAUDII_HOME/lib/attribution.awk" \
+    -f "$CLAUDII_HOME/lib/fmt.awk" \
+    -f "$CLAUDII_HOME/lib/forecast.awk" \
+    "${_in[@]}"
+  _spinner_stop
+}
+
 _cmd_cost() {
+  local _a _forecast=0
+  for _a in "$@"; do
+    [[ "$_a" == "--forecast" || "$_a" == "forecast" ]] && _forecast=1
+  done
+
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
@@ -399,6 +505,12 @@ _cmd_cost() {
   # first statusline render wrote history, and its mtime-keyed "today"
   # misattributed multi-day sessions.
   _collect_history_files "$cache_dir"
+
+  if (( _forecast )); then
+    _cmd_cost_forecast "$cache_dir"
+    return 0
+  fi
+
   if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
     echo "No cost history yet — run 'claudii cc-statusline on' and start a Claude session to record costs."
     return 0

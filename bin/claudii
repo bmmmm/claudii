@@ -156,7 +156,7 @@ case "${1:-}" in
   doctor)              _cmd_doctor            ;;
 
   # Session commands
-  cost)                _cmd_cost              ;;
+  cost)                _cmd_cost "$@"         ;;
   skills-cost)         _cmd_skills_cost "${@:2}" ;;
   sessions)
     if [[ "${2:-}" == "--resume" && -n "${3:-}" ]]; then

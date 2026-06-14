@@ -390,6 +390,27 @@ Supports
 .BR \-\-json " and " \-\-tsv .
 Alias:
 .BR c .
+.RS
+.PP
+With
+.B \-\-forecast
+the spend tables are replaced by a burn-rate projection in two blocks. The
+.B 5h budget
+block shows the current account-wide rate-limit usage, the burn rate (the slope
+of
+.I rate_5h
+over the last 20 minutes, with an accelerating/slowing note), a projected
+time-to-limit when the budget is on track to be hit before the window resets,
+and the reset countdown \(em the live state comes from the newest active
+.I session-*
+cache (history carries no reset timestamp), so it degrades to a month-only view
+when no session is live. The
+.B "This month"
+block shows spend so far, the $/day pace, the month-end projection with an
+honest \(+- band derived from daily-spend variance, and a comparison against
+last month. Honors
+.BR \-\-json " and " \-\-tsv .
+.RE
 .TP
 .B skills-cost
 Per-skill (or per-plugin, per-MCP-tool) cost breakdown using attribution data

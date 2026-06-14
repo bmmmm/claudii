@@ -120,6 +120,16 @@ _claudii() {
           _describe 'sessions option' se_opts
           ;;
 
+        cost|c)
+          local -a cost_opts
+          cost_opts=(
+            '--forecast:5h-budget burn rate + this-month spend projection'
+            '--json:JSON output'
+            '--tsv:Tab-separated output'
+          )
+          _describe 'cost option' cost_opts
+          ;;
+
         skills-cost)
           local -a sc_opts
           sc_opts=(
