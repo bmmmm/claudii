@@ -306,47 +306,73 @@ _cmd_cache() {
     "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
     "${CLAUDII_CLR_ACCENT}" "${VERSION:-?}" "${CLAUDII_CLR_RESET}"
 
+  # Single jq pass → per-day (D), per-model (M), summary (S) rows, tab-delimited,
+  # hit% pre-formatted to one decimal in jq (pct1s). Replaces 3 jq calls plus a
+  # per-row awk fork each: jq aggregates and formats, bash only renders. Collect-
+  # then-render (not mid-stream section state) stays set-u-safe under bash 3.2.
+  local _rows
+  _rows=$(jq -r '
+    def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
+                      | "\(($z/10)|floor).\($z%10)" else "0.0" end;
+    ( (.days // {}) | to_entries
+      | map({day:(.key|split("|")[0]), v:.value})
+      | group_by(.day)
+      | map({day:.[0].day, cr:([.[].v.cache_read//0]|add),
+             cc:([.[].v.cache_create//0]|add), in:([.[].v.in_tok//0]|add)})
+      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0))
+      | sort_by(.day) | reverse
+      | .[] | ["D", .day, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
+    ),
+    ( (.models // {}) | to_entries
+      | map({model:.key, cr:(.value.cache_read//0),
+             cc:(.value.cache_create//0), in:(.value.in_tok//0)})
+      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0 and .model!="<synthetic>"))
+      | sort_by(-.total)
+      | .[] | ["M", .model, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
+    ),
+    ( ([(.days//{})[]?|.cache_read//0]|add//0) as $r
+      | ([(.days//{})[]?|.cache_create//0]|add//0) as $c
+      | ([(.days//{})[]?|.in_tok//0]|add//0) as $i
+      | ($r+$c+$i) as $t
+      | ["S", ($r|tostring), ($t|tostring), pct1s($r;$t)] | @tsv
+    )
+  ' <<< "$merged")
+
+  local -a _d_rows _m_rows
+  local _s_row="" _ln _tag
+  while IFS= read -r _ln; do
+    [[ -z "$_ln" ]] && continue
+    _tag="${_ln%%$'\t'*}"
+    case "$_tag" in
+      D) _d_rows+=("${_ln#D$'\t'}") ;;
+      M) _m_rows+=("${_ln#M$'\t'}") ;;
+      S) _s_row="${_ln#S$'\t'}" ;;
+    esac
+  done <<< "$_rows"
+
   # ── Per-day hit rate ──
   printf '  %s●%s %sCache hit rate (%dd)%s\n' \
     "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
     "${CLAUDII_CLR_ACCENT}" "$days" "${CLAUDII_CLR_RESET}"
 
-  local per_day
-  per_day=$(jq -r '
-    .days
-    | to_entries
-    | map({day: (.key | split("|")[0]), v: .value})
-    | group_by(.day)
-    | map({
-        day: .[0].day,
-        cache_read:   ([.[] | .v.cache_read   // 0] | add),
-        cache_create: ([.[] | .v.cache_create // 0] | add),
-        in_tok:       ([.[] | .v.in_tok       // 0] | add)
-      })
-    | map(. + {total: (.cache_read + .cache_create + .in_tok)})
-    | map(select(.total > 0))
-    | sort_by(.day) | reverse
-    | .[] | [.day, .cache_read, .cache_create, .in_tok, .total] | @tsv
-  ' <<< "$merged")
-
-  if [[ -z "$per_day" ]]; then
+  if (( ${#_d_rows[@]} == 0 )); then
     printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
   else
-    while IFS=$'\t' read -r day creads ccreates ins total; do
-      [[ -z "$day" ]] && continue
-      local pct_int=$(( 100 * creads / total ))
-      local filled=$(( (pct_int * 20 + 50) / 100 ))
-      local label; label=$(_insights_day_label "$day")
-      local bar;   bar=$(_insights_bar "$filled")
-      local pct_str; pct_str=$(LC_ALL=C awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
-      local creads_h; creads_h=$(_fmt_tok "$creads")
-      local total_h;  total_h=$(_fmt_tok "$total")
+    local _r day creads total pct_str pct_int filled label bar creads_h total_h
+    for _r in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r day creads total pct_str <<< "$_r"
+      pct_int=$(( 100 * creads / total ))
+      filled=$(( (pct_int * 20 + 50) / 100 ))
+      label=$(_insights_day_label "$day")
+      bar=$(_insights_bar "$filled")
+      creads_h=$(_fmt_tok "$creads")
+      total_h=$(_fmt_tok "$total")
       printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
         "$label" \
         "$bar" \
         "${CLAUDII_CLR_CYAN}" "$pct_str" "${CLAUDII_CLR_RESET}" \
         "${CLAUDII_CLR_DIM}" "$creads_h" "$total_h" "${CLAUDII_CLR_RESET}"
-    done <<< "$per_day"
+    done
   fi
 
   echo
@@ -356,61 +382,39 @@ _cmd_cache() {
     "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
     "${CLAUDII_CLR_ACCENT}" "$days" "${CLAUDII_CLR_RESET}"
 
-  local per_model
-  per_model=$(jq -r '
-    .models
-    | to_entries
-    | map({
-        model: .key,
-        cache_read:   (.value.cache_read   // 0),
-        cache_create: (.value.cache_create // 0),
-        in_tok:       (.value.in_tok       // 0)
-      })
-    | map(. + {total: (.cache_read + .cache_create + .in_tok)})
-    | map(select(.total > 0 and .model != "<synthetic>"))
-    | sort_by(-.total)
-    | .[] | [.model, .cache_read, .total] | @tsv
-  ' <<< "$merged")
-
-  if [[ -z "$per_model" ]]; then
+  if (( ${#_m_rows[@]} == 0 )); then
     printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
   else
-    while IFS=$'\t' read -r model creads total; do
-      [[ -z "$model" ]] && continue
-      local pct_int=$(( 100 * creads / total ))
-      local filled=$(( (pct_int * 20 + 50) / 100 ))
-      local label; label=$(_insights_model_label "$model")
-      local bar;   bar=$(_insights_bar "$filled")
-      local pct_str; pct_str=$(LC_ALL=C awk -v r="$creads" -v t="$total" 'BEGIN{printf "%.1f", 100*r/t}')
-      local total_h; total_h=$(_fmt_tok "$total")
+    local _rm model mcreads mtotal mpct_str mpct_int mfilled mlabel mbar mtotal_h
+    for _rm in "${_m_rows[@]}"; do
+      IFS=$'\t' read -r model mcreads mtotal mpct_str <<< "$_rm"
+      mpct_int=$(( 100 * mcreads / mtotal ))
+      mfilled=$(( (mpct_int * 20 + 50) / 100 ))
+      mlabel=$(_insights_model_label "$model")
+      mbar=$(_insights_bar "$mfilled")
+      mtotal_h=$(_fmt_tok "$mtotal")
       printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
-        "$label" \
-        "$bar" \
-        "${CLAUDII_CLR_CYAN}" "$pct_str" "${CLAUDII_CLR_RESET}" \
-        "${CLAUDII_CLR_DIM}" "$total_h" "${CLAUDII_CLR_RESET}"
-    done <<< "$per_model"
+        "$mlabel" \
+        "$mbar" \
+        "${CLAUDII_CLR_CYAN}" "$mpct_str" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_DIM}" "$mtotal_h" "${CLAUDII_CLR_RESET}"
+    done
   fi
 
   echo
 
   # ── Summary line ──
-  local totals
-  totals=$(jq -r '
-    ([.days[]? | .cache_read   // 0] | add // 0) as $r
-    | ([.days[]? | .cache_create // 0] | add // 0) as $c
-    | ([.days[]? | .in_tok       // 0] | add // 0) as $i
-    | ($r + $c + $i) as $t
-    | "\($r)\t\($c)\t\($i)\t\($t)"
-  ' <<< "$merged")
-  IFS=$'\t' read -r tot_r tot_c tot_i tot_all <<< "$totals"
-  if (( tot_all > 0 )); then
-    local hit_pct; hit_pct=$(LC_ALL=C awk -v r="$tot_r" -v t="$tot_all" 'BEGIN{printf "%.1f", 100*r/t}')
-    local saved_h; saved_h=$(_fmt_tok "$tot_r")
-    printf '  %s●%s Saved: %s%s%s tokens cached · %s%s%%%s hit rate (%dd)\n' \
-      "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
-      "${CLAUDII_CLR_CYAN}"  "$saved_h" "${CLAUDII_CLR_RESET}" \
-      "${CLAUDII_CLR_CYAN}"  "$hit_pct" "${CLAUDII_CLR_RESET}" \
-      "$days"
+  if [[ -n "$_s_row" ]]; then
+    local tot_r tot_all hit_pct saved_h
+    IFS=$'\t' read -r tot_r tot_all hit_pct <<< "$_s_row"
+    if (( tot_all > 0 )); then
+      saved_h=$(_fmt_tok "$tot_r")
+      printf '  %s●%s Saved: %s%s%s tokens cached · %s%s%%%s hit rate (%dd)\n' \
+        "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_CYAN}"  "$saved_h" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_CYAN}"  "$hit_pct" "${CLAUDII_CLR_RESET}" \
+        "$days"
+    fi
   fi
   echo
 }
@@ -858,27 +862,33 @@ _cmd_tools() {
 
   # ── Tool table (top 15 by calls; rest folded) ──
   _render_shead "Tool" "calls · share · errors" "$RW"
+  # error_pct (1 decimal) + hi-flag (rate > 5%) precomputed in jq so the render
+  # loop no longer forks two awks per tool row. Both fields stay non-empty
+  # ("0.0"/"0") so @tsv + IFS=$'\t' read cannot collapse them (CLAUDE.md trap).
   local toolrows; toolrows=$(jq -r '
+    def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
+                      | "\(($z/10)|floor).\($z%10)" else "0.0" end;
     (.tool_errors // {}) as $e
     | (.tools // {}) | to_entries
     | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
-    | sort_by(-.n) | .[] | [.name, .n, .e] | @tsv
+    | sort_by(-.n)
+    | .[] | [.name, .n, .e, pct1s(.e;.n),
+             (if .e>0 and (.e*100/.n)>5 then "1" else "0" end)] | @tsv
   ' <<< "$merged")
-  local maxn=0 idx=0 rest_n=0 rest_c=0 nm cnt ec
-  while IFS=$'\t' read -r nm cnt ec; do
+  local maxn=0 idx=0 rest_n=0 rest_c=0 nm cnt ec erate hi
+  while IFS=$'\t' read -r nm cnt ec erate hi; do
     [[ -z "$nm" ]] && continue
     (( idx == 0 )) && maxn=$cnt
     if (( idx < 15 )); then
       local disp="$nm"
       case "$nm" in mcp__*) disp="${nm##*__}"; [[ -z "$disp" ]] && disp="$nm" ;; esac
       (( ${#disp} > 18 )) && disp="${disp:0:18}"
-      local bf share suf err_str
+      local bf share suf err_str hi_mark
       bf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
       share=$(( cnt * 100 / totcalls ))
       if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
-        local erate hi=""; erate=$(LC_ALL=C awk -v e="$ec" -v n="$cnt" 'BEGIN{printf "%.1f", 100*e/n}')
-        LC_ALL=C awk -v e="$ec" -v n="$cnt" 'BEGIN{exit !(100*e/n > 5)}' && hi=" ${yellow}⚠${reset}"
-        printf -v err_str '%s%d err · %s%%%s%s' "$dim" "$ec" "$erate" "$reset" "$hi"
+        hi_mark=""; [[ "$hi" == "1" ]] && hi_mark=" ${yellow}⚠${reset}"
+        printf -v err_str '%s%d err · %s%%%s%s' "$dim" "$ec" "$erate" "$reset" "$hi_mark"
       else
         printf -v err_str '%s—%s' "$dim" "$reset"
       fi
