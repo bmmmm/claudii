@@ -181,8 +181,9 @@ Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache \(-> Session Dashboard
 Running
 .B claudii
 with no arguments prints the Overview: a modular status page built from
-sections. Default order: account (rate limits + today's token throughput), sessions
-(active/inactive/stale counts, next cron wake, bg tasks), activity
+sections. Default order: account (rate limits + today's token throughput), usage
+(30-day token-per-day sparkline from history, with today/average/peak),
+sessions (active/inactive/stale counts, next cron wake, bg tasks), activity
 (mini vibemap strip), agents (configured agents grouped by model tier,
 plus shell aliases), services (ClaudeStatus / Dashboard / CC-Statusline
 state), commands (grouped quick reference).

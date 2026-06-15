@@ -7,7 +7,7 @@
 # Each `_ov_render_<name>` owns its own leading blank line + header so
 # reordering/disabling never leaves stray spacing.
 
-_OV_DEFAULT_SECTIONS="account sessions activity agents services commands"
+_OV_DEFAULT_SECTIONS="account usage sessions activity agents services commands"
 
 # Normalize model identifier to canonical short form (Opus/Sonnet/Haiku); echoes input on no match.
 _norm_model_short() {
@@ -234,6 +234,53 @@ _ov_render_account() {
     _ov_acct_line+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}${_ov_today_fmt} tok${CLAUDII_CLR_RESET} today (${_ov_today_count} session${_ov_s})"
   fi
   printf '%s\n' "$_ov_acct_line"
+}
+
+# ── Usage — 30-day token-per-day sparkline ───────────────────────────────────
+# History-based (not the short-lived insights cache), so the trend reaches back
+# a full month. Self-contained pass (collect history files + one awk), only run
+# when this section is in overview.sections — like _ov_render_activity.
+_ov_render_usage() {
+  printf '\n'
+  local _uv_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _collect_history_files "$_uv_cache"
+  if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Usage                           start Claude to see token trends${CLAUDII_CLR_RESET}\n"
+    return 0
+  fi
+
+  # in+out tokens per local calendar day over the last 30 days. LC_ALL=C for
+  # consistency with the cost/trends class (this awk only sums integer tokens
+  # and prints %d, so it is locale-immune, but keep the class uniform).
+  local _uv_tz _uv_raw _uv_series _uv_summary
+  _uv_tz=$(_tz_offset_secs)
+  _uv_raw=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_uv_tz:-0}" -v ndays=30 \
+    -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
+    "${_HIST_FILES[@]}" 2>/dev/null)
+  _uv_series=$(printf '%s\n' "$_uv_raw" | awk 'NR==1')
+  _uv_summary=$(printf '%s\n' "$_uv_raw" | awk 'NR==2')
+
+  local _uv_max _uv_today _uv_total _uv_active _uv_peak
+  IFS=$'\t' read -r _uv_max _uv_today _uv_total _uv_active _uv_peak <<< "$_uv_summary"
+
+  # History exists but no token activity in the window → dim placeholder.
+  if [[ ! "$_uv_total" =~ ^[0-9]+$ ]] || (( _uv_total == 0 )); then
+    printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Usage                           no token activity in the last 30d${CLAUDII_CLR_RESET}\n"
+    return 0
+  fi
+
+  printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Usage${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}last 30d${CLAUDII_CLR_RESET}\n"
+  # One tick per day, oldest -> today (accent).
+  printf "    ${CLAUDII_CLR_ACCENT}%s${CLAUDII_CLR_RESET}\n" "$(_sparkline "$_uv_series" "$_uv_max")"
+
+  # Context: today · busy-day avg · peak. avg divides by ACTIVE days (not 30) so
+  # idle days do not understate the working rate.
+  local _uv_avg=0
+  (( _uv_active > 0 )) && _uv_avg=$(( _uv_total / _uv_active ))
+  printf "    ${CLAUDII_CLR_DIM}today ${CLAUDII_CLR_RESET}${CLAUDII_CLR_ACCENT}%s${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM} ${CLAUDII_SYM_SEP} avg %s/d ${CLAUDII_SYM_SEP} peak %s${CLAUDII_CLR_RESET}\n" \
+    "$(_fmt_tok "$_uv_today")" "$(_fmt_tok "$_uv_avg")" "$(_fmt_tok "$_uv_max")"
+
+  _ov_hint "claudii tokens" "claudii cost"
 }
 
 # ── Sessions ─────────────────────────────────────────────────────────────────
@@ -466,6 +513,7 @@ _cmd_default() {
   for _ov_sec in $_ov_secs; do
     case "$_ov_sec" in
       account)  _ov_render_account  ;;
+      usage)    _ov_render_usage    ;;
       sessions) _ov_render_sessions ;;
       activity) _ov_render_activity ;;
       agents)   _ov_render_agents   ;;

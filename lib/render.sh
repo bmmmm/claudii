@@ -65,6 +65,28 @@ _bar_filled() {
   printf '%d' "$f"
 }
 
+# Unicode sparkline from a space-separated value series, normalized to `max`.
+# Eight levels (U+2581..U+2588); a zero/empty day is the floor tick ▁ and any
+# positive day maps to ▂..█, so activity stands out from idle days. Uncoloured
+# — the caller wraps it. Pure bash 3.2 (indexed array, no declare -A). Args:
+#   $1 = space-separated non-negative integers   $2 = max (ceiling; <=0 -> floor)
+_sparkline() {
+  local max="${2:-0}" v out="" lvl
+  local -a _tk=('▁' '▂' '▃' '▄' '▅' '▆' '▇' '█')
+  [[ "$max" =~ ^[0-9]+$ ]] || max=0
+  for v in $1; do
+    [[ "$v" =~ ^[0-9]+$ ]] || v=0
+    if (( v <= 0 || max <= 0 )); then
+      out+="${_tk[0]}"
+    else
+      lvl=$(( 1 + (v * 6 + max / 2) / max ))   # v>0 -> level 1..7 (min ▂)
+      (( lvl > 7 )) && lvl=7
+      out+="${_tk[lvl]}"
+    fi
+  done
+  printf '%s' "$out"
+}
+
 # Repeat a (possibly multi-byte) string `n` times. Used for rules (─) and
 # manual padding where a UTF-8 char would defeat printf's byte-based %*s.
 _rep() {

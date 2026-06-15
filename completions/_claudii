@@ -241,7 +241,7 @@ _claudii() {
                 'vibemap.enabled:Opt-in activity heatmap logging (true/false, default false)'
                 'vibemap.path:Custom path for vibemap.tsv (default: ~/.cache/claudii/vibemap.tsv)'
                 'vibemap.overview:Show Activity strip in the bare overview (true/false, default true)'
-                'overview.sections:Bare overview sections — order + selection (array, default account/sessions/activity/agents/services/commands)'
+                'overview.sections:Bare overview sections — order + selection (array, default account/usage/sessions/activity/agents/services/commands)'
               )
               _describe 'config key' keys
               ;;

@@ -48,7 +48,7 @@
     "timezone": ""
   },
   "overview": {
-    "sections": ["account", "sessions", "activity", "agents", "services", "commands"]
+    "sections": ["account", "usage", "sessions", "activity", "agents", "services", "commands"]
   },
   "session-dashboard": {
     "enabled": "off"
