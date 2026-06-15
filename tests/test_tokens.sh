@@ -77,6 +77,33 @@ _TOK_OUT_30=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tokens --days 30 2>&1)
 assert_contains "tokens --days 30: window note" "last 30 days" "$_TOK_OUT_30"
 
+# ── Cycleable named windows (today / 7d / 30d / year) resolve without --days ──
+# The shared _insights_window helper maps named tokens + <N>d to a day count;
+# the header note proves which window was selected.
+_TOK_TODAY=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens today 2>&1)
+assert_contains "tokens today: 1-day window labelled 'today'" "today"        "$_TOK_TODAY"
+assert_not_contains "tokens today: no 'last 1 days' grammar"  "last 1 days"  "$_TOK_TODAY"
+
+_TOK_30D=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens 30d 2>&1)
+assert_contains "tokens 30d: resolves to last 30 days"  "last 30 days"  "$_TOK_30D"
+
+_TOK_MONTH=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens month 2>&1)
+assert_contains "tokens month: alias for 30 days"  "last 30 days"  "$_TOK_MONTH"
+
+_TOK_YEAR=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens year 2>&1)
+assert_contains "tokens year: resolves to 365 days"  "last 365 days"  "$_TOK_YEAR"
+
+# ── Unknown window token → actionable error, not silent fall-through ──
+_TOK_BAD=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens lastweek 2>&1; echo "rc=$?")
+assert_contains "tokens lastweek: names the bad token"  "unknown tokens argument: lastweek"  "$_TOK_BAD"
+assert_contains "tokens lastweek: suggests valid windows" "today|7d|30d|year"  "$_TOK_BAD"
+assert_contains "tokens lastweek: exit 1"  "rc=1"  "$_TOK_BAD"
+
 # ── Empty cache renders the empty-state line ──
 _TOK_EPROJ="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_EPROJ")
 _TOK_ECACHE="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_ECACHE")
@@ -96,3 +123,4 @@ _TOK_HELP=$(bash "$CLAUDII_HOME/bin/claudii" tokens --help 2>&1)
 assert_contains "tokens --help: usage line" "Usage: claudii tokens" "$_TOK_HELP"
 
 unset _SID _TS _JSONL _TOK_OUT _TOK_RC _TOK_OUT_30 _TOK_EOUT _TOK_DV _TOK_HELP
+unset _TOK_TODAY _TOK_30D _TOK_MONTH _TOK_YEAR _TOK_BAD

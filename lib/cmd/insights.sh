@@ -84,33 +84,68 @@ _insights_day_label() {
   fi
 }
 
+# Shared rolling-window argument parser for cache/tokens/tools/limits. Lets the
+# window be *cycled* without remembering --days: a named window (today/day,
+# week, month, quarter, year), a generic <N>d token (e.g. 14d), or the explicit
+# --days N / -d N. Sets _IW_DAYS (validated positive int) and _IW_HELP (1 when
+# -h/--help was seen, so the caller prints its own usage). Prints an actionable
+# error and returns 1 on an unknown token or non-numeric window.
+# Args: command-label, then the command's positional "$@" (bin/claudii has
+# already stripped --json/--tsv into $_FORMAT before dispatch).
+_insights_window() {
+  local cmd="$1"; shift
+  local days=7
+  _IW_HELP=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days|-d)   shift; days="${1:-7}" ;;
+      today|day)   days=1   ;;
+      week)        days=7   ;;
+      month)       days=30  ;;
+      quarter)     days=90  ;;
+      year)        days=365 ;;
+      [0-9]*d)     days="${1%d}" ;;
+      -h|--help)   _IW_HELP=1 ;;
+      *)
+        printf 'claudii: unknown %s argument: %s\n' "$cmd" "$1" >&2
+        printf '  try: claudii %s [today|7d|30d|year] [--days N]\n' "$cmd" >&2
+        return 1
+        ;;
+    esac
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
+  done
+  _IW_DAYS="$days"
+  (( _IW_HELP )) && return 0
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Human window label: "today" for a 1-day window, "last N days" otherwise.
+# Keeps the section headers grammatical when a named window resolves to 1 day.
+_insights_window_label() {
+  if [[ "${1:-}" == "1" ]]; then printf 'today'; else printf 'last %s days' "$1"; fi
+}
+
 # ── claudii cache ────────────────────────────────────────────────────────────
 
 _cmd_cache() {
   _cfg_init
   _insights_refresh
 
-  local days=7
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --days|-d) shift; days="${1:-7}" ;;
-      -h|--help)
-        printf 'Usage: claudii cache [--days N]\n'
-        printf '\n'
-        printf 'Show prompt-cache hit rate per day and per model.\n'
-        return 0
-        ;;
-    esac
-    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
-  done
-
-  # Validate here — claudii-insights merge also validates, but its stderr is
-  # swallowed by _insights_merged_json (2>/dev/null), so a bad --days used to
-  # surface as the misleading "No insight data yet".
-  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
+  # Window parsing + validation is centralized in _insights_window (the merge
+  # also validates, but _insights_merged_json swallows its stderr, so a bad
+  # value used to surface as the misleading "No insight data yet").
+  _insights_window cache "${@:2}" || return 1
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii cache [WINDOW] [--days N]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Show prompt-cache hit rate per day and per model.\n'
+    return 0
   fi
+  local days="$_IW_DAYS"
 
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
@@ -240,24 +275,15 @@ _cmd_tokens() {
   _cfg_init
   _insights_refresh
 
-  local days=7
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --days|-d) shift; days="${1:-7}" ;;
-      -h|--help)
-        printf 'Usage: claudii tokens [--days N]\n\n'
-        printf 'Token breakdown by type, model and day (input+output is the\n'
-        printf 'primary figure; cache read/write and hit%% shown alongside).\n'
-        return 0
-        ;;
-    esac
-    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
-  done
-
-  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
+  _insights_window tokens "${@:2}" || return 1
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii tokens [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Token breakdown by type, model and day (input+output is the\n'
+    printf 'primary figure; cache read/write and hit%% shown alongside).\n'
+    return 0
   fi
+  local days="$_IW_DAYS"
 
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
@@ -277,7 +303,7 @@ _cmd_tokens() {
     || date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d 2>/dev/null \
     || printf '')
 
-  local note hpad; note="last ${days} days"
+  local note hpad; note=$(_insights_window_label "$days")
   hpad=$(( RW - 14 - ${#note} )); (( hpad < 1 )) && hpad=1
   printf '\n  %sclaudii tokens%s%*s%s%s%s\n\n' \
     "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
@@ -630,23 +656,15 @@ _cmd_tools() {
   _cfg_init
   _insights_refresh
 
-  local days=7
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --days|-d) shift; days="${1:-7}" ;;
-      -h|--help)
-        printf 'Usage: claudii tools [--days N]\n\n'
-        printf 'Tool call counts, error rates, subagents and thinking volume\n'
-        printf 'for the rolling window.\n'
-        return 0
-        ;;
-    esac
-    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
-  done
-  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
+  _insights_window tools "${@:2}" || return 1
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii tools [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Tool call counts, error rates, subagents and thinking volume\n'
+    printf 'for the rolling window.\n'
+    return 0
   fi
+  local days="$_IW_DAYS"
 
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
@@ -666,7 +684,7 @@ _cmd_tools() {
   (( totcalls == 0 )) && { printf '  No tool calls recorded in the last %dd.\n\n' "$days"; return 0; }
   local okpct; okpct=$(LC_ALL=C awk -v c="$totcalls" -v e="$toterrs" 'BEGIN{printf "%.1f", 100*(c-e)/c}')
 
-  local note hpad; printf -v note 'last %d days · %s calls · %s%% ok' "$days" "$totcalls" "$okpct"
+  local note hpad; printf -v note '%s · %s calls · %s%% ok' "$(_insights_window_label "$days")" "$totcalls" "$okpct"
   hpad=$(( RW - 13 - ${#note} )); (( hpad < 1 )) && hpad=1
   printf '\n  %sclaudii tools%s%*s%s%s%s\n\n' \
     "$cyan" "$reset" "$hpad" "" "$dim" "$note" "$reset"
@@ -760,23 +778,15 @@ _cmd_limits() {
   _cfg_init
   _insights_refresh
 
-  local days=7
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --days|-d) shift; days="${1:-7}" ;;
-      -h|--help)
-        printf 'Usage: claudii limits [--days N]\n\n'
-        printf 'Rate-limit hits in the rolling window: when they happened and\n'
-        printf 'which model was running (the 5h budget is account-wide).\n'
-        return 0
-        ;;
-    esac
-    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
-  done
-  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
+  _insights_window limits "${@:2}" || return 1
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii limits [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Rate-limit hits in the rolling window: when they happened and\n'
+    printf 'which model was running (the 5h budget is account-wide).\n'
+    return 0
   fi
+  local days="$_IW_DAYS"
 
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
@@ -795,8 +805,8 @@ _cmd_limits() {
   ' <<< "$merged")
 
   if [[ -z "$hits" ]]; then
-    printf '\n  %s●%s %sNo rate-limit hits in the last %d days%s — clear runway.\n\n' \
-      "$green" "$reset" "$dim" "$days" "$reset"
+    printf '\n  %s●%s %sNo rate-limit hits (%s)%s — clear runway.\n\n' \
+      "$green" "$reset" "$dim" "$(_insights_window_label "$days")" "$reset"
     return 0
   fi
 
@@ -829,8 +839,8 @@ _cmd_limits() {
     fi
   done <<< "$hits"
 
-  printf '\n  %s⚠ Rate limits%s   %s%d×%s %s· last %d days · 5h budget (account-wide)%s\n' \
-    "$yellow" "$reset" "$cyan" "$total" "$reset" "$dim" "$days" "$reset"
+  printf '\n  %s⚠ Rate limits%s   %s%d×%s %s· %s · 5h budget (account-wide)%s\n' \
+    "$yellow" "$reset" "$cyan" "$total" "$reset" "$dim" "$(_insights_window_label "$days")" "$reset"
   printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
   printf '%s' "$list"
   (( total > listed )) && printf '  %s+%d earlier%s\n' "$dim" "$(( total - listed ))" "$reset"

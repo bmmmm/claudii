@@ -54,6 +54,16 @@ _CACHE_OUT_30=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CA
   bash "$CLAUDII_HOME/bin/claudii" cache --days 30 2>&1)
 assert_contains "cache --days 30: window in section header" "30d" "$_CACHE_OUT_30"
 
+# ── Cycleable named window: `cache 30d` == `cache --days 30` ──────────────
+_CACHE_30D=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" cache 30d 2>&1)
+assert_contains "cache 30d: named window resolves to 30-day header" "30d" "$_CACHE_30D"
+_CACHE_BAD=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" cache bogus 2>&1; echo "rc=$?")
+assert_contains "cache bogus: actionable unknown-arg error" "unknown cache argument: bogus" "$_CACHE_BAD"
+assert_contains "cache bogus: exit 1" "rc=1" "$_CACHE_BAD"
+unset _CACHE_30D _CACHE_BAD
+
 # ── Empty cache (no projects) renders the empty-state line ────────────────
 _EMPTY_PROJ="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_EMPTY_PROJ")
 _EMPTY_CACHE="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_EMPTY_CACHE")

@@ -506,8 +506,16 @@ day-level hit rate). All three are floored to exactly
 calendar days so the window matches the header.
 .RS
 .TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
 .BI "\-\-days " N
-Override the rolling window.
+Override the rolling window with an explicit day count.
 .RE
 .TP
 .B tools
@@ -524,8 +532,16 @@ the long tail is folded into a
 line.
 .RS
 .TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
 .BI "\-\-days " N
-Override the rolling window.
+Override the rolling window with an explicit day count.
 .RE
 .TP
 .B limits
@@ -538,8 +554,16 @@ model is \(lqwhat ran\(rq, not \(lqwhat is to blame\(rq. With no hits it reports
 clear runway.
 .RS
 .TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
 .BI "\-\-days " N
-Override the rolling window.
+Override the rolling window with an explicit day count.
 .RE
 .TP
 .B cache
@@ -550,8 +574,16 @@ First run is slower (5\(en30 s) while the cache warms; subsequent runs
 only re-aggregate changed sessions.
 .RS
 .TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
 .BI "\-\-days " N
-Override the rolling window.
+Override the rolling window with an explicit day count.
 .RE
 .
 .SS Configuration

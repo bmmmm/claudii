@@ -66,6 +66,16 @@ _TLS_EOUT=$(CLAUDE_PROJECTS_DIR="$_TLS_EPROJ" CLAUDII_CACHE_DIR="$_TLS_ECACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tools 2>&1)
 assert_contains "tools (empty): empty-state message" "No insight data" "$_TLS_EOUT"
 
+# ── Cycleable named window resolves; unknown token errors ──
+_TLS_TODAY=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tools today 2>&1)
+assert_contains "tools today: 1-day window labelled 'today'" "today" "$_TLS_TODAY"
+_TLS_BAD=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tools bogus 2>&1; echo "rc=$?")
+assert_contains "tools bogus: actionable unknown-arg error" "unknown tools argument: bogus" "$_TLS_BAD"
+assert_contains "tools bogus: exit 1" "rc=1" "$_TLS_BAD"
+unset _TLS_TODAY _TLS_BAD
+
 # ── --days validation ──
 _TLS_DV=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tools --days foo 2>&1; echo "rc=$?")

@@ -142,6 +142,19 @@ _claudii() {
           _describe 'skills-cost option' sc_opts
           ;;
 
+        tokens|tools|limits|cache)
+          local -a win_opts
+          win_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days (default)'
+            '30d:Last 30 days'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--days:Explicit rolling window in days'
+          )
+          _describe 'window' win_opts
+          ;;
+
         resume)
           local _cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
           local -a _ids
