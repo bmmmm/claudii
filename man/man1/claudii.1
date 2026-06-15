@@ -1,5 +1,5 @@
 .\" claudii manual — auto-synced to wiki via GitHub Actions
-.TH CLAUDII 1 "April 3, 2026" "claudii 0.23.0" "claudii manual"
+.TH CLAUDII 1 "June 15, 2026" "claudii 0.23.0" "claudii manual"
 .
 .SH NAME
 claudii \- Fast Claude Code aliases with live model status and session insights
@@ -347,6 +347,8 @@ come from the
 .I session-*
 cache when one still exists; for ended sessions the model is inferred from the
 token data and the context bar is omitted.
+.TP
+.BI "pin " session-id
 Protect an inactive session from garbage collection.
 Matches by session ID substring (first match wins).
 .TP
@@ -850,8 +852,8 @@ model	\fBClaude Opus 4.8\fR	Model name (bold); effort level appended (ultracode/
 context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62% \[u26A1]73%	10-block bar + usable% + cache hit ratio
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
-cost	$0.42	Session cost in USD (cyan); omitted when zero
-tokens	42.1K\(ua 8.3K\(da	Input / output tokens with K/M suffixes
+cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
+tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M/B suffixes
 lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
 duration	1h 23m	Wall-clock session duration (dim)
 api-duration	api:45m	Time waiting for Claude API responses (dim)
@@ -1114,7 +1116,7 @@ Per-model status cache written by
 .TP
 .I ~/.cache/claudii/session-*
 Per-session cache files written by the CC-Statusline handler
-(model, context %, cost, rate-limit data).
+(model, context %, token throughput, cost, rate-limit data).
 .TP
 .I ~/.cache/claudii/history-YYYY-MM.tsv
 Persistent session history (Flight Recorder), rotated monthly.

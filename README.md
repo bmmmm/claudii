@@ -1,6 +1,6 @@
 # claudii
 
-**Claude Code session intelligence in your shell — costs, prompt-cache hit rate, rate limits, model health, and effort-mode awareness. With the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin, a bedtime nudge that escalates into a synthwave shame display past 1am.**
+**Claude Code session intelligence in your shell — token usage, prompt-cache hit rate, costs, rate limits, model health, and effort-mode awareness. With the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin, a bedtime nudge that escalates into a synthwave shame display past 1am.**
 
 Pure bash + jq. No Python, no Node, no daemons. Read-only — claudii never modifies your sessions or makes API calls on your behalf. Compatible with oh-my-zsh, zinit, and manual source.
 
@@ -69,8 +69,8 @@ Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only rend
 Appears automatically after `claudii` commands when sessions are active:
 
 ```
-  opus-4-8     73%  $25.63  5h:28% ↺42m
-  sonnet-4-6   42%   $1.20
+  opus-4-8     73%  18.2k tok  5h:28% ↺42m
+  sonnet-4-6   42%   3.1k tok
 ```
 
 ### 3. ClaudeStatus — RPROMPT
@@ -83,17 +83,21 @@ Model health in your right prompt, refreshed every 5 minutes. Never blocks your 
 ## Commands
 
 ```bash
-claudii                          # overview: sessions, account, agents, services
+claudii                          # overview: account, usage, sessions, agents, services
 claudii on / off                 # enable/disable all display layers
 claudii status                   # live model health check
 claudii sessions / se            # active sessions: context, cost, rate
 claudii sessions-inactive / si   # ended sessions + GC hint
 claudii gc / g                   # garbage-collect ended sessions
 claudii pin / unpin <id>         # protect a session from garbage collection
-claudii cost / c                 # per-model cost breakdown
-claudii cache                    # prompt-cache hit rate + $ saved, per model & day
-claudii trends / t               # weekly/daily cost history
-claudii skills-cost              # per-skill / per-plugin cost (--plugins · --json · --days N)
+claudii cost / c                 # per-model cost breakdown (--forecast = burn rate)
+claudii tokens                   # token usage by type, model & day (today/7d/30d/year)
+claudii tools                    # tool-call counts + per-tool error rates
+claudii limits                   # rate-limit hits — when they hit, which model ran
+claudii cache                    # prompt-cache hit rate + tokens saved, per model & day
+claudii session <id>             # per-session token / tool / subagent drilldown
+claudii trends / t               # token + cost history, 30-day model split
+claudii skills-cost              # per-skill / per-plugin / per-MCP cost (--compare · --json)
 claudii explain                  # explain claudii's layers and architecture
 claudii doctor / d               # installation health check
 claudii update                   # self-update (Homebrew or git checkout)
@@ -167,6 +171,6 @@ All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 
 **Inside Claude Code (CC-Statusline):** The native `statusLine` hook calls `claudii-cc-statusline` on each turn and passes session JSON via stdin. Nothing runs between turns.
 
-**Cost & cache data:** Read straight from Claude Code's local session JSONL — `claudii cost`, `cache`, `trends`, and `skills-cost` aggregate it with jq. No telemetry, nothing leaves your machine.
+**Cost, token & cache data:** Read straight from Claude Code's local session JSONL — `claudii cost`, `tokens`, `tools`, `limits`, `cache`, `trends`, and `skills-cost` aggregate it with jq. No telemetry, nothing leaves your machine.
 
 </details>
