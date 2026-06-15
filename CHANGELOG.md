@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **CC-Statusline hotpath forks trimmed** — the in-session statusline reruns on every render (frequent in a live session), so each per-render subprocess spawn is pure overhead. Three cuts, no output change: the eight `_cache_get` lookups that read the already-loaded session cache no longer each run in a `$(...)` subshell (they write a global `_CG`, the same fork-free pattern `_tok`/`_dur` already use); the ClaudeStatus age display and the self-refresh TTL check now share one `stat` on `status-models` instead of forking it twice; and burn-ETA + pace (same `dur`/`rate` inputs) are emitted by a single `awk` instead of two. ~10 `fork()`s removed per render on the warm path. Verified byte-identical cache writes, green under `/bin/bash` 3.2.
+
 ---
 
 ## [v0.23.0] — 2026-06-15

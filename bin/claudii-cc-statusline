@@ -141,26 +141,27 @@ _existing_cache=""
 [[ -f "$_session_file" ]] && { _existing_cache=$(<"$_session_file"); } 2>/dev/null
 _ec_nl=$'\n'"$_existing_cache"
 
-# Read cached value or fall back to live current.
+# Read cached value or fall back to live current. Writes to _CG (no subshell —
+# the call sites used to wrap this in $(...), one fork() each on every render).
 _cache_get() {
   local key=$1 fallback=$2 v
   if [[ "$_ec_nl" == *$'\n'"$key"=* ]]; then
     v="${_existing_cache#*$key=}"
     v="${v%%$'\n'*}"
-    [[ -n "$v" ]] && { printf '%s' "$v"; return; }
+    [[ -n "$v" ]] && { _CG="$v"; return; }
   fi
-  printf '%s' "$fallback"
+  _CG="$fallback"
 }
-_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && _rate_7d_start=$(_cache_get rate_7d_start "$rate_7d")
-_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && _rate_5h_start=$(_cache_get rate_5h_start "$rate_5h")
-_last_duration_ms=$(_cache_get last_duration_ms "")
+_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && { _cache_get rate_7d_start "$rate_7d"; _rate_7d_start="$_CG"; }
+_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && { _cache_get rate_5h_start "$rate_5h"; _rate_5h_start="$_CG"; }
+_cache_get last_duration_ms ""; _last_duration_ms="$_CG"
 
 # Compaction counter — no compaction signal exists in the statusline JSON, so
 # detect the footprint: context usage collapsing between renders of the SAME
 # session (>= 30-point drop from >= 50%). Survives in the cache as compactions=.
-_compactions=$(_cache_get compactions "0")
+_cache_get compactions "0"; _compactions="$_CG"
 [[ "$_compactions" =~ ^[0-9]+$ ]] || _compactions=0
-_last_ctx_pct=$(_cache_get last_ctx_pct "")
+_cache_get last_ctx_pct ""; _last_ctx_pct="$_CG"
 if [[ "$ctx_pct" != "null" && -n "$ctx_pct" && "$_last_ctx_pct" =~ ^[0-9]+$ ]]; then
   _ctx_now=${ctx_pct%.*}
   if [[ "$_ctx_now" =~ ^[0-9]+$ ]] && (( _last_ctx_pct >= 50 && _last_ctx_pct - _ctx_now >= 30 )); then
@@ -170,30 +171,32 @@ fi
 _last_ctx_store=""
 [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]] && _last_ctx_store=${ctx_pct%.*}
 
-# Burn-rate ETA (cached for dashboard, not rendered here).
+# Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
+# Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
+# instead of two forks. US is passed as a var — \u escapes are not portable in
+# BSD awk's printf (macOS CI), so build the byte in bash and hand it over.
 _burn_eta=""
 _pace_state=""
 if _isset "$duration_ms"; then
   _rate_5h_int=${rate_5h%.*}
   _session_min_int=$(( ${duration_ms%.*} / 60000 ))
   if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    _burn_eta=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" \
-      'BEGIN { m=dur/60000; r=rat+0; print (r>0)?int((100-r)/(r/m)+0.5):0 }')
-    # Pace tri-state: compare actual rate_5h against linear burn expectation.
-    # Linear burn = session_min / 300 * 100 (hits 100% exactly at 5h mark).
-    # Thresholds: ±15% tolerance band around linear.
-    _pace_state=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" \
-      'BEGIN {
-        m = dur / 60000
-        linear = m / 300 * 100
-        actual = rat + 0
-        if (linear <= 0) { print ""; exit }
-        lo = linear * 0.85
-        hi = linear * 1.15
-        if      (actual < lo) print "ahead"
-        else if (actual > hi) print "behind"
-        else                  print "on_pace"
-      }')
+    # Pace: actual rate_5h vs linear burn (session_min / 300 * 100, hits 100% at
+    # the 5h mark); ±15% tolerance band → ahead / on_pace / behind.
+    _bp=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
+      m = dur / 60000; r = rat + 0
+      eta = (r > 0) ? int((100 - r) / (r / m) + 0.5) : 0
+      linear = m / 300 * 100
+      pace = ""
+      if (linear > 0) {
+        if      (r < linear * 0.85) pace = "ahead"
+        else if (r > linear * 1.15) pace = "behind"
+        else                        pace = "on_pace"
+      }
+      printf "%d%s%s", eta, us, pace
+    }')
+    _burn_eta="${_bp%%$'\x1f'*}"
+    _pace_state="${_bp#*$'\x1f'}"
   fi
 fi
 
@@ -202,9 +205,9 @@ fi
 # does not erase them. Keys are read from the existing cache via _cache_get
 # and included in the new file write.
 _ppid="${PPID:-}"
-_cached_pinned=$(_cache_get pinned "")
-_cached_next_cron_at=$(_cache_get next_cron_at "")
-_cached_bg_tasks=$(_cache_get bg_tasks "")
+_cache_get pinned "";       _cached_pinned="$_CG"
+_cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
+_cache_get bg_tasks "";     _cached_bg_tasks="$_CG"
 _tmp_session="${_session_file}.tmp.$$"
 { printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
@@ -581,6 +584,7 @@ _lines_raw="$_DEFAULT_LINES"
 # ClaudeStatus — read status-models cache, render [Model glyph ...] + age + incident.
 _seg_claude_status=""
 _status_cache="${_cache_dir}/status-models"
+_sc_mtime=""   # set once below (render block); reused by the self-refresh TTL check
 if [[ -f "$_status_cache" ]]; then
   _sc=""
   { _sc=$(<"$_status_cache"); } 2>/dev/null
@@ -649,7 +653,10 @@ fi
 if [[ "$_lines_raw" == *claude-status* ]]; then
   _sc_ttl="$_cfg_status_ttl"
   [[ "$_sc_ttl" =~ ^[0-9]+$ ]] || _sc_ttl=300
-  _sc_age=$(( _now - $(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0) ))
+  # Reuse the mtime already stat'd for the age display; only fork stat when the
+  # render block above did not run (cache absent / empty → _sc_mtime still "").
+  [[ "$_sc_mtime" =~ ^[0-9]+$ ]] || _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
+  _sc_age=$(( _now - _sc_mtime ))
   if (( _sc_age > _sc_ttl )); then
     _spid_file="$_cache_dir/status.pid"
     _spid=""
