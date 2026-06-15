@@ -14,19 +14,23 @@ bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, sessio
 bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
-lib/cmd/cost.sh         # Command: cost (history-based aggregation + tile renderer)
+lib/cmd/cost.sh         # Commands: cost, cost --forecast (history aggregation, D-grid + amount-sorted bars)
 lib/cmd/overview.sh     # Command: default overview (bare `claudii`)
 lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin/MCP cost, --compare)
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
-lib/cmd/insights.sh     # Command: cache (prompt-cache hit-rate table)
+lib/cmd/insights.sh     # Commands: cache, tokens, tools, limits, session (insights-cache views; cycleable window + --json)
 lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
 lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
 lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
+lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _sparkline, _cache_hit_pct)
+lib/fmt.awk             # Shared awk formatters (fmt_tok/fmt_usd/rep/bar — locale-immune)
 lib/trends.awk          # awk program for trends aggregation
 lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
 lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/trends)
+lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projection
+lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline
 lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
 lib/tier.jq             # jq module: tier() model→rate-tier mapping
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
@@ -54,7 +58,7 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 - **ClaudeStatus** — RPROMPT health monitor (our feature)
 - **Session Dashboard** — session lines prepended to PROMPT after claudii commands
 - **Sessionline** — in-session status bar inside Claude Code (native implementation)
-- **Overview** — what `claudii` (bare, no args) shows: account + agents + services + session summary
+- **Overview** — what `claudii` (bare, no args) shows: account + usage + sessions + agents + services
 - Commands: `claudii on/off`, `claudii status`, `claudii cc-statusline`
 - Config keys: `statusline.*` (internal, don't rename)
 
@@ -62,11 +66,11 @@ man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 
 | Name | Trigger | Location | Content |
 |------|---------|----------|---------|
-| **Session Dashboard** | automatic, after `claudii` commands | PROMPT (above prompt line) | Active sessions: model · ctx% · cost · 5h rate · ↺ |
+| **Session Dashboard** | automatic, after `claudii` commands | PROMPT (above prompt line) | Active sessions: model · ctx% · token throughput · 5h rate · ↺ |
 | **ClaudeStatus** | automatic, after every command | RPROMPT (right side) | API health per model |
-| **Overview** (`claudii`) | on demand | stdout | Modular sections via `overview.sections`: account · sessions · activity · agents · services · commands |
+| **Overview** (`claudii`) | on demand | stdout | Modular sections via `overview.sections`: account · usage · sessions · activity · agents · services · commands |
 | **`claudii status`** | on demand | stdout | Per-model API health + current incident from RSS timeline |
-| **`claudii se`** | on demand | stdout | Full session detail: project · name · context bar · cost · rate · age · ID |
+| **`claudii se`** | on demand | stdout | Full session detail: project · name · context bar · token throughput + cache-hit · rate · age · ID |
 | **`claudii si`** | on demand | stdout | Inactive/ended sessions with GC hint |
 
 ## Status Cache
