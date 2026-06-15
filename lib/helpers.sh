@@ -132,12 +132,25 @@ _cfgget() {
 # collected must preserve that ordering or add an explicit sort.
 _HIST_FILES=()
 _collect_history_files() {
-  local _dir="$1"
+  local _dir="$1" _since="${2:-0}"
   _HIST_FILES=()
-  [[ -f "$_dir/history.tsv" && -s "$_dir/history.tsv" ]] && _HIST_FILES+=("$_dir/history.tsv")
-  local _f
+  local _f _mt
+  # Optional mtime gate ($2): history files are append-only, so a file's mtime
+  # equals the timestamp of its newest row. When the caller passes a window
+  # start (_since, epoch), any file whose mtime predates it holds only rows
+  # older than the window — awk would parse every line of it just to discard
+  # them all (the per-row window guard), and it cannot carry an in-window
+  # session's attribution baseline (that baseline lives inside the window by
+  # definition). Skipping such a file is a pure parse-cost saving with no data
+  # impact. _since=0 (default) keeps every file — preserves cost/trends behaviour.
+  if [[ -f "$_dir/history.tsv" && -s "$_dir/history.tsv" ]]; then
+    _mt=$(_mtime "$_dir/history.tsv")
+    [[ "$_since" -eq 0 || "${_mt:-0}" -ge "$_since" ]] && _HIST_FILES+=("$_dir/history.tsv")
+  fi
   for _f in "$_dir"/history-*.tsv; do
-    [[ -f "$_f" && -s "$_f" ]] && _HIST_FILES+=("$_f")
+    [[ -f "$_f" && -s "$_f" ]] || continue
+    _mt=$(_mtime "$_f")
+    [[ "$_since" -eq 0 || "${_mt:-0}" -ge "$_since" ]] && _HIST_FILES+=("$_f")
   done
   return 0
 }

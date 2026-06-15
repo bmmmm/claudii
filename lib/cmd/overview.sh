@@ -243,7 +243,10 @@ _ov_render_account() {
 _ov_render_usage() {
   printf '\n'
   local _uv_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  _collect_history_files "$_uv_cache"
+  # 30-day window → skip history files whose newest row predates it (the awk
+  # discards those rows anyway). 31d of slack absorbs tz/DST edges; keeping a
+  # borderline file only costs a parse, dropping a needed one loses data.
+  _collect_history_files "$_uv_cache" "$(( now - 31 * 86400 ))"
   if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Usage                           start Claude to see token trends${CLAUDII_CLR_RESET}\n"
     return 0
