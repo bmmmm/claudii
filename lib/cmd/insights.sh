@@ -96,6 +96,7 @@ _insights_window() {
   local cmd="$1"; shift
   local days=7
   _IW_HELP=0
+  _IW_DAYS=7   # bind early so callers reading it after a non-zero return stay set-u-safe
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --days|-d)   shift; days="${1:-7}" ;;
@@ -279,7 +280,7 @@ _cmd_cache() {
   # value used to surface as the misleading "No insight data yet").
   _insights_window cache "${@:2}" || return 1
   if (( _IW_HELP )); then
-    printf 'Usage: claudii cache [WINDOW] [--days N]\n\n'
+    printf 'Usage: claudii cache [WINDOW] [--days N] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
     printf 'Show prompt-cache hit rate per day and per model.\n'
     return 0
