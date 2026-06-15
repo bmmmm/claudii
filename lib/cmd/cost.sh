@@ -338,12 +338,15 @@ ${_fmt_awk}
           if (m in week_cost && week_sessions[m] > 0)
             printf "week\t%s\t%.4f\t%d\n", m, week_cost[m], week_sessions[m]
         }
+        # period column carries the YYYY-MM key (not the literal "month") so two
+        # months do not collapse into indistinguishable rows (data loss); today/
+        # week/alltime stay scope labels (no fixed key), mirroring the JSON shape.
         for (i = 1; i <= n_mon; i++) {
           mk = mon_keys[i]
           for (m in all_models) {
             k = m SUBSEP mk
             if (k in month_cost)
-              printf "month\t%s\t%.4f\t%d\n", m, month_cost[k], month_sessions[k]
+              printf "%s\t%s\t%.4f\t%d\n", mk, m, month_cost[k], month_sessions[k]
           }
         }
         for (i = 1; i <= n_yr; i++) {
@@ -351,7 +354,7 @@ ${_fmt_awk}
           for (m in all_models) {
             k = m SUBSEP yk
             if (k in year_cost)
-              printf "year\t%s\t%.4f\n", m, year_cost[k]
+              printf "%s\t%s\t%.4f\n", yk, m, year_cost[k]   # period = YYYY (see month note)
           }
         }
         for (m in all_models) {

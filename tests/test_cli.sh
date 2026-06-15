@@ -396,7 +396,8 @@ assert_eq "cost (history) --json: valid JSON" "0" \
 cost_h_tsv=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 assert_contains "cost (history) --tsv: has header" "period	model	cost" "$cost_h_tsv"
 assert_contains "cost (history) --tsv: has today row" "today" "$cost_h_tsv"
-assert_contains "cost (history) --tsv: has month row" "month" "$cost_h_tsv"
+# month rows now carry their YYYY-MM key in the period column (not literal "month")
+assert_contains "cost (history) --tsv: has YYYY-MM month row" "$(date +%Y-%m)" "$cost_h_tsv"
 
 # Empty history.tsv (header only) → shows no-data message, no crash
 printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
@@ -765,7 +766,7 @@ _wk_tsv=$(CLAUDII_CACHE_DIR="$_WK_TSV_TMP" XDG_CONFIG_HOME="$_WK_TSV_TMP" \
   bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 assert_contains "cost --tsv: week period present" "week" "$_wk_tsv"
 assert_contains "cost --tsv: today period present" "today" "$_wk_tsv"
-assert_contains "cost --tsv: month period present" "month" "$_wk_tsv"
+assert_contains "cost --tsv: YYYY-MM month period present" "$(date +%Y-%m)" "$_wk_tsv"
 assert_contains "cost --tsv: alltime period present" "alltime" "$_wk_tsv"
 rm -rf "$_WK_TSV_TMP"
 unset _WK_TSV_TMP _wk_now _wk_tsv

@@ -146,6 +146,24 @@ assert_eq "cost (multiday): cumulative cost delta = 3.00 (1+1+1)" "1" \
 
 unset _COST_MULTIDAY_TMP _now_ts _day0 _day1 _day2 cost_multiday_out _md_sessions _md_cost
 
+# ── cost --tsv: month/year rows carry their YYYY-MM / YYYY period key ─────────
+# Regression: the period column emitted the literal "month"/"year", so two
+# distinct months collapsed into indistinguishable rows (data loss). today/week/
+# alltime stay scope labels; month/year now carry their key (mirrors the JSON).
+_COST_MON_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_MON_TMP")
+_now_ts=$(date +%s)
+_mon_old=$(( _now_ts - 86400 * 45 ))   # >31d back = a different calendar month
+hist_row "$_COST_MON_TMP/history.tsv" "$_mon_old" "claude-opus-4-5" "2.00" "50" "30" "old-month-sid" "5000" "1000" "0"
+hist_row "$_COST_MON_TMP/history.tsv" "$_now_ts"  "claude-opus-4-5" "3.00" "50" "30" "new-month-sid" "6000" "1200" "0"
+cost_mon_out=$(CLAUDII_CACHE_DIR="$_COST_MON_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
+# No row may use the literal "month"/"year" as its period (the data-loss bug).
+_mon_literal=$(printf '%s\n' "$cost_mon_out" | awk -F'\t' '$1=="month" || $1=="year" {n++} END{print n+0}')
+assert_eq "cost --tsv: no literal month/year period label (data-loss regression)" "0" "$_mon_literal"
+# At least one month row carries a YYYY-MM key (portable regex — no {N} interval).
+_mon_keyed=$(printf '%s\n' "$cost_mon_out" | awk -F'\t' '$1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]$/ {n++} END{print (n>=1)?1:0}')
+assert_eq "cost --tsv: month rows carry a YYYY-MM period key" "1" "$_mon_keyed"
+unset _COST_MON_TMP _now_ts _mon_old cost_mon_out _mon_literal _mon_keyed
+
 # ── cost: Bug 2 — minor cost fluctuation must not trigger a false reset ───────
 # A cost drop of <50% (floating-point noise) should NOT count as extra spend.
 # A cost drop of >50% (genuine compaction) SHOULD count as extra spend.
