@@ -260,15 +260,43 @@ _LIVE_PIDS=()
 _LIVE_PIDS_KIND=()
 _LIVE_PIDS_STATUS=()
 _LIVE_PIDS_INITED=0
+_LIVE_PIDS_KICKED=0
+_LIVE_PIDS_PID=""
+_LIVE_PIDS_TMP=""
+# Start the `claude agents --json` fetch in the background so its ~0.37s Node
+# startup overlaps later work (the history pass + the session-cache loop);
+# _live_pids_init reaps it. Best-effort: if claude is missing or mktemp fails,
+# init just falls back to a synchronous fetch. Safe to background here —
+# bin/claudii is non-interactive with no job control, so `( … ) &` + `$!` leaks
+# no job-table entry (the leak the zsh precmd path guards against). Only ever
+# called from the bash CLI path (_cmd_default).
+_live_pids_kick() {
+  (( _LIVE_PIDS_INITED )) && return 0
+  (( _LIVE_PIDS_KICKED )) && return 0
+  command -v claude >/dev/null 2>&1 || return 0
+  _LIVE_PIDS_TMP=$(mktemp "${TMPDIR:-/tmp}/claudii-agents.XXXXXX" 2>/dev/null) || { _LIVE_PIDS_TMP=""; return 0; }
+  ( claude agents --json >"$_LIVE_PIDS_TMP" 2>/dev/null || true ) &
+  _LIVE_PIDS_PID=$!
+  _LIVE_PIDS_KICKED=1
+  return 0
+}
 # Returns 0 unconditionally — best-effort initialization, callers run under
 # `set -euo pipefail` so we must never leak a non-zero exit (claude missing,
 # garbage JSON, jq missing, etc. → silently keep arrays empty for fallback).
+# Reaps the _live_pids_kick background job when one was started, else fetches
+# inline (preserves the original synchronous behaviour for non-overview callers).
 _live_pids_init() {
   (( _LIVE_PIDS_INITED )) && return 0
   _LIVE_PIDS_INITED=1
-  command -v claude >/dev/null 2>&1 || return 0
-  local _json _pid _kind _status _i=0
-  _json=$(claude agents --json 2>/dev/null) || return 0
+  local _json="" _pid _kind _status _i=0
+  if (( _LIVE_PIDS_KICKED )) && [[ -n "$_LIVE_PIDS_TMP" ]]; then
+    if [[ -n "$_LIVE_PIDS_PID" ]]; then wait "$_LIVE_PIDS_PID" 2>/dev/null || true; fi
+    _json=$(cat "$_LIVE_PIDS_TMP" 2>/dev/null || true)
+    rm -f "$_LIVE_PIDS_TMP" 2>/dev/null
+  else
+    command -v claude >/dev/null 2>&1 || return 0
+    _json=$(claude agents --json 2>/dev/null) || return 0
+  fi
   [[ -z "$_json" || "$_json" == "[]" ]] && return 0
   while IFS=$'\t' read -r _pid _kind _status; do
     [[ -z "$_pid" ]] && continue

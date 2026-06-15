@@ -39,8 +39,70 @@ _ov_hint() {
   printf "    ${CLAUDII_CLR_DIM}→ %s${CLAUDII_CLR_RESET}\n" "$_h"
 }
 
+# ── Parallel prefetch — the two heavy, independent subprocesses ──────────────
+# `claude agents --json` (Node startup, _live_pids_kick in helpers.sh) and the
+# merged history pass each take ~0.3-0.5s and need nothing from each other.
+# _cmd_default kicks both before rendering; _ov_gather reaps them — wall time
+# collapses from their sum to their max. _ov_uv_* are seeded at file scope so a
+# reap (or a standalone render) is always set -u-safe.
+_OV_HIST_PID=""
+_OV_HIST_TMP=""
+_ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0 _ov_uv_tsess=0
+_ov_uv_have_hist=0
+
+# Parse usage_spark.awk raw output (line 1 = day series, line 2 = 6-field
+# summary) into the _ov_uv_* globals and lift today's tokens/sessions onto the
+# account line. Shared by the background-reap and synchronous-fallback paths.
+_ov_history_parse() {
+  local _raw="$1" _sum
+  _ov_uv_series=$(printf '%s\n' "$_raw" | awk 'NR==1')
+  _sum=$(printf '%s\n' "$_raw" | awk 'NR==2')
+  IFS=$'\t' read -r _ov_uv_max _ov_uv_today _ov_uv_total _ov_uv_active _ov_uv_peak _ov_uv_tsess <<< "$_sum"
+  if [[ "$_ov_uv_total" =~ ^[0-9]+$ ]] && (( _ov_uv_total > 0 )); then
+    _ov_today_tok="$_ov_uv_today"
+    _ov_today_count="$_ov_uv_tsess"
+  fi
+}
+
+# Kick the merged history pass (today figures + 30-day series) in the background.
+# 31d mtime gate skips frozen older files whose rows all fall outside the window
+# (see _collect_history_files) — generous slack, since dropping a needed file
+# loses data while keeping a spare only costs a parse.
+_ov_history_kick() {
+  _ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0 _ov_uv_tsess=0
+  _ov_uv_have_hist=0 _OV_HIST_PID="" _OV_HIST_TMP=""
+  _collect_history_files "$cache_dir" "$(( now - 31 * 86400 ))"
+  if (( ${#_HIST_FILES[@]} == 0 )); then return 0; fi
+  _ov_uv_have_hist=1
+  _ov_tz=$(_tz_offset_secs)
+  _OV_HIST_TMP=$(mktemp "${TMPDIR:-/tmp}/claudii-usage.XXXXXX" 2>/dev/null) || _OV_HIST_TMP=""
+  if [[ -n "$_OV_HIST_TMP" ]]; then
+    ( LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
+        "${_HIST_FILES[@]}" >"$_OV_HIST_TMP" 2>/dev/null || true ) &
+    _OV_HIST_PID=$!
+  else
+    # mktemp unavailable → compute synchronously so the section still renders.
+    _ov_history_parse "$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
+        "${_HIST_FILES[@]}" 2>/dev/null)"
+  fi
+  return 0
+}
+
+# Reap the backgrounded history pass: wait, parse, clean up. No-op when no
+# background job ran (no history, or the synchronous fallback already parsed).
+_ov_history_reap() {
+  if [[ -z "$_OV_HIST_TMP" ]]; then return 0; fi
+  if [[ -n "$_OV_HIST_PID" ]]; then wait "$_OV_HIST_PID" 2>/dev/null || true; fi
+  _ov_history_parse "$(cat "$_OV_HIST_TMP" 2>/dev/null || true)"
+  rm -f "$_OV_HIST_TMP" 2>/dev/null
+  return 0
+}
+
 # ── Gather — one pass over session caches + history, sets _ov_* globals ─────
 _ov_gather() {
+  _live_pids_init                 # reap the backgrounded `claude agents --json`
   _session_files "$cache_dir"
   _ov_files=("${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}")
 
@@ -109,36 +171,11 @@ _ov_gather() {
     done
   fi
 
-  # ── One history pass: today's tokens (account) + 30-day series (usage) ──
-  # A single per-session attribution scan now drives BOTH the account line's
-  # "today" figures AND the usage sparkline — they used to be two separate
-  # full-history walks. Same increment math as `claudii cost`/`trends`, so the
-  # overview agrees with them (the session-cache sum above double-counts
-  # multi-day sessions). The 31d mtime gate skips frozen older files whose rows
-  # all fall outside the window (see _collect_history_files). usage_spark.awk
-  # emits the day series on line 1 and a 6-field summary on line 2:
-  # max, today_tok, total, active_days, peak_idx, today_sessions. The account
-  # "today" figures are fields 2 (tokens) and 6 (distinct sessions); a session
-  # spanning the window edge loses its prior baseline, matching the existing
-  # first-row-counts-as-throughput semantics.
-  _ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0
-  _ov_uv_have_hist=0
-  _collect_history_files "$cache_dir" "$(( now - 31 * 86400 ))"
-  if [[ ${#_HIST_FILES[@]} -gt 0 ]]; then
-    _ov_uv_have_hist=1
-    _ov_tz=$(_tz_offset_secs)
-    _ov_uv_raw=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
-      -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
-      "${_HIST_FILES[@]}" 2>/dev/null)
-    _ov_uv_series=$(printf '%s\n' "$_ov_uv_raw" | awk 'NR==1')
-    _ov_uv_sum=$(printf '%s\n' "$_ov_uv_raw" | awk 'NR==2')
-    IFS=$'\t' read -r _ov_uv_max _ov_uv_today _ov_uv_total _ov_uv_active _ov_uv_peak _ov_uv_tsess <<< "$_ov_uv_sum"
-    # Account line's "today" figures come from the same pass (fields 2 & 6).
-    if [[ "$_ov_uv_total" =~ ^[0-9]+$ ]] && (( _ov_uv_total > 0 )); then
-      _ov_today_tok="$_ov_uv_today"
-      _ov_today_count="$_ov_uv_tsess"
-    fi
-  fi
+  # ── Reap the backgrounded history pass (kicked in _cmd_default) ──────────
+  # One scan drives both the account line's "today" figures and the usage
+  # sparkline (see _ov_history_kick / _ov_history_parse). Reaped here, after the
+  # session-cache loop above, so the awk overlaps that loop and the agents fetch.
+  _ov_history_reap
 }
 
 # ── Account ──────────────────────────────────────────────────────────────────
@@ -481,9 +518,13 @@ _ov_render_commands() {
 # ── Entry point — bare `claudii` ─────────────────────────────────────────────
 _cmd_default() {
   _cfg_init
-  _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s); _NOW="$now"
+  # Fire the two heavy, independent subprocesses now so they run while we print
+  # the header and walk the session caches; _ov_gather reaps both — live PIDs
+  # before the session loop, the history pass after it.
+  _live_pids_kick
+  _ov_history_kick
 
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
