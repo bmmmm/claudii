@@ -7,6 +7,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **Bare `claudii` overview is ~2.2× faster (1.55s → 0.68s here)** — the overview had grown four heavy, serialized subprocess hotspots that together were essentially the entire runtime. Fixed with no output change (byte-identical account/usage figures verified; 1443 tests green under `/bin/bash` 3.2):
+  - **History files are mtime-gated to the window.** The 30-day usage sparkline parsed *every* history file (163k rows here) including the frozen legacy `history.tsv` and months that lie entirely outside the window — `usage_spark.awk` discarded those rows one by one via its per-row guard. `_collect_history_files` gained an optional mtime cutoff: an append-only file whose newest row (== mtime) predates the window holds no in-window rows and is skipped (cost/trends pass no cutoff, unchanged).
+  - **One history pass, not two.** The account line's "today tokens/sessions" and the usage sparkline each ran a full per-session attribution scan over the same data. They are now a single `usage_spark.awk` pass driven from `_ov_gather` (the awk emits `today_sessions` as a 6th summary field); `_ov_render_usage` formats the result instead of re-scanning.
+  - **The two heaviest subprocesses run concurrently.** `claude agents --json` (Node startup, ~0.37s) for the live-agent PID list and the merged history awk (~0.5s) need nothing from each other, yet ran back to back. They are now kicked into the background before rendering and reaped inside `_ov_gather` — the agents fetch before the session-cache loop (which needs it), the history pass after (so the awk overlaps the loop and the fetch). Best-effort, with a synchronous fallback; safe to background in `bin/` (non-interactive, no job control), temp files removed on reap.
+  - **The vibemap mini-strip cache is warmed in parallel too**, so the activity section's read is a cheap `cat` even when its 60s TTL cache has expired (the common case for occasional overview use) — the cold path dropped from 0.89s to 0.68s, matching the warm path.
+
 ---
 
 ## [v0.23.1] — 2026-06-15

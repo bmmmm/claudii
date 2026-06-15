@@ -100,6 +100,25 @@ _ov_history_reap() {
   return 0
 }
 
+_OV_VIBE_PID=""
+# Warm the vibemap mini-strip TTL cache in the background. The activity section
+# calls _vibemap_mini_strip again later; if the 60s cache has expired (the
+# common case for occasional overview use) that call would otherwise run a
+# ~0.2s awk over the whole vibemap log synchronously. _vibemap_mini_strip writes
+# the cache as a side effect, so nothing needs to cross back from the subshell —
+# the section just gets a warm `cat`. Best-effort: if vibemap is disabled the
+# call returns fast; if this hasn't finished, the section recomputes itself.
+_ov_vibemap_kick() {
+  _OV_VIBE_PID=""
+  ( _vibemap_mini_strip >/dev/null 2>&1 || true ) &
+  _OV_VIBE_PID=$!
+  return 0
+}
+_ov_vibemap_reap() {
+  if [[ -n "$_OV_VIBE_PID" ]]; then wait "$_OV_VIBE_PID" 2>/dev/null || true; fi
+  return 0
+}
+
 # ── Gather — one pass over session caches + history, sets _ov_* globals ─────
 _ov_gather() {
   _live_pids_init                 # reap the backgrounded `claude agents --json`
@@ -171,11 +190,13 @@ _ov_gather() {
     done
   fi
 
-  # ── Reap the backgrounded history pass (kicked in _cmd_default) ──────────
-  # One scan drives both the account line's "today" figures and the usage
-  # sparkline (see _ov_history_kick / _ov_history_parse). Reaped here, after the
-  # session-cache loop above, so the awk overlaps that loop and the agents fetch.
+  # ── Reap the backgrounded prefetch jobs (kicked in _cmd_default) ─────────
+  # The history pass drives both the account line's "today" figures and the
+  # usage sparkline (see _ov_history_kick / _ov_history_parse). Both are reaped
+  # here, after the session-cache loop above, so their work overlaps that loop
+  # and the agents fetch — the activity section then reads a warm vibemap cache.
   _ov_history_reap
+  _ov_vibemap_reap
 }
 
 # ── Account ──────────────────────────────────────────────────────────────────
@@ -525,6 +546,7 @@ _cmd_default() {
   # before the session loop, the history pass after it.
   _live_pids_kick
   _ov_history_kick
+  _ov_vibemap_kick
 
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
