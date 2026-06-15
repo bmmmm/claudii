@@ -14,7 +14,10 @@
 # History TSV columns: ts=$1 model=$2 cost=$3 ctx=$4 rate=$5 sid=$6 in=$7 out=$8 ...
 # Output (stdout):
 #   line 1: ndays space-separated integers (in+out tokens per day, oldest first)
-#   line 2: max<TAB>today<TAB>total<TAB>active_days<TAB>peak_idx
+#   line 2: max<TAB>today<TAB>total<TAB>active_days<TAB>peak_idx<TAB>today_sessions
+# today_sessions = distinct session ids with positive token activity on the
+# current local day — drives the account line's "(N sessions)" count, so the
+# overview needs only this one history pass (not a second today-only scan).
 # DST can shift a bucket by <=1 day for the ~1h around midnight twice a year
 # (tz_offset is fixed at now's offset) — acceptable for a 30-day trend view.
 
@@ -42,6 +45,7 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
   day = int((ts + tz_offset) / 86400)
   if (day < start_day || day > today_day) next
   daily[day - start_day] += tinc      # idx 0 (oldest) .. ndays-1 (today)
+  if (day == today_day) tsess[sid] = 1   # distinct sessions active today
   total += tinc
 }
 
@@ -54,6 +58,7 @@ END {
     series = series (i > 0 ? " " : "") v
   }
   today_tok = (ndays - 1) in daily ? daily[ndays - 1] : 0
+  today_sessions = 0; for (s in tsess) today_sessions++
   printf "%s\n", series
-  printf "%d\t%d\t%d\t%d\t%d\n", max, today_tok, total, active, peak
+  printf "%d\t%d\t%d\t%d\t%d\t%d\n", max, today_tok, total, active, peak, today_sessions
 }

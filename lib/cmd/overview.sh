@@ -109,39 +109,34 @@ _ov_gather() {
     done
   fi
 
-  # ── Today's tokens from history deltas ──────────────────────────────
-  # Same per-session increment attribution as `claudii cost`/`trends`, so the
+  # ── One history pass: today's tokens (account) + 30-day series (usage) ──
+  # A single per-session attribution scan now drives BOTH the account line's
+  # "today" figures AND the usage sparkline — they used to be two separate
+  # full-history walks. Same increment math as `claudii cost`/`trends`, so the
   # overview agrees with them (the session-cache sum above double-counts
-  # multi-day sessions: cumulative tok= keyed by file mtime). in+out token
-  # deltas (9-col history: in=$7, out=$8). Only the files that can hold today's
-  # rows are scanned (legacy history.tsv + current month) — a session spanning a
-  # month boundary loses its prior-month baseline on the 1st, which matches
-  # first-row-counts-as-throughput semantics. Session count = distinct SIDs with
-  # token activity today.
-  _ov_hist_files=()
-  [[ -s "$cache_dir/history.tsv" ]] && _ov_hist_files+=("$cache_dir/history.tsv")
-  _ov_hist_month="$cache_dir/history-$(date '+%Y-%m').tsv"
-  [[ -s "$_ov_hist_month" ]] && _ov_hist_files+=("$_ov_hist_month")
-  if [[ ${#_ov_hist_files[@]} -gt 0 ]]; then
+  # multi-day sessions). The 31d mtime gate skips frozen older files whose rows
+  # all fall outside the window (see _collect_history_files). usage_spark.awk
+  # emits the day series on line 1 and a 6-field summary on line 2:
+  # max, today_tok, total, active_days, peak_idx, today_sessions. The account
+  # "today" figures are fields 2 (tokens) and 6 (distinct sessions); a session
+  # spanning the window edge loses its prior baseline, matching the existing
+  # first-row-counts-as-throughput semantics.
+  _ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0
+  _ov_uv_have_hist=0
+  _collect_history_files "$cache_dir" "$(( now - 31 * 86400 ))"
+  if [[ ${#_HIST_FILES[@]} -gt 0 ]]; then
+    _ov_uv_have_hist=1
     _ov_tz=$(_tz_offset_secs)
-    _ov_today_hist=$(awk -F'\t' -v tz_offset="${_ov_tz:-0}" -v today="$(date '+%Y-%m-%d')" "
-$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
-$(<"$CLAUDII_HOME/lib/attribution.awk")
-"'
-      NF < 6 { next }
-      $1 == "timestamp" || $1 == "" || $6 == "" { next }
-      {
-        ts = $1 + 0; if (ts == 0) next
-        sid = $6
-        tok = ($7 == "" ? 0 : $7 + 0) + ($8 == "" ? 0 : $8 + 0)
-        tinc = attr_delta(base, sid, tok)
-        if (tinc > 0 && epoch_to_date(ts) == today) { total += tinc; seen[sid] = 1 }
-      }
-      END { n = 0; for (s in seen) n++; printf "%d %d", total, n }
-    ' "${_ov_hist_files[@]}" 2>/dev/null)
-    if [[ "$_ov_today_hist" == *" "* ]]; then
-      _ov_today_tok="${_ov_today_hist% *}"
-      _ov_today_count="${_ov_today_hist##* }"
+    _ov_uv_raw=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+      -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
+      "${_HIST_FILES[@]}" 2>/dev/null)
+    _ov_uv_series=$(printf '%s\n' "$_ov_uv_raw" | awk 'NR==1')
+    _ov_uv_sum=$(printf '%s\n' "$_ov_uv_raw" | awk 'NR==2')
+    IFS=$'\t' read -r _ov_uv_max _ov_uv_today _ov_uv_total _ov_uv_active _ov_uv_peak _ov_uv_tsess <<< "$_ov_uv_sum"
+    # Account line's "today" figures come from the same pass (fields 2 & 6).
+    if [[ "$_ov_uv_total" =~ ^[0-9]+$ ]] && (( _ov_uv_total > 0 )); then
+      _ov_today_tok="$_ov_uv_today"
+      _ov_today_count="$_ov_uv_tsess"
     fi
   fi
 }
@@ -238,50 +233,34 @@ _ov_render_account() {
 
 # ── Usage — 30-day token-per-day sparkline ───────────────────────────────────
 # History-based (not the short-lived insights cache), so the trend reaches back
-# a full month. Self-contained pass (collect history files + one awk), only run
-# when this section is in overview.sections — like _ov_render_activity.
+# a full month. The single history pass that produces this data lives in
+# _ov_gather (shared with the account line's "today" figures); this renderer
+# only formats the _ov_uv_* globals it left behind, so the section adds no
+# history scan of its own.
 _ov_render_usage() {
   printf '\n'
-  local _uv_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  # 30-day window → skip history files whose newest row predates it (the awk
-  # discards those rows anyway). 31d of slack absorbs tz/DST edges; keeping a
-  # borderline file only costs a parse, dropping a needed one loses data.
-  _collect_history_files "$_uv_cache" "$(( now - 31 * 86400 ))"
-  if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
+  # No history at all → invite the user to start Claude.
+  if (( _ov_uv_have_hist == 0 )); then
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Usage                           start Claude to see token trends${CLAUDII_CLR_RESET}\n"
     return 0
   fi
 
-  # in+out tokens per local calendar day over the last 30 days. LC_ALL=C for
-  # consistency with the cost/trends class (this awk only sums integer tokens
-  # and prints %d, so it is locale-immune, but keep the class uniform).
-  local _uv_tz _uv_raw _uv_series _uv_summary
-  _uv_tz=$(_tz_offset_secs)
-  _uv_raw=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_uv_tz:-0}" -v ndays=30 \
-    -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
-    "${_HIST_FILES[@]}" 2>/dev/null)
-  _uv_series=$(printf '%s\n' "$_uv_raw" | awk 'NR==1')
-  _uv_summary=$(printf '%s\n' "$_uv_raw" | awk 'NR==2')
-
-  local _uv_max _uv_today _uv_total _uv_active _uv_peak
-  IFS=$'\t' read -r _uv_max _uv_today _uv_total _uv_active _uv_peak <<< "$_uv_summary"
-
   # History exists but no token activity in the window → dim placeholder.
-  if [[ ! "$_uv_total" =~ ^[0-9]+$ ]] || (( _uv_total == 0 )); then
+  if [[ ! "$_ov_uv_total" =~ ^[0-9]+$ ]] || (( _ov_uv_total == 0 )); then
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Usage                           no token activity in the last 30d${CLAUDII_CLR_RESET}\n"
     return 0
   fi
 
   printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Usage${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}last 30d${CLAUDII_CLR_RESET}\n"
   # One tick per day, oldest -> today (accent).
-  printf "    ${CLAUDII_CLR_ACCENT}%s${CLAUDII_CLR_RESET}\n" "$(_sparkline "$_uv_series" "$_uv_max")"
+  printf "    ${CLAUDII_CLR_ACCENT}%s${CLAUDII_CLR_RESET}\n" "$(_sparkline "$_ov_uv_series" "$_ov_uv_max")"
 
   # Context: today · busy-day avg · peak. avg divides by ACTIVE days (not 30) so
   # idle days do not understate the working rate.
   local _uv_avg=0
-  (( _uv_active > 0 )) && _uv_avg=$(( _uv_total / _uv_active ))
+  (( _ov_uv_active > 0 )) && _uv_avg=$(( _ov_uv_total / _ov_uv_active ))
   printf "    ${CLAUDII_CLR_DIM}today ${CLAUDII_CLR_RESET}${CLAUDII_CLR_ACCENT}%s${CLAUDII_CLR_RESET}${CLAUDII_CLR_DIM} ${CLAUDII_SYM_SEP} avg %s/d ${CLAUDII_SYM_SEP} peak %s${CLAUDII_CLR_RESET}\n" \
-    "$(_fmt_tok "$_uv_today")" "$(_fmt_tok "$_uv_avg")" "$(_fmt_tok "$_uv_max")"
+    "$(_fmt_tok "$_ov_uv_today")" "$(_fmt_tok "$_uv_avg")" "$(_fmt_tok "$_ov_uv_max")"
 
   _ov_hint "claudii tokens" "claudii cost"
 }
