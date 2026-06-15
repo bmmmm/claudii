@@ -472,122 +472,112 @@ _cmd_tokens() {
     "$hpad" "" \
     "${CLAUDII_CLR_DIM}" "$note" "${CLAUDII_CLR_RESET}"
 
-  # ── By type (share of throughput) ──
-  local bytype
-  bytype=$(jq -r --arg floor "$floor" '
+  # One jq pass for all three sections (shared day-filter computed once), tab-
+  # delimited and tagged: T=by-type, M=by-model, D=by-day. Replaces three jq
+  # passes that each re-filtered .days. Bash renders from arrays; hit% stays on
+  # the pure-bash _cache_hit_pct (a cheap subshell, not a fork+exec).
+  local _rows
+  _rows=$(jq -r --arg floor "$floor" '
     [ .days | to_entries[]
       | (.key | split("|")) as $p
       | select($p[1] != "<synthetic>" and $p[0] >= $floor)
-      | .value ] as $v
-    | {
-        "cache read":  ([$v[].cache_read   // 0] | add // 0),
-        "input":       ([$v[].in_tok       // 0] | add // 0),
-        "cache write": ([$v[].cache_create // 0] | add // 0),
-        "output":      ([$v[].out_tok      // 0] | add // 0)
-      }
-    | to_entries | sort_by(-.value) | .[] | [.key, .value] | @tsv
+      | {day:$p[0], model:$p[1], v:.value} ] as $rows
+    | ( {"cache read":  ([$rows[].v.cache_read   // 0] | add // 0),
+         "input":       ([$rows[].v.in_tok       // 0] | add // 0),
+         "cache write": ([$rows[].v.cache_create // 0] | add // 0),
+         "output":      ([$rows[].v.out_tok      // 0] | add // 0)}
+        | to_entries | sort_by(-.value)
+        | .[] | ["T", .key, (.value|tostring)] | @tsv
+      ),
+      ( $rows | group_by(.model)
+        | map({model:.[0].model, input:([.[].v.in_tok//0]|add), output:([.[].v.out_tok//0]|add),
+               cr:([.[].v.cache_read//0]|add), cw:([.[].v.cache_create//0]|add)})
+        | map(select((.input+.output+.cr+.cw)>0)) | sort_by(-(.input+.output))
+        | .[] | ["M", .model, (.input|tostring), (.output|tostring), (.cr|tostring), (.cw|tostring)] | @tsv
+      ),
+      ( $rows | group_by(.day)
+        | map({day:.[0].day, inout:(([.[].v.in_tok//0]|add)+([.[].v.out_tok//0]|add)),
+               cr:([.[].v.cache_read//0]|add), inp:([.[].v.in_tok//0]|add), cw:([.[].v.cache_create//0]|add)})
+        | map(select(.inout>0)) | sort_by(.day) | reverse
+        | .[] | ["D", .day, (.inout|tostring), (.cr|tostring), (.inp|tostring), (.cw|tostring)] | @tsv
+      )
   ' <<< "$merged")
 
-  local tp=0 t v
-  while IFS=$'\t' read -r t v; do
-    [[ -z "$t" ]] && continue
-    tp=$(( tp + v ))
-  done <<< "$bytype"
+  local -a _t_rows _m_rows _d_rows
+  local _ln _tag
+  while IFS= read -r _ln; do
+    [[ -z "$_ln" ]] && continue
+    _tag="${_ln%%$'\t'*}"
+    case "$_tag" in
+      T) _t_rows+=("${_ln#T$'\t'}") ;;
+      M) _m_rows+=("${_ln#M$'\t'}") ;;
+      D) _d_rows+=("${_ln#D$'\t'}") ;;
+    esac
+  done <<< "$_rows"
+
+  # ── By type (share of throughput) ──
+  local tp=0 _tr t v
+  if (( ${#_t_rows[@]} > 0 )); then
+    for _tr in "${_t_rows[@]}"; do
+      IFS=$'\t' read -r t v <<< "$_tr"
+      tp=$(( tp + v ))
+    done
+  fi
 
   _render_shead "By type" "$(_fmt_tok "$tp") throughput" "$RW"
   if (( tp == 0 )); then
     printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
   else
-    while IFS=$'\t' read -r t v; do
-      [[ -z "$t" ]] && continue
-      local bf pct suf
+    local bf pct suf
+    for _tr in "${_t_rows[@]}"; do
+      IFS=$'\t' read -r t v <<< "$_tr"
       bf=$(_bar_filled "$v" "$tp" "$BAR_W")
       pct=$(( v * 100 / tp ))
       printf -v suf '%s%3d%%%s' "${CLAUDII_CLR_CYAN}" "$pct" "${CLAUDII_CLR_RESET}"
       _render_bar_row "$t" 11 "$(_fmt_tok "$v")" 7 "$bf" "$BAR_W" "$suf"
-    done <<< "$bytype"
+    done
   fi
   echo
 
   # ── By model (input / output / cache rd / cache wr / hit) — D-grid ──
-  local bymodel
-  bymodel=$(jq -r --arg floor "$floor" '
-    [ .days | to_entries[]
-      | (.key | split("|")) as $p
-      | select($p[1] != "<synthetic>" and $p[0] >= $floor)
-      | {model: $p[1], v: .value} ]
-    | group_by(.model)
-    | map({
-        model:  .[0].model,
-        input:  ([.[].v.in_tok       // 0] | add),
-        output: ([.[].v.out_tok      // 0] | add),
-        cr:     ([.[].v.cache_read   // 0] | add),
-        cw:     ([.[].v.cache_create // 0] | add)
-      })
-    | map(select((.input + .output + .cr + .cw) > 0))
-    | sort_by(-(.input + .output))
-    | .[] | [.model, .input, .output, .cr, .cw] | @tsv
-  ' <<< "$merged")
-
   printf '  %sBy model%s\n' "${CLAUDII_CLR_ACCENT}" "${CLAUDII_CLR_RESET}"
-  if [[ -z "$bymodel" ]]; then
+  if (( ${#_m_rows[@]} == 0 )); then
     printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
   else
-    local rows="" model inp out cr cw
-    while IFS=$'\t' read -r model inp out cr cw; do
-      [[ -z "$model" ]] && continue
-      local label hit
+    local rows="" _mr model inp out cr cw label hit
+    for _mr in "${_m_rows[@]}"; do
+      IFS=$'\t' read -r model inp out cr cw <<< "$_mr"
       label=$(_insights_model_label "$model")
       # Hit rate over the whole input side: cache_read / (read + create + input).
       # cache_read dwarfs raw input, so read/(read+input) alone pins at 100% —
       # cache_create must be in the denominator (matches `claudii cache`).
       hit=$(_cache_hit_pct "$cr" $(( inp + cw )))
       rows+="${label}"$'\x1f'"$(_fmt_tok "$inp")"$'\x1f'"$(_fmt_tok "$out")"$'\x1f'"$(_fmt_tok "$cr")"$'\x1f'"$(_fmt_tok "$cw")"$'\x1f'"${hit}%"$'\n'
-    done <<< "$bymodel"
+    done
     printf '%s' "$rows" | _render_dgrid "Model" $'input\x1foutput\x1fcache rd\x1fcache wr\x1fhit'
   fi
   echo
 
   # ── By day (in+out magnitude, normalised to busiest day) — B-bars ──
-  local byday
-  byday=$(jq -r --arg floor "$floor" '
-    [ .days | to_entries[]
-      | (.key | split("|")) as $p
-      | select($p[1] != "<synthetic>" and $p[0] >= $floor)
-      | {day: $p[0], v: .value} ]
-    | group_by(.day)
-    | map({
-        day:   .[0].day,
-        inout: (([.[].v.in_tok // 0] | add) + ([.[].v.out_tok // 0] | add)),
-        cr:    ([.[].v.cache_read   // 0] | add),
-        inp:   ([.[].v.in_tok       // 0] | add),
-        cw:    ([.[].v.cache_create // 0] | add)
-      })
-    | map(select(.inout > 0))
-    | sort_by(.day) | reverse
-    | .[] | [.day, .inout, .cr, .inp, .cw] | @tsv
-  ' <<< "$merged")
-
   _render_shead "By day" "in+out · cache hit" "$RW"
-  if [[ -z "$byday" ]]; then
+  if (( ${#_d_rows[@]} == 0 )); then
     printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
   else
     local today; today=$(date -u +%Y-%m-%d)
-    local maxio=0 d io ccr cinp ccw
-    while IFS=$'\t' read -r d io ccr cinp ccw; do
-      [[ -z "$d" ]] && continue
+    local maxio=0 _dr d io ccr cinp ccw wd lbl bf2 hit suf2
+    for _dr in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
       (( io > maxio )) && maxio=$io
-    done <<< "$byday"
-    while IFS=$'\t' read -r d io ccr cinp ccw; do
-      [[ -z "$d" ]] && continue
-      local wd lbl bf hit suf
+    done
+    for _dr in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
       wd=$(date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
       if [[ "$d" == "$today" ]]; then lbl="Today $wd"; else lbl="$wd"; fi
-      bf=$(_bar_filled "$io" "$maxio" "$BAR_W")
+      bf2=$(_bar_filled "$io" "$maxio" "$BAR_W")
       hit=$(_cache_hit_pct "$ccr" $(( cinp + ccw )))
-      printf -v suf '%s%3d%%%s' "${CLAUDII_CLR_CYAN}" "$hit" "${CLAUDII_CLR_RESET}"
-      _render_bar_row "$lbl" 9 "$(_fmt_tok "$io")" 7 "$bf" "$BAR_W" "$suf"
-    done <<< "$byday"
+      printf -v suf2 '%s%3d%%%s' "${CLAUDII_CLR_CYAN}" "$hit" "${CLAUDII_CLR_RESET}"
+      _render_bar_row "$lbl" 9 "$(_fmt_tok "$io")" 7 "$bf2" "$BAR_W" "$suf2"
+    done
   fi
   echo
 }
@@ -637,19 +627,56 @@ _cmd_session() {
     if [[ "$s2" == "$sid" ]]; then _parse_session_cache "$sf"; have_live=1; break; fi
   done
 
-  # Scalars: first_seen, last_seen, thinking blocks, total tool calls + errors.
-  # first_seen/last_seen can be "" (a degenerate cache may lack them), so the
-  # fields are US-joined (0x1f), NOT tab — a leading empty tab-field collapses
-  # under IFS-whitespace and shifts every column left (the CLAUDE.md IFS trap).
-  local meta; meta=$(jq -r '
-    [ (.first_seen // ""),
-      (.last_seen // ""),
-      ((.thinking_blocks // 0) | tostring),
-      (([.tools[]?] | add // 0) | tostring),
-      (([.tool_errors[]?] | add // 0) | tostring) ] | join([31] | implode)
+  # Single jq pass over the per-session cache → every section the render needs,
+  # tagged and US-delimited (US, not tab: first_seen/last_seen and the subagent/
+  # stop strings can be empty, which IFS=$'\t' would collapse — CLAUDE.md trap).
+  # Replaces seven separate jq invocations over the same small file. META/DOM/TOK/
+  # SUB/STOP emit exactly one line each; TOOL emits up to 8, LH zero or more.
+  local _srows
+  _srows=$(jq -r '
+    def U: [31] | implode;
+    ( ["META", (.first_seen // ""), (.last_seen // ""),
+       ((.thinking_blocks // 0)|tostring),
+       (([.tools[]?]|add // 0)|tostring),
+       (([.tool_errors[]?]|add // 0)|tostring)] | join(U) ),
+    ( ["DOM",
+       ( [ .days | to_entries[] | (.key|split("|")) as $p
+           | select($p[1] != "<synthetic>")
+           | {m:$p[1], t:((.value.in_tok//0)+(.value.out_tok//0))} ]
+         | group_by(.m) | map({m:.[0].m, t:([.[].t]|add)})
+         | (max_by(.t).m) // "" ) ] | join(U) ),
+    ( [ .days | to_entries[] | select((.key|split("|")[1]) != "<synthetic>") | .value ] as $v
+      | ["TOK", (([$v[].in_tok//0]|add//0)|tostring), (([$v[].out_tok//0]|add//0)|tostring),
+         (([$v[].cache_read//0]|add//0)|tostring), (([$v[].cache_create//0]|add//0)|tostring)] | join(U) ),
+    ( (.tool_errors // {}) as $e
+      | (.tools // {}) | to_entries
+      | map(select(.key != "") | {name:.key, n:.value, e:($e[.key]//0)})
+      | sort_by(-.n) | .[:8]
+      | .[] | ["TOOL", .name, (.n|tostring), (.e|tostring)] | join(U) ),
+    ( .subagent_types // {} | to_entries | sort_by(-.value)
+      | ["SUB", ((map(.value)|add//0)|tostring), ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
+    ( .stop_reasons // {} | to_entries | sort_by(-.value)
+      | ["STOP", ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
+    ( .limit_hits // [] | .[] | ["LH", (.timestamp // ""), (.model // "")] | join(U) )
   ' "$jf")
-  local first_seen last_seen think tcalls terrs
-  IFS=$'\x1f' read -r first_seen last_seen think tcalls terrs <<< "$meta"
+
+  local first_seen="" last_seen="" think="0" tcalls="0" terrs="0" dom=""
+  local t_in=0 t_out=0 t_cr=0 t_cw=0 sub_tot=0 sub_str="" stop_str=""
+  local -a _stool_rows _slh_rows
+  local _sl _tag _rest
+  while IFS= read -r _sl; do
+    [[ -z "$_sl" ]] && continue
+    _tag="${_sl%%$'\x1f'*}"; _rest="${_sl#*$'\x1f'}"
+    case "$_tag" in
+      META) IFS=$'\x1f' read -r first_seen last_seen think tcalls terrs <<< "$_rest" ;;
+      DOM)  dom="$_rest" ;;
+      TOK)  IFS=$'\x1f' read -r t_in t_out t_cr t_cw <<< "$_rest" ;;
+      TOOL) _stool_rows+=("$_rest") ;;
+      SUB)  IFS=$'\x1f' read -r sub_tot sub_str <<< "$_rest" ;;
+      STOP) stop_str="$_rest" ;;
+      LH)   _slh_rows+=("$_rest") ;;
+    esac
+  done <<< "$_srows"
 
   # Duration = last_seen - first_seen.
   local dur="—" e0 e1
@@ -666,13 +693,7 @@ _cmd_session() {
   if (( have_live )) && [[ -n "${_PSC_model:-}" ]]; then
     model_lbl=$(_strip_model_name "$_PSC_model")
   else
-    local dom; dom=$(jq -r '
-      [ .days | to_entries[] | (.key|split("|")) as $p
-        | select($p[1] != "<synthetic>")
-        | {m: $p[1], t: ((.value.in_tok // 0) + (.value.out_tok // 0))} ]
-      | group_by(.m) | map({m: .[0].m, t: ([.[].t] | add)})
-      | (max_by(.t).m) // "" ' "$jf")
-    model_lbl=$(_insights_model_label "$dom")
+    model_lbl=$(_insights_model_label "$dom")   # dom from the single jq pass above
   fi
 
   # Project: live path (shortened) else the repo basename from the transcript dir.
@@ -706,13 +727,7 @@ _cmd_session() {
   local RW=66 BAR_W=34
 
   # ── Tokens (share over input+output+cache-write; cache read shown separately) ──
-  local toks; toks=$(jq -r '
-    [ .days | to_entries[] | select((.key|split("|")[1]) != "<synthetic>") | .value ] as $v
-    | [ ([$v[].in_tok//0]|add//0), ([$v[].out_tok//0]|add//0),
-        ([$v[].cache_read//0]|add//0), ([$v[].cache_create//0]|add//0) ] | @tsv
-  ' "$jf")
-  local t_in t_out t_cr t_cw
-  IFS=$'\t' read -r t_in t_out t_cr t_cw <<< "$toks"
+  # t_in/t_out/t_cr/t_cw come from the single jq pass above.
   local work=$(( t_in + t_out + t_cw ))
 
   _render_shead "Tokens" "share" "$RW"
@@ -741,61 +756,46 @@ _cmd_session() {
   local tnote="${tcalls} calls"
   [[ "$terrs" =~ ^[0-9]+$ ]] && (( terrs > 0 )) && tnote="$tnote · $terrs err"
   _render_shead "Tools" "$tnote" "$RW"
-  local toolrows; toolrows=$(jq -r '
-    (.tool_errors // {}) as $e
-    | (.tools // {}) | to_entries
-    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
-    | sort_by(-.n) | .[:8]
-    | .[] | [.name, .n, .e] | @tsv
-  ' "$jf")
-  if [[ -z "$toolrows" ]]; then
+  # toolrows (top 8) come from the single jq pass above as _stool_rows.
+  if (( ${#_stool_rows[@]} == 0 )); then
     printf '    %s(no tool calls)%s\n' "$dim" "$reset"
   else
-    local maxn=0 nm cnt ec
-    while IFS=$'\t' read -r nm cnt ec; do
-      [[ -z "$nm" ]] && continue
+    local maxn=0 _str nm cnt ec tbf tsuf
+    for _str in "${_stool_rows[@]}"; do
+      IFS=$'\x1f' read -r nm cnt ec <<< "$_str"
       (( cnt > maxn )) && maxn=$cnt
-    done <<< "$toolrows"
-    while IFS=$'\t' read -r nm cnt ec; do
-      [[ -z "$nm" ]] && continue
-      local tbf tsuf=""
+    done
+    for _str in "${_stool_rows[@]}"; do
+      IFS=$'\x1f' read -r nm cnt ec <<< "$_str"
+      tsuf=""
       tbf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
       if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
         printf -v tsuf '%s⚠ %d err%s' "$yellow" "$ec" "$reset"
       fi
       _render_bar_row "$nm" 16 "$cnt" 5 "$tbf" "$BAR_W" "$tsuf"
-    done <<< "$toolrows"
+    done
   fi
   echo
 
   # ── Subagents / Stop reasons / Limit hits (compact one-liners) ──
-  local sub_tot sub_str
-  IFS=$'\t' read -r sub_tot sub_str < <(jq -r '
-    .subagent_types // {} | to_entries | sort_by(-.value)
-    | ((map(.value) | add // 0) | tostring) + "\t"
-      + ((map("\(.key) ×\(.value)")) | join(" · "))
-  ' "$jf")
+  # sub_tot/sub_str/stop_str/_slh_rows come from the single jq pass above.
   if [[ "$sub_tot" =~ ^[0-9]+$ ]] && (( sub_tot > 0 )); then
     printf '  %s%-12s%s %s%3d%s   %s%s%s\n' \
       "$accent" "Subagents" "$reset" "$cyan" "$sub_tot" "$reset" "$dim" "$sub_str" "$reset"
   fi
 
-  local stop_str; stop_str=$(jq -r '
-    .stop_reasons // {} | to_entries | sort_by(-.value)
-    | (map("\(.key) ×\(.value)")) | join(" · ")
-  ' "$jf")
   if [[ -n "$stop_str" ]]; then
     printf '  %s%-12s%s     %s%s%s\n' \
       "$accent" "Stop reasons" "$reset" "$dim" "$stop_str" "$reset"
   fi
 
-  local lh; lh=$(jq -r '.limit_hits // [] | .[] | [(.timestamp // ""), (.model // "")] | @tsv' "$jf")
-  if [[ -n "$lh" ]]; then
-    local lcount=0 lt lm last_ts="" last_m=""
-    while IFS=$'\t' read -r lt lm; do
+  if (( ${#_slh_rows[@]} > 0 )); then
+    local lcount=0 _lhr lt lm last_ts="" last_m=""
+    for _lhr in "${_slh_rows[@]}"; do
+      IFS=$'\x1f' read -r lt lm <<< "$_lhr"
       [[ -z "$lt" ]] && continue
       last_ts="$lt"; last_m="$lm"; (( ++lcount ))
-    done <<< "$lh"
+    done
     local labs="—"; _iso_epoch "$last_ts"
     if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then _fmt_abs "$_EPOCH" '%a %H:%M'; [[ -n "$_ABS_FMT" ]] && labs="$_ABS_FMT"; fi
     # The model is "what ran when the cap hit", not "what is to blame" (the 5h
