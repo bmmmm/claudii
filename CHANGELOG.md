@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.23.0] — 2026-06-15
+
 ### Added
 - **`claudii tokens`, `tools`, `limits` and `cache` gained cycleable named windows** — the rolling window can now be switched without remembering `--days`: a named token (`today`/`day`, `week`, `month`, `quarter`, `year`) or a generic `<N>d` (e.g. `claudii tokens 14d`) resolves to a day count, alongside the existing `--days N`/`-d N`. One shared `_insights_window` helper parses and validates the window for all four commands (replacing four duplicated `--days` loops), so the named windows, the `<N>d` form, the positive-integer guard, and an actionable unknown-token error (`unknown tokens argument: lastweek` + a `today|7d|30d|year` hint) stay identical across the class. A 1-day window now reads `today` in the section header instead of the ungrammatical "last 1 days" (shared `_insights_window_label`). The command name is sliced off with `"${@:2}"` at the call site (the dispatcher passes the full argv), matching `skills-cost`/`session`.
 - **`claudii tokens`, `tools`, `limits` and `cache` gained `--json`** — previously these four insight views silently swallowed the global `--json`/`--tsv` flags (`bin/claudii` strips them into `$_FORMAT`, but the commands never read it). Each now emits the same curated aggregate the pretty path renders, as structured JSON: `tokens` → `by_type`/`by_model`/`by_day` with derived `hit_pct`; `cache` → `per_day`/`per_model`/`summary`; `tools` → `total_calls`/`ok_pct`/`tools[]`/`subagents[]`/`thinking_blocks`; `limits` → `total`/`hits[]` (newest-first)/`by_model[]`. Raw model ids (not the friendly labels, which are a bash-render concern), `error_pct`/`hit_pct` rounded to one decimal. The empty-cache case emits the same envelope shape with empty arrays (the builders run with `merged="{}"`), so a consumer never has to special-case "no data". `--tsv` is rejected with a pointer to `--json` rather than silently ignored — these views are nested and a flat TSV would have to invent a shape.
