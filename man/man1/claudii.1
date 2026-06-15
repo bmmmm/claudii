@@ -104,7 +104,7 @@ Example agent aliases — see
 .B \-\-json
 Output structured JSON instead of formatted text.
 Available for:
-.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents .
+.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " tools ", " limits ", " cache .
 .TP
 .B \-\-tsv
 Output tab-separated values (header + data rows).
@@ -516,6 +516,10 @@ token (e.g.
 .TP
 .BI "\-\-days " N
 Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
 .RE
 .TP
 .B tools
@@ -542,6 +546,10 @@ token (e.g.
 .TP
 .BI "\-\-days " N
 Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
 .RE
 .TP
 .B limits
@@ -564,6 +572,10 @@ token (e.g.
 .TP
 .BI "\-\-days " N
 Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
 .RE
 .TP
 .B cache
@@ -584,6 +596,10 @@ token (e.g.
 .TP
 .BI "\-\-days " N
 Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
 .RE
 .
 .SS Configuration

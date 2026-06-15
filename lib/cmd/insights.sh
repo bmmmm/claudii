@@ -129,6 +129,145 @@ _insights_window_label() {
   if [[ "${1:-}" == "1" ]]; then printf 'today'; else printf 'last %s days' "$1"; fi
 }
 
+# These insight views are nested (by-type/by-model/by-day, tool tables, hit
+# strips) — a flat TSV would have to invent a shape. --json carries the full
+# structure; reject --tsv with a pointer instead of silently ignoring it.
+_insights_reject_tsv() {
+  printf 'claudii: %s has no --tsv view (nested data) — use --json\n' "$1" >&2
+}
+
+# ── --json builders ──────────────────────────────────────────────────────────
+# One per command. Each takes the merged JSON (the same aggregate the pretty
+# path renders) and emits the curated view as JSON — raw model ids (not the
+# friendly labels, which are a bash concern), derived hit_pct/error_pct rounded
+# to one decimal. Called with merged="{}" for the empty-cache case, so the
+# `// {}` / `// []` defaults yield the same envelope shape with empty arrays.
+# Kept inline alongside the pretty-path jq for the same view (the established
+# convention in this file) rather than re-aggregating in a shared .jq module.
+
+_cache_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
+    ($m.days // {}) as $day
+    | {
+        window_days: $days,
+        per_day: (
+          $day | to_entries
+          | map({day: (.key | split("|")[0]), v: .value})
+          | group_by(.day)
+          | map({ day: .[0].day,
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add),
+                  input:        ([.[].v.in_tok       // 0] | add) })
+          | map(. + {total: (.cache_read + .cache_create + .input)})
+          | map(select(.total > 0))
+          | map(. + {hit_pct: hit(.cache_read; .total)})
+          | sort_by(.day) | reverse
+        ),
+        per_model: (
+          ($m.models // {}) | to_entries
+          | map({ model: .key,
+                  cache_read:   (.value.cache_read   // 0),
+                  cache_create: (.value.cache_create // 0),
+                  input:        (.value.in_tok       // 0) })
+          | map(. + {total: (.cache_read + .cache_create + .input)})
+          | map(select(.total > 0 and .model != "<synthetic>"))
+          | map(. + {hit_pct: hit(.cache_read; .total)})
+          | sort_by(-.total)
+        ),
+        summary: (
+          ([$day[]? | .cache_read   // 0] | add // 0) as $r
+          | ([$day[]? | .cache_create // 0] | add // 0) as $c
+          | ([$day[]? | .in_tok       // 0] | add // 0) as $i
+          | {cache_read: $r, cache_create: $c, input: $i,
+             total: ($r + $c + $i), hit_pct: hit($r; ($r + $c + $i))}
+        )
+      }'
+}
+
+_tokens_json() {
+  local merged="$1" days="$2" floor="$3"
+  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" '
+    def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
+    [ ($m.days // {}) | to_entries[]
+      | (.key | split("|")) as $p
+      | select($p[1] != "<synthetic>" and $p[0] >= $floor)
+      | {day: $p[0], model: $p[1], v: .value} ] as $rows
+    | {
+        window_days: $days,
+        by_type: {
+          "cache read":  ([$rows[].v.cache_read   // 0] | add // 0),
+          "input":       ([$rows[].v.in_tok       // 0] | add // 0),
+          "cache write": ([$rows[].v.cache_create // 0] | add // 0),
+          "output":      ([$rows[].v.out_tok      // 0] | add // 0)
+        },
+        by_model: (
+          $rows | group_by(.model)
+          | map({ model: .[0].model,
+                  input:        ([.[].v.in_tok       // 0] | add),
+                  output:       ([.[].v.out_tok      // 0] | add),
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add) })
+          | map(select((.input + .output + .cache_read + .cache_create) > 0))
+          | map(. + {hit_pct: hit(.cache_read; (.cache_read + .cache_create + .input))})
+          | sort_by(-(.input + .output))
+        ),
+        by_day: (
+          $rows | group_by(.day)
+          | map({ day: .[0].day,
+                  in_out: (([.[].v.in_tok // 0] | add) + ([.[].v.out_tok // 0] | add)),
+                  input:        ([.[].v.in_tok       // 0] | add),
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add) })
+          | map(select(.in_out > 0))
+          | map(. + {hit_pct: hit(.cache_read; (.cache_read + .cache_create + .input))})
+          | sort_by(.day) | reverse
+        )
+      }'
+}
+
+_tools_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    def pct1($n; $d): if $d > 0 then (($n * 1000 / $d) | round) / 10 else 0 end;
+    ([$m.tools[]? ] | add // 0) as $tc
+    | ([$m.tool_errors[]? ] | add // 0) as $te
+    | {
+        window_days: $days,
+        total_calls: $tc,
+        total_errors: $te,
+        ok_pct: pct1(($tc - $te); $tc),
+        tools: (
+          ($m.tool_errors // {}) as $e
+          | ($m.tools // {}) | to_entries
+          | map(select(.key != "") | {name: .key, calls: .value, errors: ($e[.key] // 0)})
+          | map(. + {error_pct: pct1(.errors; .calls)})
+          | sort_by(-.calls)
+        ),
+        subagents: (
+          ($m.subagent_types // {}) | to_entries
+          | map(select(.key != "") | {type: .key, count: .value})
+          | sort_by(-.count)
+        ),
+        thinking_blocks: ($m.thinking_blocks // 0)
+      }'
+}
+
+_limits_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    ($m.limit_hits // []) as $h
+    | {
+        window_days: $days,
+        total: ($h | length),
+        hits: ($h | sort_by(.timestamp) | reverse
+               | map({timestamp: (.timestamp // ""), model: (.model // "")})),
+        by_model: ($h | map(.model // "unknown") | group_by(.)
+                   | map({model: .[0], count: length}) | sort_by(-.count))
+      }'
+}
+
 # ── claudii cache ────────────────────────────────────────────────────────────
 
 _cmd_cache() {
@@ -147,9 +286,18 @@ _cmd_cache() {
   fi
   local days="$_IW_DAYS"
 
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv cache; return 1; }
+
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _cache_json "{}" "$days"; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _cache_json "$merged" "$days"
     return 0
   fi
 
@@ -285,23 +433,32 @@ _cmd_tokens() {
   fi
   local days="$_IW_DAYS"
 
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv tokens; return 1; }
+
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _tokens_json "{}" "$days" ""; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
     return 0
   fi
-
-  local RW=66 BAR_W=34
 
   # Floor every view at exactly `days` calendar days. The merge windows sessions
   # by last_seen, so a long-running session can drag in day-entries older than
   # the window; without this floor "last 7 days" shows 8+ rows and the bare
   # weekday labels repeat ambiguously. Empty floor (date failed) → no-op (every
-  # string >= "").
+  # string >= ""). Shared by the json and pretty paths.
   local floor
   floor=$(date -u -v-"$(( days - 1 ))"d +%Y-%m-%d 2>/dev/null \
     || date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d 2>/dev/null \
     || printf '')
+
+  if [[ "$fmt" == "json" ]]; then
+    _tokens_json "$merged" "$days" "$floor"
+    return 0
+  fi
+
+  local RW=66 BAR_W=34
 
   local note hpad; note=$(_insights_window_label "$days")
   hpad=$(( RW - 14 - ${#note} )); (( hpad < 1 )) && hpad=1
@@ -666,9 +823,18 @@ _cmd_tools() {
   fi
   local days="$_IW_DAYS"
 
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv tools; return 1; }
+
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _tools_json "{}" "$days"; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _tools_json "$merged" "$days"
     return 0
   fi
 
@@ -788,9 +954,18 @@ _cmd_limits() {
   fi
   local days="$_IW_DAYS"
 
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv limits; return 1; }
+
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _limits_json "{}" "$days"; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _limits_json "$merged" "$days"
     return 0
   fi
 

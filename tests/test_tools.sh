@@ -86,4 +86,26 @@ assert_contains "tools --days foo: exit 1" "rc=1" "$_TLS_DV"
 _TLS_HELP=$(bash "$CLAUDII_HOME/bin/claudii" tools --help 2>&1)
 assert_contains "tools --help: usage" "Usage: claudii tools" "$_TLS_HELP"
 
+# ── --json: counts + error/subagent breakdown, well-formed ──
+# 23 calls (20 Bash + Read + Agent + MCP), 2 Bash errors → ok 91.3%, Explore ×1.
+_TLS_JSON=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tools --json 2>&1)
+assert_eq "tools --json: well-formed JSON" "0" \
+  "$(printf '%s' "$_TLS_JSON" | jq empty >/dev/null 2>&1; echo $?)"
+assert_eq "tools --json: total_calls=23" "23" \
+  "$(printf '%s' "$_TLS_JSON" | jq -r '.total_calls')"
+assert_eq "tools --json: total_errors=2" "2" \
+  "$(printf '%s' "$_TLS_JSON" | jq -r '.total_errors')"
+assert_eq "tools --json: ok_pct=91.3" "91.3" \
+  "$(printf '%s' "$_TLS_JSON" | jq -r '.ok_pct')"
+assert_eq "tools --json: top tool is Bash ×20" "Bash 20" \
+  "$(printf '%s' "$_TLS_JSON" | jq -r '.tools[0] | "\(.name) \(.calls)"')"
+assert_eq "tools --json: subagent Explore present" "Explore" \
+  "$(printf '%s' "$_TLS_JSON" | jq -r '.subagents[] | select(.type=="Explore") | .type')"
+_TLS_TSV=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tools --tsv 2>&1; echo "rc=$?")
+assert_contains "tools --tsv: rejected, points to --json" "use --json" "$_TLS_TSV"
+assert_contains "tools --tsv: exit 1" "rc=1" "$_TLS_TSV"
+
 unset _SID _TS _JSONL _bash_uses _i _TLS_OUT _TLS_RC _TLS_EOUT _TLS_DV _TLS_HELP
+unset _TLS_JSON _TLS_TSV

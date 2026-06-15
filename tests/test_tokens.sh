@@ -122,5 +122,41 @@ assert_not_contains "tokens --days foo: no misleading no-data message" "No insig
 _TOK_HELP=$(bash "$CLAUDII_HOME/bin/claudii" tokens --help 2>&1)
 assert_contains "tokens --help: usage line" "Usage: claudii tokens" "$_TOK_HELP"
 
+# ── --json: well-formed structured output carrying the curated view ──
+# Fixture: Opus in=50/out=200/cr=900/cc=50, Sonnet in=100/out=100/cr=700/cc=200.
+_TOK_JSON=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens --json 2>&1)
+assert_eq "tokens --json: well-formed JSON" "0" \
+  "$(printf '%s' "$_TOK_JSON" | jq empty >/dev/null 2>&1; echo $?)"
+assert_eq "tokens --json: window_days=7" "7" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.window_days')"
+assert_eq "tokens --json: by_type.input=150 (50+100)" "150" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.by_type.input')"
+assert_eq "tokens --json: by_type.output=300 (200+100)" "300" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.by_type.output')"
+assert_eq "tokens --json: two models" "2" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.by_model | length')"
+assert_contains "tokens --json: top model is opus (most in+out)" "opus" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.by_model[0].model')"
+assert_eq "tokens --json: opus hit_pct=90 (900/(900+50+50))" "90" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '.by_model[] | select(.model|test("opus")) | .hit_pct')"
+assert_eq "tokens --json: raw ids, not friendly labels" "" \
+  "$(printf '%s' "$_TOK_JSON" | jq -r '[.by_model[].model | select(test("Opus|Sonnet"))] | join(",")')"
+
+# --tsv has no flat shape for this view → actionable rejection, not silent ignore
+_TOK_TSV=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens --tsv 2>&1; echo "rc=$?")
+assert_contains "tokens --tsv: rejected, points to --json" "use --json" "$_TOK_TSV"
+assert_contains "tokens --tsv: exit 1" "rc=1" "$_TOK_TSV"
+
+# Empty cache still emits a valid, same-shape envelope (not a bare message)
+_TOK_JSON_E=$(CLAUDE_PROJECTS_DIR="$_TOK_EPROJ" CLAUDII_CACHE_DIR="$_TOK_ECACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens --json 2>&1)
+assert_eq "tokens --json (empty): still well-formed JSON" "0" \
+  "$(printf '%s' "$_TOK_JSON_E" | jq empty >/dev/null 2>&1; echo $?)"
+assert_eq "tokens --json (empty): by_model is []" "0" \
+  "$(printf '%s' "$_TOK_JSON_E" | jq -r '.by_model | length')"
+
 unset _SID _TS _JSONL _TOK_OUT _TOK_RC _TOK_OUT_30 _TOK_EOUT _TOK_DV _TOK_HELP
 unset _TOK_TODAY _TOK_30D _TOK_MONTH _TOK_YEAR _TOK_BAD
+unset _TOK_JSON _TOK_TSV _TOK_JSON_E

@@ -151,6 +151,7 @@ _claudii() {
             '90d:Last 90 days'
             'year:Last 365 days'
             '--days:Explicit rolling window in days'
+            '--json:Structured JSON output'
           )
           _describe 'window' win_opts
           ;;

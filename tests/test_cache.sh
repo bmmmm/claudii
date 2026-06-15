@@ -64,6 +64,27 @@ assert_contains "cache bogus: actionable unknown-arg error" "unknown cache argum
 assert_contains "cache bogus: exit 1" "rc=1" "$_CACHE_BAD"
 unset _CACHE_30D _CACHE_BAD
 
+# ── --json: structured output mirrors the rendered numbers ────────────────
+# Opus cr=950/cc=10/in=40, Sonnet cr=800/cc=100/in=100 → read 1750, total 2000,
+# hit 87.5% (same figure the pretty summary prints).
+_CACHE_JSON=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" cache --json 2>&1)
+assert_eq "cache --json: well-formed JSON" "0" \
+  "$(printf '%s' "$_CACHE_JSON" | jq empty >/dev/null 2>&1; echo $?)"
+assert_eq "cache --json: window_days=7" "7" \
+  "$(printf '%s' "$_CACHE_JSON" | jq -r '.window_days')"
+assert_eq "cache --json: summary.cache_read=1750" "1750" \
+  "$(printf '%s' "$_CACHE_JSON" | jq -r '.summary.cache_read')"
+assert_eq "cache --json: summary.hit_pct=87.5" "87.5" \
+  "$(printf '%s' "$_CACHE_JSON" | jq -r '.summary.hit_pct')"
+assert_eq "cache --json: two models (synthetic excluded)" "2" \
+  "$(printf '%s' "$_CACHE_JSON" | jq -r '.per_model | length')"
+_CACHE_TSV=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" cache --tsv 2>&1; echo "rc=$?")
+assert_contains "cache --tsv: rejected, points to --json" "use --json" "$_CACHE_TSV"
+assert_contains "cache --tsv: exit 1" "rc=1" "$_CACHE_TSV"
+unset _CACHE_JSON _CACHE_TSV
+
 # ── Empty cache (no projects) renders the empty-state line ────────────────
 _EMPTY_PROJ="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_EMPTY_PROJ")
 _EMPTY_CACHE="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_EMPTY_CACHE")

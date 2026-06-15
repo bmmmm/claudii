@@ -79,4 +79,27 @@ assert_contains "limits --days foo: exit 1" "rc=1" "$_LIM_DV"
 _LIM_HELP=$(bash "$CLAUDII_HOME/bin/claudii" limits --help 2>&1)
 assert_contains "limits --help: usage" "Usage: claudii limits" "$_LIM_HELP"
 
+# ── --json: hits newest-first + per-model tally, well-formed ──
+# 3 hits: 2026-06-11 20:00 (Haiku), 2026-06-10 11:45 + 11:29 (Opus). Window 90d
+# covers them (same lifespan as the --days 60 run above).
+_LIM_JSON=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" limits --json --days 90 2>&1)
+assert_eq "limits --json: well-formed JSON" "0" \
+  "$(printf '%s' "$_LIM_JSON" | jq empty >/dev/null 2>&1; echo $?)"
+assert_eq "limits --json: total=3" "3" \
+  "$(printf '%s' "$_LIM_JSON" | jq -r '.total')"
+assert_eq "limits --json: 3 hits listed" "3" \
+  "$(printf '%s' "$_LIM_JSON" | jq -r '.hits | length')"
+assert_eq "limits --json: newest hit first (2026-06-11 20:00)" "2026-06-11T20:00:00Z" \
+  "$(printf '%s' "$_LIM_JSON" | jq -r '.hits[0].timestamp')"
+assert_contains "limits --json: by_model top is opus" "opus" \
+  "$(printf '%s' "$_LIM_JSON" | jq -r '.by_model[0].model')"
+assert_eq "limits --json: opus hit count 2" "2" \
+  "$(printf '%s' "$_LIM_JSON" | jq -r '.by_model[] | select(.model|test("opus")) | .count')"
+_LIM_TSV=$(CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" limits --tsv 2>&1; echo "rc=$?")
+assert_contains "limits --tsv: rejected, points to --json" "use --json" "$_LIM_TSV"
+assert_contains "limits --tsv: exit 1" "rc=1" "$_LIM_TSV"
+
 unset _SID _JSONL _LIM_OUT _LIM_RC _LIM_NOUT _LIM_EOUT _LIM_DV _LIM_HELP
+unset _LIM_JSON _LIM_TSV
