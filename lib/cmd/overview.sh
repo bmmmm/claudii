@@ -47,6 +47,7 @@ _ov_hint() {
 # reap (or a standalone render) is always set -u-safe.
 _OV_HIST_PID=""
 _OV_HIST_TMP=""
+_OV_HIST_RAW=""
 _ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0 _ov_uv_tsess=0
 _ov_uv_have_hist=0
 
@@ -70,7 +71,7 @@ _ov_history_parse() {
 # loses data while keeping a spare only costs a parse.
 _ov_history_kick() {
   _ov_uv_series="" _ov_uv_max=0 _ov_uv_today=0 _ov_uv_total=0 _ov_uv_active=0 _ov_uv_peak=0 _ov_uv_tsess=0
-  _ov_uv_have_hist=0 _OV_HIST_PID="" _OV_HIST_TMP=""
+  _ov_uv_have_hist=0 _OV_HIST_PID="" _OV_HIST_TMP="" _OV_HIST_RAW=""
   _collect_history_files "$cache_dir" "$(( now - 31 * 86400 ))"
   if (( ${#_HIST_FILES[@]} == 0 )); then return 0; fi
   _ov_uv_have_hist=1
@@ -82,21 +83,30 @@ _ov_history_kick() {
         "${_HIST_FILES[@]}" >"$_OV_HIST_TMP" 2>/dev/null || true ) &
     _OV_HIST_PID=$!
   else
-    # mktemp unavailable → compute synchronously so the section still renders.
-    _ov_history_parse "$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+    # mktemp unavailable → run the awk synchronously but STASH its raw output.
+    # The parse must still happen in _ov_history_reap (after _ov_gather resets
+    # _ov_today_*), otherwise the account "today" figures would diverge: this
+    # path would show session-cache sums while the normal background path shows
+    # history deltas. Same parse, same place — just no parallelism.
+    _OV_HIST_RAW=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
         -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
-        "${_HIST_FILES[@]}" 2>/dev/null)"
+        "${_HIST_FILES[@]}" 2>/dev/null) || _OV_HIST_RAW=""
   fi
   return 0
 }
 
-# Reap the backgrounded history pass: wait, parse, clean up. No-op when no
-# background job ran (no history, or the synchronous fallback already parsed).
+# Reap the history pass and parse it into the globals — always after the gather
+# loop (which resets _ov_today_*), so both the background and the mktemp-fail
+# synchronous paths land identical history-based account figures. No-op when no
+# history existed (neither a temp file nor a stashed raw output was produced).
 _ov_history_reap() {
-  if [[ -z "$_OV_HIST_TMP" ]]; then return 0; fi
-  if [[ -n "$_OV_HIST_PID" ]]; then wait "$_OV_HIST_PID" 2>/dev/null || true; fi
-  _ov_history_parse "$(cat "$_OV_HIST_TMP" 2>/dev/null || true)"
-  rm -f "$_OV_HIST_TMP" 2>/dev/null
+  if [[ -n "$_OV_HIST_TMP" ]]; then
+    if [[ -n "$_OV_HIST_PID" ]]; then wait "$_OV_HIST_PID" 2>/dev/null || true; fi
+    _ov_history_parse "$(cat "$_OV_HIST_TMP" 2>/dev/null || true)"
+    rm -f "$_OV_HIST_TMP" 2>/dev/null
+  elif [[ -n "$_OV_HIST_RAW" ]]; then
+    _ov_history_parse "$_OV_HIST_RAW"
+  fi
   return 0
 }
 
@@ -541,6 +551,11 @@ _cmd_default() {
   _cfg_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   now=$(date +%s); _NOW="$now"
+  # Remove the prefetch temp files even on Ctrl-C during the ~0.5s render window
+  # (the reaps handle the normal path; this covers the interrupt). Safe to claim
+  # the EXIT trap here — the overview path runs no spinner, so nothing else owns
+  # it; the names expand at fire time, empty when no job was kicked.
+  trap 'rm -f "$_OV_HIST_TMP" "$_LIVE_PIDS_TMP" 2>/dev/null || true' EXIT
   # Fire the two heavy, independent subprocesses now so they run while we print
   # the header and walk the session caches; _ov_gather reaps both — live PIDs
   # before the session loop, the history pass after it.
