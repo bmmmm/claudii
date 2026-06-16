@@ -250,6 +250,10 @@ _ov_render_account() {
       _fmt_rel "$_ov_remaining"
       [[ -z "$_REL_FMT" ]] && _REL_FMT="${_ov_rem_min}m"
       _ov_acct_line+=" ${_ov_reset_clr}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
+      # Absolute wall-clock time of the reset — within a 5h window the
+      # time-of-day is unambiguous, so HH:MM suffices (timezone-aware).
+      _fmt_abs "$_ov_acct_reset" '%H:%M'
+      [[ -n "$_ABS_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ABS_FMT})${CLAUDII_CLR_RESET}"
     fi
   fi
   if [[ -n "$_ov_acct_7d" ]]; then
@@ -287,6 +291,10 @@ _ov_render_account() {
     if [[ "$_ov_acct_reset_7d" =~ ^[0-9]+$ && "$_ov_acct_reset_7d" != "0" ]]; then
       _fmt_rel $(( _ov_acct_reset_7d - now ))
       [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
+      # Absolute date+time of the 7d reset — within a week the weekday is
+      # unambiguous, so "Wed 16:30" pins it without a full date.
+      _fmt_abs "$_ov_acct_reset_7d" '%a %H:%M'
+      [[ -n "$_ABS_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ABS_FMT})${CLAUDII_CLR_RESET}"
     fi
   fi
   # Today's token throughput with accent color, and session count.
@@ -401,7 +409,7 @@ _ov_render_activity() {
   if (( _ov_vm_ok )); then
     printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}last 43d${CLAUDII_CLR_RESET}\n"
     printf "    %s\n" "$_ov_vm_strip"
-    _ov_hint "claudii vibemap" "claudii vibemap strip"
+    _ov_hint "claudii vibemap" "claudii vibemap grid"
   else
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Activity                        claudii config set vibemap.enabled true${CLAUDII_CLR_RESET}\n"
   fi

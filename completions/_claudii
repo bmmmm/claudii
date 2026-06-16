@@ -49,7 +49,7 @@ _claudii() {
         'agents:List configured agents (alias → skill mapping) or show onboarding'
         'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
-        'vibemap:Activity heatmap (opt-in) — grid / strip / status / clear / path'
+        'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
         'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
         'resume:Resume a session by ID'
         'insomnii:Bedtime statusline plugin (on/off/auto/status/install)'
@@ -213,12 +213,12 @@ _claudii() {
         vibemap)
           local -a vibemap_opts
           vibemap_opts=(
-            'grid:Weekday × 3-hour-bin heatmap (default)'
-            'strip:Last N days × 24-hour heatmap (use --days N)'
+            'strip:Last N days × 24-hour heatmap (default view, use --days N)'
+            'grid:Weekday × 3-hour-bin heatmap'
             'status:Show enabled/path/entries/oldest entry'
             'path:Print the vibemap file path'
             'clear:Delete the vibemap file'
-            '--days:Number of days for strip view (1..90, default 14)'
+            '--days:Number of days for strip view (1..90, default 30)'
           )
           _describe 'vibemap command' vibemap_opts
           ;;

@@ -79,5 +79,26 @@ _ovs_out3=$(_ovs_plain)
 assert_contains "unknown section: warning names the bad value" "unknown overview section 'bogus'" "$_ovs_out3"
 assert_contains "unknown section: rest of overview still renders" "Account" "$_ovs_out3"
 
+# ── Account: wall-clock reset time alongside the relative countdown ──────────
+# A session cache with future 5h/7d reset epochs makes the account line render
+# real rate data (not the "appears after first session" placeholder), so the
+# new absolute reset time is exercised. The time is matched as a bare HH:MM
+# pattern, not a fixed value — _fmt_abs is timezone-aware, so the wall clock
+# varies by machine/CI locale (keeps the de_DE matrix green).
+_ovs_rnow=$(date +%s)
+printf 'model=Sonnet\nctx_pct=50\ncost=1.00\ntok=1000\ncache_pct=50\nrate_5h=30\nrate_7d=20\nrate_7d_start=15\nreset_5h=%s\nreset_7d=%s\nsession_id=acct\nppid=%s\n' \
+  "$(( _ovs_rnow + 3600 ))" "$(( _ovs_rnow + 2 * 86400 ))" "$$" \
+  > "$_ovs_tmp/cache/session-acct"
+cp "$CLAUDII_HOME/config/defaults.json" "$_ovs_xdg/claudii/config.json"
+_ovs_acct=$(_ovs_plain)
+# The relative countdown is still there (proves the real rate line rendered).
+assert_contains "account: relative reset countdown still present" "↺" "$_ovs_acct"
+# Both the 5h and 7d resets append an absolute HH:MM time → at least two matches.
+_ovs_times=$(echo "$_ovs_acct" | grep -oE '[0-9][0-9]:[0-9][0-9]' | wc -l | tr -d ' ')
+(( _ovs_times >= 2 )) && _ok=1 || _ok=0
+assert_eq "account: 5h and 7d resets show a wall-clock time (HH:MM)" "1" "$_ok"
+rm -f "$_ovs_tmp/cache/session-acct"
+unset _ovs_rnow _ovs_acct _ovs_times _ok
+
 rm -rf "$_ovs_tmp"
 unset _ovs_tmp _ovs_xdg _ovs_out _ovs_out2 _ovs_out3 _ovs_svc_line _ovs_acct_line _ovs_ordered _sec

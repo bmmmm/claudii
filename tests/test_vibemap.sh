@@ -273,7 +273,7 @@ EOF
 # output is not a TTY, so auto-colors would blank it.
 _grid_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
   XDG_CONFIG_HOME="$_vm_home4/.config" CLAUDII_FORCE_COLOR=1 \
-  bash "$CLAUDII_HOME/bin/claudii" vibemap 2>&1)
+  bash "$CLAUDII_HOME/bin/claudii" vibemap grid 2>&1)
 
 # Header must contain ▶ marker (today's column)
 echo "$_grid_out" | grep -q "▶" && _ok=1 || _ok=0
@@ -285,6 +285,17 @@ assert_eq "grid today-column: output contains accent ANSI escape" "1" "$_ok"
 
 # Legend line must mention today
 assert_contains "grid today-column: legend mentions today" "today" "$_grid_out"
+
+# Default view (no subcommand) now renders the 30-day strip, not the grid.
+_def_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
+  XDG_CONFIG_HOME="$_vm_home4/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" vibemap 2>&1)
+echo "$_def_out" | grep -q "last 30 days" && _ok=1 || _ok=0
+assert_eq "vibemap default: bare 'vibemap' renders the 30-day strip" "1" "$_ok"
+# The strip header is "00 03 06 …"; the grid's "00-03" bin labels must be absent.
+echo "$_def_out" | grep -qE '00-03|21-00' && _ok=0 || _ok=1
+assert_eq "vibemap default: bare 'vibemap' is not the weekday grid" "1" "$_ok"
+unset _def_out
 
 rm -rf "$_vm_home4"
 

@@ -189,7 +189,7 @@ _vibemap_render_grid() {
 #     density char for the current hour), so the total row width stays 24
 #     columns — matching the header `00 03 06 09 12 15 18 21`.
 _vibemap_render_strip() {
-  local days="${1:-14}"
+  local days="${1:-30}"
   if [[ ! "$days" =~ ^[0-9]+$ ]] || (( days < 1 || days > 90 )); then
     printf 'vibemap: --days must be 1..90 (got %s)\n' "$days" >&2
     return 2
@@ -368,8 +368,9 @@ Logs one line per cc-statusline render to ~/.cache/claudii/vibemap.tsv —
 local file only, never transmitted, no prompt content stored.
 
 Subcommands:
-  (none) | grid       Default view: weekday × 3-hour bin grid
-  strip [--days N]    Last N days × 24 hours strip (default 14, max 90)
+  (none)              Default view: last 30 days × 24 hours
+  strip [--days N]    Same strip with a custom window (default 30, max 90)
+  grid                Weekday × 3-hour bin grid
   status              Show enabled/path/entries/oldest entry
   path                Print the vibemap file path
   clear               Delete the vibemap file (with no confirmation)
@@ -383,14 +384,15 @@ EOF
 _cmd_vibemap() {
   shift  # remove "vibemap" itself
   case "${1:-}" in
-    ""|grid)              _vibemap_render_grid ;;
+    "")                   _vibemap_render_strip 30 ;;
+    grid)                 _vibemap_render_grid ;;
     strip|--recent)
       shift
-      local days=14
-      if [[ "${1:-}" == "--days" ]]; then days="${2:-14}"; fi
+      local days=30
+      if [[ "${1:-}" == "--days" ]]; then days="${2:-30}"; fi
       _vibemap_render_strip "$days"
       ;;
-    --days)               _vibemap_render_strip "${2:-14}" ;;
+    --days)               _vibemap_render_strip "${2:-30}" ;;
     clear)                _vibemap_clear ;;
     path)                 _vibemap_print_path ;;
     status)               _vibemap_show_status ;;

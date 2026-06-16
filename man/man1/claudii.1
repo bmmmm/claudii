@@ -181,7 +181,8 @@ Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache \(-> Session Dashboard
 Running
 .B claudii
 with no arguments prints the Overview: a modular status page built from
-sections. Default order: account (rate limits + today's token throughput), usage
+sections. Default order: account (rate limits with reset countdown and
+wall-clock reset time + today's token throughput), usage
 (30-day token-per-day sparkline from history, with today/average/peak),
 sessions (active/inactive/stale counts, next cron wake, bg tasks), activity
 (mini vibemap strip), agents (configured agents grouped by model tier,
@@ -757,14 +758,17 @@ Schema:
 No prompt content is recorded.
 .TP
 .B vibemap
-Weekday \[mu] 3-hour-bin grid (default view).
-Today\[aq]s weekday column is highlighted in accent color with a \[u25B6] prefix.
+Last 30 days \[mu] 24-hour strip (default view).
+Today\[aq]s row is highlighted with a \[u25B6] marker and a cursor at the current hour.
 .TP
 .BI "vibemap strip" " [--days N]"
-Last
+The same strip with a custom window: last
 .I N
-days \[mu] 24-hour strip (default 14, range 1\(en90).
-Today\[aq]s row is highlighted with a \[u25B6] marker and a cursor at the current hour.
+days \[mu] 24 hours (default 30, range 1\(en90).
+.TP
+.B "vibemap grid"
+Weekday \[mu] 3-hour-bin grid.
+Today\[aq]s weekday column is highlighted in accent color with a \[u25B6] prefix.
 .TP
 .B "vibemap status"
 Show enabled state, file path, entry count, and oldest entry.

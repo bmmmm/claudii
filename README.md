@@ -109,8 +109,8 @@ claudii omlx [status|connect|test|disconnect]
 claudii vpnii [set <name>|clear|show]
                                  # WireGuard tunnel marker for the VPN segment
                                  # (call from wg-quick PostUp/PreDown)
-claudii vibemap [grid|strip|status|clear|path]
-                                 # opt-in activity heatmap (default off)
+claudii vibemap [strip|grid|status|clear|path]
+                                 # opt-in activity heatmap, last 30 days (default off)
 ```
 
 Most data commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
