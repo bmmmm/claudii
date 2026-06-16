@@ -287,14 +287,20 @@ _ov_render_account() {
         _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ov_sign}${_ov_delta_disp}%)${CLAUDII_CLR_RESET}"
       fi
     fi
-    # 7d reset countdown (shared cascade: m / h+m / d+h, zero units suppressed)
+    # 7d reset countdown + absolute time (shared cascade: m / h+m / d+h, zero
+    # units suppressed). Gated on a future reset — mirrors the 5h block's
+    # `_ov_remaining > 0` guard — so a stale cache whose 7d window already
+    # rolled over doesn't print a past wall-clock time with no countdown.
     if [[ "$_ov_acct_reset_7d" =~ ^[0-9]+$ && "$_ov_acct_reset_7d" != "0" ]]; then
-      _fmt_rel $(( _ov_acct_reset_7d - now ))
-      [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
-      # Absolute date+time of the 7d reset — within a week the weekday is
-      # unambiguous, so "Wed 16:30" pins it without a full date.
-      _fmt_abs "$_ov_acct_reset_7d" '%a %H:%M'
-      [[ -n "$_ABS_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ABS_FMT})${CLAUDII_CLR_RESET}"
+      _ov_remaining_7d=$(( _ov_acct_reset_7d - now ))
+      if (( _ov_remaining_7d > 0 )); then
+        _fmt_rel "$_ov_remaining_7d"
+        [[ -n "$_REL_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}↺${_REL_FMT}${CLAUDII_CLR_RESET}"
+        # Absolute date+time of the 7d reset — within a week the weekday is
+        # unambiguous, so "Wed 16:30" pins it without a full date.
+        _fmt_abs "$_ov_acct_reset_7d" '%a %H:%M'
+        [[ -n "$_ABS_FMT" ]] && _ov_acct_line+=" ${CLAUDII_CLR_DIM}(${_ABS_FMT})${CLAUDII_CLR_RESET}"
+      fi
     fi
   fi
   # Today's token throughput with accent color, and session count.
