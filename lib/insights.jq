@@ -20,9 +20,23 @@
 # Schema versioning: bump `schema_version` on every breaking change to the
 # output shape so `claudii-insights` can detect stale caches and force-rebuild.
 
+# Parse a Claude Code ISO timestamp (may carry millis / offset) to epoch
+# seconds: take YYYY-MM-DDTHH:MM:SS and force UTC. fromdateiso8601 rejects the
+# fractional ".456Z" form, so the [0:19]+"Z" slice is the robust path.
+def ts: .[0:19] + "Z" | fromdateiso8601;
+
+# Repo identity from a working directory: basename, but for git worktrees
+# (.../<repo>/.claude-worktrees/<wt>) collapse to the parent <repo> so a
+# worktree's perf rolls up under its repo rather than a throwaway wt name.
+def reponame($cwd):
+  ($cwd | split("/")) as $p
+  | ($p | index(".claude-worktrees")) as $w
+  | (if $w != null and $w > 0 then $p[$w-1] else ($p | last) end) // "";
+
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 5,
+  schema_version: 6,
   sessionId: $sid,
+  project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
   last_seen: null,
   messages: 0,
@@ -42,13 +56,17 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   sidechain_msgs: 0,
   thinking_blocks: 0,
   limit_hits: [],          # [{timestamp, model}]
+  latency: [],             # [{day, model, dt_ms, out}] main-thread response deltas (assistant.ts - parent.ts); sidechains excluded
   snapshots: 0,
   pending_tools: {},       # transient: tool_use_id -> tool_name
   pending_agent_skill: {}, # transient: tool_use_id -> attributionSkill at Agent spawn
   agent_skill_map: {},     # transient: agentId -> attributionSkill at spawn
+  seen_ts: {},             # transient: uuid -> timestamp (resolves parentUuid -> ts for latency deltas)
   last_assistant_model: null
 };
   .messages += 1
+  | (if $r.uuid and $r.timestamp then .seen_ts[$r.uuid] = $r.timestamp else . end)
+  | (if $r.cwd then .project = {path: $r.cwd, repo: reponame($r.cwd), branch: ($r.gitBranch // "")} else . end)
   | (if $r.timestamp and (.first_seen == null or $r.timestamp < .first_seen) then .first_seen = $r.timestamp else . end)
   | (if $r.timestamp and (.last_seen == null or $r.timestamp > .last_seen) then .last_seen = $r.timestamp else . end)
   | (if ($r.isSidechain // false) then .sidechain_msgs += 1 else . end)
@@ -71,6 +89,16 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       | .models[$model].in_tok       = ((.models[$model].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
       | .models[$model].cache_read   = ((.models[$model].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
       | .models[$model].cache_create = ((.models[$model].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+      # Response latency (main thread only): assistant.ts - parent.ts. Sidechain
+      # records interleave concurrently, so their deltas are meaningless -> excluded.
+      # The 600s cap drops resume gaps (parent from a prior day). OTEL (phase 2)
+      # replaces this estimate with exact api_request.duration_ms.
+      | (if (($r.isSidechain // false) | not) and $r.parentUuid and (.seen_ts[$r.parentUuid] != null) and $r.timestamp then
+          ((($r.timestamp | ts) - (.seen_ts[$r.parentUuid] | ts)) * 1000 | round) as $dt
+          | (if $dt >= 0 and $dt <= 600000 then
+              .latency += [{day: $day, model: $model, dt_ms: $dt, out: ($r.message.usage.output_tokens // 0)}]
+            else . end)
+        else . end)
       | (if $skill != null then
           .attribution_skills[$skill].calls       = ((.attribution_skills[$skill].calls       // 0) + 1)
           | .attribution_skills[$skill].in_tok     = ((.attribution_skills[$skill].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
@@ -159,4 +187,5 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
 | del(.pending_tools)
 | del(.pending_agent_skill)
 | del(.agent_skill_map)
+| del(.seen_ts)
 | del(.last_assistant_model)

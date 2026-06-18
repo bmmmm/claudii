@@ -37,6 +37,7 @@ def add_models(a; b):
       sidechain_msgs: 0,
       thinking_blocks: 0,
       limit_hits: [],
+      latency: [],
       snapshots: 0,
       first_seen: null,
       last_seen: null,
@@ -59,6 +60,9 @@ def add_models(a; b):
     | .sidechain_msgs += ($s.sidechain_msgs // 0)
     | .thinking_blocks += ($s.thinking_blocks // 0)
     | .limit_hits += [ ($s.limit_hits // [])[] | . + {sessionId: $s.sessionId} ]
+    # latency is large (one entry per response) — only the perf command needs it.
+    # Gated on $with_latency so cache/tokens/tools/limits don't drag ~10MB they ignore.
+    | (if $with_latency then .latency += [ ($s.latency // [])[] | . + {repo: ($s.project.repo // "?"), sessionId: $s.sessionId} ] else . end)
     | .snapshots += ($s.snapshots // 0)
     | (if $s.first_seen and (.first_seen == null or $s.first_seen < .first_seen) then .first_seen = $s.first_seen else . end)
     | (if $s.last_seen  and (.last_seen  == null or $s.last_seen  > .last_seen)  then .last_seen  = $s.last_seen  else . end)

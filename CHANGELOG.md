@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **`claudii perf` (alias `pf`) — token-performance & API-health dashboard** — a new insights command that surfaces response time and output throughput, derived from the JSONL transcripts with no extra setup. Latency is the wall-clock gap between each assistant response and its parent record (`assistant.timestamp − parent.timestamp`, main-thread only — sidechains interleave concurrently and are excluded); throughput is output tokens over that time. Sections: **By model** (response-time p50/p90/p99 + tok/s), a **Latency trend** (per-day p50 sparkline with a today-vs-baseline delta as an early-warning signal), a **By repo** breakdown (or **By session** under `--repo NAME`), and a one-line **API health** read from the ClaudeStatus cache. Cycleable windows (`today`/`7d`/`30d`/`year`/`--days N`) and `--json`, like the sibling insights commands. Backed by insights cache schema v6, which adds a per-response `latency` list and a `project` field (`cwd`→repo/branch); the latency list is large, so the merge only emits it behind `--with-latency` (perf-only) — `tokens`/`cache`/`tools`/`limits` are unaffected. Latency is a transcript estimate (no TTFT); a planned OpenTelemetry path will replace it with exact `duration_ms`, real API error codes and TTFT.
+
 ---
 
 ## [v0.24.0] — 2026-06-18

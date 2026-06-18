@@ -80,6 +80,7 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Activity & Insights${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "vibemap [grid|strip|status]"     "activity heatmap (opt-in)"
   printf "    %-33s $d %s\n" "tokens [--days N]"               "token usage by type / model / day"
+  printf "    %-33s $d %s\n" "perf (pf) [--repo NAME]"         "response-time p50/p90/p99, tok/s, latency trend, health"
   printf "    %-33s $d %s\n" "tools [--days N]"                "tool call counts, error rates, subagents"
   printf "    %-33s $d %s\n" "limits [--days N]"               "rate-limit hits — when + which model"
   printf "    %-33s $d %s\n" "cache [--days N]"                "prompt-cache hit-rate insights"
@@ -126,10 +127,12 @@ source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
 source "$CLAUDII_HOME/lib/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/insights.sh"
+source "$CLAUDII_HOME/lib/cmd/perf.sh"
 
 # Shorthand aliases — expand before main dispatcher.
 case "${1:-}" in
   s)     set -- status             "${@:2}" ;;
+  pf)    set -- perf               "${@:2}" ;;
   se)    set -- sessions           "${@:2}" ;;
   ss)    set -- sessions           "${@:2}" ;;
   si)    set -- sessions-inactive  "${@:2}" ;;
@@ -176,6 +179,7 @@ case "${1:-}" in
   cache)               _cmd_cache "$@"        ;;
   tokens)              _cmd_tokens "$@"       ;;
   tools)               _cmd_tools "$@"        ;;
+  perf)                _cmd_perf "$@"         ;;
   limits)              _cmd_limits "$@"       ;;
   session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;

@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 5" "5" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 6" "6" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -159,7 +159,7 @@ _HAIKU_TOTAL=$(echo "$_RESULT_SUB" | jq '.models["claude-haiku-4-5"].in_tok // e
 assert_eq "insights subagent: haiku in_tok in session models == 65" "65" "$_HAIKU_TOTAL"
 
 # Transient bookkeeping is stripped
-_TRANSIENT=$(echo "$_RESULT_SUB" | jq 'has("pending_agent_skill") or has("agent_skill_map") or has("pending_tools")' 2>/dev/null)
+_TRANSIENT=$(echo "$_RESULT_SUB" | jq 'has("pending_agent_skill") or has("agent_skill_map") or has("pending_tools") or has("seen_ts")' 2>/dev/null)
 assert_eq "insights subagent: transient maps stripped" "false" "$_TRANSIENT"
 
 # ── Message count sanity checks ──────────────────────────────────────────────

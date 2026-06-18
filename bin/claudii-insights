@@ -88,7 +88,7 @@ _is_stale() {
 
 # Must match `schema_version` in lib/insights.jq — bump both together on any
 # breaking change to the per-session cache shape (drives the rebuild gate below).
-SCHEMA_VERSION=5
+SCHEMA_VERSION=6
 
 # Schema gate: compare the .schema marker written after the last successful
 # rebuild. The previous approach (min schema_version across ALL cache files)
@@ -173,13 +173,14 @@ _cmd_aggregate() {
 # filter anything. Removed rather than silently no-op'ing; needs a schema bump
 # to implement for real.)
 _cmd_merge() {
-  local days="" until_days=""
+  local days="" until_days="" wl=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --days)       shift; days="${1:-}" ;;
-      --until-days) shift; until_days="${1:-}" ;;
+      --days)         shift; days="${1:-}" ;;
+      --until-days)   shift; until_days="${1:-}" ;;
+      --with-latency) wl=true ;;
       *) printf 'merge: unknown option: %s\n' "$1" >&2
-         printf 'Usage: claudii-insights merge [--days N] [--until-days M]\n' >&2; exit 1 ;;
+         printf 'Usage: claudii-insights merge [--days N] [--until-days M] [--with-latency]\n' >&2; exit 1 ;;
     esac
     shift
   done
@@ -223,6 +224,7 @@ _cmd_merge() {
   jq -n \
     --arg cutoff "$cutoff_iso" \
     --arg until "$until_iso" \
+    --argjson with_latency "$wl" \
     -f "$CLAUDII_HOME/lib/insights-merge.jq" "${files[@]}"
 }
 

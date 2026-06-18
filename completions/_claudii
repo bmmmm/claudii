@@ -35,6 +35,8 @@ _claudii() {
         'skills-cost:Per-skill, per-plugin and per-MCP-tool cost breakdown from attribution data'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
         'tokens:Token usage breakdown by type, model and day (7d default)'
+        'perf:Response-time p50/p90/p99, throughput (tok/s), latency trend and API health (7d default)'
+        'pf:Shorthand for perf'
         'tools:Tool call counts, error rates, subagents and thinking volume (7d default)'
         'limits:Rate-limit hits — when they happened and which model ran (7d default)'
         'cache:Prompt-cache hit rate per day and per model (7d default)'
@@ -154,6 +156,21 @@ _claudii() {
             '--json:Structured JSON output'
           )
           _describe 'window' win_opts
+          ;;
+
+        perf|pf)
+          local -a perf_opts
+          perf_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days (default)'
+            '30d:Last 30 days'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--days:Explicit rolling window in days'
+            '--repo:Narrow every section to one repository'
+            '--json:Structured JSON output'
+          )
+          _describe 'perf option' perf_opts
           ;;
 
         resume)

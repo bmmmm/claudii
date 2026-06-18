@@ -24,6 +24,9 @@ Live health check:
 Show active sessions with token throughput and rate limits:
 .B claudii se
 .TP
+Response-time and throughput for one repo:
+.B claudii perf --repo claudii
+.TP
 Read a config value:
 .B claudii config get aliases.cl.model
 .TP
@@ -104,7 +107,7 @@ Example agent aliases — see
 .B \-\-json
 Output structured JSON instead of formatted text.
 Available for:
-.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " tools ", " limits ", " cache .
+.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " limits ", " cache .
 .TP
 .B \-\-tsv
 Output tab-separated values (header + data rows).
@@ -622,6 +625,53 @@ Override the rolling window with an explicit day count.
 .B \-\-json
 Emit the view as structured JSON (the curated aggregate, raw model ids) instead
 of the formatted tables.
+.RE
+.TP
+.B perf
+Response-time and throughput dashboard for the rolling window (default: 7 days).
+Latency is estimated from the JSONL transcripts as the wall-clock gap between an
+assistant response and its parent record
+.RB ( assistant.timestamp " \(mi " parent.timestamp ),
+main-thread responses only (sidechains interleave concurrently and are excluded).
+Sections:
+.B By model
+(response-time
+.BR p50 / p90 / p99
+and output
+.BR tok/s ),
+a
+.B Latency trend
+(per-day p50 sparkline with a today-vs-baseline delta as an early-warning
+signal), a
+.B By repo
+breakdown, and a one-line
+.B API health
+read from the ClaudeStatus cache. Throughput is output tokens over end-to-end
+time (includes wait); enabling OpenTelemetry replaces the estimate with exact
+.IR duration_ms .
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.BI "\-\-repo " NAME
+Narrow every section to one repository; the
+.B By repo
+breakdown is replaced by a
+.B By session
+breakdown within that repo.
+.TP
+.B \-\-json
+Emit the view as structured JSON (percentiles in milliseconds, raw model ids)
+instead of the formatted tables.
 .RE
 .
 .SS Configuration
