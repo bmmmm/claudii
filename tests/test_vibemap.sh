@@ -180,7 +180,7 @@ echo "$_ov_out" | grep -q "Activity" && _ok=1 || _ok=0
 assert_eq "overview: Activity section present when vibemap enabled+data" "1" "$_ok"
 
 # The Activity block must contain a real density char (░▒▓█), not just be non-empty.
-# Two ways the old assert passed VACUOUSLY: (a) `tail -n 1` grabbed the "last 43d…"
+# Two ways the old assert passed VACUOUSLY: (a) `tail -n 1` grabbed the "last 30d…"
 # FOOTER line, not the strip; (b) when the mini-strip crashed under set -u (cold cache,
 # bash 5.x), the caller's 2>/dev/null fell through to the disabled placeholder. Grep the
 # whole 2-line block (header + strip) for a density char so the strip itself is asserted.

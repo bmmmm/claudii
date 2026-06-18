@@ -413,7 +413,7 @@ _ov_render_activity() {
   local _ov_vm_strip="" _ov_vm_ok
   _ov_vm_strip=$(_vibemap_mini_strip 2>/dev/null) && _ov_vm_ok=1 || _ov_vm_ok=0
   if (( _ov_vm_ok )); then
-    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}last 43d${CLAUDII_CLR_RESET}\n"
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Activity${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}last 30d${CLAUDII_CLR_RESET}\n"
     printf "    %s\n" "$_ov_vm_strip"
     _ov_hint "claudii vibemap" "claudii vibemap grid"
   else

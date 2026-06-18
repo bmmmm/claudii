@@ -281,7 +281,7 @@ _vibemap_render_strip() {
 }
 
 # Mini-vibemap strip for the bare `claudii` overview.
-# Renders a one-line 43-char strip (rightmost = today, leftmost = oldest day).
+# Renders a one-line 30-char strip (rightmost = today, leftmost = oldest day).
 # Each position is the maximum density char for that calendar day.
 # Does NOT produce output when vibemap.enabled=false or no data exists —
 # callers check $? or pass the return via _vibemap_overview_segment().
@@ -312,9 +312,9 @@ _vibemap_mini_strip() {
     fi
   fi
   local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
-  # Width matches the "last 43d · …" caption below the strip in the overview —
-  # no point keeping the bar artificially narrow when the caption is wider.
-  local minidays=43
+  # Width matches the "last 30d" caption below the strip in the overview and the
+  # 30-day default of `claudii vibemap` (the hint target) — one consistent window.
+  local minidays=30
   local data
   data=$(awk -v now="$now" -v maxdays="$minidays" -v tz_offset="${tz_off:-0}" \
     -f "$CLAUDII_HOME/lib/vibemap-strip.awk" "$_VIBEMAP_PATH")
