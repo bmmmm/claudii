@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.24.0] — 2026-06-18
+
 ### Added
 - `on`/`off`: touch/remove `presence.file` when configured (`CLAUDE_CLIENT_PRESENCE_FILE` suppresses Claude Code mobile notifications)
 - **The Account section shows each rate limit's wall-clock reset time** — the bare `claudii` overview already printed the relative reset countdown (`↺3h45m`); it now also pins the absolute time the window resets, so you can plan against a clock instead of doing the arithmetic: `↺3h45m (16:30)` for the 5h limit and `↺2d4h (Wed 16:30)` for the 7d limit (the weekday is unambiguous within a week, so no full date). The reset epochs were already cached (`reset_5h`/`reset_7d`, lifted from the Claude Code rate-limit payload by `claudii-cc-statusline`); rendering reuses the timezone-aware `_fmt_abs` (honors `display.timezone`) and only appears when a fresh `session-*` cache carries the reset timestamp — no new data path.
