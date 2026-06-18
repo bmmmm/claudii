@@ -13,6 +13,9 @@
     "session_end": true,
     "osc": "777"
   },
+  "presence": {
+    "file": ""
+  },
   "fallback": {
     "enabled": true,
     "opus":   { "model": "sonnet", "effort": "high" },

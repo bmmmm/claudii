@@ -202,9 +202,16 @@ never data.
 .TP
 .B on
 Enable all three layers at once (ClaudeStatus, Session Dashboard, CC-Statusline).
+When
+.B presence.file
+is configured, removes the presence file (re-enables Claude Code mobile notifications).
 .TP
 .B off
 Disable all three layers at once.
+When
+.B presence.file
+is configured, touches the presence file (suppresses Claude Code mobile notifications via
+.BR CLAUDE_CLIENT_PRESENCE_FILE ) .
 .TP
 .BR "claudestatus " [on|off]
 Toggle only the ClaudeStatus RPROMPT.
@@ -1043,6 +1050,7 @@ notifications.burn_eta	true	Bell + title when burn-ETA < threshold
 notifications.burn_eta_threshold_min	30	Burn-ETA alert threshold (minutes)
 notifications.session_end	true	Desktop notification on session end
 notifications.osc	777	Notify flavor: \fB777\fR (Ghostty/urxvt/Warp) or \fB9\fR (iTerm2/WezTerm)
+presence.file	(empty)	Path touched by \fBoff\fR / removed by \fBon\fR (CLAUDE_CLIENT_PRESENCE_FILE); empty = disabled
 search.dir	~/claude-search	Directory for search mode
 ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)
 debug.level	off	Log level: off/error/warn/info/debug

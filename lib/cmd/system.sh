@@ -16,6 +16,14 @@ _cmd_on() {
       _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
     fi
   fi
+  # CLAUDE_CLIENT_PRESENCE_FILE — wenn konfiguriert, File entfernen
+  local _presence_file
+  _presence_file=$(_cfgget presence.file 2>/dev/null || true)
+  _presence_file="${_presence_file/\$HOME/$HOME}"
+  _presence_file="${_presence_file/\~/$HOME}"
+  if [[ -n "$_presence_file" ]] && [[ -f "$_presence_file" ]]; then
+    rm -f "$_presence_file" 2>/dev/null || true
+  fi
   echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }
 
@@ -26,6 +34,14 @@ _cmd_off() {
   SETTINGS="${HOME}/.claude/settings.json"
   if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
     _jq_update "$SETTINGS" 'del(.statusLine)'
+  fi
+  # CLAUDE_CLIENT_PRESENCE_FILE — wenn konfiguriert, File anlegen (suppresses CC mobile notifications)
+  local _presence_file
+  _presence_file=$(_cfgget presence.file 2>/dev/null || true)
+  _presence_file="${_presence_file/\$HOME/$HOME}"
+  _presence_file="${_presence_file/\~/$HOME}"
+  if [[ -n "$_presence_file" ]]; then
+    touch "$_presence_file" 2>/dev/null || true
   fi
   echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
 }

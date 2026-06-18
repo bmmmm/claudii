@@ -129,6 +129,40 @@ assert_eq "claudestatus bad-arg: exit 1" "1" "$_cds_bad_exit"
 rm -rf "$_cds_base"
 unset _CDS_BASE _CDS_XDG _cds_xdg _cds_base _cds_exit _cds_out _cds_val _cds_noarg_exit _cds_noarg_out _cds_bad_exit
 
+# ── claudii on/off: presence file ─────────────────────────────────────────────
+# off touches presence.file (CLAUDE_CLIENT_PRESENCE_FILE → suppresses CC mobile
+# notifications); on removes it. Empty default = disabled (no file ops).
+# HOME is isolated because on/off also touch $HOME/.claude/settings.json.
+_make_cfg_tmp _PF
+mkdir -p "$_PF_BASE/fakehome/.claude"
+printf '{}' > "$_PF_BASE/fakehome/.claude/settings.json"
+_pf_file="$_PF_BASE/presence-flag"
+jq --arg f "$_pf_file" '.presence.file = $f' "$_PF_XDG/claudii/config.json" > "$_PF_XDG/claudii/config.json.tmp" \
+  && mv "$_PF_XDG/claudii/config.json.tmp" "$_PF_XDG/claudii/config.json"
+
+# claudii off → presence file is created
+HOME="$_PF_BASE/fakehome" XDG_CONFIG_HOME="$_PF_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" off >/dev/null 2>&1 || true
+assert_eq "claudii off: presence file created" "1" \
+  "$([[ -f "$_pf_file" ]] && echo 1 || echo 0)"
+
+# claudii on → presence file is removed
+HOME="$_PF_BASE/fakehome" XDG_CONFIG_HOME="$_PF_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" on >/dev/null 2>&1 || true
+assert_eq "claudii on: presence file removed" "0" \
+  "$([[ -f "$_pf_file" ]] && echo 1 || echo 0)"
+
+# empty presence.file (default) → no file ops, no crash
+_make_cfg_tmp _PFE
+mkdir -p "$_PFE_BASE/fakehome/.claude"
+printf '{}' > "$_PFE_BASE/fakehome/.claude/settings.json"
+_pfe_exit=$(HOME="$_PFE_BASE/fakehome" XDG_CONFIG_HOME="$_PFE_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" off >/dev/null 2>&1; echo $?)
+assert_eq "claudii off (empty presence.file): exit 0" "0" "$_pfe_exit"
+
+rm -rf "$_PF_BASE" "$_PFE_BASE"
+unset _PF_BASE _PF_XDG _PF_CACHE _pf_file _PFE_BASE _PFE_XDG _PFE_CACHE _pfe_exit
+
 # ── cc-statusline on/off ──────────────────────────────────────────────────────
 # cc-statusline requires HOME/.claude/settings.json to exist.
 # We point HOME to a temp dir and create a minimal settings.json there.
