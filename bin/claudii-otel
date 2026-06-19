@@ -9,6 +9,10 @@
 # only claudii<->OTEL coupling is the local JSONL file; nothing here touches the
 # network.
 #
+# Optional fan-out (perf.otel.forward): the receiver tees each batch verbatim to
+# an internal collector gateway. claudii itself never reads the gateway — it
+# only reads the local file; the forward is purely for central retention.
+#
 # Usage:
 #   claudii-otel build [--days N]   # emit {source,latency,errors} JSON on stdout
 #   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
@@ -110,6 +114,12 @@ _cmd_doctor() {
   else
     printf '  env wiring   off — run: claudii-otel setup\n'
   fi
+  local fwd; fwd=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.forward 2>/dev/null)
+  if [[ -n "$fwd" ]]; then
+    printf '  forward      %s (batches mirrored to the gateway)\n' "$fwd"
+  else
+    printf '  forward      off (local-only; set perf.otel.forward to fan out)\n'
+  fi
 }
 
 # Enable the OTEL path: flip the config flag, write the shell env file the plugin
@@ -118,9 +128,10 @@ _cmd_doctor() {
 # nothing touches ~/Library/LaunchAgents without consent.
 _cmd_setup() {
   local cli="$CLAUDII_HOME/bin/claudii"
-  local endpoint beta
+  local endpoint beta forward
   endpoint=$("$cli" config get perf.otel.endpoint 2>/dev/null); [[ -z "$endpoint" ]] && endpoint="http://127.0.0.1:4318"
   beta=$("$cli" config get perf.otel.beta_traces 2>/dev/null)
+  forward=$("$cli" config get perf.otel.forward 2>/dev/null)
   "$cli" config set perf.otel.enabled true >/dev/null 2>&1
 
   mkdir -p "$OTEL_DIR"
@@ -135,10 +146,15 @@ _cmd_setup() {
     printf '%s\n' 'export OTEL_EXPORTER_OTLP_PROTOCOL=http/json'
     printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$endpoint"
     [[ "$beta" == "true" ]] && printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
+    [[ -n "$forward" ]] && printf 'export CLAUDII_OTEL_FORWARD=%s\n' "$forward"
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)
   local plist="$OTEL_DIR/com.claudii.otel-receiver.plist"
+  # The receiver process needs CLAUDII_OTEL_FORWARD too (it does the teeing), so
+  # bake it into the plist env when configured.
+  local fwd_xml=""
+  [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$forward"
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -151,7 +167,9 @@ _cmd_setup() {
     <string>$RECEIVER</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>CLAUDII_OTEL_DIR</key><string>$OTEL_DIR</string></dict>
+  <dict>
+    <key>CLAUDII_OTEL_DIR</key><string>$OTEL_DIR</string>$fwd_xml
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardErrorPath</key><string>$OTEL_DIR/receiver.log</string>
@@ -162,7 +180,9 @@ PLIST
 
   printf 'claudii-otel: OTEL source enabled (perf.otel.enabled=true)\n'
   printf '  env written:   %s\n' "$envf"
-  printf '  plist written: %s\n\n' "$plist"
+  printf '  plist written: %s\n' "$plist"
+  [[ -n "$forward" ]] && printf '  forwarding to: %s\n' "$forward"
+  printf '\n'
   printf 'Next steps:\n'
   printf '  1. Start the receiver (persistent, restarts on boot):\n'
   printf '       cp "%s" ~/Library/LaunchAgents/\n' "$plist"
@@ -204,6 +224,9 @@ Usage:
   claudii-otel receiver [args]    exec the local OTLP receiver (foreground)
   claudii-otel doctor             check receiver wiring + data freshness
   claudii-otel cache-dir          print the OTEL data directory
+
+Fan-out (optional): set perf.otel.forward to an internal collector URL and the
+receiver mirrors every batch there (best-effort) for central retention.
 EOF
     ;;
   *) printf 'claudii-otel: unknown command: %s\n' "$cmd" >&2; exit 1 ;;

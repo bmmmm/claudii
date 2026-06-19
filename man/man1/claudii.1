@@ -670,7 +670,11 @@ events. The local receiver
 .RB ( "claudii\-otel receiver" )
 captures Claude Code's OTLP/JSON export under
 .IR ~/.cache/claudii/otel/ ;
-nothing leaves the machine. The active source is shown in the header
+by default nothing leaves the machine. Setting
+.I perf.otel.forward
+to an internal collector URL makes the receiver additionally mirror each batch
+there (best-effort, for central retention on a shared gateway); claudii itself
+still reads only the local file. The active source is shown in the header
 .RB ( "source: otel" " vs " "source: transcript" ).
 .RS
 .TP

@@ -8,19 +8,34 @@ JSON OTLP batch; this appends it verbatim (one batch per line) to per-signal
 JSONL that `claudii-otel build` reads via jq. Stdlib only — no pip, no brew, no
 collector binary; the receiver IS the dependency.
 
+Optional fan-out (Phase 2b): if CLAUDII_OTEL_FORWARD is set, each batch is also
+tee'd verbatim to that base endpoint (e.g. an internal collector gateway on
+nutc). The forward is best-effort and off the hot path — a single daemon worker
+drains a bounded queue, so a slow or unreachable gateway never blocks the local
+persist or the 200 returned to Claude Code; batches drop (queue-full) rather
+than back-pressure. The local JSONL is always the source of truth; the gateway
+is a copy.
+
 Security: binds 127.0.0.1 only, so nothing on the network can push events in.
 The batches carry user.email / account ids, so the files stay on-box (0700 dir).
+CLAUDII_OTEL_FORWARD is an explicit opt-in and should point at an internal-only
+host (no internet egress).
 
 Env:
-  CLAUDII_OTEL_DIR      output dir (default ~/.cache/claudii/otel)
-  CLAUDII_OTEL_HOST     bind host (default 127.0.0.1 — do not widen casually)
-  CLAUDII_OTEL_PORT     bind port (default 4318)
-  CLAUDII_OTEL_VERBOSE  1 → log one diagnostic line per request to stderr
+  CLAUDII_OTEL_DIR              output dir (default ~/.cache/claudii/otel)
+  CLAUDII_OTEL_HOST             bind host (default 127.0.0.1 — do not widen casually)
+  CLAUDII_OTEL_PORT             bind port (default 4318)
+  CLAUDII_OTEL_FORWARD          base URL to tee batches to (default off)
+  CLAUDII_OTEL_FORWARD_TIMEOUT  per-batch forward timeout in seconds (default 5)
+  CLAUDII_OTEL_VERBOSE          1 → log one diagnostic line per request to stderr
 """
 import gzip
 import json
 import os
+import queue
 import sys
+import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OUT_DIR = os.path.expanduser(os.environ.get("CLAUDII_OTEL_DIR", "~/.cache/claudii/otel"))
@@ -31,6 +46,12 @@ except OSError:
     pass
 
 VERBOSE = os.environ.get("CLAUDII_OTEL_VERBOSE", "") == "1"
+
+FORWARD = os.environ.get("CLAUDII_OTEL_FORWARD", "").rstrip("/")
+FORWARD_TIMEOUT = float(os.environ.get("CLAUDII_OTEL_FORWARD_TIMEOUT", "5") or "5")
+# Bounded so an unreachable gateway can't grow memory without limit; drop-on-full
+# keeps the local path unaffected. One worker is plenty at Claude Code's batch rate.
+_FQ = queue.Queue(maxsize=512) if FORWARD else None
 
 SIGNAL_FILES = {
     "/v1/logs": "logs.jsonl",
@@ -46,19 +67,56 @@ def _signal_file(path):
     return os.path.join(OUT_DIR, "other.jsonl")
 
 
+def _forward_worker():
+    """Drain the forward queue serially; failures are swallowed (best-effort)."""
+    while True:
+        path, data, headers = _FQ.get()
+        try:
+            req = urllib.request.Request(
+                FORWARD + path, data=data, headers=headers, method="POST")
+            urllib.request.urlopen(req, timeout=FORWARD_TIMEOUT).read()
+        except Exception as exc:  # noqa: BLE001 — gateway down must not crash the receiver
+            if VERBOSE:
+                sys.stderr.write("[otel] forward -> %s%s failed: %s\n"
+                                 % (FORWARD, path, exc))
+                sys.stderr.flush()
+        finally:
+            _FQ.task_done()
+
+
+def _enqueue_forward(path, data, ctype, encoding):
+    """Tee the raw wire body to the gateway verbatim (Content-Encoding preserved)."""
+    if _FQ is None or not data:
+        return
+    headers = {"Content-Type": ctype or "application/json"}
+    if encoding:
+        headers["Content-Encoding"] = encoding
+    try:
+        _FQ.put_nowait((path, data, headers))
+    except queue.Full:
+        if VERBOSE:
+            sys.stderr.write("[otel] forward queue full — dropped batch %s\n" % path)
+            sys.stderr.flush()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # silence stdlib's default per-request logging
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length) if length else b""
-        wire_len = len(body)
+        raw = self.rfile.read(length) if length else b""  # wire body (maybe gzipped)
+        wire_len = len(raw)
         encoding = (self.headers.get("Content-Encoding") or "").lower()
         ctype = (self.headers.get("Content-Type") or "").lower()
+        # Tee the raw body to the gateway before we touch it — byte-transparent,
+        # so the upstream collector sees exactly what Claude Code sent.
+        _enqueue_forward(self.path, raw, self.headers.get("Content-Type"),
+                         self.headers.get("Content-Encoding"))
+        body = raw
         if "gzip" in encoding:
             try:
-                body = gzip.decompress(body)
+                body = gzip.decompress(raw)
             except OSError:
                 pass
         is_json = body[:1] in (b"{", b"[")
@@ -75,8 +133,9 @@ class Handler(BaseHTTPRequestHandler):
                 fh.write((json.dumps(rec) + "\n").encode())
         if VERBOSE:
             sys.stderr.write(
-                "[otel] POST %s  ctype=%s  enc=%s  wire=%db  json=%s\n"
-                % (self.path, ctype or "-", encoding or "-", wire_len, is_json))
+                "[otel] POST %s  ctype=%s  enc=%s  wire=%db  json=%s  fwd=%s\n"
+                % (self.path, ctype or "-", encoding or "-", wire_len, is_json,
+                   "on" if _FQ is not None else "off"))
             sys.stderr.flush()
         # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
         self.send_response(200)
@@ -92,8 +151,13 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     host = os.environ.get("CLAUDII_OTEL_HOST", "127.0.0.1")
     port = int(os.environ.get("CLAUDII_OTEL_PORT", "4318"))
+    if _FQ is not None:
+        threading.Thread(target=_forward_worker, daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
     sys.stderr.write("[otel] listening on %s:%d  ->  %s\n" % (host, port, OUT_DIR))
+    if FORWARD:
+        sys.stderr.write("[otel] forwarding batches -> %s (timeout %.0fs)\n"
+                         % (FORWARD, FORWARD_TIMEOUT))
     sys.stderr.flush()
     try:
         srv.serve_forever()

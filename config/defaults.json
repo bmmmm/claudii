@@ -51,7 +51,8 @@
     "otel": {
       "enabled": false,
       "endpoint": "http://127.0.0.1:4318",
-      "beta_traces": true
+      "beta_traces": true,
+      "forward": ""
     }
   },
   "display": {

@@ -136,9 +136,30 @@ assert_contains "otel setup: env enables telemetry" "CLAUDE_CODE_ENABLE_TELEMETR
 assert_contains "otel setup: env sets http/json" "OTEL_EXPORTER_OTLP_PROTOCOL=http/json" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_eq "otel setup: launchd plist generated" "0" "$([ -s "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" ] && echo 0 || echo 1)"
+# default config carries no forward → env/plist/doctor stay local-only
+assert_not_contains "otel setup (default): env omits CLAUDII_OTEL_FORWARD" \
+  "CLAUDII_OTEL_FORWARD" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_not_contains "otel setup (default): plist omits CLAUDII_OTEL_FORWARD" \
+  "CLAUDII_OTEL_FORWARD" "$(<"$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist")"
+assert_contains "otel doctor (default): reports local-only" \
+  "local-only" "$(_otel doctor 2>&1)"
 
 _otel off >/dev/null 2>&1
 assert_eq "otel off: config flag disabled" "false" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
 assert_eq "otel off: env file removed" "1" "$([ -e "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
+
+# ── forward / gateway fan-out (perf.otel.forward → receiver tee) ──
+# Placeholder host only — never a real internal name in tracked source. The
+# socket tee itself isn't testable here (sandbox blocks bind); this pins the
+# wiring (env + plist + doctor), the operator smoke-tests the actual forward.
+_ocli config set perf.otel.forward "http://nutc.example:4318" >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+assert_contains "otel setup (forward): env exports CLAUDII_OTEL_FORWARD" \
+  "export CLAUDII_OTEL_FORWARD=http://nutc.example:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_contains "otel setup (forward): plist bakes forward into receiver env" \
+  "<key>CLAUDII_OTEL_FORWARD</key><string>http://nutc.example:4318</string>" \
+  "$(<"$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist")"
+assert_contains "otel doctor (forward): reports the gateway" \
+  "http://nutc.example:4318" "$(_otel doctor 2>&1)"
 
 unset _NOW _NANO _OLD _OLDNANO _OB _OE _OBAD _ODOC _PO _POJ
