@@ -56,18 +56,9 @@ source "$CLAUDII_HOME/lib/vpnii.zsh"
 _CLAUDII_METRICS[plugin.load_us]=$(( int(($EPOCHREALTIME - _claudii_t0) * 1000000) ))
 unset _claudii_t0
 
-# Head-start: fire status refresh now if cache is absent, so the background
-# job has more time to finish before the first prompt renders.
-# Guards: skip if status-models already exists OR a previous fetch is still running.
-() {
-  local _sf="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
-  local _pf="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status.pid"
-  [[ -f "$_sf" ]] && return
-  local _hp
-  [[ -f "$_pf" ]] && { _hp=$(<"$_pf"); } 2>/dev/null
-  [[ -n "$_hp" ]] && kill -0 "$_hp" 2>/dev/null && return
-  ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_pf" &>/dev/null & )
-}
+# Head-start: kick a status refresh now so the background job has more time
+# to finish before the first prompt renders. Guard is in _claudii_status_spawn.
+_claudii_status_spawn
 
 # Session cache GC — runs at most once per hour, silently removes stale session
 # files whose Claude Code process has ended and that are older than 1 hour.
