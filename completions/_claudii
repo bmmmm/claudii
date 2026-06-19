@@ -168,6 +168,7 @@ _claudii() {
             'year:Last 365 days'
             '--days:Explicit rolling window in days'
             '--repo:Narrow every section to one repository'
+            '--watch:Auto-refresh every 30s (--watch=N for custom interval)'
             '--json:Structured JSON output'
           )
           _describe 'perf option' perf_opts

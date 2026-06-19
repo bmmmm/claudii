@@ -112,6 +112,27 @@ _perf_json() {
 
 # ── claudii perf ───────────────────────────────────────────────────────────────
 _cmd_perf() {
+  # --watch [N] — strip before passing args down; loop with tput clear.
+  local _watch=0 _a
+  local -a _fwd=()
+  for _a in "$@"; do
+    case "$_a" in
+      --watch)    _watch=30 ;;
+      --watch=*)  _watch="${_a#--watch=}" ;;
+      *)          _fwd+=("$_a") ;;
+    esac
+  done
+  if (( _watch > 0 )); then
+    while true; do
+      tput clear 2>/dev/null || printf '\033[2J\033[H'
+      _cmd_perf "${_fwd[@]+"${_fwd[@]}"}"
+      local _dim _reset; _dim=$(tput dim 2>/dev/null || printf '\033[2m'); _reset=$(tput sgr0 2>/dev/null || printf '\033[0m')
+      printf '  %s↻  refreshing in %ds — Ctrl-C to exit%s\n\n' "$_dim" "$_watch" "$_reset"
+      sleep "$_watch"
+    done
+    return
+  fi
+
   _cfg_init
   _insights_refresh
 
@@ -129,12 +150,13 @@ _cmd_perf() {
 
   _insights_window perf "${_rest[@]+"${_rest[@]}"}" || return 1
   if (( _IW_HELP )); then
-    printf 'Usage: claudii perf [WINDOW] [--repo NAME] [--json]\n\n'
+    printf 'Usage: claudii perf [WINDOW] [--repo NAME] [--watch[=N]] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
     printf 'Response-time percentiles (p50/p90/p99), output throughput (tok/s)\n'
     printf 'and a per-day latency trend, by model and repo, plus API health.\n'
     printf 'Latency is estimated from transcript timestamps (assistant minus\n'
     printf 'parent); --repo NAME narrows every section to one repository.\n'
+    printf '%s\n' '--watch[=N] refreshes every N seconds (default: 30).'
     return 0
   fi
   local days="$_IW_DAYS"
