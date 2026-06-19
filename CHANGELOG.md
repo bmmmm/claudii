@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ### Changed
 - **`config import` derives its valid top-level keys from `defaults.json`** instead of a hardcoded list, so a newly shipped config block (e.g. `perf`) is accepted automatically rather than rejected as an "unknown key" until the list is manually updated.
 
+### Fixed
+- **`claudii status` "Recent changes": both states are now colored** — a transition row only ever colored the *new* state, so a `down → ok` recovery rendered "down" in plain text instead of red (and `ok → down` left the prior "ok" colorless too). Both sides now take their own state color via a shared `_status_state_color` helper.
+- **ClaudeStatus stayed "down" for up to the full base TTL after a model recovered** — the zsh precmd and `claudii-cc-statusline` shorten their refresh cadence to base÷5 (min 60s) while a model is down/degraded, but `bin/claudii-status` itself still gated the real refetch on the *base* TTL (300s). So those refreshers spawned the fetcher on the shortened interval and it refused to refetch, leaving a recovered model showing `↓` in the RPROMPT for minutes after it was actually green. `claudii-status` now applies the same base÷5 (min 60s) shortening to its own cache gate; `_api=unreachable` keeps the base TTL.
+
 ---
 
 ## [v0.24.0] — 2026-06-18

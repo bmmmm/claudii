@@ -408,6 +408,65 @@ _h_empty=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 || true)
 assert_contains "status --history: empty log message" "no transition history yet" "$_h_empty"
 assert_eq "status --history --json: empty log is []" "0" "$(bash "$CLAUDII_HOME/bin/claudii" status --history --json 2>&1 | jq 'length' 2>/dev/null || echo NaN)"
 
+# ── Bug: transition row colors BOTH states (old + new) ───────────────────────
+# A "down → ok" row must paint the old "down" red — it used to render bare
+# (only the new state was colored). CLAUDII_FORCE_COLOR=1 keeps the ANSI codes
+# under the test's piped stdout (bin/claudii blanks colors when not a TTY).
+# Red = \033[0;31m, reset = \033[0m. The cache is all-ok (fresh mtime →
+# cache-hit, no network), so the only red-wrapped "down" can come from the
+# transition row's old state.
+printf '%s\topus\tdown\tok\n' "$(( $(date +%s) - 600 ))" > "$CLAUDII_CACHE_DIR/status-history.tsv"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_clr_raw=$(CLAUDII_FORCE_COLOR=1 bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+_RED=$(printf '\033[0;31m'); _RST=$(printf '\033[0m')
+case "$_clr_raw" in
+  *"${_RED}down${_RST}"*) assert_eq "transition: old 'down' state colored red" "true" "true" ;;
+  *)                      assert_eq "transition: old 'down' state colored red" "red-wrapped down" "bare/uncolored down" ;;
+esac
+
+# ── Bug: adaptive cache gate — down/degraded shortens the refetch TTL ─────────
+# The zsh precmd / cc-statusline refreshers spawn claudii-status on a ÷5
+# interval while a model is down, but claudii-status itself used to gate the
+# real refetch on the full base TTL — so a recovered model stayed "down" in the
+# RPROMPT for up to base TTL. claudii-status must apply the same ÷5 (min 60s).
+_adt_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_adt.XXXXXX")
+mkdir -p "$_adt_dir/srv"
+cat > "$_adt_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_adt_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_adt_dir/curl"
+# Set mtime to N seconds ago (BSD date -v on macOS/CI, GNU date -d fallback).
+_set_mtime_ago() {
+  local _f="$1" _n="$2" _t
+  _t=$(date -v-"${_n}"S +%Y%m%d%H%M.%S 2>/dev/null) || _t=$(date -d "${_n} seconds ago" +%Y%m%d%H%M.%S 2>/dev/null)
+  [[ -n "$_t" ]] && touch -t "$_t" "$_f"
+}
+
+# base TTL 300 → down-gate = 60s. Cache 150s old + opus down: mock returns "no
+# incidents" → the refetch must run and rewrite opus=ok.
+printf '{"incidents":[]}\n' > "$_adt_dir/srv/unresolved.json"
+printf 'opus=down\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_set_mtime_ago "$CLAUDII_CACHE_DIR/status-models" 150
+CLAUDII_CACHE_TTL=300 PATH="$_adt_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_adt_down=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "adaptive gate: down cache (150s, base 300) refetched to ok" "opus=ok" "$_adt_down"
+
+# Negative: healthy cache 150s old must NOT refetch (gate stays base 300s). The
+# mock now returns an Opus incident; a wrongful refetch would flip opus off ok.
+printf '{"incidents":[{"name":"Elevated errors on Claude Opus","status":"investigating","impact":"major","incident_updates":[{"body":"x"}],"components":[{"name":"Claude Opus"}]}]}\n' > "$_adt_dir/srv/unresolved.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_set_mtime_ago "$CLAUDII_CACHE_DIR/status-models" 150
+CLAUDII_CACHE_TTL=300 PATH="$_adt_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_adt_ok=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "adaptive gate: healthy cache (150s, base 300) not refetched" "opus=ok" "$_adt_ok"
+rm -rf "$_adt_dir"
+
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
 unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR

@@ -82,8 +82,21 @@ _claudii_log debug "Unresolved: $UNRESOLVED_URL | RSS: $RSS_URL | TTL: ${CACHE_T
 
 if [[ -f "$CACHE_STATUS" ]]; then
   cache_age=$(( $(date +%s) - $(_mtime "$CACHE_STATUS") ))
-  if (( cache_age < CACHE_TTL )); then
-    _claudii_log debug "Cache hit (${cache_age}s < TTL ${CACHE_TTL}s)"
+  # Adaptive gate — mirror the refreshers' shortened cadence (lib/statusline.zsh
+  # precmd + bin/claudii-cc-statusline): when the last result had a model
+  # down/degraded, cut the TTL to base/5 (min 60s) so a recovery is picked up
+  # promptly. Without this, those refreshers spawn on the shortened interval but
+  # THIS script refused the real refetch until the full base TTL elapsed, so a
+  # recovered model stayed "down" in the RPROMPT for up to base TTL. The
+  # _api=unreachable marker keeps the base TTL (no point hammering a dead API).
+  eff_ttl=$CACHE_TTL
+  if ! grep -qE '^_api=unreachable$' "$CACHE_STATUS" 2>/dev/null \
+     && grep -qE '=(down|degraded)$' "$CACHE_STATUS" 2>/dev/null; then
+    eff_ttl=$(( CACHE_TTL / 5 ))
+    (( eff_ttl < 60 )) && eff_ttl=60
+  fi
+  if (( cache_age < eff_ttl )); then
+    _claudii_log debug "Cache hit (${cache_age}s < TTL ${eff_ttl}s, base ${CACHE_TTL}s)"
     if ! $quiet; then
       while IFS='=' read -r model state; do
         case "$state" in
@@ -95,7 +108,7 @@ if [[ -f "$CACHE_STATUS" ]]; then
     grep -q "=down\|=degraded" "$CACHE_STATUS" 2>/dev/null && exit 1
     exit 0
   fi
-  _claudii_log debug "Cache stale (${cache_age}s > TTL ${CACHE_TTL}s)"
+  _claudii_log debug "Cache stale (${cache_age}s > TTL ${eff_ttl}s, base ${CACHE_TTL}s)"
 fi
 
 # ── Helper: write cache + output + exit ──────────────────────────────────────

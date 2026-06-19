@@ -159,22 +159,32 @@ _cmd_session_dashboard() {
   esac
 }
 
+# Map a model state to its display color. Sets _STATE_CLR (no subshell — bash
+# 3.2 has no namerefs). Shared so both sides of a transition get colored.
+_status_state_color() {
+  case "$1" in
+    ok)       _STATE_CLR="$CLAUDII_CLR_GREEN" ;;
+    degraded) _STATE_CLR="$CLAUDII_CLR_YELLOW" ;;
+    down)     _STATE_CLR="$CLAUDII_CLR_RED" ;;
+    *)        _STATE_CLR="$CLAUDII_CLR_DIM" ;;
+  esac
+}
+
 # One colored transition row: "<timestamp>  <Model>  old → new".
 # Shared by the bare-status "Recent changes" footer and `status --history`
-# (the case ladder used to be duplicated in both branches).
+# (the case ladder used to be duplicated in both branches). BOTH states are
+# colored by their own state — a "down → ok" row paints "down" red, not bare.
 # Args: ts model old new — honors _CLAUDII_TZ via _fmt_abs.
 _status_print_transition() {
-  local _h_ts="$1" _h_model="$2" _h_old="$3" _h_new="$4" _h_label _h_clr
+  local _h_ts="$1" _h_model="$2" _h_old="$3" _h_new="$4" _h_label _h_clr_old _h_clr_new _STATE_CLR
   _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
   _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
-  case "$_h_new" in
-    ok)       _h_clr="$CLAUDII_CLR_GREEN" ;;
-    degraded) _h_clr="$CLAUDII_CLR_YELLOW" ;;
-    down)     _h_clr="$CLAUDII_CLR_RED" ;;
-    *)        _h_clr="$CLAUDII_CLR_DIM" ;;
-  esac
-  printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %s → %b%s%b\n" \
-    "${_ABS_FMT:-$_h_ts}" "$_h_label" "$_h_old" "$_h_clr" "$_h_new" "$CLAUDII_CLR_RESET"
+  _status_state_color "$_h_old"; _h_clr_old="$_STATE_CLR"
+  _status_state_color "$_h_new"; _h_clr_new="$_STATE_CLR"
+  printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %b%s%b → %b%s%b\n" \
+    "${_ABS_FMT:-$_h_ts}" "$_h_label" \
+    "$_h_clr_old" "$_h_old" "$CLAUDII_CLR_RESET" \
+    "$_h_clr_new" "$_h_new" "$CLAUDII_CLR_RESET"
 }
 
 # Bare `claudii status` render: per-model state, cache age + adaptive TTL,

@@ -1152,7 +1152,9 @@ haiku=ok
 .PP
 Refreshed automatically in the background when older than
 .B status.cache_ttl
-seconds.
+seconds. While a model is down or degraded the interval is shortened to a
+fifth (minimum 60s) so a recovery is picked up quickly; an unreachable status
+API keeps the base interval.
 .PP
 Every state transition (e.g. opus ok\(->degraded) is appended to
 .I status-history.tsv
