@@ -45,6 +45,14 @@ source "$CLAUDII_HOME/lib/functions.zsh"
 source "$CLAUDII_HOME/lib/statusline.zsh"
 source "$CLAUDII_HOME/lib/vpnii.zsh"
 
+# OTEL telemetry env — written by `claudii-otel setup` (opt-in). A bare file
+# test (no jq fork) so shells pay nothing when the OTEL source is off; when on,
+# it points Claude Code's telemetry at the local receiver for `claudii perf`.
+() {
+  local _oe="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/otel.env"
+  [[ -r "$_oe" ]] && source "$_oe"
+}
+
 _CLAUDII_METRICS[plugin.load_us]=$(( int(($EPOCHREALTIME - _claudii_t0) * 1000000) ))
 unset _claudii_t0
 

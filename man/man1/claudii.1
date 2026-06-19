@@ -650,8 +650,11 @@ read from the ClaudeStatus cache. Throughput is output tokens over end-to-end
 time (includes wait).
 .PP
 With the optional OpenTelemetry source enabled
-.RB ( "config set perf.otel.enabled true" ),
-perf reads exact metrics instead of the transcript estimate: real
+.RB ( "claudii\-otel setup" ,
+which flips the config flag, writes the shell env the plugin sources, and
+generates a launchd plist;
+.B claudii\-otel off
+reverts), perf reads exact metrics instead of the transcript estimate: real
 .I duration_ms
 and
 .I ttft_ms

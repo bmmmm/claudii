@@ -123,4 +123,22 @@ assert_eq "perf --json (otel): reliability total=5" "5" \
 assert_eq "perf --json (otel): 2 error buckets" "2" \
   "$(printf '%s' "$_POJ" | jq -r '.errors | length')"
 
+# ── setup / off toggle (config flag + fork-free env file + launchd plist) ──
+_OTEL_SCFG="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SCFG")
+_OTEL_SCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SCACHE")
+_otel() { CLAUDII_CACHE_DIR="$_OTEL_SCACHE" XDG_CONFIG_HOME="$_OTEL_SCFG" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
+_ocli() { XDG_CONFIG_HOME="$_OTEL_SCFG" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" "$@"; }
+
+_otel setup >/dev/null 2>&1
+assert_eq "otel setup: config flag enabled" "true" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
+assert_eq "otel setup: env file written" "0" "$([ -r "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
+assert_contains "otel setup: env enables telemetry" "CLAUDE_CODE_ENABLE_TELEMETRY=1" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_contains "otel setup: env sets http/json" "OTEL_EXPORTER_OTLP_PROTOCOL=http/json" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_eq "otel setup: launchd plist generated" "0" "$([ -s "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" ] && echo 0 || echo 1)"
+
+_otel off >/dev/null 2>&1
+assert_eq "otel off: config flag disabled" "false" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
+assert_eq "otel off: env file removed" "1" "$([ -e "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
+
 unset _NOW _NANO _OLD _OLDNANO _OB _OE _OBAD _ODOC _PO _POJ
