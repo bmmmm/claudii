@@ -24,9 +24,8 @@ _fmt_ms() {
   fi
 }
 
-# Active perf data source. Phase 2 returns "otel" when a fresh OTEL cache exists;
-# for now the transcript estimate is the only source.
-_perf_source() { printf 'transcript'; }
+# Perf data source is chosen in _cmd_perf: OTEL when perf.otel.enabled and the
+# local OTEL cache has samples in the window, else the transcript estimate.
 
 # One-line API health from the ClaudeStatus cache (bin/claudii-status writes it).
 # key=value lines: opus=ok|degraded|down. Absent file -> hint.
@@ -94,7 +93,20 @@ _perf_json() {
           | map({ repo:.[0].repo, p50_ms:pctms([.[].dt_ms];0.5),
                   p90_ms:pctms([.[].dt_ms];0.9),
                   tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
-          | sort_by(-.samples) )
+          | sort_by(-.samples) ),
+        ttft: ( ([$L[].ttft_ms] | map(select(. != null))) as $tt
+          | if ($tt|length) > 0
+            then { p50_ms:pctms($tt;0.5), p90_ms:pctms($tt;0.9), p99_ms:pctms($tt;0.99), samples:($tt|length) }
+            else null end ),
+        reliability: ( [$L[] | select(.success != null)] as $sl
+          | if ($sl|length) > 0
+            then { total:($sl|length), ok:([$sl[]|select(.success==true)]|length),
+                   retried:([$sl[]|select((.attempt//0)>1)]|length) }
+            else null end ),
+        errors: ( [ (.errors // [])[]
+                    | select((.day >= $floor) and (($repo=="") or (.repo==$repo))) ]
+          | group_by(.status_code)
+          | map({ status_code:.[0].status_code, count:length }) )
       }' <<< "$merged"
 }
 
@@ -130,10 +142,19 @@ _cmd_perf() {
   local fmt="${_FORMAT:-}"
   [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv perf; return 1; }
 
-  # perf is the only command that needs the (large) latency list — request it
-  # explicitly. cache/tokens/tools/limits use the latency-free merge.
-  local merged; merged=$(_insights_run merge --days "$days" --with-latency 2>/dev/null)
-  local src; src=$(_perf_source)
+  # Source selection: OTEL when enabled AND it has samples in the window, else
+  # the transcript estimate. claudii-otel build emits the same .latency shape
+  # plus exact ttft_ms / success / api_error status codes. perf is the only
+  # command that needs the (large) latency list — the transcript merge requests
+  # it explicitly; cache/tokens/tools/limits use the latency-free merge.
+  local merged="" src="transcript"
+  if [[ "$(_cfgget perf.otel.enabled 2>/dev/null)" == "true" ]]; then
+    local _om; _om=$("$CLAUDII_HOME/bin/claudii-otel" build --days "$days" 2>/dev/null)
+    if [[ -n "$_om" ]] && (( $(jq '.latency | length' <<< "$_om" 2>/dev/null || echo 0) > 0 )); then
+      merged="$_om"; src="otel"
+    fi
+  fi
+  [[ "$src" == "transcript" ]] && merged=$(_insights_run merge --days "$days" --with-latency 2>/dev/null)
 
   # Calendar floor identical to `claudii tokens`, so "last N days" is exact.
   local floor
@@ -154,6 +175,7 @@ _cmd_perf() {
 
   local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
   local accent="${CLAUDII_CLR_ACCENT}" yellow="${CLAUDII_CLR_YELLOW}" green="${CLAUDII_CLR_GREEN}"
+  local red="${CLAUDII_CLR_RED}"
   local RW=66
 
   # Single jq pass → tagged rows: M=model, D=day, R=repo, G=session, S=summary.
@@ -167,6 +189,8 @@ _cmd_perf() {
     [ (.latency // [])[]
       | select(.model != "<synthetic>" and (.day >= $floor)
                and (($repo=="") or (.repo==$repo))) ] as $L
+    | [ (.errors // [])[]
+        | select((.day >= $floor) and (($repo=="") or (.repo==$repo))) ] as $E
     | ( $L | group_by(.model)
         | map({k:.[0].model, d:[.[].dt_ms], o:([.[].out]|add), n:length})
         | sort_by(-.n)
@@ -190,11 +214,24 @@ _cmd_perf() {
       ( ["S", (pctms([$L[].dt_ms];0.5)|tostring), (pctms([$L[].dt_ms];0.9)|tostring),
          (pctms([$L[].dt_ms];0.99)|tostring),
          (toks(([$L[].out]|add // 0); ([$L[].dt_ms]|add // 0))|tostring),
-         (($L|length)|tostring)] | @tsv )
+         (($L|length)|tostring)] | @tsv ),
+      ( ([$L[].ttft_ms] | map(select(. != null))) as $tt
+        | if ($tt|length) > 0 then
+            ["T", (pctms($tt;0.5)|tostring), (pctms($tt;0.9)|tostring),
+             (pctms($tt;0.99)|tostring), ($tt|length|tostring)] | @tsv
+          else empty end ),
+      ( [$L[] | select(.success != null)] as $sl
+        | if ($sl|length) > 0 then
+            ["X", ($sl|length|tostring),
+                  ([$sl[]|select(.success==true)]|length|tostring),
+                  ([$sl[]|select((.attempt//0) > 1)]|length|tostring)] | @tsv
+          else empty end ),
+      ( $E | group_by(.status_code) | .[]
+        | ["E", (.[0].status_code|tostring), (length|tostring)] | @tsv )
   ' <<< "$merged")
 
-  local -a _m_rows _d_rows _r_rows _g_rows
-  local _s_row="" _ln _tag
+  local -a _m_rows _d_rows _r_rows _g_rows _e_rows
+  local _s_row="" _t_row="" _x_row="" _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue
     _tag="${_ln%%$'\t'*}"
@@ -204,6 +241,9 @@ _cmd_perf() {
       R) _r_rows+=("${_ln#R$'\t'}") ;;
       G) _g_rows+=("${_ln#G$'\t'}") ;;
       S) _s_row="${_ln#S$'\t'}" ;;
+      T) _t_row="${_ln#T$'\t'}" ;;
+      X) _x_row="${_ln#X$'\t'}" ;;
+      E) _e_rows+=("${_ln#E$'\t'}") ;;
     esac
   done <<< "$_rows"
 
@@ -227,12 +267,34 @@ _cmd_perf() {
   fi
 
   # ── Summary line ──
-  printf '  %s●%s p50 %s%s%s   p90 %s%s%s   p99 %s%s%s   %s%s tok/s%s\n\n' \
+  printf '  %s●%s p50 %s%s%s   p90 %s%s%s   p99 %s%s%s   %s%s tok/s%s\n' \
     "$green" "$reset" \
     "$cyan" "$(_fmt_ms "$s_p50")" "$reset" \
     "$cyan" "$(_fmt_ms "$s_p90")" "$reset" \
     "$cyan" "$(_fmt_ms "$s_p99")" "$reset" \
     "$cyan" "$s_toks" "$reset"
+
+  # ── TTFT ("lag") + reliability — OTEL only (transcripts can't measure these) ──
+  if [[ -n "$_t_row" ]]; then
+    local t_p50 t_p90 t_p99 t_n
+    IFS=$'\t' read -r t_p50 t_p90 t_p99 t_n <<< "$_t_row"
+    printf '  %s○%s TTFT p50 %s%s%s   p90 %s%s%s   p99 %s%s%s   %stime to first token%s\n' \
+      "$cyan" "$reset" \
+      "$cyan" "$(_fmt_ms "$t_p50")" "$reset" \
+      "$cyan" "$(_fmt_ms "$t_p90")" "$reset" \
+      "$cyan" "$(_fmt_ms "$t_p99")" "$reset" \
+      "$dim" "$reset"
+  fi
+  if [[ -n "$_x_row" ]]; then
+    local x_total=0 x_ok=0 x_retry=0 x_pct=100
+    IFS=$'\t' read -r x_total x_ok x_retry <<< "$_x_row"
+    (( x_total > 0 )) && x_pct=$(( x_ok * 100 / x_total ))
+    local xcol="$green"; (( x_pct < 99 )) && xcol="$yellow"; (( x_pct < 95 )) && xcol="$red"
+    printf '  %s✓%s success %s%d%%%s   %sretried%s %s%d%s %sof %d responses%s\n' \
+      "$xcol" "$reset" "$xcol" "$x_pct" "$reset" \
+      "$dim" "$reset" "$cyan" "$x_retry" "$reset" "$dim" "$x_total" "$reset"
+  fi
+  echo
 
   # ── By model (p50/p90/p99/tok-s/n) — D-grid ──
   printf '  %sBy model%s\n' "$accent" "$reset"
@@ -313,11 +375,31 @@ _cmd_perf() {
   fi
   echo
 
+  # ── API errors (OTEL only — transcripts carry no error signal) ──
+  if [[ "$src" == "otel" ]]; then
+    if (( ${#_e_rows[@]} > 0 )); then
+      _render_shead "API errors" "by status code" "$RW"
+      local _er ecode ecount
+      for _er in "${_e_rows[@]}"; do
+        IFS=$'\t' read -r ecode ecount <<< "$_er"
+        printf '  %s●%s HTTP %s   %s%s error(s)%s\n' "$red" "$reset" "$ecode" "$dim" "$ecount" "$reset"
+      done
+    else
+      printf '  %s✓ no API errors in window%s\n' "$green" "$reset"
+    fi
+    echo
+  fi
+
   # ── API health ──
   _perf_health_line
   echo
 
-  # ── Source note (honesty: transcript estimate, OTEL upgrades it) ──
-  printf '  %stok/s is output ÷ end-to-end time (includes wait). Transcript\n' "$dim"
-  printf '  estimate — enable OTEL for exact duration_ms, errors and TTFT.%s\n\n' "$reset"
+  # ── Source note ──
+  if [[ "$src" == "otel" ]]; then
+    printf '  %sExact duration_ms + TTFT from OTEL traces (claude_code.llm_request);\n' "$dim"
+    printf '  errors from api_error events. tok/s is output ÷ duration_ms.%s\n\n' "$reset"
+  else
+    printf '  %stok/s is output ÷ end-to-end time (includes wait). Transcript\n' "$dim"
+    printf '  estimate — enable OTEL for exact duration_ms, errors and TTFT.%s\n\n' "$reset"
+  fi
 }

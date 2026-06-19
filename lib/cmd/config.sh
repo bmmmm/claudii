@@ -62,8 +62,11 @@ _cmd_config() {
       [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; exit 1; }
       jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
       jq -e 'type == "object"' "$file" >/dev/null 2>&1 || { echo "config import: $file is not a JSON object — aborting" >&2; exit 1; }
-      # Validate only known top-level keys (a non-object would make `keys` error → empty → vacuous pass)
-      _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence"]'
+      # Validate only known top-level keys (a non-object would make `keys` error → empty → vacuous pass).
+      # Derive the known set from defaults.json so it never drifts when a new
+      # config block ships (perf, …); fall back to a literal set if unreadable.
+      _known=$(jq -c 'keys' "$DEFAULTS" 2>/dev/null) \
+        || _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence","perf"]'
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
       [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
 

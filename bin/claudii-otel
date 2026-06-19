@@ -1,0 +1,128 @@
+#!/bin/bash
+# claudii-otel — fold Claude Code's local OTLP/JSON export into the perf cache.
+#
+# The OTEL path is optional and local-only. bin/claudii-otel-receiver writes the
+# raw OTLP batches Claude Code emits to $CACHE/otel/{traces,logs}.jsonl, and
+# `claudii-otel build` folds them into the SAME .latency shape lib/cmd/perf.sh
+# already renders from transcripts — plus the exact fields the transcript
+# estimate can't provide (duration_ms, ttft_ms, api_error status codes). The
+# only claudii<->OTEL coupling is the local JSONL file; nothing here touches the
+# network.
+#
+# Usage:
+#   claudii-otel build [--days N]   # emit {source,latency,errors} JSON on stdout
+#   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
+#   claudii-otel doctor             # check receiver wiring + data freshness
+#   claudii-otel cache-dir          # print the OTEL data directory
+
+set -uo pipefail
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-otel: jq not found — install jq\n' >&2; exit 1; }
+
+CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+OTEL_DIR="$CACHE_BASE/otel"
+INSIGHTS_DIR="$CACHE_BASE/insights"
+JQ_PROGRAM="$CLAUDII_HOME/lib/otel.jq"
+RECEIVER="$CLAUDII_HOME/bin/claudii-otel-receiver"
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
+# floor = today - (days-1) in UTC; BSD date first, GNU fallback (matches perf).
+_floor_day() {
+  local days="$1"
+  date -u -v-"$(( days - 1 ))"d +%Y-%m-%d 2>/dev/null \
+    || date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d 2>/dev/null \
+    || printf ''
+}
+
+# {sessionId: repo} from the insights caches — OTEL events carry session.id but
+# no cwd, so the repo is resolved here (same source perf's transcript path uses).
+_repomap() {
+  shopt -s nullglob
+  local files=("$INSIGHTS_DIR"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then printf '{}'; return; fi
+  jq -n 'reduce inputs as $s ({};
+           if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
+           then .[$s.sessionId] = $s.project.repo else . end)' "${files[@]}" 2>/dev/null \
+    || printf '{}'
+}
+
+_cmd_build() {
+  local days=30
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days) shift; days="${1:-30}" ;;
+      *) printf 'build: unknown option: %s\n' "$1" >&2; exit 1 ;;
+    esac
+    shift
+  done
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'build: --days must be a positive integer (got: %s)\n' "$days" >&2; exit 1
+  fi
+
+  local present=() f
+  for f in "$OTEL_DIR/traces.jsonl" "$OTEL_DIR/logs.jsonl"; do
+    [[ -s "$f" ]] && present+=("$f")
+  done
+  if (( ${#present[@]} == 0 )); then
+    printf '{"source":"otel","latency":[],"errors":[]}\n'; return 0
+  fi
+
+  local floor; floor=$(_floor_day "$days")
+  local repomap; repomap=$(_repomap)
+  # -nR: read raw lines so one half-written batch (live-appended JSONL) skips
+  # itself via fromjson? instead of aborting the whole stream.
+  jq -nR --argjson repomap "$repomap" --arg floor "$floor" \
+    -f "$JQ_PROGRAM" "${present[@]}"
+}
+
+_cmd_receiver() {
+  [[ -f "$RECEIVER" ]] || { printf 'claudii-otel: receiver not found: %s\n' "$RECEIVER" >&2; exit 1; }
+  command -v python3 >/dev/null 2>&1 || { printf 'claudii-otel: python3 required for the receiver\n' >&2; exit 1; }
+  exec python3 "$RECEIVER" "$@"
+}
+
+_cmd_doctor() {
+  printf 'claudii-otel doctor\n'
+  if command -v python3 >/dev/null 2>&1; then
+    printf '  python3      %s\n' "$(command -v python3)"
+  else
+    printf '  python3      MISSING — the receiver needs it\n'
+  fi
+  printf '  otel dir     %s\n' "$OTEL_DIR"
+  local now t l tc lc age
+  now=$(date +%s)
+  for f in traces logs; do
+    local path="$OTEL_DIR/$f.jsonl"
+    if [[ -s "$path" ]]; then
+      local lines; lines=$(wc -l < "$path" 2>/dev/null | tr -d ' ')
+      age=$(( now - $(_mtime "$path") ))
+      printf '  %-12s %s batches · last write %ds ago\n' "$f.jsonl" "$lines" "$age"
+    else
+      printf '  %-12s (none — receiver not running, or no session yet)\n' "$f.jsonl"
+    fi
+  done
+  local n; n=$(_cmd_build --days 36500 2>/dev/null | jq '.latency | length' 2>/dev/null || echo '?')
+  printf '  samples      %s response(s) parsed\n' "$n"
+}
+
+cmd="${1:-build}"; shift || true
+case "$cmd" in
+  build)     _cmd_build "$@" ;;
+  receiver)  _cmd_receiver "$@" ;;
+  doctor)    _cmd_doctor "$@" ;;
+  cache-dir) printf '%s\n' "$OTEL_DIR" ;;
+  -h|--help|help)
+    cat <<'EOF'
+claudii-otel — fold local OTLP/JSON telemetry into the perf cache
+
+Usage:
+  claudii-otel build [--days N]   emit {source,latency,errors} JSON on stdout
+  claudii-otel receiver [args]    exec the local OTLP receiver (foreground)
+  claudii-otel doctor             check receiver wiring + data freshness
+  claudii-otel cache-dir          print the OTEL data directory
+EOF
+    ;;
+  *) printf 'claudii-otel: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
+esac

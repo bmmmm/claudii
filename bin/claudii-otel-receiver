@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""claudii OTLP/JSON receiver — the local "agent" half of the OTEL path.
+
+Claude Code exports OpenTelemetry over OTLP/HTTP-JSON when pointed at this
+receiver (CLAUDE_CODE_ENABLE_TELEMETRY=1 + OTEL_EXPORTER_OTLP_PROTOCOL=http/json
++ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318). Each POST body is a plain
+JSON OTLP batch; this appends it verbatim (one batch per line) to per-signal
+JSONL that `claudii-otel build` reads via jq. Stdlib only — no pip, no brew, no
+collector binary; the receiver IS the dependency.
+
+Security: binds 127.0.0.1 only, so nothing on the network can push events in.
+The batches carry user.email / account ids, so the files stay on-box (0700 dir).
+
+Env:
+  CLAUDII_OTEL_DIR      output dir (default ~/.cache/claudii/otel)
+  CLAUDII_OTEL_HOST     bind host (default 127.0.0.1 — do not widen casually)
+  CLAUDII_OTEL_PORT     bind port (default 4318)
+  CLAUDII_OTEL_VERBOSE  1 → log one diagnostic line per request to stderr
+"""
+import gzip
+import json
+import os
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+OUT_DIR = os.path.expanduser(os.environ.get("CLAUDII_OTEL_DIR", "~/.cache/claudii/otel"))
+os.makedirs(OUT_DIR, exist_ok=True)
+try:
+    os.chmod(OUT_DIR, 0o700)  # batches carry PII — keep them owner-only
+except OSError:
+    pass
+
+VERBOSE = os.environ.get("CLAUDII_OTEL_VERBOSE", "") == "1"
+
+SIGNAL_FILES = {
+    "/v1/logs": "logs.jsonl",
+    "/v1/traces": "traces.jsonl",
+    "/v1/metrics": "metrics.jsonl",
+}
+
+
+def _signal_file(path):
+    for suffix, fname in SIGNAL_FILES.items():
+        if path.endswith(suffix):
+            return os.path.join(OUT_DIR, fname)
+    return os.path.join(OUT_DIR, "other.jsonl")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass  # silence stdlib's default per-request logging
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length) if length else b""
+        wire_len = len(body)
+        encoding = (self.headers.get("Content-Encoding") or "").lower()
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        if "gzip" in encoding:
+            try:
+                body = gzip.decompress(body)
+            except OSError:
+                pass
+        is_json = body[:1] in (b"{", b"[")
+        target = _signal_file(self.path)
+        if is_json:
+            with open(target, "ab") as fh:
+                fh.write(body.rstrip() + b"\n")
+        else:
+            # Not expected (Claude Code sends JSON over http/json) — record a
+            # marker rather than corrupt the JSONL with binary protobuf.
+            with open(target, "ab") as fh:
+                rec = {"_unparsed": True, "content_type": ctype,
+                       "encoding": encoding, "bytes": len(body)}
+                fh.write((json.dumps(rec) + "\n").encode())
+        if VERBOSE:
+            sys.stderr.write(
+                "[otel] POST %s  ctype=%s  enc=%s  wire=%db  json=%s\n"
+                % (self.path, ctype or "-", encoding or "-", wire_len, is_json))
+            sys.stderr.flush()
+        # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def main():
+    host = os.environ.get("CLAUDII_OTEL_HOST", "127.0.0.1")
+    port = int(os.environ.get("CLAUDII_OTEL_PORT", "4318"))
+    srv = ThreadingHTTPServer((host, port), Handler)
+    sys.stderr.write("[otel] listening on %s:%d  ->  %s\n" % (host, port, OUT_DIR))
+    sys.stderr.flush()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[otel] stopped\n")
+
+
+if __name__ == "__main__":
+    main()

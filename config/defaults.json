@@ -47,6 +47,13 @@
   "cost": {
     "week_start": "monday"
   },
+  "perf": {
+    "otel": {
+      "enabled": false,
+      "endpoint": "http://127.0.0.1:4318",
+      "beta_traces": true
+    }
+  },
   "display": {
     "timezone": ""
   },
