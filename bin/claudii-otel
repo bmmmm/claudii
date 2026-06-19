@@ -150,6 +150,12 @@ _cmd_setup() {
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)
+  local py_dir; py_dir=$(dirname "$py")
+  # Invoke the receiver script directly (arg0), not `python3 <script>`, so macOS
+  # Login Items / "Allow in the Background" shows it as "claudii-otel-receiver"
+  # instead of "python3". The env-shebang then needs Homebrew on PATH (launchd's
+  # default PATH lacks it) — set in EnvironmentVariables below. Keep it +x.
+  chmod +x "$RECEIVER" 2>/dev/null || true
   local plist="$OTEL_DIR/com.claudii.otel-receiver.plist"
   # The receiver process needs CLAUDII_OTEL_FORWARD too (it does the teeing), so
   # bake it into the plist env when configured.
@@ -163,11 +169,11 @@ _cmd_setup() {
   <key>Label</key><string>com.claudii.otel-receiver</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$py</string>
     <string>$RECEIVER</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key><string>$py_dir:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>CLAUDII_OTEL_DIR</key><string>$OTEL_DIR</string>$fwd_xml
   </dict>
   <key>RunAtLoad</key><true/>
