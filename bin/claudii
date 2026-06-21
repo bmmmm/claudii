@@ -11,7 +11,7 @@ source "$CLAUDII_HOME/lib/visual.sh"
 source "$CLAUDII_HOME/lib/spinner.sh"
 source "$CLAUDII_HOME/lib/helpers.sh"
 source "$CLAUDII_HOME/lib/render.sh"
-VERSION="0.24.0"
+VERSION="0.25.0"
 
 # TTY detection — 1 if stdout is a terminal, 0 if piped
 _TTY=0
