@@ -1,65 +1,54 @@
 ---
 name: shape
-description: Hygiene-check for claudii repo. Checks memories, skills, docs, settings, CI, README for staleness and inconsistencies.
-model: sonnet
-effort: high
+description: Hygiene-check for claudii repo. Checks memories, skills, docs, config, settings, CI, README for staleness and inconsistencies.
+model: opus
+effort: low
 ---
 
 # claudii Shape — Hygiene Checker
 
-Check repo health, find stale references, report problems. No TODO planning (that's `/orchestrate` Step 0).
+Find stale references and cross-file drift, root-cause them, report. Static checks only — no feature planning (→ `/orchestrate`), no ecosystem research (→ `/explore`), no test runs. Tiny isolated fix → just do it.
 
-claudii extends the Claude Code Statusline — inward (Sessionline) and outward (RPROMPT, sessions, cost, decision support). No other tool covers both layers.
+## Step 1: Scan
 
-## When NOT to use
+Read each source below and cross-check every reference it makes against what actually exists in `bin/`, `lib/`, `scripts/`, `config/`. A pointer to a removed command/script/file is the typical finding.
 
-- User wants to **plan or implement features** → `/orchestrate`
-- User wants **ecosystem research** → `/explore`
-- Tiny isolated fix → just do it
+- **CLAUDE.md** — architecture table, naming, command-role table, rules still match the code?
+- **`config/defaults.json`** — agent aliases/descriptions current? A description naming an old model version is drift (see CLAUDE.md "When a new Claude model ships").
+- **Memories** — read `MEMORY.md` index first (`~/.claude/projects/-Users-bma-offline-coding-claudii/memory/`); stale entries, contradictions, wrong file/flag names?
+- **Skills** (`.claude/skills/`) — dead references? overlaps? model frontmatter sane (main-thread skill → `opus`/`inherit`, never `sonnet`)?
+- **TODO.md / ROADMAP.md** — bloated, duplicated, or already-shipped items?
+- **`.claude/settings.local.json`** — every `Bash(...)` entry still maps to a real command/script? Plus stale `.gitignore` rules for removed files. Local-only — never commit, never `git add .claude/`.
+- **`.github/workflows/`** — reference commands or files that no longer exist?
+- **README.md** — example commands + referenced features still valid?
+- **`scripts/release.sh`** — drifted from the Homebrew tap it syncs (URL/SHA/caveats)?
 
-## Step 1: Load context
+## Step 2: Root-cause each finding
 
-1. `TODO.md` — current tasks
-2. `ROADMAP.md` — backlog
-
-## Step 2: Hygiene check
-
-Check on every `/shape` invocation:
-
-- **Memories** (`~/.claude/projects/-Users-bma-offline-coding-claudii/memory/`) — stale entries? Contradictions? Read `MEMORY.md` index first.
-- **Skills** (`.claude/skills/`) — dead references? Overlaps?
-- **CLAUDE.md** — architecture table, naming, rules still current?
-- **TODO.md / ROADMAP.md** — bloated? Duplicates?
-- **`.claude/settings.local.json`** — dead `Bash(...)` entries? Cross-check every entry against actual files and commands in `bin/`. Stale entry = command or script no longer exists.
-- **`.github/workflows/`** — do CI/release/wiki workflows reference commands or files that no longer exist?
-- **Homebrew Formula** — lives in `bmmmm/homebrew-tap` (single source of truth, synced by `scripts/release.sh`). Not checked here; flag only if `scripts/release.sh` has drifted from the tap.
-- **`README.md`** — example commands still valid? Referenced features still exist?
-
-For each problem found — root cause loop:
-1. **Symptom** — what's broken
-2. **Root cause** — why did this happen? Which process failed?
-3. **Fix** — concrete action (direct fix or TODO for `/orchestrate`)
+1. **Symptom** — what's stale/inconsistent
+2. **Root cause** — which process let it drift?
+3. **Fix** — direct fix now, or a TODO line for `/orchestrate`
 
 ## Step 3: Release check
 
 ```bash
 last_tag=$(git describe --tags --abbrev=0 --match "v*" 2>/dev/null)
-feat_count=$(git log ${last_tag}..HEAD --oneline --grep="^feat" | wc -l)
+git log ${last_tag:+$last_tag..}HEAD --oneline --grep="^feat" | wc -l   # new feat commits
 ```
 
-- `>= 1 feat` → mention: "Release possible (N new features)"
-- `>= 3 feat` → recommend: "We should release"
+- `>= 1 feat` → mention "Release possible (N features)"
+- `>= 3 feat` → recommend "We should release"
 
-## Step 4: Present results
+Bump type follows the CHANGELOG unreleased block, not the commit count: any `### Added` → MINOR, only `### Fixed`/`### Changed` → PATCH.
 
-Concise:
-- **Hygiene findings** — only if something was found
+## Step 4: Report
+
+Concise — surface only what was found, skip clean areas:
+- **Hygiene findings** — grouped, each with its fix
 - **Release?** — only if relevant
 
 ## Rules
 
-- **No ecosystem scanning** — that's `/explore`
-- **No task planning, no waves, no agents** — that's `/orchestrate`
-- **Token efficiency** — no bloat
-- **Communicate with user in their language, code and docs in English**
-- **Commit before handing off** — before `/orchestrate`, all pending changes must be committed
+- Static hygiene only — leave ecosystem scans to `/explore`, planning/waves/agents to `/orchestrate`
+- Commit all pending changes before handing off to `/orchestrate`
+- Talk to the user in their language; code and docs in English
