@@ -18,10 +18,13 @@
 _fmt_tok() {
   local n="${1:-0}" t
   case "$n" in ''|*[!0-9]*) printf '0'; return ;; esac
-  if (( n >= 1000000000 )); then
+  # Promote at the ROUNDED boundary, not the raw unit: 999500..999999 rounds to
+  # 1.0M (not "1000K"), and 999.95M..999.99M to 1.0B (not "1000.0M"). Keep these
+  # thresholds in lockstep with fmt.awk fmt_tok() and statusline.zsh.
+  if (( n >= 999950000 )); then
     t=$(( (n + 50000000) / 100000000 ))     # tenths of a billion, rounded
     printf '%d.%dB' $(( t / 10 )) $(( t % 10 ))
-  elif (( n >= 1000000 )); then
+  elif (( n >= 999500 )); then
     t=$(( (n + 50000) / 100000 ))           # tenths of a million, rounded
     printf '%d.%dM' $(( t / 10 )) $(( t % 10 ))
   elif (( n >= 1000 )); then

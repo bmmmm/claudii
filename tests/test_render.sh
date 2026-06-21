@@ -26,6 +26,14 @@ assert_eq "fmt.awk: fmt_tok 2500 → 3K (half-up, not 2K)"           "3K"   "$(_
 assert_eq "fmt.awk: fmt_tok 5250000 → 5.3M (half-up, not 5.2M)"    "5.3M" "$(_fmtawk 'print fmt_tok(5250000)')"
 assert_eq "fmt.awk: fmt_tok 5250000000 → 5.3B (half-up, not 5.2B)" "5.3B" "$(_fmtawk 'print fmt_tok(5250000000)')"
 
+# Rounded-boundary promotion: a value that rounds UP into the next unit must
+# carry that unit (999500 → 1.0M, not "1000K"; 999.95M → 1.0B, not "1000.0M").
+assert_eq "fmt.awk: fmt_tok 999499 → 999K"                 "999K"   "$(_fmtawk 'print fmt_tok(999499)')"
+assert_eq "fmt.awk: fmt_tok 999500 → 1.0M (not 1000K)"     "1.0M"   "$(_fmtawk 'print fmt_tok(999500)')"
+assert_eq "fmt.awk: fmt_tok 999999 → 1.0M"                 "1.0M"   "$(_fmtawk 'print fmt_tok(999999)')"
+assert_eq "fmt.awk: fmt_tok 999949999 → 999.9M"            "999.9M" "$(_fmtawk 'print fmt_tok(999949999)')"
+assert_eq "fmt.awk: fmt_tok 999950000 → 1.0B (not 1000.0M)" "1.0B"  "$(_fmtawk 'print fmt_tok(999950000)')"
+
 assert_eq "fmt.awk: rep('-',4) → ----"        "----"   "$(_fmtawk 'print rep("-",4)')"
 assert_eq "fmt.awk: rep('x',0) → empty"       ""       "$(_fmtawk 'print rep("x",0)')"
 
@@ -57,6 +65,9 @@ assert_eq "render: _fmt_tok 2300000000 → 2.3B" "2.3B"  "$(_fmt_tok 2300000000)
 assert_eq "render: _fmt_tok 2500 → 3K (half-up)"          "3K"   "$(_fmt_tok 2500)"
 assert_eq "render: _fmt_tok 5250000 → 5.3M (half-up)"     "5.3M" "$(_fmt_tok 5250000)"
 assert_eq "render: _fmt_tok 5250000000 → 5.3B (half-up)"  "5.3B" "$(_fmt_tok 5250000000)"
+assert_eq "render: _fmt_tok 999500 → 1.0M (not 1000K)"    "1.0M" "$(_fmt_tok 999500)"
+assert_eq "render: _fmt_tok 999999 → 1.0M"               "1.0M" "$(_fmt_tok 999999)"
+assert_eq "render: _fmt_tok 999950000 → 1.0B"            "1.0B" "$(_fmt_tok 999950000)"
 assert_eq "render: _fmt_tok non-numeric → 0"  "0"      "$(_fmt_tok abc)"
 assert_eq "render: _fmt_tok empty → 0"        "0"      "$(_fmt_tok '')"
 
@@ -103,7 +114,7 @@ assert_contains "render: _render_dgrid keeps unterminated final row" "22" "$_dgn
 unset _bc _br _dg _dgnt
 
 # ── awk ↔ bash parity (non-boundary values; 0 differs by design: awk "" / bash 0) ──
-for _v in 500 1000 5000 250000 5200000 140000000 2300000000 2500 5250000 5250000000; do
+for _v in 500 1000 5000 250000 5200000 140000000 2300000000 2500 5250000 5250000000 999499 999500 999999 999950000; do
   _a=$(_fmtawk "print fmt_tok($_v)")
   _b=$(_fmt_tok "$_v")
   assert_eq "fmt parity awk==bash for $_v" "$_a" "$_b"

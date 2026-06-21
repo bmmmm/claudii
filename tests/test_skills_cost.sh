@@ -125,6 +125,17 @@ _sc_flag_count=$(printf '%s\n' "$_sc_outlier_out" \
   | grep -c '!' || true)
 assert_eq "skills-cost outlier: exactly 1 row flagged" "1" "$_sc_flag_count"
 
+# --json mode computes the outlier flag in jq (not a per-row awk fork). Lock the
+# value against the same fixture: expensive-skill true, a sub-threshold skill false.
+_sc_outlier_json=$(CLAUDII_CACHE_DIR="$_SC_OUTLIER_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_oj_exp=$(jq -r '.rows[] | select(.name=="expensive-skill") | .outlier' <<< "$_sc_outlier_json" 2>/dev/null)
+assert_eq "skills-cost --json: expensive-skill outlier=true" "true" "$_sc_oj_exp"
+_sc_oj_cheap=$(jq -r '.rows[] | select(.name=="cheap-skill") | .outlier' <<< "$_sc_outlier_json" 2>/dev/null)
+assert_eq "skills-cost --json: cheap-skill outlier=false" "false" "$_sc_oj_cheap"
+_sc_oj_rare=$(jq -r '.rows[] | select(.name=="rare-expensive") | .outlier' <<< "$_sc_outlier_json" 2>/dev/null)
+assert_eq "skills-cost --json: rare-expensive blocked by calls floor (false)" "false" "$_sc_oj_rare"
+
 # ── Test 4: --plugins flag switches attribution block ─────────────────────────
 _SC_PLUGINS_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_PLUGINS_CACHE")
 mkdir -p "$_SC_PLUGINS_CACHE/insights"

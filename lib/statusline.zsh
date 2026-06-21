@@ -195,10 +195,12 @@ function _claudii_fmt_tok {
   local n=${1%.*} t
   [[ "$n" == <-> ]] || { printf ''; return; }
   (( n == 0 )) && { printf ''; return; }
-  if (( n >= 1000000000 )); then
+  # Promote at the ROUNDED boundary, not the raw unit: 999500..999999 rounds to
+  # 1.0M (not "1000K"), 999.95M..999.99M to 1.0B. Mirror of lib/render.sh _fmt_tok.
+  if (( n >= 999950000 )); then
     t=$(( (n + 50000000) / 100000000 ))
     printf '%d.%dB' $(( t / 10 )) $(( t % 10 ))
-  elif (( n >= 1000000 )); then
+  elif (( n >= 999500 )); then
     t=$(( (n + 50000) / 100000 ))
     printf '%d.%dM' $(( t / 10 )) $(( t % 10 ))
   elif (( n >= 1000 )); then
@@ -218,7 +220,7 @@ function _claudii_collect_sessions {
 
   local -A _sfst
   local _sf_mt _sf_age sc s_ppid
-  local s_model s_ctx s_tok s_5h s_r5h _best_r5h=""
+  local s_model s_ctx s_tok s_5h s_r5h _best_r5h="" _best_r5h_mt=0
   for _sf in "$_cache_base"/session-*(N); do
     [[ "$_sf" == *.tmp.* ]] && continue
     _sf_mt=0
@@ -260,7 +262,12 @@ function _claudii_collect_sessions {
     _CLAUDII_SDASH_TOKS+=("$s_tok")
     _CLAUDII_SDASH_5HS+=("$s_5h")
     _CLAUDII_SDASH_R5HS+=("$s_r5h")
-    [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && _best_r5h="$s_r5h"
+    # Keep the reset_5h from the FRESHEST session (max mtime), not the glob-last
+    # one — the account-wide 5h window can have rolled between two samples, and
+    # glob order is by session id, not freshness. Mirrors the freshest-wins
+    # logic in lib/functions.zsh _claudii_rl_warn.
+    [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && (( _sf_mt > _best_r5h_mt )) \
+      && { _best_r5h="$s_r5h"; _best_r5h_mt=$_sf_mt; }
     (( ++_CLAUDII_SDASH_COUNT ))
   done
   # Backfill missing reset_5h — all sessions share the same account reset time

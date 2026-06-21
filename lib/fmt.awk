@@ -20,8 +20,10 @@
 # integral value via %d, not the locale-sensitive CONVFMT). Rounding mirrors
 # _fmt_tok exactly (tenths, half-up): keep the two in lockstep.
 function fmt_tok(t,   x) {
-  if (t >= 1000000000) { x = int((t + 50000000) / 100000000); return int(x / 10) "." (x % 10) "B" }
-  if (t >= 1000000)    { x = int((t + 50000) / 100000);       return int(x / 10) "." (x % 10) "M" }
+  # Promote at the ROUNDED boundary: 999500..999999 → 1.0M (not "1000K"),
+  # 999.95M..999.99M → 1.0B. Keep in lockstep with _fmt_tok (lib/render.sh).
+  if (t >= 999950000) { x = int((t + 50000000) / 100000000); return int(x / 10) "." (x % 10) "B" }
+  if (t >= 999500)    { x = int((t + 50000) / 100000);       return int(x / 10) "." (x % 10) "M" }
   if (t >= 1000)       return int((t + 500) / 1000) "K"
   if (t > 0)           return t ""
   return ""

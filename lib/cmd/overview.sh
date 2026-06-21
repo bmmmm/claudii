@@ -56,8 +56,13 @@ _ov_uv_have_hist=0
 # account line. Shared by the background-reap and synchronous-fallback paths.
 _ov_history_parse() {
   local _raw="$1" _sum
-  _ov_uv_series=$(printf '%s\n' "$_raw" | awk 'NR==1')
-  _sum=$(printf '%s\n' "$_raw" | awk 'NR==2')
+  # Split the two awk-output lines with pure bash (was two awk forks + printfs).
+  _ov_uv_series="${_raw%%$'\n'*}"
+  if [[ "$_raw" == *$'\n'* ]]; then
+    _sum="${_raw#*$'\n'}"; _sum="${_sum%%$'\n'*}"
+  else
+    _sum=""
+  fi
   IFS=$'\t' read -r _ov_uv_max _ov_uv_today _ov_uv_total _ov_uv_active _ov_uv_peak _ov_uv_tsess <<< "$_sum"
   if [[ "$_ov_uv_total" =~ ^[0-9]+$ ]] && (( _ov_uv_total > 0 )); then
     _ov_today_tok="$_ov_uv_today"
@@ -102,7 +107,7 @@ _ov_history_kick() {
 _ov_history_reap() {
   if [[ -n "$_OV_HIST_TMP" ]]; then
     if [[ -n "$_OV_HIST_PID" ]]; then wait "$_OV_HIST_PID" 2>/dev/null || true; fi
-    _ov_history_parse "$(cat "$_OV_HIST_TMP" 2>/dev/null || true)"
+    _ov_history_parse "$(<"$_OV_HIST_TMP")"
     rm -f "$_OV_HIST_TMP" 2>/dev/null
   elif [[ -n "$_OV_HIST_RAW" ]]; then
     _ov_history_parse "$_OV_HIST_RAW"
@@ -458,7 +463,7 @@ _ov_render_agents() {
       Opus)   _ag_opus+="${_ag_opus:+ · }${_a_entry}"     ;;
       *)      _ag_other+="${_ag_other:+ · }${_a_entry}"   ;;
     esac
-  done < <(echo "$_ov_agents_json" | jq -r 'to_entries | sort_by(.key)[] | [(.value.model // "?"), (.key + (if (.value.effort // "") == "" then "" else "/" + .value.effort end))] | @tsv')
+  done < <(jq -r 'to_entries | sort_by(.key)[] | [(.value.model // "?"), (.key + (if (.value.effort // "") == "" then "" else "/" + .value.effort end))] | @tsv' <<< "$_ov_agents_json")
 
   [[ -n "$_ag_haiku"  ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "haiku"  "$_ag_haiku"
   [[ -n "$_ag_sonnet" ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "sonnet" "$_ag_sonnet"
@@ -499,7 +504,10 @@ _ov_render_services() {
     if [[ -f "$_ov_status_cache" ]]; then
       _ov_health_str=""
       _ov_affected=0
+      _ov_inc=""
       while IFS='=' read -r _om _os; do
+        # Capture the incident stage in the same pass (was a 2nd grep|head|cut read).
+        [[ "$_om" == "_incident" && -z "$_ov_inc" ]] && _ov_inc="$_os"
         [[ -z "$_om" || "$_om" == _* ]] && continue
         _om_cap=$(_norm_model_short "$_om")
         case "$_os" in
@@ -513,7 +521,7 @@ _ov_render_services() {
         # Incident indicator — neutral note glyph when an incident exists but
         # no tracked model is affected; stage-colored otherwise. In sync with
         # bin/claudii-cc-statusline and lib/statusline.zsh.
-        _ov_inc=$(grep -E '^_incident=' "$_ov_status_cache" 2>/dev/null | head -1 | cut -d= -f2)
+        # _ov_inc was captured during the read loop above.
         if [[ -n "$_ov_inc" && $_ov_affected -eq 0 ]]; then
           _ov_model_health+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_NOTE}${CLAUDII_CLR_RESET}"
         else

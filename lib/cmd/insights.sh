@@ -620,10 +620,14 @@ _cmd_session() {
   fi
 
   # Enrichment: live session-* cache for ctx%/model/project (often absent).
-  local have_live=0 sf s2 ln
+  local have_live=0 sf s2 _scontent _nl
   for sf in "$cdir"/session-*; do
-    [[ -e "$sf" ]] || continue
-    s2=""; while IFS= read -r ln; do s2="${ln#*=}"; break; done < <(grep '^session_id=' "$sf" 2>/dev/null)
+    [[ -f "$sf" ]] || continue
+    [[ "$sf" == *.tmp.* ]] && continue
+    # Read once + parameter-expansion match — was a grep fork per cache file.
+    _scontent=""; { _scontent=$(<"$sf"); } 2>/dev/null
+    _nl=$'\n'"$_scontent"; s2=""
+    [[ "$_nl" == *$'\n'session_id=* ]] && { s2="${_nl#*$'\n'session_id=}"; s2="${s2%%$'\n'*}"; }
     if [[ "$s2" == "$sid" ]]; then _parse_session_cache "$sf"; have_live=1; break; fi
   done
 
@@ -657,7 +661,7 @@ _cmd_session() {
       | ["SUB", ((map(.value)|add//0)|tostring), ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
     ( .stop_reasons // {} | to_entries | sort_by(-.value)
       | ["STOP", ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
-    ( .limit_hits // [] | .[] | ["LH", (.timestamp // ""), (.model // "")] | join(U) )
+    ( .limit_hits // [] | sort_by(.timestamp) | .[] | ["LH", (.timestamp // ""), (.model // "")] | join(U) )
   ' "$jf")
 
   local first_seen="" last_seen="" think="0" tcalls="0" terrs="0" dom=""
@@ -997,11 +1001,12 @@ _cmd_limits() {
   fi
 
   # Single pass: count, hour buckets, model tally, recent list.
-  local total=0 ts model labs lH lhour modacc="" listed=0 list=""
+  local total=0 ts model labs lH lhour modacc="" listed=0 list="" _mlabel
   local -a hours
   while IFS=$'\t' read -r ts model; do
     [[ -z "$ts" ]] && continue
     (( ++total ))
+    _mlabel=$(_insights_model_label "$model")   # compute once: used for tally + listing
     _iso_epoch "$ts"
     if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
       _fmt_abs "$_EPOCH" '%H'; lhour="$_ABS_FMT"
@@ -1011,7 +1016,7 @@ _cmd_limits() {
         local _hb=$(( 10#$lhour )); hours[_hb]=$(( ${hours[_hb]:-0} + 1 ))
       fi
     fi
-    modacc+="$(_insights_model_label "$model")"$'\n'
+    modacc+="$_mlabel"$'\n'
     if (( listed < 10 )); then
       labs="?"; lH=""
       if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
@@ -1020,7 +1025,7 @@ _cmd_limits() {
       fi
       printf -v list '%s  %s%-10s%s  %s%5s%s   %s%s%s\n' "$list" \
         "$dim" "$labs" "$reset" "$cyan" "$lH" "$reset" \
-        "$accent" "$(_insights_model_label "$model")" "$reset"
+        "$accent" "$_mlabel" "$reset"
       (( ++listed ))
     fi
   done <<< "$hits"

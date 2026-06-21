@@ -96,6 +96,7 @@ _cfgget_memo_clear() {
 }
 _cfgget() {
   local key="$1" val _jp="" _seg
+  local -a _cfgget_segs=()   # local: was leaking into the caller's scope
   _validate_key "$key" || return 1
   local _ck="_CFGMEMO_${key//[^a-zA-Z0-9_]/_}"
   local _cks="${_ck}__set"
@@ -291,7 +292,7 @@ _live_pids_init() {
   local _json="" _pid _kind _status _i=0
   if (( _LIVE_PIDS_KICKED )) && [[ -n "$_LIVE_PIDS_TMP" ]]; then
     if [[ -n "$_LIVE_PIDS_PID" ]]; then wait "$_LIVE_PIDS_PID" 2>/dev/null || true; fi
-    _json=$(cat "$_LIVE_PIDS_TMP" 2>/dev/null || true)
+    _json=$(<"$_LIVE_PIDS_TMP") || _json=""   # $(<) avoids a cat fork; guard keeps set -e safe
     rm -f "$_LIVE_PIDS_TMP" 2>/dev/null
   else
     command -v claude >/dev/null 2>&1 || return 0
@@ -351,7 +352,7 @@ _session_build_map() {
 
 # Resolve JSONL path for a session_id (uses map if built, falls back to scan).
 _session_jsonl() {
-  local sid="$1" _j
+  local sid="$1" _j _d   # _d local: was leaking into the caller's scope
   [[ -z "$sid" ]] && return
   # Map lookup
   for (( _j=0; _j<${#_SID_MAP_KEYS[@]}; _j++ )); do

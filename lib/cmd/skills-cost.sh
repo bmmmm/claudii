@@ -254,13 +254,11 @@ _cmd_skills_cost() {
     local _json_rows="["
     local _first=1
     for (( _i=0; _i<_sc_count; _i++ )); do
-      local _outlier="false"
-      _outlier=$(LC_ALL=C awk -v a="${_sc_avg[$_i]}" -v t="$_threshold" -v c="${_sc_calls[$_i]}" -v mc="$_outlier_min_calls" \
-        'BEGIN { print (a+0 >= t+0 && c+0 >= mc+0) ? "true" : "false" }')
       [[ "$_first" -eq 0 ]] && _json_rows+=","
       # Token split per row: the judgment signal consumers need — out-heavy
       # ("skill talks too much" → reply-cap helps) vs cache_read-heavy ("runs
-      # in fat sessions" → SKILL.md edits won't move the needle).
+      # in fat sessions" → SKILL.md edits won't move the needle). The outlier
+      # flag is computed inside this jq pass (was a separate per-row awk fork).
       _json_rows+=$(jq -n \
         --arg name "${_sc_names[$_i]}" \
         --arg calls "${_sc_calls[$_i]}" \
@@ -271,8 +269,10 @@ _cmd_skills_cost() {
         --arg otok "${_sc_out[$_i]}" \
         --arg cr "${_sc_cr[$_i]}" \
         --arg cc "${_sc_cc[$_i]}" \
-        --argjson outlier "$_outlier" \
-        '{name:$name, calls:($calls|tonumber), tot_usd:($tot|tonumber), avg_usd:($avg|tonumber), model:$model, outlier:$outlier,
+        --argjson thr "$_threshold" \
+        --argjson mc "$_outlier_min_calls" \
+        '{name:$name, calls:($calls|tonumber), tot_usd:($tot|tonumber), avg_usd:($avg|tonumber), model:$model,
+          outlier: (($avg|tonumber) >= $thr and ($calls|tonumber) >= $mc),
           in_tok:($itok|tonumber), out_tok:($otok|tonumber), cache_read:($cr|tonumber), cache_create:($cc|tonumber)}')
       _first=0
     done
