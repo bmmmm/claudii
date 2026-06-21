@@ -678,17 +678,31 @@ unset PID_TMP pid_guard_out _TEST_LIVE_PID
 #   all ok   → effective_ttl = base * 2
 #   incident → effective_ttl = max(60, base / 5)
 #   unreachable → effective_ttl = base (unchanged)
+#
+# Each subtest gets its own tmp dir. _claudii_statusline spawns bin/claudii-status
+# in the background (which does a network fetch and writes status-models via mv).
+# A shared dir causes a race: the background job from the ok-stale subtest can
+# write status-models with mtime=now AFTER the degraded subtest's touch -t sets
+# it to 2020, making the degraded subprocess see age≈0 and omit ⟳.
 
-ATTL_TMP="$CLAUDII_HOME/tmp/test_statusline_attl"
-rm -rf "$ATTL_TMP"
-mkdir -p "$ATTL_TMP/config/claudii"
-cp "$CLAUDII_HOME/config/defaults.json" "$ATTL_TMP/config/claudii/config.json"
+_attl_setup() {
+  local dir="$1"
+  rm -rf "$dir"
+  mkdir -p "$dir/config/claudii"
+  cp "$CLAUDII_HOME/config/defaults.json" "$dir/config/claudii/config.json"
+}
+
+ATTL_OK_FRESH="$CLAUDII_HOME/tmp/test_statusline_attl_ok_fresh"
+ATTL_OK_STALE="$CLAUDII_HOME/tmp/test_statusline_attl_ok_stale"
+ATTL_DEG="$CLAUDII_HOME/tmp/test_statusline_attl_deg"
+ATTL_UNR="$CLAUDII_HOME/tmp/test_statusline_attl_unr"
 
 # Base TTL from defaults (300s). A fresh cache (age ~0) should never show ⟳.
 # For ok state (effective_ttl = 600): age 0 → no refresh indicator.
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
+_attl_setup "$ATTL_OK_FRESH"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_OK_FRESH/status-models"
 attl_ok_out=$(
-  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ATTL_OK_FRESH" XDG_CONFIG_HOME="$ATTL_OK_FRESH/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _claudii_statusline
@@ -703,10 +717,11 @@ else
 fi
 
 # For ok state with stale cache (age > base*2): should show ⟳
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
-touch -t 202001010000 "$ATTL_TMP/status-models"
+_attl_setup "$ATTL_OK_STALE"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ATTL_OK_STALE/status-models"
+touch -t 202001010000 "$ATTL_OK_STALE/status-models"
 attl_ok_stale=$(
-  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ATTL_OK_STALE" XDG_CONFIG_HOME="$ATTL_OK_STALE/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _claudii_statusline
@@ -717,10 +732,11 @@ assert_contains "adaptive TTL ok state: stale cache → refresh indicator shown"
 
 # For degraded state: effective_ttl = max(60, base/5) = max(60, 60) = 60.
 # A fresh cache (age ~0) → no refresh. A cache slightly older than 60s → refresh.
-printf 'opus=degraded\nsonnet=ok\nhaiku=ok\n' > "$ATTL_TMP/status-models"
-touch -t 202001010000 "$ATTL_TMP/status-models"
+_attl_setup "$ATTL_DEG"
+printf 'opus=degraded\nsonnet=ok\nhaiku=ok\n' > "$ATTL_DEG/status-models"
+touch -t 202001010000 "$ATTL_DEG/status-models"
 attl_deg_out=$(
-  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ATTL_DEG" XDG_CONFIG_HOME="$ATTL_DEG/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _claudii_statusline
@@ -730,9 +746,10 @@ attl_deg_out=$(
 assert_contains "adaptive TTL incident state: stale degraded cache → refresh indicator shown" "⟳" "$attl_deg_out"
 
 # For unreachable: effective_ttl = base (300). Fresh cache → no ⟳.
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$ATTL_TMP/status-models"
+_attl_setup "$ATTL_UNR"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$ATTL_UNR/status-models"
 attl_unr_out=$(
-  CLAUDII_CACHE_DIR="$ATTL_TMP" XDG_CONFIG_HOME="$ATTL_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ATTL_UNR" XDG_CONFIG_HOME="$ATTL_UNR/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
     _claudii_statusline
@@ -745,8 +762,9 @@ else
   assert_eq "adaptive TTL unreachable state: fresh cache → no refresh indicator" "no refresh" "no refresh"
 fi
 
-rm -rf "$ATTL_TMP"
-unset ATTL_TMP attl_ok_out attl_ok_stale attl_deg_out attl_unr_out
+rm -rf "$ATTL_OK_FRESH" "$ATTL_OK_STALE" "$ATTL_DEG" "$ATTL_UNR"
+unset -f _attl_setup
+unset ATTL_OK_FRESH ATTL_OK_STALE ATTL_DEG ATTL_UNR attl_ok_out attl_ok_stale attl_deg_out attl_unr_out
 
 # ── token-throughput display (from the session-* cache tok= field) ───────────
 
