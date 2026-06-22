@@ -224,6 +224,7 @@ _claudii() {
             'set:Mark VPN tunnel active — claudii vpnii set <name>'
             'clear:Mark VPN as down (alias: down/off)'
             'show:Print current tunnel name (alias: status)'
+            '--user:Override target user for set/clear (default: SUDO_USER → console → $USER)'
           )
           _describe 'vpnii command' vpnii_opts
           ;;
