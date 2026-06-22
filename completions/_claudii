@@ -274,6 +274,21 @@ _claudii() {
                 'vibemap.path:Custom path for vibemap.tsv (default: ~/.cache/claudii/vibemap.tsv)'
                 'vibemap.overview:Show Activity strip in the bare overview (true/false, default true)'
                 'overview.sections:Bare overview sections — order + selection (array, default account/usage/sessions/activity/agents/services/commands)'
+                'display.timezone:IANA timezone for absolute timestamps (empty = system local)'
+                'notifications.enabled:terminalSequence alerts from hooks (master switch, true/false)'
+                'notifications.model_down:Window-title alert when a model is down (true/false)'
+                'notifications.burn_eta:Bell + title when burn-ETA < threshold (true/false)'
+                'notifications.burn_eta_threshold_min:Burn-ETA alert threshold in minutes (default: 30)'
+                'notifications.session_end:Desktop notification on session end (true/false)'
+                'notifications.osc:Notify flavor — 777 (Ghostty/urxvt/Warp) or 9 (iTerm2/WezTerm)'
+                'presence.file:Path touched by off / removed by on (CLAUDE_CLIENT_PRESENCE_FILE)'
+                'theme.name:Active color theme name (loaded by lib/visual.sh)'
+                'search.model:Model for claudii search mode'
+                'search.effort:Effort for claudii search mode'
+                'perf.otel.enabled:Read exact latency from OpenTelemetry (opt-in, true/false)'
+                'perf.otel.endpoint:OTLP/HTTP receiver bind address (default: http://127.0.0.1:4318)'
+                'perf.otel.beta_traces:Capture the llm_request span for TTFT (true/false)'
+                'perf.otel.forward:Mirror OTLP batches to a central collector URL (empty = local only)'
               )
               _describe 'config key' keys
               ;;

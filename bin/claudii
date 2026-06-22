@@ -88,11 +88,11 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Config & Integrations${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
-  printf "    %-33s $d %s\n" "omlx [status|connect|test]"      "local-LLM (gateii/oMLX) integration"
+  printf "    %-33s $d %s\n" "omlx [status|connect|test|disconnect]" "local-LLM (gateii/oMLX) integration"
   printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
-  printf "    %-33s $d %s\n" "status (s) [5m|15m|30m]"        "live model check · refresh interval"
+  printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
   printf "    %-33s $d %s\n" "update"                          "update to latest version"
   printf "    %-33s $d %s\n" "version"                         "show version number"

@@ -107,7 +107,7 @@ Example agent aliases — see
 .B \-\-json
 Output structured JSON instead of formatted text.
 Available for:
-.BR status ", " sessions ", " cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " limits ", " cache .
+.BR status ", " sessions ", " cost ", " skills-cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " limits ", " cache .
 .TP
 .B \-\-tsv
 Output tab-separated values (header + data rows).
@@ -1117,7 +1117,7 @@ aliases.clm.effort	xhigh	Effort for \fBclm\fR
 aliases.clq.model	sonnet	Model for \fBclq\fR / search
 fallback.enabled	true	Auto-fallback on outage
 fallback.opus.model	sonnet	Fallback when opus is down
-status.cache_ttl	300	Status cache TTL in seconds
+status.cache_ttl	900	Status cache TTL in seconds
 display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku	Models to monitor
@@ -1138,6 +1138,10 @@ ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/as
 debug.level	off	Log level: off/error/warn/info/debug
 vibemap.enabled	false	Opt-in activity tracking
 vibemap.overview	true	Show Activity strip in claudii overview
+perf.otel.enabled	false	Exact latency via OpenTelemetry (opt-in); off = transcript estimate
+perf.otel.endpoint	http://127.0.0.1:4318	OTLP/HTTP receiver bind address
+perf.otel.beta_traces	true	Capture the claude_code.llm_request span (TTFT)
+perf.otel.forward	(empty)	Mirror OTLP batches to a central collector URL; empty = local only
 overview.sections	account…commands	Overview section order + selection (array)
 .TE
 .

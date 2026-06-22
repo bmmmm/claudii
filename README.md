@@ -97,6 +97,7 @@ claudii limits                   # rate-limit hits — when they hit, which mode
 claudii cache                    # prompt-cache hit rate + tokens saved, per model & day
 claudii session <id>             # per-session token / tool / subagent drilldown
 claudii trends / t               # token + cost history, 30-day model split
+claudii perf / pf                # response-time (p50/p90/p99) + throughput dashboard (today/7d/30d/year)
 claudii skills-cost              # per-skill / per-plugin / per-MCP cost (--compare · --json)
 claudii explain                  # explain claudii's layers and architecture
 claudii doctor / d               # installation health check
@@ -171,6 +172,10 @@ All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 
 **Inside Claude Code (CC-Statusline):** The native `statusLine` hook calls `claudii-cc-statusline` on each turn and passes session JSON via stdin. Nothing runs between turns.
 
-**Cost, token & cache data:** Read straight from Claude Code's local session JSONL — `claudii cost`, `tokens`, `tools`, `limits`, `cache`, `trends`, and `skills-cost` aggregate it with jq. No telemetry, nothing leaves your machine.
+**Cost, token & cache data:** Read straight from Claude Code's local session JSONL — `claudii cost`, `tokens`, `tools`, `limits`, `cache`, `trends`, `skills-cost`, and `perf` aggregate it with jq. No telemetry, nothing leaves your machine.
+
+**`claudii perf` (alias `pf`):** Surfaces response-time percentiles (p50/p90/p99) and output throughput (tok/s), derived from transcript timestamps. Sections: by model, a per-day p50 latency sparkline with a today-vs-baseline delta, a by-repo breakdown (or by-session with `--repo NAME`), and a one-line API health read from the ClaudeStatus cache. Cycleable windows (`today`/`7d`/`30d`/`year`/`--days N`) and `--json`, like the other insights commands.
+
+**Optional OpenTelemetry source for `perf`:** Opt in via `perf.otel.enabled` (toggle: `claudii-otel setup` / `claudii-otel off`). A tiny stdlib Python receiver (`bin/claudii-otel-receiver`, no pip/brew/collector needed) captures Claude Code's OTLP/JSON export to `~/.cache/claudii/otel/`. This upgrades latency from the transcript estimate to exact `duration_ms` + `ttft_ms` (time-to-first-token, shown as **TTFT**), per-response success rate with retry count, and an API errors breakdown by HTTP status code. The receiver binds `127.0.0.1` only; nothing leaves the machine by default. Set `perf.otel.forward` to a collector URL to mirror batches there best-effort for central retention. The active source is shown in the `perf` header (`source: otel` vs `source: transcript`).
 
 </details>

@@ -80,8 +80,7 @@
     "snmax":   { "model": "sonnet", "effort": "max",                            "description": "Sonnet max — harder single-file tasks without multi-step reasoning" },
     "opl":     { "model": "opus",   "effort": "low",                            "description": "Opus low — code review, arch checks, merge assessment" },
     "opm":     { "model": "opus",   "effort": "high",                           "description": "Opus high — multi-file refactors with cross-file reasoning, ecosystem analysis" },
-    "op":      { "model": "opus",   "effort": "high",                           "description": "Opus high — foundation tasks, complex multi-file changes with cross-cutting concerns" },
-    "showall": { "model": "haiku",  "effort": "high",   "skill": "showall",     "description": "Show all — full project state (TODO, git, tests, sessions)" }
+    "op":      { "model": "opus",   "effort": "high",                           "description": "Opus high — foundation tasks, complex multi-file changes with cross-cutting concerns" }
   },
   "theme": {
     "name": "default",
