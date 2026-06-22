@@ -280,11 +280,6 @@ and run its
 .BR install.sh .
 Idempotent.
 .RE
-.TP
-.B explain
-Component overview with current status, data flow, and symbol legend.
-Aliases:
-.BR layers ", " components .
 .
 .SS Model Health (ClaudeStatus)
 .TP
@@ -768,6 +763,15 @@ claudii config set agents.clorch.effort high
 claudii config set agents.clorch.description "Orchestrator"
 .fi
 .RE
+.TP
+.BI "search " "['query']"
+Launch Claude Code in the configured search directory
+.RI ( search.dir ,
+default:
+.IR ~/claude-search ).
+If a
+.I query
+is provided it is passed as the initial prompt.
 .
 .SS Local LLM (omlx / gateii)
 .TP
@@ -879,14 +883,10 @@ Enable:
 .
 .SS System
 .TP
-.BI "search " "['query']"
-Launch Claude Code in the configured search directory
-.RI ( search.dir ,
-default:
-.IR ~/claude-search ).
-If a
-.I query
-is provided it is passed as the initial prompt.
+.B explain
+Component overview with current status, data flow, and symbol legend.
+Aliases:
+.BR layers ", " components .
 .TP
 .B restart
 Reload the plugin by sourcing

@@ -64,15 +64,16 @@ usage() {
   printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
   printf "    %-33s $d %s\n" "cc-statusline [on|off|preset]"   "CC-Statusline inside Claude (on/off, preset focused|calm|default)"
   printf "    %-33s $d %s\n" "insomnii [on|off|auto|install]"  "bedtime statusline plugin (delegates clock segment)"
-  printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}Sessions & Cost${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
   printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
   printf "    %-33s $d %s\n" "session <session-id>"            "per-session token / tool drilldown"
   printf "    %-33s $d %s\n" "pin / unpin <session-id>"        "protect session from GC"
   printf "    %-33s $d %s\n" "gc (g)"                          "clean up stale session caches"
   printf "    %-33s $d %s\n" "resume <session-id>"             "resume a session by ID"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
   printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin / per-MCP-tool cost breakdown"
@@ -90,15 +91,16 @@ usage() {
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
   printf "    %-33s $d %s\n" "omlx [status|connect|test|disconnect]" "local-LLM (gateii/oMLX) integration"
   printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
+  printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
+  printf "    %-33s $d %s\n" "explain (layers)"               "components, symbols & data flow"
   printf "    %-33s $d %s\n" "update"                          "update to latest version"
   printf "    %-33s $d %s\n" "version"                         "show version number"
   printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
   printf "    %-33s $d %s\n" "restart"                         "reload plugin"
-  printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf '\n'
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}man claudii${CLAUDII_CLR_RESET}  full reference\n"

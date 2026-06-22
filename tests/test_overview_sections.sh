@@ -34,6 +34,11 @@ assert_contains "commands: omlx discoverable"    "omlx"    "$_ovs_out"
 assert_contains "commands: vpnii discoverable"   "vpnii"   "$_ovs_out"
 assert_contains "commands: skills-cost listed"   "skills-cost" "$_ovs_out"
 assert_contains "commands: prefix rule stated"   "claudii <command>" "$_ovs_out"
+# Unified taxonomy: the `insights` group restores the analytics commands the old
+# board silently dropped (tokens/perf/tools/limits). Pin the group label + a
+# distinctive slice of its item list so a regrouping regression is caught.
+assert_contains "commands: insights group present"     "insights"              "$_ovs_out"
+assert_contains "commands: dropped analytics restored" "perf · tools · limits" "$_ovs_out"
 
 # ── Usage section: 30-day token sparkline from history ───────────────────────
 # Empty cache (no history) → placeholder; with history token rows → sparkline.

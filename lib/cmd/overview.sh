@@ -486,10 +486,10 @@ _ov_render_services() {
   _ov_sl_on=0
   # _cc_statusline_connected — also matches wrapper chains (cc-insomnii, user scripts)
   [[ -f "$_ov_sl_settings" ]] && _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$_ov_sl_settings" 2>/dev/null)" && _ov_sl_on=1
+  _ov_cs_on=0;   [[ "$_ov_cs_en" == "true" ]]  && _ov_cs_on=1
+  _ov_dash_on=0; [[ "$_ov_dash_en" != "off" ]] && _ov_dash_on=1
   _ov_svc_any=0
-  [[ "$_ov_cs_en" == "true" ]]   && _ov_svc_any=1
-  [[ "$_ov_dash_en" != "off" ]]  && _ov_svc_any=1
-  (( _ov_sl_on ))                && _ov_svc_any=1
+  (( _ov_cs_on || _ov_dash_on || _ov_sl_on )) && _ov_svc_any=1
 
   if (( _ov_svc_any )); then
     printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
@@ -497,9 +497,10 @@ _ov_render_services() {
     printf "  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Services${CLAUDII_CLR_RESET}\n"
   fi
 
-  # ClaudeStatus — with inline model health when on
-  if [[ "$_ov_cs_en" == "true" ]]; then
-    _ov_model_health=""
+  # ClaudeStatus inline model-health block — built once (used by both the
+  # one-row and stacked layouts below). Only meaningful when ClaudeStatus is on.
+  _ov_model_health=""
+  if (( _ov_cs_on )); then
     _ov_status_cache="$cache_dir/status-models"
     if [[ -f "$_ov_status_cache" ]]; then
       _ov_health_str=""
@@ -533,13 +534,26 @@ _ov_render_services() {
         fi
       fi
     fi
+  fi
+
+  # All three layers active → one wide row of short chips. The chips carry no
+  # off-state hints, so the row stays well under 80 cols and renders cleanly even
+  # in the piped (cols=80) fallback — no terminal-width probe needed.
+  if (( _ov_cs_on && _ov_dash_on && _ov_sl_on )); then
+    printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ClaudeStatus%s   ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} Dashboard   ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} CC-Statusline\n" "$_ov_model_health"
+    return 0
+  fi
+
+  # Stacked layout — at least one layer is off, so each line has room for its
+  # actionable "claudii <x> on" hint.
+  if (( _ov_cs_on )); then
     printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ClaudeStatus%s\n" "$_ov_model_health"
   else
     printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} ClaudeStatus%-20s claudii on${CLAUDII_CLR_RESET}\n" ""
   fi
 
   # Session Dashboard
-  if [[ "$_ov_dash_en" != "off" ]]; then
+  if (( _ov_dash_on )); then
     printf "    ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} Dashboard\n"
   else
     printf "    ${CLAUDII_CLR_DIM}${CLAUDII_SYM_INACTIVE} Dashboard%-23s claudii session-dashboard on${CLAUDII_CLR_RESET}\n" ""
@@ -559,12 +573,12 @@ _ov_render_services() {
 _ov_render_commands() {
   printf '\n'
   printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Commands${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}each runs as claudii <command>${CLAUDII_CLR_RESET}\n"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "sessions" "se · si · pin · unpin · gc · resume"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "cost"     "cost · trends · skills-cost"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "activity" "vibemap · cache"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "display"  "on · off · claudestatus · session-dashboard · cc-statusline · insomnii"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "tools"    "agents · config · omlx · vpnii · search"
-  printf "    ${CLAUDII_CLR_DIM}%-9s${CLAUDII_CLR_RESET} %s\n" "system"   "status · doctor · update · explain · changelog"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "sessions" "se · si · session · pin · unpin · gc · resume"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "cost"     "cost · trends · skills-cost"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "insights" "tokens · perf · tools · limits · cache · vibemap"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "display"  "on · off · claudestatus · session-dashboard · cc-statusline · insomnii"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "config"   "config · agents · omlx · vpnii · search"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "system"   "status · doctor · explain · update · version · changelog · restart"
   _ov_hint "claudii help" "man claudii"
 }
 
