@@ -34,7 +34,7 @@ def reponame($cwd):
   | (if $w != null and $w > 0 then $p[$w-1] else ($p | last) end) // "";
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 6,
+  schema_version: 7,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -56,7 +56,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   sidechain_msgs: 0,
   thinking_blocks: 0,
   limit_hits: [],          # [{timestamp, model}]
-  latency: [],             # [{day, model, dt_ms, out}] main-thread response deltas (assistant.ts - parent.ts); sidechains excluded
+  latency: [],             # [{day, model, dt_ms, out, ctx}] main-thread response deltas (assistant.ts - parent.ts); sidechains excluded. ctx = context-window occupancy (input + cache_read + cache_creation tokens)
   snapshots: 0,
   pending_tools: {},       # transient: tool_use_id -> tool_name
   pending_agent_skill: {}, # transient: tool_use_id -> attributionSkill at Agent spawn
@@ -96,7 +96,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       | (if (($r.isSidechain // false) | not) and $r.parentUuid and (.seen_ts[$r.parentUuid] != null) and $r.timestamp then
           ((($r.timestamp | ts) - (.seen_ts[$r.parentUuid] | ts)) * 1000 | round) as $dt
           | (if $dt >= 0 and $dt <= 600000 then
-              .latency += [{day: $day, model: $model, dt_ms: $dt, out: ($r.message.usage.output_tokens // 0)}]
+              .latency += [{day: $day, model: $model, dt_ms: $dt, out: ($r.message.usage.output_tokens // 0), ctx: (($r.message.usage.input_tokens // 0) + ($r.message.usage.cache_read_input_tokens // 0) + ($r.message.usage.cache_creation_input_tokens // 0))}]
             else . end)
         else . end)
       | (if $skill != null then

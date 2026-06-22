@@ -634,6 +634,14 @@ Sections:
 .BR p50 / p90 / p99
 and output
 .BR tok/s ),
+.B By context window
+(latency bucketed by context-window occupancy \(em
+.IR input " + " cache_read " + " cache_creation
+tokens \(em so the response-time cost of a large window is visible:
+.BR p50 / p90 / p99
+climb and the
+.B p99
+tail explodes as the window grows),
 a
 .B Latency trend
 (per-day p50 sparkline with a today-vs-baseline delta as an early-warning

@@ -3,9 +3,10 @@
 #
 # Shares the insights data path (lib/cmd/insights.sh helpers: _insights_window,
 # _insights_refresh, _insights_merged_json, _insights_model_label, ...). The
-# perf signal is the per-response latency list added to the cache in schema v6
-# (insights.jq): latency = [{day, model, dt_ms, out}], dt_ms = assistant.ts -
-# parent.ts (main thread only). The merge attaches {repo, sessionId} per sample.
+# perf signal is the per-response latency list added to the cache in schema v7
+# (insights.jq): latency = [{day, model, dt_ms, out, ctx}], dt_ms = assistant.ts -
+# parent.ts (main thread only), ctx = input + cache_read + cache_creation tokens
+# (context-window occupancy). The merge attaches {repo, sessionId} per sample.
 #
 # Source abstraction (phase 2): perf reads a fixed shape (latency samples). Today
 # that shape comes from transcripts (estimated, no TTFT). When a local OTEL agent
@@ -67,7 +68,8 @@ _perf_json() {
       | if $n==0 then 0 else $s[ ([($n*$p|floor), ($n-1)]|min) ] end;
     def toks($o;$d): if $d>0 then ($o*1000/$d|floor) else 0 end;
     [ (.latency // [])[]
-      | select(.model != "<synthetic>" and (.day >= $floor)
+      | select(.model != "<synthetic>" and (.model | startswith("claudii-") | not)
+               and (.day >= $floor)
                and (($repo=="") or (.repo==$repo))) ] as $L
     | {
         window_days: $days,
@@ -81,8 +83,8 @@ _perf_json() {
           tok_s:  toks(([$L[].out]|add // 0); ([$L[].dt_ms]|add // 0)),
           samples: ($L|length)
         },
-        by_model: ( $L | group_by(.model)
-          | map({ model:.[0].model, p50_ms:pctms([.[].dt_ms];0.5),
+        by_model: ( $L | group_by(.model | sub("\\[1m\\]$";""))
+          | map({ model:(.[0].model | sub("\\[1m\\]$";"")), p50_ms:pctms([.[].dt_ms];0.5),
                   p90_ms:pctms([.[].dt_ms];0.9), p99_ms:pctms([.[].dt_ms];0.99),
                   tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
           | sort_by(-.samples) ),
@@ -94,6 +96,16 @@ _perf_json() {
                   p90_ms:pctms([.[].dt_ms];0.9),
                   tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
           | sort_by(-.samples) ),
+        # ctx buckets — keep the boundaries (50k/100k/200k/400k) in sync with the
+        # render W-rows in _cmd_perf below; test pins json/render label parity.
+        by_window: ( $L | map(. + {wk: ((.ctx // -1)
+              | if . < 0 then 9 elif . < 50000 then 1 elif . < 100000 then 2
+                elif . < 200000 then 3 elif . < 400000 then 4 else 5 end)})
+          | group_by(.wk)
+          | map({ bucket:({"1":"<50k","2":"50-100k","3":"100-200k","4":"200-400k","5":"400k+","9":"unknown"}[.[0].wk|tostring]),
+                  p50_ms:pctms([.[].dt_ms];0.5), p90_ms:pctms([.[].dt_ms];0.9),
+                  p99_ms:pctms([.[].dt_ms];0.99),
+                  tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length }) ),
         ttft: ( ([$L[].ttft_ms] | map(select(. != null))) as $tt
           | if ($tt|length) > 0
             then { p50_ms:pctms($tt;0.5), p90_ms:pctms($tt;0.9), p99_ms:pctms($tt;0.99), samples:($tt|length) }
@@ -153,7 +165,8 @@ _cmd_perf() {
     printf 'Usage: claudii perf [WINDOW] [--repo NAME] [--watch[=N]] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
     printf 'Response-time percentiles (p50/p90/p99), output throughput (tok/s)\n'
-    printf 'and a per-day latency trend, by model and repo, plus API health.\n'
+    printf 'and a per-day latency trend, by model, context window and repo, plus\n'
+    printf 'API health.\n'
     printf 'Latency is estimated from transcript timestamps (assistant minus\n'
     printf 'parent); --repo NAME narrows every section to one repository.\n'
     printf '%s\n' '--watch[=N] refreshes every N seconds (default: 30).'
@@ -209,14 +222,27 @@ _cmd_perf() {
       | if $n==0 then 0 else $s[ ([($n*$p|floor), ($n-1)]|min) ] end;
     def toks($o;$d): if $d>0 then ($o*1000/$d|floor) else 0 end;
     [ (.latency // [])[]
-      | select(.model != "<synthetic>" and (.day >= $floor)
+      | select(.model != "<synthetic>" and (.model | startswith("claudii-") | not)
+               and (.day >= $floor)
                and (($repo=="") or (.repo==$repo))) ] as $L
     | [ (.errors // [])[]
         | select((.day >= $floor) and (($repo=="") or (.repo==$repo))) ] as $E
-    | ( $L | group_by(.model)
-        | map({k:.[0].model, d:[.[].dt_ms], o:([.[].out]|add), n:length})
+    | ( $L | map(. + {mn:(.model | sub("\\[1m\\]$";""))}) | group_by(.mn)
+        | map({k:.[0].mn, d:[.[].dt_ms], o:([.[].out]|add), n:length})
         | sort_by(-.n)
         | .[] | ["M", .k, (pctms(.d;0.5)|tostring), (pctms(.d;0.9)|tostring),
+                 (pctms(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
+                 (.n|tostring)] | @tsv ),
+      # ctx buckets — keep the boundaries (50k/100k/200k/400k) in sync with the
+      # by_window block in _perf_json above; test pins json/render label parity.
+      ( $L | map(. + {wb: ((.ctx // -1)
+              | if . < 0 then "9_unknown" elif . < 50000 then "1_<50k"
+                elif . < 100000 then "2_50-100k" elif . < 200000 then "3_100-200k"
+                elif . < 400000 then "4_200-400k" else "5_400k+" end)})
+        | group_by(.wb)
+        | map({k:.[0].wb, d:[.[].dt_ms], o:([.[].out]|add), n:length})
+        | sort_by(.k)
+        | .[] | ["W", .k, (pctms(.d;0.5)|tostring), (pctms(.d;0.9)|tostring),
                  (pctms(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
                  (.n|tostring)] | @tsv ),
       ( $L | group_by(.day)
@@ -252,13 +278,14 @@ _cmd_perf() {
         | ["E", (.[0].status_code|tostring), (length|tostring)] | @tsv )
   ' <<< "$merged")
 
-  local -a _m_rows _d_rows _r_rows _g_rows _e_rows
+  local -a _m_rows _w_rows _d_rows _r_rows _g_rows _e_rows
   local _s_row="" _t_row="" _x_row="" _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue
     _tag="${_ln%%$'\t'*}"
     case "$_tag" in
       M) _m_rows+=("${_ln#M$'\t'}") ;;
+      W) _w_rows+=("${_ln#W$'\t'}") ;;
       D) _d_rows+=("${_ln#D$'\t'}") ;;
       R) _r_rows+=("${_ln#R$'\t'}") ;;
       G) _g_rows+=("${_ln#G$'\t'}") ;;
@@ -276,9 +303,11 @@ _cmd_perf() {
   local note; printf -v note '%s · %s responses · source: %s' \
     "$(_insights_window_label "$days")" "$total_n" "$src"
   [[ -n "$repo_filter" ]] && note="repo: $repo_filter · $note"
-  local hpad=$(( RW - 12 - ${#note} )); (( hpad < 1 )) && hpad=1
-  printf '\n  %sclaudii perf%s%*s%s%s%s\n\n' \
-    "$cyan" "$reset" "$hpad" "" "$dim" "$note" "$reset"
+  # Left-aligned note after the title: a right-justified pad over a `·`-laden
+  # string mis-counts column width under LC_ALL=C (U+00B7 is 2 bytes) and breaks
+  # the de_DE/C CI matrix — keep it ASCII-safe, no ${#note} math.
+  printf '\n  %sclaudii perf%s   %s%s%s\n\n' \
+    "$cyan" "$reset" "$dim" "$note" "$reset"
 
   if (( total_n == 0 )); then
     printf '  %sNo response-time data in this window%s — latency needs assistant\n' "$dim" "$reset"
@@ -330,6 +359,24 @@ _cmd_perf() {
       rows+="${label}"$'\x1f'"$(_fmt_ms "$p50")"$'\x1f'"$(_fmt_ms "$p90")"$'\x1f'"$(_fmt_ms "$p99")"$'\x1f'"${toks}/s"$'\x1f'"${n}"$'\n'
     done
     printf '%s' "$rows" | _render_dgrid "Model" $'p50\x1fp90\x1fp99\x1ftok/s\x1fn'
+  fi
+  echo
+
+  # ── By context window (latency vs context-window occupancy) ──
+  # Buckets responses by context size (input + cache_read + cache_creation tokens)
+  # so the latency cost of a large window is visible — bigger windows run slower
+  # (higher p50/p90/p99), the central "do big contexts hurt?" signal.
+  printf '  %sBy context window%s\n' "$accent" "$reset"
+  if (( ${#_w_rows[@]} == 0 )); then
+    printf '    %s(no data)%s\n' "$dim" "$reset"
+  else
+    local wrows="" _wr wb wp50 wp90 wp99 wtoks wn wlabel
+    for _wr in "${_w_rows[@]}"; do
+      IFS=$'\t' read -r wb wp50 wp90 wp99 wtoks wn <<< "$_wr"
+      wlabel="${wb#*_}"   # strip the sort-key prefix: "4_200-400k" -> "200-400k"
+      wrows+="${wlabel}"$'\x1f'"$(_fmt_ms "$wp50")"$'\x1f'"$(_fmt_ms "$wp90")"$'\x1f'"$(_fmt_ms "$wp99")"$'\x1f'"${wtoks}/s"$'\x1f'"${wn}"$'\n'
+    done
+    printf '%s' "$wrows" | _render_dgrid "Window" $'p50\x1fp90\x1fp99\x1ftok/s\x1fn'
   fi
   echo
 

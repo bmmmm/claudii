@@ -11,7 +11,7 @@
 # Output (same .latency shape lib/cmd/perf.sh already renders, plus exact fields
 # transcripts can't give — ttft_ms, success, attempt — and an .errors list):
 #   { source:"otel",
-#     latency:[{day,model,dt_ms,ttft_ms,out,sessionId,success,attempt,repo}],
+#     latency:[{day,model,dt_ms,ttft_ms,out,ctx,sessionId,success,attempt,repo}],
 #     errors :[{day,model,status_code,sessionId,repo}] }
 #
 # The perf-relevant signal lives in events (logs) and beta traces, NOT metrics:
@@ -43,6 +43,7 @@ def day_of($nano): ((num($nano) / 1000000000) | floor | todate)[0:10];
           dt_ms: num(attr($a; "duration_ms")),
           ttft_ms: (attr($a; "ttft_ms") | if . == null then null else num(.) end),
           out: num(attr($a; "output_tokens")),
+          ctx: (num(attr($a; "input_tokens")) + num(attr($a; "cache_read_tokens")) + num(attr($a; "cache_creation_tokens"))),
           sessionId: (attr($a; "session.id") // ""),
           success: (attrbool($a; "success") as $s | if $s == null then true else $s end),
           attempt: num(attr($a; "attempt")) }
@@ -59,9 +60,11 @@ def day_of($nano): ((num($nano) / 1000000000) | floor | todate)[0:10];
     else empty end
 ] as $rows
 | { source: "otel",
-    latency: [ $rows[] | select(.kind == "lat" and .day >= $floor)
-               | { day, model, dt_ms, ttft_ms, out, sessionId, success, attempt,
+    latency: [ $rows[] | select(.kind == "lat" and .day >= $floor
+                                and (.model | startswith("claudii-") | not))
+               | { day, model, dt_ms, ttft_ms, out, ctx, sessionId, success, attempt,
                    repo: ($repomap[.sessionId] // "?") } ],
-    errors:  [ $rows[] | select(.kind == "err" and .day >= $floor)
+    errors:  [ $rows[] | select(.kind == "err" and .day >= $floor
+                                and (.model | startswith("claudii-") | not))
                | { day, model, status_code, sessionId,
                    repo: ($repomap[.sessionId] // "?") } ] }
