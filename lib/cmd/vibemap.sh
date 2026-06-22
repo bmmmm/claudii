@@ -388,6 +388,10 @@ _cmd_vibemap() {
     grid)                 _vibemap_render_grid ;;
     strip|--recent)
       shift
+      if [[ -n "${1:-}" && "${1:-}" != "--days" ]]; then
+        printf 'claudii vibemap strip: unexpected argument %s — try `claudii vibemap strip --days N`\n' "$1" >&2
+        return 2
+      fi
       local days=30
       if [[ "${1:-}" == "--days" ]]; then days="${2:-30}"; fi
       _vibemap_render_strip "$days"

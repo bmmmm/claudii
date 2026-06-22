@@ -154,6 +154,28 @@ _out=$(_vm_run strip --days 999 2>&1; echo "rc=$?")
 echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
 assert_eq "vibemap strip: --days bounds-checked (1..90)" "1" "$_ok"
 
+# strip: positional argument (e.g. strip 45) must error, not silently use 30
+_out=$(_vm_run strip 45 2>&1; echo "rc=$?")
+echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+assert_eq "vibemap strip: positional arg returns rc=2" "1" "$_ok"
+echo "$_out" | grep -q "45" && _ok=1 || _ok=0
+assert_eq "vibemap strip: positional arg error mentions the bad argument" "1" "$_ok"
+
+# strip: bogus flag also errors
+_out=$(_vm_run strip bogus 2>&1; echo "rc=$?")
+echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+assert_eq "vibemap strip: unrecognized flag returns rc=2" "1" "$_ok"
+
+# strip: --days N still works
+_out=$(_vm_run strip --days 45 2>&1; echo "rc=$?")
+echo "$_out" | grep -q "rc=0" && _ok=1 || _ok=0
+assert_eq "vibemap strip: --days N succeeds (rc=0)" "1" "$_ok"
+
+# strip: bare strip still works
+_out=$(_vm_run strip 2>&1; echo "rc=$?")
+echo "$_out" | grep -q "rc=0" && _ok=1 || _ok=0
+assert_eq "vibemap strip: bare strip succeeds (rc=0)" "1" "$_ok"
+
 # ── mini-vibemap overview segment ─────────────────────────────────────────────
 
 # Setup: fresh home with vibemap enabled + some data
