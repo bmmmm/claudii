@@ -566,7 +566,7 @@ _cmd_gc() {
     [[ -f "$_sf" ]] || continue
     [[ "$_sf" == *.tmp.* ]] && continue
 
-    local _sc _ppid _pinned _sf_mt _age
+    local _sc _ppid _pinned _sf_mt _age _tmp   # _tmp local: was leaking into the caller's scope
     { _sc=$(<"$_sf"); } 2>/dev/null || continue
 
     # Extract ppid
