@@ -34,7 +34,7 @@ _cmd_config() {
       _validate_key "$key" || exit 1
       value="${4:-}"
       [[ -z "$value" ]] && { echo "Usage: claudii config set <key> <value>" >&2; exit 1; }
-      if [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
+      if [[ "$value" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
         _jq_update "$CONFIG" --arg k "$key" --argjson v "$value" \
           'setpath($k | split("."); $v)'
       else

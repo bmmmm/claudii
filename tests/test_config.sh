@@ -38,6 +38,30 @@ bash "$CLAUDII_HOME/bin/claudii" config set fallback.enabled false >/dev/null 2>
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get fallback.enabled 2>&1)
 assert_eq "config set boolean value" "false" "$output"
 
+# config set leading-zero string — must preserve padding, not coerce to numeric
+bash "$CLAUDII_HOME/bin/claudii" config set aliases.cl.model sonnet >/dev/null 2>&1  # reset first
+bash "$CLAUDII_HOME/bin/claudii" config set testkey.zero 007 >/dev/null 2>&1
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get testkey.zero 2>&1)
+assert_eq "config set leading-zero string (007 preserved)" "007" "$output"
+
+bash "$CLAUDII_HOME/bin/claudii" config set testkey.zero 08 >/dev/null 2>&1
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get testkey.zero 2>&1)
+assert_eq "config set leading-zero string (08 preserved)" "08" "$output"
+
+# config set canonical zero — must still be stored as numeric 0
+bash "$CLAUDII_HOME/bin/claudii" config set testkey.zero 0 >/dev/null 2>&1
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get testkey.zero 2>&1)
+assert_eq "config set canonical zero stays numeric" "0" "$output"
+raw_type=$(jq -r '.testkey.zero | type' "$XDG_CONFIG_HOME/claudii/config.json" 2>/dev/null)
+assert_eq "config set canonical zero is JSON number type" "number" "$raw_type"
+
+# config set decimal — must still be numeric
+bash "$CLAUDII_HOME/bin/claudii" config set testkey.zero 1.5 >/dev/null 2>&1
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get testkey.zero 2>&1)
+assert_eq "config set decimal (1.5) stays numeric" "1.5" "$output"
+raw_type=$(jq -r '.testkey.zero | type' "$XDG_CONFIG_HOME/claudii/config.json" 2>/dev/null)
+assert_eq "config set decimal is JSON number type" "number" "$raw_type"
+
 # config get statusline.models
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get statusline.models 2>&1)
 assert_eq "config get statusline.models default" "opus,sonnet,haiku" "$output"
