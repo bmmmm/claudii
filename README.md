@@ -161,7 +161,7 @@ All keys: `claudii config set <Tab>` (zsh completion) or `man claudii`.
 
 ## License
 
-[GPL-3.0](LICENSE) · [ko-fi](https://ko-fi.com/bmabma)
+[Homepage](https://bmmmm.github.io/claudii) · [GPL-3.0](LICENSE) · [ko-fi](https://ko-fi.com/bmabma)
 
 ---
 
