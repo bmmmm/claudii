@@ -1,0 +1,43 @@
+name: CI
+
+# Fast pre-mirror gate on the self-hosted Forgejo runner (nutc). Runs the
+# Linux / C-locale leg of the test suite in seconds, right where you push —
+# before the Forgejo→GitHub mirror carries the commit to the full GitHub
+# matrix (macOS + ubuntu, C + de_DE.UTF-8). This catches OS/locale-agnostic
+# breakage immediately; macOS- and de_DE-specific cases (onetrueawk comma
+# locale, BSD date %a) stay GitHub-only — there is no self-hosted Mac. So
+# this is a speed gate, not a coverage replacement: a green run here does
+# not imply the macOS legs are green.
+#
+# `runs-on: docker` matches the runner's registered label →
+# data.forgejo.org/oci/node:20-bullseye (Debian, runs as root, no sudo).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run on the same ref when a new push arrives — rapid
+# fix-up commits to main no longer queue behind their predecessor on the
+# shared runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # GitHub's ubuntu image ships jq; the runner's node image does not, so
+      # install both (zsh for the statusline tests, jq for the data commands).
+      - name: Install zsh + jq
+        run: |
+          apt-get update -qq
+          apt-get install -qq -y zsh jq
+
+      - name: Run test suite
+        run: bash tests/run.sh --summary
