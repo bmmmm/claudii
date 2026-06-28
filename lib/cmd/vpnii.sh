@@ -56,7 +56,15 @@ _vpnii_user_home() {
 
 _vpnii_path_for_user() {
   local u="$1"
-  if [[ "$u" == "${USER:-}" || -z "$u" ]]; then
+  # When the target user IS the invoking user, honor the env-driven cache path
+  # (CLAUDII_CACHE_DIR/XDG_CACHE_HOME/HOME) rather than resolving the home dir
+  # via dscl/getent. Match on `id -un` (the real uid) — not just $USER — because
+  # in a bare-root context (containers, systemd, the wg-quick PostUp hook itself)
+  # $USER is often unset while we ARE that user; the old $USER-only check then
+  # routed writes to getent's /root and silently ignored an explicit HOME/
+  # XDG_CACHE_HOME. Keeps this in step with the `id -un == target_user`
+  # direct-write branch in _vpnii_set.
+  if [[ "$u" == "$(id -un)" || "$u" == "${USER:-}" || -z "$u" ]]; then
     printf '%s' "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/vpnii"
     return
   fi
