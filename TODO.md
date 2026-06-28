@@ -6,6 +6,16 @@
 
 ## Pending
 
+### Homepage screenshots (low prio)
+
+**Type: Enhancement**
+**Complexity: Low**
+**Touches: docs/index.html**
+The GitHub Pages homepage (`docs/index.html`, live at bmmmm.github.io/claudii)
+deliberately renders the CC-Statusline as styled text instead of a PNG. Optional:
+add real terminal screenshots (sessionline + ClaudeStatus) as a richer hero,
+matching the README's `screenshot-*.png` assets. Keep the text-first aesthetic.
+
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**
