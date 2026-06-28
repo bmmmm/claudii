@@ -210,11 +210,17 @@ else
   assert_eq "zsh: affected incident shows stage not note icon" "stage" "stage"
 fi
 
-# Stale cache → ⟳ indicator
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/status-models"
-touch -t 202001010000 "$ZSH_TMP/status-models"   # set mtime far in the past
+# Stale cache → ⟳ indicator.
+# Fresh tmp dir: an earlier test sharing $ZSH_TMP spawns a background claudii-status
+# that can rewrite status-models right after the touch below, resetting its mtime to
+# now and masking the stale state (flaky ⟳-missing, seen on slow macOS CI runners).
+# Same isolation the no-cache test below relies on.
+ZSH_STALE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_stale.XXXXXX")
+mkdir -p "$ZSH_STALE_TMP/config/claudii"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$ZSH_STALE_TMP/status-models"
+touch -t 202001010000 "$ZSH_STALE_TMP/status-models"   # set mtime far in the past
 zsh_out=$(
-  CLAUDII_CACHE_DIR="$ZSH_TMP" XDG_CONFIG_HOME="$ZSH_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  CLAUDII_CACHE_DIR="$ZSH_STALE_TMP" XDG_CONFIG_HOME="$ZSH_STALE_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     cp \"\$CLAUDII_HOME/config/defaults.json\" \"\$XDG_CONFIG_HOME/claudii/config.json\"
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -223,6 +229,7 @@ zsh_out=$(
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
 )
+rm -rf "$ZSH_STALE_TMP"
 assert_contains "zsh: stale cache → ⟳ in RPROMPT" "⟳" "$zsh_out"
 
 # No cache → […] loading indicator
