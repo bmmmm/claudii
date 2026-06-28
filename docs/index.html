@@ -29,15 +29,12 @@
     font: 15px/1.6 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     padding: 2.5rem 1.25rem 4rem;
   }
-  main { max-width: 720px; margin: 0 auto; }
+  main { max-width: 880px; margin: 0 auto; }
   a { color: var(--cyan); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
   h1 { font-size: 2.4rem; margin: 0; font-weight: 700; letter-spacing: -.5px; }
-  h1 .cursor {
-    color: var(--green);
-    animation: blink 1.1s steps(1) infinite;
-  }
+  h1 .cursor { color: var(--green); animation: blink 1.1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
 
   .tag { color: var(--dim); margin: .35rem 0 2rem; font-size: .95rem; }
@@ -47,11 +44,12 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 8px;
-    padding: 1rem 1.1rem;
+    padding: .9rem 1rem;
     overflow-x: auto;
-    margin: 0 0 2rem;
+    margin: 0;
   }
-  .panel pre { margin: 0; white-space: pre; }
+  .panel pre { margin: 0; white-space: pre; font-size: 13px; line-height: 1.5; }
+  .hero pre { font-size: 13.5px; }
   .prompt { color: var(--dim); }
   .g { color: var(--green); }
   .c { color: var(--cyan); }
@@ -59,26 +57,27 @@
   .d { color: var(--dim); }
 
   h2 {
-    font-size: .8rem;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--dim);
-    margin: 2.5rem 0 .9rem;
-    font-weight: 600;
+    font-size: .8rem; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--dim); margin: 2.8rem 0 1rem; font-weight: 600;
   }
   .layers { list-style: none; padding: 0; margin: 0; }
   .layers li { margin: 0 0 .7rem; }
   .layers .num { color: var(--green); }
   .layers .what { color: var(--dim); }
 
-  .links { margin: 2.5rem 0 0; display: flex; flex-wrap: wrap; gap: 1.2rem; }
+  /* flex grid of command-output cards */
+  .cards { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .card { flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; }
+  .card .cmd { color: var(--dim); font-size: .8rem; margin: 0 0 .5rem; }
+  .card .cmd b { color: var(--green); font-weight: 600; }
+  .card .panel { flex: 1; }
+
+  .links { margin: 2.8rem 0 0; display: flex; flex-wrap: wrap; gap: 1.2rem; }
   footer {
-    margin-top: 2.5rem; padding-top: 1.2rem;
-    border-top: 1px solid var(--line);
+    margin-top: 2.5rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
     color: var(--dim); font-size: .85rem;
     display: flex; flex-wrap: wrap; gap: .4rem 1rem; justify-content: space-between;
   }
-  .badges { color: var(--dim); }
   .badges b { color: var(--green); font-weight: 600; }
 </style>
 </head>
@@ -90,7 +89,7 @@
      token usage · prompt-cache hit rate · costs · rate limits · model health</p>
 
   <!-- the real CC-Statusline output — no screenshot, this is what you actually see -->
-  <div class="panel"><pre><span class="c">Opus xhigh</span> <span class="y">▲</span>  <span class="g">████████░░</span>  <span class="c">⚡73%</span>
+  <div class="panel hero"><pre><span class="c">Opus xhigh</span> <span class="y">▲</span>  <span class="g">████████</span><span class="d">░░</span>  <span class="c">⚡73%</span>
 <span class="d">5h:</span>28%  <span class="d">7d:</span>12%  <span class="d">eta:</span>4h  <span class="g">+47</span>/<span class="y">-12</span>
 <span class="d">api:</span>23m  12.4k<span class="g">↑</span> 4.2k<span class="y">↓</span>  23m  feature-branch  <span class="d">⌂ gateii</span>
 Opus <span class="g">✓</span>  Sonnet <span class="g">✓</span>  Haiku <span class="g">✓</span>  <span class="d">│</span>  <span class="c">@orchestrate</span></pre></div>
@@ -106,12 +105,62 @@ Opus <span class="g">✓</span>  Sonnet <span class="g">✓</span>  Haiku <span 
     <li><span class="num">3.</span> <b>ClaudeStatus</b> <span class="what">— model health in your RPROMPT, never blocks</span></li>
   </ul>
 
-  <p class="tag" style="margin-top:1.6rem">Cost, token &amp; cache data read straight from Claude Code's local
-  session JSONL. No telemetry, no API calls on your behalf — nothing leaves your machine.</p>
+  <h2>And in your terminal, on demand</h2>
+  <div class="cards">
+
+    <!-- cost -->
+    <div class="card">
+      <p class="cmd">$ <b>claudii cost</b> — where the spend goes, per model</p>
+      <div class="panel"><pre><span class="d">Week                          $48.20 · 6.4M tok</span>
+<span class="d">───────────────────────────────────────────────</span>
+Opus     <span class="c">$44.80</span>  <span class="g">████████████████████████</span><span class="d">░</span>  93%
+Sonnet    <span class="c">$3.31</span>  <span class="g">█</span><span class="d">░░░░░░░░░░░░░░░░░░░░░░░░░</span>   7%
+Haiku     <span class="c">$0.09</span>  <span class="d">░░░░░░░░░░░░░░░░░░░░░░░░░░</span>   0%</pre></div>
+    </div>
+
+    <!-- vibemap -->
+    <div class="card">
+      <p class="cmd">$ <b>claudii vibemap grid</b> — when you actually code</p>
+      <div class="panel"><pre><span class="d">      Mon  Tue  Wed  Thu  Fri  Sat ▶Sun</span>
+00-06  <span class="g">█    ▒    █    ▒    █    ░    ░</span>
+06-12  <span class="g">▒    ░    ▓    █    █    ░    ▒</span>
+12-18  <span class="g">░    ▒    ▓    ▓    █    ▒    ▓</span>
+18-00  <span class="g">▒    ░    ▒    ░    ░    ░    ▒</span>
+<span class="d"> ░ ▒ ▓ █  density · ▶ today</span></pre></div>
+    </div>
+
+    <!-- trends -->
+    <div class="card">
+      <p class="cmd">$ <b>claudii trends</b> — your daily token rhythm</p>
+      <div class="panel"><pre><span class="d">Daily tokens                 spend  sess</span>
+<span class="d">─────────────────────────────────────────</span>
+Today   420K  <span class="g">██</span><span class="d">░░░░░░░░░░░</span>  <span class="c">$12.40</span>    4
+Fri     1.8M  <span class="g">████████</span><span class="d">░░░░░</span>  <span class="c">$48.90</span>   11
+Thu     2.4M  <span class="g">███████████</span><span class="d">░░</span>  <span class="c">$61.20</span>    9
+Wed     3.1M  <span class="g">█████████████</span>  <span class="c">$79.10</span>   14
+Tue     2.0M  <span class="g">█████████</span><span class="d">░░░░</span>  <span class="c">$52.30</span>   10</pre></div>
+    </div>
+
+    <!-- perf -->
+    <div class="card">
+      <p class="cmd">$ <b>claudii perf</b> — latency percentiles &amp; throughput</p>
+      <div class="panel"><pre><span class="g">●</span> p50 <span class="c">7.1s</span>  p90 <span class="c">28.8s</span>  p99 <span class="c">1m54s</span>  66 tok/s
+<span class="d">○</span> TTFT p50 2.4s   <span class="g">✓</span> success 99%
+<span class="d">────────────────────────────────────────────</span>
+Opus 4.8    8.2s  33.3s  2m02s   <span class="g">67/s</span>
+Sonnet 4.6  6.2s  20.0s  1m28s   <span class="g">50/s</span>
+Haiku 4.5   2.7s   6.8s  32.7s   <span class="g">76/s</span></pre></div>
+    </div>
+
+  </div>
+
+  <p class="tag" style="margin-top:1.8rem">All of it read straight from Claude Code's local session JSONL
+  (and an optional local OpenTelemetry receiver for exact latency). No telemetry, no API calls on your
+  behalf — nothing leaves your machine.</p>
 
   <div class="links">
     <a href="https://github.com/bmmmm/claudii">→ source &amp; docs</a>
-    <a href="https://github.com/bmmmm/claudii#commands">→ commands</a>
+    <a href="https://github.com/bmmmm/claudii#commands">→ all commands</a>
     <a href="https://ko-fi.com/bmabma">→ ko-fi</a>
   </div>
 
