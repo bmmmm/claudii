@@ -9,6 +9,11 @@ on:
 jobs:
   test:
     strategy:
+      # Run every matrix leg even when one fails — fail-fast would cancel the
+      # other legs on the first red job, serializing independent failures across
+      # multiple pushes (a macOS-C flake once masked a separate de_DE bug until
+      # the first was fixed). The suite is seconds-fast; surface all legs at once.
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
         locale: [C, de_DE.UTF-8]
