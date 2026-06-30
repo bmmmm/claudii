@@ -235,7 +235,13 @@ unset _COST_MIXMODEL_TMP _now_ts cost_mixmodel_out _mm_opus _mm_sonnet
 # climbing rate_5h history rows give the burn slope; older cost deltas drive the
 # month projection.
 _FC_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_FC_TMP")
-_now_ts=$(date +%s)
+# Pin the clock to mid-month (2026-06-15 12:00 UTC) via CLAUDII_NOW so the
+# "earlier this month" rows (now-6d / now-9d) never cross a month boundary — the
+# forecast month-spend is calendar-month bucketed, so a live clock fails this on
+# days 1-9 of every month. Unset at the end of the block so later blocks (which
+# build fixtures off the real clock) are unaffected.
+export CLAUDII_NOW=1781524800
+_now_ts=$CLAUDII_NOW
 _fc_reset=$(( _now_ts + 10000 ))   # 5h window resets in ~2h47m (in the future)
 
 printf 'model=Opus 4.8\nctx_pct=50\ncost=12.00\nrate_5h=64\nrate_7d=22\nreset_5h=%d\nreset_7d=%d\nsession_id=fcast001\ntok=1500000\ncache_pct=80\nppid=%s\n' \
@@ -282,7 +288,7 @@ assert_eq "cost --forecast --json: month spent = 77" "77" \
 assert_eq "cost --forecast --json: days_in_month is 28..31" "1" \
   "$(echo "$fc_json" | jq -r 'if .month.days_in_month >= 28 and .month.days_in_month <= 31 then 1 else 0 end')"
 
-unset _FC_TMP _now_ts _fc_reset fc_out fc_err fc_json
+unset CLAUDII_NOW _FC_TMP _now_ts _fc_reset fc_out fc_err fc_json
 
 # ── cost --forecast: no live session → 5h block degrades, month still renders ─
 # History only (no session-* cache) → no future reset to anchor the 5h state.

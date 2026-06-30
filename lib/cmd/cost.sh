@@ -408,12 +408,24 @@ _cmd_cost_forecast() {
   local cache_dir="$1"
   _date_init
   local _tz_offset="$_TZ_OFFSET" _date_cmd="$_DATE_CMD"
-  local _now today_str
-  _now=$(date '+%s')
-  today_str=$(date '+%Y-%m-%d')
+  # CLAUDII_NOW (epoch) pins "now" for deterministic tests. The month projection
+  # buckets spend by calendar month, so a fixture's "earlier this month" rows
+  # cross the month boundary near month-start unless the clock is fixed (the test
+  # would fail on days 1-9 of every month). Unset in production → live clock.
+  # today_str/monname derive from the same epoch so day/month/year all agree.
+  local _now today_str monname
+  _now="${CLAUDII_NOW:-$(date '+%s')}"
+  if [[ -n "${CLAUDII_NOW:-}" ]]; then
+    if [[ "$_date_cmd" == "macos" ]]; then
+      today_str=$(date -r "$_now" '+%Y-%m-%d'); monname=$(date -r "$_now" '+%b')
+    else
+      today_str=$(date -d "@$_now" '+%Y-%m-%d'); monname=$(date -d "@$_now" '+%b')
+    fi
+  else
+    today_str=$(date '+%Y-%m-%d'); monname=$(date '+%b')
+  fi
   local thismon="${today_str:0:7}"
   local dom=$(( 10#${today_str:8:2} ))     # day-of-month, base-10 (08/09 not octal)
-  local monname; monname=$(date '+%b')
 
   # Days-in-month + previous month. BSD needs -v BEFORE -f (flag order matters —
   # -v after the date value is silently ignored); GNU uses relative date strings.
