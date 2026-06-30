@@ -994,9 +994,21 @@ non-opus model whose window exceeds ~244k (e.g.\& sonnet[1m]) ends at a 195k hab
 ceiling \(em so a 1M sonnet[1m] bar fills near 195k, not 800k.
 .B CLAUDE_CODE_AUTO_COMPACT_WINDOW
 (inherited from Claude Code) overrides the default scale.
-A dim
+A window marker is appended after the bar, and it is
+.IR model-aware .
+Opus bills a flat rate across its entire 1M window (no >200k long-context
+premium, and its real capacity edge is the ~780k compact point, not 200k), so
+Claude Code's
+.I exceeds_200k_tokens
+flag is a non-event on Opus \(em Opus shows a dim
 .B 1M
-indicator is appended when the context window >= 1,000,000 tokens.
+window label and never a >200k warning. For a non-opus model, crossing 200k
+still matters: on a native 1M window (e.g.\& sonnet[1m]) it is the long-context
+pricing tier, shown as a yellow
+.BR >200k ;
+on a 200k-class window it is a genuine overflow of the standard window, shown as
+a red
+.BR >200k .
 Cache hit ratio
 .B \[u26A1]XX%
 is shown when cache-read tokens are present (green >= 60%, yellow < 30%).

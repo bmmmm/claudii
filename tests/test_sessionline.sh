@@ -402,14 +402,31 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cache-create absent when zero" "0" "$(echo "$strip" | grep -c '✎' || true)"
 
-# exceeds_200k: >200k indicator shown when exceeds_200k_tokens = true
+# Window / pricing marker — model-aware (exceeds_200k_tokens handling).
+# Opus bills a flat rate across its whole 1M window (no >200k premium), so the
+# flag is a non-event there — Opus shows a dim 1M label, never a >200k warning.
+# Non-opus crossing 200k is a real signal: yellow on a native 1M window
+# (sonnet[1m], the pricing tier), red on a 200k-class window (genuine overflow).
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":80,"total_input_tokens":180000,"total_output_tokens":30000,"context_window_size":200000},"cost":{"total_cost_usd":1.00},"exceeds_200k_tokens":true}' \
+# Opus on its 1M window + exceeds_200k → dim 1M label, NEVER >200k (the 28%
+# screenshot case: flat pricing, no long-context premium).
+_wm=$(echo '{"model":{"display_name":"Opus 4.8","id":"claude-opus-4-8"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "exceeds_200k shows >200k" ">200k" "$strip"
+assert_contains "window marker: opus/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: opus never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
+# Non-opus 200k-class window + exceeds_200k → genuine overflow → red >200k.
+# -F on the count: the needle's '[' is a literal SGR byte, not a regex bracket.
+_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":95,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_contains "window marker: sonnet/200k overflow >200k is red" $'\033[0;31m>200k' "$_wm"
+# Non-opus native 1M window (sonnet[1m]) + exceeds_200k → pricing tier → yellow.
+_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":30,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_contains "window marker: sonnet[1m]/1M >200k is yellow" $'\033[0;33m>200k' "$_wm"
+assert_eq "window marker: sonnet[1m] not red" "0" "$(printf '%s' "$_wm" | grep -cF $'\033[0;31m>200k' || true)"
+unset _wm
 
 # session-name segment: shown when session_name set
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")

@@ -374,12 +374,30 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
+  # Window / pricing marker — model-aware. Opus bills a flat rate across its
+  # entire 1M window (no >200k long-context premium, and the real capacity edge
+  # is the ~780k compact point, not 200k), so Claude Code's exceeds_200k_tokens
+  # flag is a non-event on Opus: show the dim 1M window label and NEVER a >200k
+  # warning. For a non-opus model crossing 200k still means something — on a
+  # native 1M window (sonnet[1m]) it is the long-context pricing tier →
+  # informational yellow; on a 200k-class window it is a genuine overflow of the
+  # standard window → red. (Was unconditionally red, a false alarm on Opus/1M.)
   win=""
-  if [[ "$exceeds_200k" == "true" ]]; then
-    win=" ${RED}>200k${RST}"
-  elif [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null; then
-    win=" ${DIM}1M${RST}"
-  fi
+  _win_1m=0
+  [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null && _win_1m=1
+  case "${model_id:-$model}" in
+    *[Oo]pus*)
+      (( _win_1m )) && win=" ${DIM}1M${RST}"
+      ;;
+    *)
+      if [[ "$exceeds_200k" == "true" ]]; then
+        if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
+        else                   win=" ${RED}>200k${RST}"; fi
+      elif (( _win_1m )); then
+        win=" ${DIM}1M${RST}"
+      fi
+      ;;
+  esac
   _thr "$_usable_pct"; _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
   if _isset "$cache_read" && _isset "$_cache_pct"; then
     if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
