@@ -632,6 +632,44 @@ if [[ "$_lines_raw" == *remotes* ]]; then
   fi
 fi
 
+# Repo sync-state segment — the working copy's git status as a compact traffic
+# light: ●N uncommitted (commit pending, yellow), ↑N ahead of upstream (push
+# pending, yellow), ↓N behind upstream (pull pending, red — you're missing
+# commits, the highest merge-conflict risk). Clean and in sync → a green ✓.
+# One `git status --porcelain=v2 --branch` fork yields both the dirty count and
+# the ahead/behind counts. Gated on the segment being in the active layout so
+# the working-tree scan (the most expensive segment fork) only runs when shown.
+# No upstream / detached HEAD → no branch.ab line → only the dirty state shows.
+# Outside a git repo (rc != 0) → empty. Opt-in (not in the default layout).
+# Matched as *git-sync* (not *git*) so it never false-fires on the github segment.
+_seg_git_sync=""
+if [[ "$_lines_raw" == *git-sync* ]]; then
+  _gs_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_gs_dir" && "$_gs_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _gs_out=$(git -C "$_gs_dir" status --porcelain=v2 --branch 2>/dev/null); _gs_rc=$?
+    if (( _gs_rc == 0 )); then
+      _gs_ahead=0; _gs_behind=0; _gs_dirty=0
+      while IFS= read -r _gl; do
+        case "$_gl" in
+          '# branch.ab '*)
+            _gs_ab="${_gl#\# branch.ab }"        # "+A -B"
+            _gs_a="${_gs_ab%% *}"; _gs_b="${_gs_ab##* }"
+            _gs_a="${_gs_a#+}"; _gs_b="${_gs_b#-}"
+            [[ "$_gs_a" =~ ^[0-9]+$ ]] && _gs_ahead=$_gs_a
+            [[ "$_gs_b" =~ ^[0-9]+$ ]] && _gs_behind=$_gs_b
+            ;;
+          '#'*|'') : ;;                          # other header / blank line
+          *) (( ++_gs_dirty )) ;;                # 1/2/u/? line = one changed path
+        esac
+      done <<< "$_gs_out"
+      (( _gs_dirty  > 0 )) && _seg_git_sync="${YELLOW}●${_gs_dirty}${RST}"
+      (( _gs_ahead  > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${YELLOW}↑${_gs_ahead}${RST}"
+      (( _gs_behind > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${RED}↓${_gs_behind}${RST}"
+      [[ -z "$_seg_git_sync" ]] && _seg_git_sync="${GREEN}✓${RST}"
+    fi
+  fi
+fi
+
 # ClaudeStatus — read status-models cache, render [Model glyph ...] + age + incident.
 _seg_claude_status=""
 _status_cache="${_cache_dir}/status-models"
@@ -824,6 +862,7 @@ while IFS= read -r _line_segs; do
       dir)           _val="$_seg_dir"      ;;
       github)        _val="$_seg_github"   ;;
       remotes)       _val="$_seg_remotes"  ;;
+      git-sync)      _val="$_seg_git_sync" ;;
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;
       omlx)          _val="$_seg_omlx"     ;;

@@ -816,3 +816,52 @@ _rm_plain="$(mktemp -d)"; _SL_TMPDIRS+=("$_rm_plain")
 _rm_strip="$(_rm_run "$_rm_plain")"
 assert_eq "remotes non-git: no local tag" "0" "$(echo "$_rm_strip" | grep -c 'local' || true)"
 unset -f _rm_init _rm_run; unset _rm_strip
+
+# ── git-sync segment — working-copy sync state (dirty / ahead / behind) ──────
+# Same throwaway-repo discipline as the remotes block: repos live in the SYSTEM
+# temp dir (a repo under $CLAUDII_HOME would let git's upward .git discovery
+# resolve to claudii's own tree), with an empty --template to skip sample hooks.
+# Upstream tracking is faked with remote="." (the repo as its own remote) +
+# branch.main.merge → a local 'up' branch, so ahead/behind need no network/clone.
+_gs_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_gs_cfg")
+mkdir -p "$_gs_cfg/claudii"
+printf '{"statusline":{"lines":[["git-sync"]]}}\n' > "$_gs_cfg/claudii/config.json"
+_gs_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_gs_tpl")
+_gs_ci() { git -C "$1" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m "$2"; }
+_gs_mkrepo() {  # $1 = dir → repo with 1 commit on main + a tracked 'up' upstream
+  _SL_TMPDIRS+=("$1")
+  git init -q --template="$_gs_tpl" -b main "$1"
+  _gs_ci "$1" A
+  git -C "$1" branch up
+  git -C "$1" config branch.main.remote .
+  git -C "$1" config branch.main.merge refs/heads/up
+}
+_gs_run() {  # $1 = repo dir → echoes stripped statusline output
+  echo "{\"model\":{\"display_name\":\"Opus\"},\"cwd\":\"$1\",\"context_window\":{\"used_percentage\":10,\"total_input_tokens\":1000,\"total_output_tokens\":200,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.05}}" \
+    | XDG_CONFIG_HOME="$_gs_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+# Clean + in sync → green ✓
+_gs_clean="$(mktemp -d)"; _gs_mkrepo "$_gs_clean"
+assert_contains "git-sync clean+synced → ✓" "✓" "$(_gs_run "$_gs_clean")"
+
+# Uncommitted change (untracked file) → ●1, no ✓
+_gs_dirty="$(mktemp -d)"; _gs_mkrepo "$_gs_dirty"
+printf 'x\n' > "$_gs_dirty/newfile"
+_gs_d_strip="$(_gs_run "$_gs_dirty")"
+assert_contains "git-sync dirty → ●1" "●1" "$_gs_d_strip"
+assert_eq "git-sync dirty → no ✓" "0" "$(echo "$_gs_d_strip" | grep -c '✓' || true)"
+
+# One unpushed commit (main ahead of up) → ↑1
+_gs_ahead="$(mktemp -d)"; _gs_mkrepo "$_gs_ahead"; _gs_ci "$_gs_ahead" B
+assert_contains "git-sync ahead → ↑1" "↑1" "$(_gs_run "$_gs_ahead")"
+
+# One unpulled commit (up ahead of main) → ↓1
+_gs_behind="$(mktemp -d)"; _gs_mkrepo "$_gs_behind"
+git -C "$_gs_behind" checkout -q up; _gs_ci "$_gs_behind" B; git -C "$_gs_behind" checkout -q main
+assert_contains "git-sync behind → ↓1" "↓1" "$(_gs_run "$_gs_behind")"
+
+# Non-git directory → segment empty → no output line at all
+_gs_plain="$(mktemp -d)"; _SL_TMPDIRS+=("$_gs_plain")
+assert_eq "git-sync non-git → empty output" "" "$(_gs_run "$_gs_plain")"
+unset -f _gs_ci _gs_mkrepo _gs_run; unset _gs_d_strip
