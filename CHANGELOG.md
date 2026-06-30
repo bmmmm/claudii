@@ -8,6 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Added
+- **`remotes` statusline segment — where the current repo is published** — a new CC-Statusline segment classifies the working copy's git remotes by host and renders a compact `⇡fj·gh` tag: `fj` (cyan) for a self-hosted forge (any non-GitHub remote), `gh` (white) for GitHub, both when the repo lives on both, `local` (dim) when there is no remote, and nothing at all outside a git repo. Added next to `dir` in the default layout so the repo's publish targets sit beside its name. The lookup forks `git remote -v` against the session's cwd only when the segment is actually in the active layout.
 - **`claudii perf` — By context window section + per-response context capture** — perf now buckets every response by its context-window occupancy (`input + cache_read + cache_creation` tokens) and shows p50/p90/p99 + tok/s per band (`<50k` · `50-100k` · `100-200k` · `200-400k` · `400k+`), so the latency cost of a large window is visible at a glance. On real data the p50 climbs ~5s→13s and the p99 tail explodes (42s at `<50k` → 3m+ at `100-200k`) as the window grows — confirming that bigger contexts run *slower*, not that they *fail* (failure rate stays ~0 across all bands). Backed by a new per-response `ctx` field on the `latency` record: the OTEL source reads exact token counts from the `claude_code.llm_request` span, the transcript source sums `message.usage`. Insights cache schema v6 → v7 (forces a one-time rebuild). Exposed in `--json` as `by_window`.
 
 ### Fixed

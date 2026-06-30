@@ -574,12 +574,42 @@ _term_cols=""
 
 _DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,duration,worktree,dir
+api-duration,duration,worktree,dir,remotes
 omlx,proxy,cost,context-bar
 claude-status,vpn"
 
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+
+# Repo-remotes segment — where this working copy is published. Classifies the
+# cwd's git remotes by host: a github.com URL → GitHub (gh); any other remote
+# host → self-hosted forge (fj). Both present → fj·gh (source-of-truth first,
+# mirror second). No remote → local; a non-git directory omits the segment.
+# Gated on the segment being in the active layout so the one git fork only
+# happens when the segment is actually shown.
+_seg_remotes=""
+if [[ "$_lines_raw" == *remotes* ]]; then
+  _rr_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_rr_dir" && "$_rr_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _rr_out=$(git -C "$_rr_dir" remote -v 2>/dev/null); _rr_rc=$?
+    if (( _rr_rc == 0 )); then
+      _rr_gh=0; _rr_fj=0
+      while IFS= read -r _rl; do
+        [[ -z "$_rl" ]] && continue
+        if   [[ "$_rl" == *github.com* ]];         then _rr_gh=1
+        elif [[ "$_rl" == *://* || "$_rl" == *@* ]]; then _rr_fj=1
+        fi
+      done <<< "$_rr_out"
+      if (( _rr_fj || _rr_gh )); then
+        (( _rr_fj )) && _seg_remotes="${CYAN}fj${RST}"
+        (( _rr_gh )) && _seg_remotes+="${_seg_remotes:+${DIM}·${RST}}${WHITE}gh${RST}"
+        _seg_remotes="${DIM}⇡${RST}${_seg_remotes}"
+      else
+        _seg_remotes="${DIM}local${RST}"
+      fi
+    fi
+  fi
+fi
 
 # ClaudeStatus — read status-models cache, render [Model glyph ...] + age + incident.
 _seg_claude_status=""
@@ -772,6 +802,7 @@ while IFS= read -r _line_segs; do
       cache-create)  _val="$_seg_cache_create" ;;
       dir)           _val="$_seg_dir"      ;;
       github)        _val="$_seg_github"   ;;
+      remotes)       _val="$_seg_remotes"  ;;
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;
       omlx)          _val="$_seg_omlx"     ;;

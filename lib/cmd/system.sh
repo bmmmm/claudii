@@ -416,7 +416,7 @@ _cc_statusline_preset_json() {
       ;;
     default)
       # Restore the shipped default layout (mirrors config/defaults.json).
-      printf '%s' '[["model","tokens","cache-create"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","dir"],["omlx","proxy","cost","context-bar"],["claude-status"]]'
+      printf '%s' '[["model","tokens","cache-create"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","dir","remotes"],["omlx","proxy","cost","context-bar"],["claude-status"]]'
       ;;
     *)
       return 1

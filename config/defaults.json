@@ -34,7 +34,7 @@
     "lines": [
       ["model", "tokens", "cache-create"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
-      ["api-duration", "duration", "worktree", "dir"],
+      ["api-duration", "duration", "worktree", "dir", "remotes"],
       ["omlx", "proxy", "cost", "context-bar"],
       ["claude-status"]
     ]

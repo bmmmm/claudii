@@ -744,3 +744,54 @@ assert_contains "compactions: second collapse counted" "compactions=2" "$_cp_sta
 assert_contains "compactions: segment shows 2" "♻2" "$output"
 unset _cp_cache _cp_cfg _cp_state
 unset -f _cp_json
+
+# ── remotes segment — git remote classification (fj / gh / local) ───────────
+# Each case builds a throwaway git repo with specific remotes, points the
+# statusline at it via cwd, and checks the rendered fj/gh/local tags. The
+# segment forks `git remote -v` against cwd, so a real repo is required.
+# Repos live in the SYSTEM temp dir, never under $CLAUDII_HOME — a repo nested
+# inside claudii's own tree would let git's upward .git discovery resolve to
+# claudii's remotes (fj+gh) and mask every assertion. An empty --template dir
+# skips the sample-hook copy that the macOS sandbox denies (clonefile EPERM).
+_rm_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_rm_cfg")
+mkdir -p "$_rm_cfg/claudii"
+printf '{"statusline":{"lines":[["remotes"]]}}\n' > "$_rm_cfg/claudii/config.json"
+_rm_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_rm_tpl")  # empty git template (no hooks)
+
+_rm_init() { _SL_TMPDIRS+=("$1"); git init -q --template="$_rm_tpl" "$1"; }
+_rm_run() {  # $1 = repo dir → echoes stripped statusline output
+  echo "{\"model\":{\"display_name\":\"Opus\"},\"cwd\":\"$1\",\"context_window\":{\"used_percentage\":10,\"total_input_tokens\":1000,\"total_output_tokens\":200,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.05}}" \
+    | XDG_CONFIG_HOME="$_rm_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+# Both forgejo (self-hosted) origin + github mirror → fj·gh
+_rm_both="$(mktemp -d)"; _rm_init "$_rm_both"
+git -C "$_rm_both" remote add origin https://git.example.com/bsz/claudii.git
+git -C "$_rm_both" remote add github https://github.com/bmmmm/claudii.git
+_rm_strip="$(_rm_run "$_rm_both")"
+assert_contains "remotes both: joined fj·gh" "fj·gh" "$_rm_strip"
+
+# GitHub only → gh, no fj
+_rm_gh="$(mktemp -d)"; _rm_init "$_rm_gh"
+git -C "$_rm_gh" remote add origin git@github.com:bmmmm/claudii.git
+_rm_strip="$(_rm_run "$_rm_gh")"
+assert_contains "remotes github-only: gh tag" "gh" "$_rm_strip"
+assert_eq "remotes github-only: no fj tag" "0" "$(echo "$_rm_strip" | grep -c 'fj' || true)"
+
+# Forgejo / self-hosted only → fj, no gh
+_rm_fj="$(mktemp -d)"; _rm_init "$_rm_fj"
+git -C "$_rm_fj" remote add origin https://git.example.com/bsz/claudii.git
+_rm_strip="$(_rm_run "$_rm_fj")"
+assert_contains "remotes forgejo-only: fj tag" "fj" "$_rm_strip"
+assert_eq "remotes forgejo-only: no gh tag" "0" "$(echo "$_rm_strip" | grep -c 'gh' || true)"
+
+# No remotes → local
+_rm_local="$(mktemp -d)"; _rm_init "$_rm_local"
+_rm_strip="$(_rm_run "$_rm_local")"
+assert_contains "remotes none: local tag" "local" "$_rm_strip"
+
+# Non-git directory → segment omitted (no fj/gh/local)
+_rm_plain="$(mktemp -d)"; _SL_TMPDIRS+=("$_rm_plain")
+_rm_strip="$(_rm_run "$_rm_plain")"
+assert_eq "remotes non-git: no local tag" "0" "$(echo "$_rm_strip" | grep -c 'local' || true)"
+unset -f _rm_init _rm_run; unset _rm_strip
