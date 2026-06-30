@@ -984,7 +984,15 @@ clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomni
 .TE
 .PP
 .B context-bar color thresholds:
-green < 70%, yellow 70\(en89%, red >= 90% (of usable context).
+green < 70%, yellow 70\(en89%, red >= 90% of the
+.I usable
+context \(em the raw used-percentage rescaled to the model's practical (pre-compact)
+window, so the bar fills as the compact point nears rather than at 100%. The
+practical window is model-aware: opus (incl.\& the 1M window) ends at 80%, while a
+non-opus model whose window exceeds ~244k (e.g.\& sonnet[1m]) ends at a 195k habit
+ceiling \(em so a 1M sonnet[1m] bar fills near 195k, not 800k.
+.B CLAUDE_CODE_AUTO_COMPACT_WINDOW
+(inherited from Claude Code) overrides the default scale.
 A dim
 .B 1M
 indicator is appended when the context window >= 1,000,000 tokens.

@@ -699,11 +699,32 @@ assert_contains "auto-compact garbage falls back to 80" "50%" "$output"
 output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=0.2 bash "$SL" 2>&1)
 assert_contains "auto-compact low fraction clamps to 0.5" "80%" "$output"
 
-# Token count without window size → default 80% scale → 50%
+# Token count without window size → default scale (opus → 80) → 50%
 _ac_nown='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"total_input_tokens":1000,"total_output_tokens":100},"cost":{"total_cost_usd":0.10}}'
 output=$(echo "$_ac_nown" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
 assert_contains "auto-compact token count w/o window size falls back" "50%" "$output"
 unset _ac_json _ac_nown
+
+# ── Model-aware practical-window scale (mirrors reflect-nudge FLOOR rule) ─────
+# Standard windows resolve to the same 80% scale as before — no behaviour change:
+#   opus/1M, opus/200k, sonnet/200k all have compact point = min(win*80%, FLOOR)
+#   = win*80%, so scale = 80 and a raw 40% → 40*100/80 = 50%.
+output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: opus/1M keeps 80% scale (40%→50%)" "50%" "$output"
+output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet/200k keeps 80% scale (40%→50%)" "50%" "$output"
+
+# The only changed case: a non-opus 1M window (sonnet[1m]) hits the 195k FLOOR,
+# so scale = 195000/1000000 = 19.5 → 19. The bar fills near 195k, not 800k.
+#   raw 5% (=50k of 1M) → 5*100/19 = 26% (still room; well before the floor)
+output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":5,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet[1m] raw 5% scales to 26%" "26%" "$output"
+#   raw 20% (=200k of 1M, past the 195k floor) → 20*100/19 = 105 → clamped 100%
+output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet[1m] past 195k floor reads full (100%)" "100%" "$output"
+# Contrast: opus/1M at the same raw 20% is still early (20*100/80 = 25%).
+output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: opus/1M at raw 20% stays early (25%)" "25%" "$output"
 
 # ── Compaction counter (context-usage collapse detection) ────────────────────
 _cp_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_cp_cache")
