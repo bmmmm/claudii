@@ -595,7 +595,7 @@ _term_cols=""
 
 _DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,duration,worktree,dir,remotes
+api-duration,duration,worktree,dir,remotes,git-sync
 omlx,proxy,cost,context-bar
 claude-status,vpn"
 
@@ -638,9 +638,11 @@ fi
 # commits, the highest merge-conflict risk). Clean and in sync → a green ✓.
 # One `git status --porcelain=v2 --branch` fork yields both the dirty count and
 # the ahead/behind counts. Gated on the segment being in the active layout so
-# the working-tree scan (the most expensive segment fork) only runs when shown.
+# the working-tree scan (the most expensive segment fork) is skipped by any
+# custom layout that drops git-sync — it ships in the default layout, but the
+# gate keeps the fork off when the segment isn't actually rendered.
 # No upstream / detached HEAD → no branch.ab line → only the dirty state shows.
-# Outside a git repo (rc != 0) → empty. Opt-in (not in the default layout).
+# Outside a git repo (rc != 0) → empty.
 # Matched as *git-sync* (not *git*) so it never false-fires on the github segment.
 _seg_git_sync=""
 if [[ "$_lines_raw" == *git-sync* ]]; then
