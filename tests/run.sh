@@ -14,6 +14,10 @@ TESTS_DIR="$CLAUDII_HOME/tests"
 PASS=0
 FAIL=0
 ERRORS=()
+# Captured stdout of each test file that had ≥1 failure — surfaced under
+# --summary so a CI failure carries the assert's Expected/Got diff, not just
+# the test name (the diff is otherwise discarded in summary mode).
+_FAIL_DETAILS=()
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -226,6 +230,12 @@ fi
       _f=$(echo "$_summary" | cut -d: -f3)
       PASS=$(( PASS + _p ))
       FAIL=$(( FAIL + _f ))
+      # Stash the failing file's full output (sans the machine-readable marker
+      # lines) so --summary can print it; captured here because $_out_dir is
+      # removed before the summary block runs.
+      if [[ "$_f" =~ ^[0-9]+$ ]] && (( _f > 0 )); then
+        _FAIL_DETAILS+=("$(grep -vE '^CLAUDII_TEST_(RESULT|ERROR):' "$_out_file")")
+      fi
     fi
     while IFS= read -r _err_line; do
       ERRORS+=("${_err_line#CLAUDII_TEST_ERROR:}")
@@ -240,6 +250,14 @@ if (( _summary_only )); then
   if (( FAIL > 0 )); then
     echo -e "${RED}${FAIL} failed${NC} / ${PASS} passed"
     for err in "${ERRORS[@]}"; do echo "  - $err"; done
+    # Surface the captured Expected/Got diff so a CI failure is diagnosable from
+    # the log without a verbose re-run. Guarded for bash 3.2: an empty-array
+    # "${arr[@]}" expansion errors under set -u, so gate on the element count.
+    if (( ${#_FAIL_DETAILS[@]} > 0 )); then
+      echo ""
+      echo -e "${RED}── failing test output ──${NC}"
+      for _d in "${_FAIL_DETAILS[@]}"; do printf '%s\n\n' "$_d"; done
+    fi
   else
     echo -e "${GREEN}${PASS} passed${NC}"
   fi

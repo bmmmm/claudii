@@ -35,9 +35,12 @@ jobs:
       # GitHub's ubuntu image ships jq; the runner's node image does not, so
       # install both (zsh for the statusline tests, jq for the data commands).
       - name: Install zsh + jq
+        # --no-install-recommends keeps it to zsh core + jq instead of pulling
+        # zsh's recommended extras, which drove most of the dpkg/libc-bin trigger
+        # processing that made this step hang for over a minute.
         run: |
           apt-get update -qq
-          apt-get install -qq -y zsh jq
+          DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends zsh jq
 
       - name: Run test suite
         run: bash tests/run.sh --summary
