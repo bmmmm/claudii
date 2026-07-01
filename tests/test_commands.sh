@@ -322,7 +322,10 @@ _make_cfg_tmp _LY
 _ly_xdg="$_LY_XDG"
 _ly_base="$_LY_BASE"
 
-_ly_out=$(XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
+# HOME points at the empty temp base (no ~/.claude/settings.json) so the render
+# is deterministic — without it, layers reads the developer's real settings.json
+# and a malformed one crashes the command mid-render (regression guard).
+_ly_out=$(HOME="$_ly_base" XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
 
 # No literal ANSI escapes
@@ -338,7 +341,7 @@ _ly_show_model=$(printf '%s' "$_ly_out" | grep -c 'show model' || true)
 assert_eq "layers: no obsolete 'show model' reference" "0" "$_ly_show_model"
 
 # Exit 0
-_ly_exit=$(XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
+_ly_exit=$(HOME="$_ly_base" XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" layers >/dev/null 2>&1; echo $?)
 assert_eq "layers: exit 0" "0" "$_ly_exit"
 
@@ -356,12 +359,13 @@ unset _LY_BASE _LY_XDG _LY_CACHE _ly_xdg _ly_base _ly_out _ly_show_model _ly_exi
 # here is a pipe). CLAUDII_FORCE_COLOR=1 must opt back in.
 
 _make_cfg_tmp _AC
-_ac_out=$(XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" \
+# HOME isolated (empty base, no ~/.claude/settings.json) — see the layers note above.
+_ac_out=$(HOME="$_AC_BASE" XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
 printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
 assert_eq "auto colors: piped explain output has no ANSI escapes" "0" "$_ac_has"
 
-_ac_out=$(XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" CLAUDII_FORCE_COLOR=1 \
+_ac_out=$(HOME="$_AC_BASE" XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" CLAUDII_FORCE_COLOR=1 \
   bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
 printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
 assert_eq "auto colors: CLAUDII_FORCE_COLOR=1 restores ANSI" "1" "$_ac_has"
@@ -376,10 +380,30 @@ unset _AC_BASE _AC_XDG _AC_CACHE _ac_out _ac_has
 # so iconv is the correct detector — it rejects the truncated codepoint.
 if command -v iconv >/dev/null 2>&1; then
   _make_cfg_tmp _EX
-  LC_ALL=C XDG_CONFIG_HOME="$_EX_XDG" CLAUDII_CACHE_DIR="$_EX_CACHE" \
+  LC_ALL=C HOME="$_EX_BASE" XDG_CONFIG_HOME="$_EX_XDG" CLAUDII_CACHE_DIR="$_EX_CACHE" \
     bash "$CLAUDII_HOME/bin/claudii" explain 2>/dev/null \
     | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 && _ex_valid=0 || _ex_valid=$?
   assert_eq "explain: rules are valid UTF-8 under LC_ALL=C (no mid-codepoint cut)" "0" "$_ex_valid"
   rm -rf "$_EX_BASE"
   unset _EX_BASE _EX_XDG _EX_CACHE _ex_valid
 fi
+
+# ── explain: malformed ~/.claude/settings.json must not crash the render ───────
+# The CC-Statusline section reads $HOME/.claude/settings.json via jq. jq 1.7
+# exits non-zero (5) on unparseable JSON; under bin/claudii's set -e a bare
+# `sl_cmd=$(jq …)` aborted the whole command mid-render (exit 5, output cut off
+# before the Data Flow section). Guarded with `|| sl_cmd=""` in display.sh so a
+# bad settings file degrades to the "not configured" branch. Point HOME at a
+# temp with a deliberately broken settings.json and assert explain still exits 0
+# and renders to completion.
+_make_cfg_tmp _EM
+mkdir -p "$_EM_BASE/.claude"
+printf '{ "statusLine": { not valid json\n' > "$_EM_BASE/.claude/settings.json"
+_em_exit=$(HOME="$_EM_BASE" XDG_CONFIG_HOME="$_EM_XDG" CLAUDII_CACHE_DIR="$_EM_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" explain >/dev/null 2>&1; echo $?)
+assert_eq "explain: malformed settings.json does not crash (exit 0)" "0" "$_em_exit"
+_em_out=$(HOME="$_EM_BASE" XDG_CONFIG_HOME="$_EM_XDG" CLAUDII_CACHE_DIR="$_EM_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
+assert_contains "explain: renders to completion despite bad settings.json" "Data Flow" "$_em_out"
+rm -rf "$_EM_BASE"
+unset _EM_BASE _EM_XDG _EM_CACHE _em_exit _em_out

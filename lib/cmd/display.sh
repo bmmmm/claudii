@@ -204,7 +204,12 @@ _cmd_explain() {
   # CC-Statusline
   settings_file="$HOME/.claude/settings.json"
   if [[ -f "$settings_file" ]] && command -v jq >/dev/null 2>&1; then
-    sl_cmd=$(jq -r '.statusLine.command // empty' "$settings_file" 2>/dev/null)
+    # `|| sl_cmd=""` is load-bearing: a malformed settings.json makes jq exit
+    # non-zero (jq 1.7 returns 5 on unparseable JSON), and under bin/claudii's
+    # `set -e` a bare `sl_cmd=$(jq …)` would abort the whole `explain` render
+    # mid-output. `// empty` only guards a missing key, not a parse failure — so
+    # degrade to the "not configured" branch instead of crashing.
+    sl_cmd=$(jq -r '.statusLine.command // empty' "$settings_file" 2>/dev/null) || sl_cmd=""
     if [[ -n "$sl_cmd" ]] && _cc_statusline_connected "$sl_cmd"; then
       sl_state="${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}"
     else
