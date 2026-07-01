@@ -1001,14 +1001,20 @@ _cmd_limits() {
     return 0
   fi
 
-  # Single pass: count, hour buckets, model tally, recent list.
-  local total=0 ts model labs lH lhour modacc="" listed=0 list="" _mlabel
-  local -a hours
+  # Single pass: count, hour buckets, model tally, per-day group-by. Hits arrive
+  # newest-first (jq sort_by(.timestamp)|reverse), so same-day rows are
+  # contiguous — a streaming group-by needs no map (bash 3.2 has no assoc
+  # arrays). Day tallies collect into parallel indexed arrays.
+  local total=0 ts model lhour modacc="" _mlabel _dkey _dlab
+  local -a hours=()
+  local _cur_key="" _cur_lab="" _cur_n=0 _dmax=0
+  local -a _day_labs=() _day_cnts=()
   while IFS=$'\t' read -r ts model; do
     [[ -z "$ts" ]] && continue
     (( ++total ))
-    _mlabel=$(_insights_model_label "$model")   # compute once: used for tally + listing
+    _mlabel=$(_insights_model_label "$model")   # used for the model tally
     _iso_epoch "$ts"
+    _dkey=""; _dlab="?"
     if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
       _fmt_abs "$_EPOCH" '%H'; lhour="$_ABS_FMT"
       # Assignment form (not (( ++x ))): incrementing an unset array element
@@ -1016,26 +1022,54 @@ _cmd_limits() {
       if [[ "$lhour" =~ ^[0-9]+$ ]]; then
         local _hb=$(( 10#$lhour )); hours[_hb]=$(( ${hours[_hb]:-0} + 1 ))
       fi
+      # One date call yields both a collision-proof group key (YYYYMMDD, local
+      # TZ) and the display label, split on '|'.
+      _fmt_abs "$_EPOCH" '%Y%m%d|%a %d %b'
+      _dkey="${_ABS_FMT%%|*}"; _dlab="${_ABS_FMT#*|}"
     fi
     modacc+="$_mlabel"$'\n'
-    if (( listed < 10 )); then
-      labs="?"; lH=""
-      if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
-        _fmt_abs "$_EPOCH" '%a %d %b'; labs="$_ABS_FMT"
-        _fmt_abs "$_EPOCH" '%H:%M';    lH="$_ABS_FMT"
+    # Flush the previous day when the local day changes; accumulate otherwise.
+    # A hit with an unparseable timestamp (_dkey="") never opens a day.
+    if [[ -n "$_dkey" && "$_dkey" != "$_cur_key" ]]; then
+      if [[ -n "$_cur_key" ]]; then
+        _day_labs+=("$_cur_lab"); _day_cnts+=("$_cur_n")
+        (( _cur_n > _dmax )) && _dmax=$_cur_n
       fi
-      printf -v list '%s  %s%-10s%s  %s%5s%s   %s%s%s\n' "$list" \
-        "$dim" "$labs" "$reset" "$cyan" "$lH" "$reset" \
-        "$accent" "$_mlabel" "$reset"
-      (( ++listed ))
+      _cur_key="$_dkey"; _cur_lab="$_dlab"; _cur_n=1
+    elif [[ -n "$_cur_key" ]]; then
+      (( ++_cur_n ))
     fi
   done <<< "$hits"
+  # Flush the final open day.
+  if [[ -n "$_cur_key" ]]; then
+    _day_labs+=("$_cur_lab"); _day_cnts+=("$_cur_n")
+    (( _cur_n > _dmax )) && _dmax=$_cur_n
+  fi
 
   printf '\n  %s⚠ Rate limits%s   %s%d×%s %s· %s · 5h budget (account-wide)%s\n' \
     "$yellow" "$reset" "$cyan" "$total" "$reset" "$dim" "$(_insights_window_label "$days")" "$reset"
   printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
-  printf '%s' "$list"
-  (( total > listed )) && printf '  %s+%d earlier%s\n' "$dim" "$(( total - listed ))" "$reset"
+
+  # Per-day distribution: one row per day (newest first), bar scaled to the
+  # busiest day, count suffix. Cap the rows; summarise the tail. This replaces
+  # the old flat recent-hits list, which was redundant when hits cluster (the
+  # top rows were all the same day) — exact times live in the "when" strip,
+  # models in the tally below.
+  local _DMAX_ROWS=8 _BARW=12 _i _bf _n_days=${#_day_labs[@]} _shown=0
+  local _row_lab="by day"
+  for (( _i=0; _i<_n_days; _i++ )); do
+    (( _shown >= _DMAX_ROWS )) && break
+    _bf=$(_bar_filled "${_day_cnts[_i]}" "$_dmax" "$_BARW")
+    printf '  %s%-8s%s%s%-10s%s  %s   %s%d\303\227%s\n' \
+      "$accent" "$_row_lab" "$reset" \
+      "$dim" "${_day_labs[_i]}" "$reset" \
+      "$(_bar_c "$_bf" "$_BARW")" \
+      "$cyan" "${_day_cnts[_i]}" "$reset"
+    _row_lab=""
+    (( ++_shown ))
+  done
+  (( _n_days > _shown )) && printf '  %s%-8s+%d earlier days%s\n' \
+    "$dim" "" "$(( _n_days - _shown ))" "$reset"
   echo
 
   # Hour strip (00..23): accent block where a hit landed, dim otherwise.

@@ -573,8 +573,9 @@ of the formatted tables.
 .B limits
 Rate-limit hits in the rolling window (default: 7 days) from the insights
 .IR limit_hits .
-Lists each hit (date, time, and the model that was running) newest-first, an
-hour strip showing when hits cluster, and a per-model tally. Time and model only
+Groups the hits by day (newest-first, a bar scaled to the busiest day plus that
+day's hit count), an hour strip showing when hits cluster, and a per-model
+tally. Time and model only
 \(em the data carries no percentage, and the 5h budget is account-wide, so the
 model is \(lqwhat ran\(rq, not \(lqwhat is to blame\(rq. With no hits it reports
 clear runway.

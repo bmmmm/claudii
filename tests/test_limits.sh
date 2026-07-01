@@ -41,11 +41,16 @@ assert_no_literal_ansi "limits: no literal \\033 in output" "$_LIM_OUT"
 
 assert_contains "limits: header"          "Rate limits"   "$_LIM_OUT"
 assert_contains "limits: account-wide"    "account-wide"  "$_LIM_OUT"
-assert_contains "limits: opus in list"    "Opus 4.8"      "$_LIM_OUT"
-assert_contains "limits: haiku in list"   "Haiku 4.5"     "$_LIM_OUT"
+assert_contains "limits: opus in tally"   "Opus 4.8"      "$_LIM_OUT"
+assert_contains "limits: haiku in tally"  "Haiku 4.5"     "$_LIM_OUT"
 assert_contains "limits: hour strip label" "when"         "$_LIM_OUT"
 assert_contains "limits: model tally"     "models"        "$_LIM_OUT"
 assert_contains "limits: cluster insight (UTC hour 11)" "11:00" "$_LIM_OUT"
+# Per-day distribution: two Opus hits on 2026-06-10 (UTC) collapse into one
+# "2×" day row — the old flat list would have printed two separate lines.
+assert_contains "limits: by-day section label" "by day"   "$_LIM_OUT"
+assert_contains "limits: by-day row shows local date" "10 Jun" "$_LIM_OUT"
+assert_contains "limits: same-day hits aggregated to 2×" "2×" "$_LIM_OUT"
 
 # ── No hits → clear-runway line, exit 0 ──
 _LIM_NPROJ="$(mktemp -d)"; _LIM_TMPDIRS+=("$_LIM_NPROJ")
