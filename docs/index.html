@@ -52,9 +52,8 @@
   .hero pre { font-size: 13.5px; }
 
   .proof-caption { color: var(--dim); font-size: .8rem; text-align: center; margin: .6rem 0; }
-  .proof { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0 0 2.8rem; }
-  .proof img { flex: 1 1 380px; min-width: 0; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
-  .proof img.chrome { border: none; }
+  .proof { display: flex; flex-direction: column; gap: 1.2rem; margin: 0 0 2.8rem; }
+  .proof img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; display: block; }
   .prompt { color: var(--dim); }
   .g { color: var(--green); }
   .c { color: var(--cyan); }
@@ -102,7 +101,7 @@ Opus <span class="g">✓</span>  Sonnet <span class="g">✓</span>  Haiku <span 
   <p class="proof-caption">the real thing, in a real terminal</p>
   <div class="proof">
     <img src="screenshot-sessionline.png" alt="claudii sessionline status bar inside a Claude Code session" loading="lazy" width="1904" height="386">
-    <img class="chrome" src="screenshot-claudestatus.png" alt="claudii ClaudeStatus segment in a shell RPROMPT" loading="lazy" width="805" height="244">
+    <img src="screenshot-overview.png" alt="bare claudii overview command output in a terminal" loading="lazy" width="1736" height="1672">
   </div>
 
   <h2>Install</h2>
