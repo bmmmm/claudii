@@ -29,7 +29,7 @@
   },
   "statusline": {
     "enabled": true,
-    "models": "opus,sonnet,haiku",
+    "models": "opus,sonnet,haiku,fable",
     "bedtime": "23:00",
     "insomnii": "auto",
     "lines": [

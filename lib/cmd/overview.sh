@@ -15,6 +15,7 @@ _norm_model_short() {
     *[Oo]pus*)   echo "Opus"   ;;
     *[Ss]onnet*) echo "Sonnet" ;;
     *[Hh]aiku*)  echo "Haiku"  ;;
+    *[Ff]able*)  echo "Fable"  ;;
     *)           echo "$1"     ;;
   esac
 }
@@ -503,7 +504,12 @@ _ov_render_services() {
   if (( _ov_cs_on )); then
     _ov_status_cache="$cache_dir/status-models"
     if [[ -f "$_ov_status_cache" ]]; then
-      _ov_health_str=""
+      # Collapsed health: all-healthy → a single green "claude ✓"; only the
+      # down/degraded models are named (an unlisted model is assumed working);
+      # a uniform all-down / all-degraded set collapses to one "claude" glyph.
+      # Kept in sync with bin/claudii-cc-statusline and lib/statusline.zsh.
+      _ov_total=0; _ov_ok=0; _ov_down=0; _ov_degr=0
+      _ov_problems=""
       _ov_affected=0
       _ov_inc=""
       while IFS='=' read -r _om _os; do
@@ -512,11 +518,21 @@ _ov_render_services() {
         [[ -z "$_om" || "$_om" == _* ]] && continue
         _om_cap=$(_norm_model_short "$_om")
         case "$_os" in
-          ok)       _ov_health_str+="${CLAUDII_CLR_GREEN}${_om_cap} ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} " ;;
-          degraded) _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} "; _ov_affected=1 ;;
-          down)     _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} "; _ov_affected=1 ;;
+          ok)       (( ++_ov_total )); (( ++_ov_ok )) ;;
+          degraded) (( ++_ov_total )); (( ++_ov_degr )); _ov_affected=1
+                    _ov_problems+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
+          down)     (( ++_ov_total )); (( ++_ov_down )); _ov_affected=1
+                    _ov_problems+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} " ;;
         esac
       done < "$_ov_status_cache"
+      _ov_health_str=""
+      if (( _ov_total > 0 )); then
+        if   (( _ov_ok   == _ov_total )); then _ov_health_str="${CLAUDII_CLR_GREEN}claude ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} "
+        elif (( _ov_down == _ov_total )); then _ov_health_str="${CLAUDII_CLR_RED}claude ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} "
+        elif (( _ov_degr == _ov_total )); then _ov_health_str="${CLAUDII_CLR_YELLOW}claude ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} "
+        else                                   _ov_health_str="$_ov_problems"
+        fi
+      fi
       if [[ -n "$_ov_health_str" ]]; then
         _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
         # Incident indicator — neutral note glyph when an incident exists but

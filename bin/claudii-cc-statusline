@@ -713,30 +713,45 @@ if [[ -f "$_status_cache" ]]; then
   _sc=""
   { _sc=$(<"$_status_cache"); } 2>/dev/null
   if [[ -n "$_sc" ]]; then
-    _sc_models=("opus" "sonnet" "haiku")
+    _sc_models=("opus" "sonnet" "haiku" "fable")
     [[ -n "$_sc_models_cfg" ]] && IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
+    # Collapsed health: when every model is healthy the row is a single
+    # "claude ✓" — an unlisted model is assumed working. Only down/degraded
+    # models get named (Fable included, once its API presence surfaces); a
+    # uniform all-down / all-degraded row collapses to one "claude" glyph.
     # No declare -A: bash 3.2 (macOS /bin/bash) maps every key to arr[0] and
-    # last-write-wins, so all three slots would render the same label.
+    # last-write-wins, so a per-model map would render the same label thrice.
+    # Kept in sync with lib/statusline.zsh (RPROMPT) and lib/cmd/overview.sh.
+    _sc_total=0; _sc_ok=0; _sc_down=0; _sc_degr=0; _sc_problems=""
     for _scm in "${_sc_models[@]}"; do
       _scm="${_scm// /}"
       [[ -z "$_scm" ]] && continue
+      (( ++_sc_total ))
       case "$_scm" in
         opus)   _scm_lbl="Opus"   ;;
         sonnet) _scm_lbl="Sonnet" ;;
         haiku)  _scm_lbl="Haiku"  ;;
+        fable)  _scm_lbl="Fable"  ;;
         *)      _scm_lbl="$_scm"  ;;
       esac
       if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
-        _scm_icon="${RED}↓${RST}"; _sc_worst="down"
+        (( ++_sc_down )); _sc_worst="down"
+        _sc_problems+="${_sc_problems:+ }${DIM}${_scm_lbl}${RST} ${RED}↓${RST}"
       elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then
-        _scm_icon="${YELLOW}~${RST}"; [[ "${_sc_worst:-}" != "down" ]] && _sc_worst="degraded"
+        (( ++_sc_degr )); [[ "${_sc_worst:-}" != "down" ]] && _sc_worst="degraded"
+        _sc_problems+="${_sc_problems:+ }${DIM}${_scm_lbl}${RST} ${YELLOW}~${RST}"
       else
-        _scm_icon="${GREEN}✓${RST}"
+        (( ++_sc_ok ))
       fi
-      [[ -n "$_seg_claude_status" ]] && _seg_claude_status+=" "
-      _seg_claude_status+="${DIM}${_scm_lbl}${RST} ${_scm_icon}"
     done
-    _seg_claude_status="${DIM}[${RST}${_seg_claude_status}${DIM}]${RST}"
+    if (( _sc_total > 0 )); then
+      if   (( _sc_ok   == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${GREEN}✓${RST}"
+      elif (( _sc_down == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${RED}↓${RST}"
+      elif (( _sc_degr == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${YELLOW}~${RST}"
+      else                                   _seg_claude_status="$_sc_problems"
+      fi
+      _seg_claude_status="${DIM}[${RST}${_seg_claude_status}${DIM}]${RST}"
+    fi
 
     _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
     if [[ "$_sc_mtime" =~ ^[0-9]+$ ]] && (( _sc_mtime > 0 )); then

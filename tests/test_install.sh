@@ -36,7 +36,7 @@ assert_contains "install: source line in zshrc" "claudii.plugin.zsh" "$zshrc"
 # config created from defaults
 assert_file_exists "install: config.json created" "$TEST_TMP/config/claudii/config.json"
 models=$(jq -r '.statusline.models' "$TEST_TMP/config/claudii/config.json")
-assert_eq "install: config has default models" "opus,sonnet,haiku" "$models"
+assert_eq "install: config has default models" "opus,sonnet,haiku,fable" "$models"
 
 # ── idempotent: run install again ──
 

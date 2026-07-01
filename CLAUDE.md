@@ -170,6 +170,13 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
    opus/sonnet/haiku via the broad-API fallback. The list is the superset of
    tracked + untracked families; only **new families** need adding (version
    bumps within `opus`/`sonnet`/`haiku`/`fable` already match).
+   To also **surface the new family in the collapsed health display** (like
+   Fable), add it to the `statusline.models` default in `config/defaults.json`
+   and add its label case in three mirrors kept in sync: `_scm_lbl` (case) in
+   `bin/claudii-cc-statusline`, `_norm_model_short` in `lib/cmd/overview.sh`,
+   and — the zsh RPROMPT capitalizes via `${(C)model}` so no case is needed
+   there. The display collapses to `claude ✓` when all are healthy, so an
+   added family is invisible until it actually has an incident (`[Fable ↓]`).
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
 If the new model also changes **pricing**, update the per-model `_rates` table in

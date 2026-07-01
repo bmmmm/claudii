@@ -126,7 +126,12 @@ prints only the bare version number when piped.
 Three separate layers each serve a different scope:
 .TP
 .B ClaudeStatus (RPROMPT)
-Model health indicators in the right-hand shell prompt.
+Model health in the right-hand shell prompt. When every tracked model is
+healthy it collapses to a single
+.B claude \(dg
+\(em an unnamed model is assumed working. Only down or degraded models are
+named (Fable included); a plane-wide outage collapses to
+.BR "claude \(da" .
 Reads a local cache — no network calls in
 .IR precmd .
 Indicators:

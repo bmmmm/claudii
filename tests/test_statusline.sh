@@ -11,121 +11,156 @@ export CLAUDII_CACHE_DIR="$TEST_TMP/cache"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
 CACHE_STATUS="$CLAUDII_CACHE_DIR/status-models"
 
-# Helper: write per-model cache and simulate statusline output
+# Helper: write per-model cache and simulate statusline output.
+# Mirrors the collapsed-health logic in lib/statusline.zsh: all-healthy → a
+# single "claude ✓"; only down/degraded models are named; a uniform all-down /
+# all-degraded row collapses to one "claude" glyph.
 _simulate_statusline() {
   local cache_content=$1
   local models_str=$2
 
   echo "$cache_content" > "$CACHE_STATUS"
 
-  local segments=""
+  local total=0 ok=0 down=0 degr=0 problems=""
   IFS=',' read -ra models <<< "$models_str"
   for model in "${models[@]}"; do
     model=$(echo "$model" | tr -d ' ')
+    [[ -z "$model" ]] && continue
     label="$(echo "${model:0:1}" | tr '[:lower:]' '[:upper:]')${model:1}"
+    total=$((total + 1))
 
     if grep -q "^${model}=down" "$CACHE_STATUS" 2>/dev/null; then
-      segments+="${label} ↓ "
+      down=$((down + 1)); problems+="${label} ↓ "
     elif grep -q "^${model}=degraded" "$CACHE_STATUS" 2>/dev/null; then
-      segments+="${label} ~ "
+      degr=$((degr + 1)); problems+="${label} ~ "
     else
-      segments+="${label} ✓ "
+      ok=$((ok + 1))
     fi
   done
+
+  local segments=""
+  if (( total > 0 )); then
+    if   (( ok   == total )); then segments="claude ✓ "
+    elif (( down == total )); then segments="claude ↓ "
+    elif (( degr == total )); then segments="claude ~ "
+    else                           segments="$problems"
+    fi
+  fi
   echo "[${segments% }]"
 }
 
-# ── Default: all 3 models ──
+# ── Default: all healthy collapses to a single "claude ✓" ──
 
 output=$(_simulate_statusline "opus=ok
 sonnet=ok
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3 models, all ok" "[Opus ✓ Sonnet ✓ Haiku ✓]" "$output"
+assert_eq "all 3 models, all ok → collapsed claude ✓" "[claude ✓]" "$output"
+
+# 4-model default (incl. the Fable placeholder) all healthy → still collapses.
+output=$(_simulate_statusline "opus=ok
+sonnet=ok
+haiku=ok
+fable=ok" "opus,sonnet,haiku,fable")
+assert_eq "all 4 incl. fable, all ok → collapsed claude ✓" "[claude ✓]" "$output"
+
+# ── Partial outage: only the affected models are named ──
 
 output=$(_simulate_statusline "opus=down
 sonnet=ok
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3, opus down" "[Opus ↓ Sonnet ✓ Haiku ✓]" "$output"
+assert_eq "all 3, opus down → only Opus named" "[Opus ↓]" "$output"
 
 output=$(_simulate_statusline "opus=ok
 sonnet=down
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3, sonnet down" "[Opus ✓ Sonnet ↓ Haiku ✓]" "$output"
+assert_eq "all 3, sonnet down → only Sonnet named" "[Sonnet ↓]" "$output"
 
 output=$(_simulate_statusline "opus=ok
 sonnet=ok
 haiku=down" "opus,sonnet,haiku")
-assert_eq "all 3, haiku down" "[Opus ✓ Sonnet ✓ Haiku ↓]" "$output"
+assert_eq "all 3, haiku down → only Haiku named" "[Haiku ↓]" "$output"
+
+# Fable placeholder surfaces by name when its incident scope flips it down.
+output=$(_simulate_statusline "opus=ok
+sonnet=ok
+haiku=ok
+fable=down" "opus,sonnet,haiku,fable")
+assert_eq "fable down while others ok → only Fable named" "[Fable ↓]" "$output"
 
 output=$(_simulate_statusline "opus=down
 sonnet=down
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3, opus+sonnet down" "[Opus ↓ Sonnet ↓ Haiku ✓]" "$output"
+assert_eq "all 3, opus+sonnet down → both named, haiku implied ok" "[Opus ↓ Sonnet ↓]" "$output"
 
 output=$(_simulate_statusline "opus=down
 sonnet=down
 haiku=down" "opus,sonnet,haiku")
-assert_eq "all 3, all down" "[Opus ↓ Sonnet ↓ Haiku ↓]" "$output"
+assert_eq "all 3, all down → collapsed claude ↓" "[claude ↓]" "$output"
 
-# ── Degraded state ──
+# ── Degraded (amber) state ──
 
 output=$(_simulate_statusline "opus=degraded
 sonnet=ok
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3, opus degraded" "[Opus ~ Sonnet ✓ Haiku ✓]" "$output"
+assert_eq "all 3, opus degraded → only Opus ~ named" "[Opus ~]" "$output"
 
 output=$(_simulate_statusline "opus=degraded
 sonnet=down
 haiku=ok" "opus,sonnet,haiku")
-assert_eq "all 3, opus degraded + sonnet down" "[Opus ~ Sonnet ↓ Haiku ✓]" "$output"
+assert_eq "all 3, opus degraded + sonnet down → both named" "[Opus ~ Sonnet ↓]" "$output"
+
+output=$(_simulate_statusline "opus=degraded
+sonnet=degraded
+haiku=degraded" "opus,sonnet,haiku")
+assert_eq "all 3, all degraded → collapsed claude ~" "[claude ~]" "$output"
 
 # ── Single model: opus only ──
 
 output=$(_simulate_statusline "opus=ok
 sonnet=ok
 haiku=ok" "opus")
-assert_eq "opus only, ok" "[Opus ✓]" "$output"
+assert_eq "opus only, ok → collapsed claude ✓" "[claude ✓]" "$output"
 
 output=$(_simulate_statusline "opus=down
 sonnet=ok
 haiku=ok" "opus")
-assert_eq "opus only, down" "[Opus ↓]" "$output"
+assert_eq "opus only, down → collapsed claude ↓" "[claude ↓]" "$output"
 
 # ── Two models: opus,sonnet ──
 
 output=$(_simulate_statusline "opus=down
 sonnet=ok
 haiku=ok" "opus,sonnet")
-assert_eq "opus+sonnet, opus down" "[Opus ↓ Sonnet ✓]" "$output"
+assert_eq "opus+sonnet, opus down → only Opus named" "[Opus ↓]" "$output"
 
 output=$(_simulate_statusline "opus=ok
 sonnet=down
 haiku=ok" "opus,sonnet")
-assert_eq "opus+sonnet, sonnet down" "[Opus ✓ Sonnet ↓]" "$output"
+assert_eq "opus+sonnet, sonnet down → only Sonnet named" "[Sonnet ↓]" "$output"
 
 output=$(_simulate_statusline "opus=down
 sonnet=down
 haiku=ok" "opus,sonnet")
-assert_eq "opus+sonnet, both down" "[Opus ↓ Sonnet ↓]" "$output"
+assert_eq "opus+sonnet, both down → collapsed claude ↓" "[claude ↓]" "$output"
 
-# ── Reversed order ──
+# ── Reversed order: only the down model shows, so order is moot here ──
 
 output=$(_simulate_statusline "opus=down
 sonnet=ok
 haiku=ok" "sonnet,opus")
-assert_eq "reversed order, opus down" "[Sonnet ✓ Opus ↓]" "$output"
+assert_eq "reversed order, opus down → only Opus named" "[Opus ↓]" "$output"
 
 # ── Haiku only ──
 
 output=$(_simulate_statusline "opus=ok
 sonnet=ok
 haiku=down" "haiku")
-assert_eq "haiku only, down" "[Haiku ↓]" "$output"
+assert_eq "haiku only, down → collapsed claude ↓" "[claude ↓]" "$output"
 
 output=$(_simulate_statusline "opus=down
 sonnet=down
 haiku=ok" "haiku")
-assert_eq "haiku only, others down (haiku ok)" "[Haiku ✓]" "$output"
+assert_eq "haiku only, others down (haiku ok) → collapsed claude ✓" "[claude ✓]" "$output"
 
 # ── Config integration ──
 
@@ -154,9 +189,13 @@ zsh_out=$(
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
 )
-assert_contains "zsh: all ok → Opus in RPROMPT" "Opus" "$zsh_out"
-assert_contains "zsh: all ok → Sonnet in RPROMPT" "Sonnet" "$zsh_out"
+assert_contains "zsh: all ok → collapsed claude in RPROMPT" "claude" "$zsh_out"
 assert_contains "zsh: all ok → ✓ in RPROMPT" "✓" "$zsh_out"
+if printf '%s' "$zsh_out" | grep -q "Opus"; then
+  assert_eq "zsh: all ok → no per-model name (collapsed)" "no Opus" "Opus found"
+else
+  assert_eq "zsh: all ok → no per-model name (collapsed)" "no Opus" "no Opus"
+fi
 
 # Opus down
 printf 'opus=down\nsonnet=ok\nhaiku=ok\n' > "$ZSH_TMP/status-models"

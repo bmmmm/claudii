@@ -127,21 +127,37 @@ function _claudii_statusline_render {
     _claudii_status_spawn
   fi
 
-  local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku}}"
+  local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku,fable}}"
   local models=(${(s:,:)models_str})
 
-  local segments=""
+  # Collapsed health: all-healthy → a single "claude ✓" (an unlisted model is
+  # assumed working); only down/degraded models get named; a uniform all-down /
+  # all-degraded row collapses to one "claude" glyph. Kept in sync with
+  # bin/claudii-cc-statusline and lib/cmd/overview.sh.
+  local -i _sl_total=0 _sl_ok=0 _sl_down=0 _sl_degr=0
+  local _sl_problems=""
   for model in "${models[@]}"; do
     model="${model// /}"
+    [[ -z "$model" ]] && continue
+    (( ++_sl_total ))
     # Pattern match in-process — no grep subprocess
     if [[ $'\n'"$cache_content" == *$'\n'"${model}=down"* ]]; then
-      segments+="%F{red}${(C)model} ${CLAUDII_SYM_DOWN}%f "
+      (( ++_sl_down )); _sl_problems+="%F{red}${(C)model} ${CLAUDII_SYM_DOWN}%f "
     elif [[ $'\n'"$cache_content" == *$'\n'"${model}=degraded"* ]]; then
-      segments+="%F{yellow}${(C)model} ${CLAUDII_SYM_DEGRADED}%f "
+      (( ++_sl_degr )); _sl_problems+="%F{yellow}${(C)model} ${CLAUDII_SYM_DEGRADED}%f "
     else
-      segments+="%F{green}${(C)model} ${CLAUDII_SYM_OK}%f "
+      (( ++_sl_ok ))
     fi
   done
+
+  local segments=""
+  if (( _sl_total > 0 )); then
+    if   (( _sl_ok   == _sl_total )); then segments="%F{green}claude ${CLAUDII_SYM_OK}%f "
+    elif (( _sl_down == _sl_total )); then segments="%F{red}claude ${CLAUDII_SYM_DOWN}%f "
+    elif (( _sl_degr == _sl_total )); then segments="%F{yellow}claude ${CLAUDII_SYM_DEGRADED}%f "
+    else                                   segments="$_sl_problems"
+    fi
+  fi
 
   local age_str refreshing="" unreachable=""
   if (( age < 60 )); then age_str="${age}s"

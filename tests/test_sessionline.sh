@@ -344,8 +344,11 @@ assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$
 # on bash 3.2 (macOS /bin/bash) — every key resolved to arr[0], so all
 # three slots rendered the last value ("Haiku"). Run via /bin/bash
 # explicitly so the test catches future bash-3.2 regressions.
+# The collapsed health display only names models when they're impaired (an
+# all-ok cache renders a single "claude ✓"), so force a non-uniform impaired
+# cache — opus/sonnet down, haiku degraded — which lists all three by name.
 _test_cache_dir_b32="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir_b32")
-printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$_test_cache_dir_b32/status-models"
+printf 'opus=down\nsonnet=down\nhaiku=degraded\n' > "$_test_cache_dir_b32/status-models"
 # Use a non-Opus/Sonnet/Haiku display name so the model segment doesn't
 # collide with the claude-status labels we are asserting on.
 _test_cfg_dir_b32="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir_b32")
@@ -472,12 +475,22 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "dir segment uses worktree.original_cwd when set" "feat-branch" "$strip"
 
 # _tok awk injection — malicious token string must not execute code
-# `awk -v n="$n"` with numeric coercion (n+0) should sanitize, but regression-test anyway
+# `awk -v n="$n"` with numeric coercion (n+0) should sanitize, but regression-test anyway.
+# Pin a claude-status + tokens layout: the injection lands in the tokens segment (so the
+# _tok path is exercised), and the health line is the deterministic "statusline still
+# rendered" sentinel — it's independent of the token math (a malformed tokens value
+# blanks the token-consuming segments) and, all-ok, collapses to "claude ✓".
+_inj_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_inj_cfg_dir")
+mkdir -p "$_inj_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["claude-status"],["tokens"]]}}\n' > "$_inj_cfg_dir/claudii/config.json"
+_inj_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_inj_cache_dir")
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$_inj_cache_dir/status-models"
 _mal='1000; system("echo PWNED_TOK")'
-output=$(jq -n --arg t "$_mal" '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":$t,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
-  | bash "$SL" 2>&1)
+output=$(jq -n --arg t "$_mal" '{"session_id":"injtest","model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":$t,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
+  | XDG_CONFIG_HOME="$_inj_cfg_dir" CLAUDII_CACHE_DIR="$_inj_cache_dir" bash "$SL" 2>&1)
 assert_not_contains "_tok awk injection: no PWNED in output" "PWNED_TOK" "$output"
-assert_contains "_tok awk injection: model still renders" "Opus" "$output"
+assert_contains "_tok awk injection: statusline still renders" "claude" "$output"
+unset _inj_cfg_dir _inj_cache_dir
 
 # omlx segment — reads gateii's data/agents/active.json (or env override)
 # Empty when path missing or stale (>5 min old). Fresh entries render

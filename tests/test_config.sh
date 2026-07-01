@@ -67,7 +67,7 @@ assert_eq "config set decimal is JSON number type" "number" "$raw_type"
 
 # config get statusline.models
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get statusline.models 2>&1)
-assert_eq "config get statusline.models default" "opus,sonnet,haiku" "$output"
+assert_eq "config get statusline.models default" "opus,sonnet,haiku,fable" "$output"
 
 # config set statusline.models
 bash "$CLAUDII_HOME/bin/claudii" config set statusline.models "opus" >/dev/null 2>&1
@@ -93,7 +93,7 @@ export_file="$XDG_CONFIG_HOME/claudii/export.json"
 bash "$CLAUDII_HOME/bin/claudii" config export "$export_file" >/dev/null 2>&1
 assert_file_exists "config export creates file" "$export_file"
 models_in_export=$(jq -r '.statusline.models' "$export_file")
-assert_eq "config export file has correct content" "opus,sonnet,haiku" "$models_in_export"
+assert_eq "config export file has correct content" "opus,sonnet,haiku,fable" "$models_in_export"
 
 # config import
 import_file="$XDG_CONFIG_HOME/claudii/import.json"
