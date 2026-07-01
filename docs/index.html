@@ -18,6 +18,7 @@
     --green: #3fb950;
     --cyan:  #56d4dd;
     --yellow:#d29922;
+    --pink:  #d98cd6;
     --line:  #20262e;
   }
   * { box-sizing: border-box; }
@@ -59,6 +60,13 @@
   .c { color: var(--cyan); }
   .y { color: var(--yellow); }
   .d { color: var(--dim); }
+  .p { color: var(--pink); }
+  /* activity-heatmap green shades (dark → bright) */
+  .h1 { color: #196c2e; }
+  .h2 { color: #2ea043; }
+  .h3 { color: #3fb950; }
+  .h4 { color: #56d364; }
+  .overview pre { font-size: 12.5px; line-height: 1.5; }
 
   h2 {
     font-size: .8rem; text-transform: uppercase; letter-spacing: 1.5px;
@@ -101,8 +109,47 @@ Opus <span class="g">✓</span>  Sonnet <span class="g">✓</span>  Haiku <span 
   <p class="proof-caption">the real thing, in a real terminal</p>
   <div class="proof">
     <img src="screenshot-sessionline.png" alt="claudii sessionline status bar inside a Claude Code session" loading="lazy" width="1904" height="386">
-    <img src="screenshot-overview.png" alt="bare claudii overview command output in a terminal" loading="lazy" width="1720" height="1608">
   </div>
+
+  <p class="proof-caption">and <b style="color:var(--fg)">claudii</b> bare — the whole picture on demand <span style="color:var(--dim)">· rendered live, not a screenshot</span></p>
+  <div class="panel overview"><pre><span class="c">claudii</span> <span class="p">v0.25.0</span>
+
+<span class="g">●</span> <span class="p">Account</span>
+  <span class="g">5h↓: 41%</span> <span class="d">↺2h48m (04:10)</span>  <span class="d">│</span>  <span class="g">7d↓: 68%</span> <span class="d">↺5d02h (Wed 13:00)</span>  <span class="d">│</span>  <span class="p">2.8M tok today</span> <span class="d">(8 sessions)</span>
+
+<span class="g">●</span> <span class="p">Usage</span> <span class="d">last 30d</span>
+  <span class="p">▂▃▄▃▂▄▅▄▆▅▄▃▄▅▆▄▃▄▅▄▃▂▃▄▅▄▃▄▆▅</span>
+  <span class="d">today</span> 2.8M <span class="d">│ avg</span> 3.1M/d <span class="d">│ peak</span> 7.2M
+  <span class="d">→ claudii tokens · claudii cost</span>
+
+<span class="d">○</span> <span class="p">Sessions</span>
+  <span class="d">2 active sessions │ 14 inactive</span>
+  <span class="d">→ claudii se · claudii si</span>
+
+<span class="g">●</span> <span class="p">Activity</span> <span class="d">last 30d</span>
+  <span class="h2">████</span><span class="h3">███</span><span class="h1">██</span><span class="h4">███</span><span class="h2">██</span><span class="h3">████</span><span class="h1">██</span><span class="h4">███</span><span class="h2">███</span><span class="h3">██</span><span class="p">█</span>
+  <span class="d">→ claudii vibemap · claudii vibemap grid</span>
+
+<span class="g">●</span> <span class="p">Agents</span> <span class="d">8 agents │ 5 shell aliases</span>
+  <span class="d">haiku </span>  <span class="g">hk</span><span class="d">/high</span> · <span class="g">sh</span><span class="d">/high</span>
+  <span class="d">sonnet</span>  <span class="g">sn</span><span class="d">/high</span> · <span class="g">snmax</span><span class="d">/max</span>
+  <span class="d">opus  </span>  <span class="g">op</span><span class="d">/high</span> · <span class="g">opl</span><span class="d">/low</span> · <span class="g">opm</span><span class="d">/medium</span> · <span class="g">orc</span><span class="d">/medium</span>
+  <span class="d">shell </span>  <span class="g">cl</span> · <span class="g">clf</span> · <span class="g">clm</span> · <span class="g">clo</span> · <span class="g">clq</span>
+  <span class="d">→ claudii agents</span>
+
+<span class="g">●</span> <span class="p">Services</span>
+  <span class="g">●</span> ClaudeStatus  <span class="d">[</span><span class="g">Opus ✓</span> <span class="g">Sonnet ✓</span> <span class="g">Haiku ✓</span><span class="d">]</span>
+  <span class="g">●</span> Dashboard
+  <span class="g">●</span> CC-Statusline
+
+<span class="g">●</span> <span class="p">Commands</span> <span class="d">each runs as claudii &lt;command&gt;</span>
+  <span class="d">sessions</span>   <span class="g">se · si · session · pin · unpin · gc · resume</span>
+  <span class="d">cost    </span>   <span class="g">cost · trends · skills-cost</span>
+  <span class="d">insights</span>   <span class="g">tokens · perf · tools · limits · cache · vibemap</span>
+  <span class="d">display </span>   <span class="g">on · off · claudestatus · session-dashboard · cc-statusline</span>
+  <span class="d">config  </span>   <span class="g">config · agents · omlx · vpnii · search</span>
+  <span class="d">system  </span>   <span class="g">status · doctor · explain · update · version · changelog</span>
+  <span class="d">→ claudii help · man claudii</span></pre></div>
 
   <h2>Install</h2>
   <div class="panel"><pre><span class="prompt">$</span> brew tap bmmmm/tap &amp;&amp; brew install claudii
