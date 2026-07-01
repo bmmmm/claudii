@@ -144,7 +144,19 @@ Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 
    ones (sourced `_insights_model_label` guard). Older asserts stay as regression cover.
 3. `config/defaults.json` — bump any agent `description` that names a version
    (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
-4. `bin/claudii-cc-statusline` already shows `.model.display_name` verbatim — no change.
+4. `bin/claudii-cc-statusline` shows `.model.display_name` verbatim — no change
+   for a version bump *within* an existing flat-1M-billing family. But check
+   whether the **new model's context-window/pricing shape** matches its
+   family's existing entry in `_flat_1m_model()` (opus/fable/mythos/sonnet-5+
+   get a native 1M window, full-window compact floor, and never show the
+   `>200k` marker; everything else gets the legacy 200k-default / paid-`[1m]`-
+   opt-in treatment). A model that changes this shape (like Sonnet 5 did vs.
+   Sonnet 4.6 — 1M went from paid opt-in to default, no premium) needs a new
+   pattern arm here, confirmed against the `claude-api` skill or the user —
+   don't assume from the family name alone. **The identical `case "$MODEL"`
+   membership test also lives in `~/.claude/hooks/compact-nudge.sh`** (global,
+   not version-controlled, no test suite) — sweep it in the same pass or it
+   silently drifts.
 5. The tier mappings are version-agnostic (match bare `fable`/`opus`/`sonnet`/
    `haiku`) — no change for version bumps within a tier. A **new tier** (e.g.
    Fable in 2026-06) needs: a `tier_label()` branch in `lib/model_tier.awk`
