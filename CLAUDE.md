@@ -240,3 +240,5 @@ This project overrides the default memory type set. Use these instead of the har
 - **`user`** — language profile and collaboration preferences for bmmmm.
 
 `feedback` is retired in this project — it conflated rules and lessons. Migration: every existing `feedback_*.md` should be re-typed to `rule` or `lesson` on next touch.
+
+**Slug convention (overrides the harness's kebab-case default):** a memory's frontmatter `name:` MUST equal its filename without `.md` (snake_case, e.g. `lesson_otel_delta_temporality`), and `[[links]]` use that exact slug. The harness memory instructions suggest `kebab-case`, but this project's files and cross-links are snake_case — following the harness default here produces dangling `[[links]]` (a whole collection's worth drifted this way once). When writing a memory: pick the filename first, then set `name:` to match it verbatim.
