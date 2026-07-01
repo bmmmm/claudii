@@ -3,7 +3,8 @@
     "cl":  { "model": "sonnet", "effort": "high",   "description": "Standard coding" },
     "clo": { "model": "opus",   "effort": "high",   "description": "Server, complex" },
     "clm": { "model": "opus",   "effort": "xhigh",  "description": "Hardest problems" },
-    "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" }
+    "clq": { "model": "sonnet", "effort": "medium", "description": "Claude Search", "dir": "~/claude-search" },
+    "clf": { "model": "fable",  "effort": "high",   "description": "Most capable model" }
   },
   "notifications": {
     "enabled": false,

@@ -255,6 +255,8 @@ _claudii() {
                 'aliases.clm.effort:Effort for clm (default: xhigh)'
                 'aliases.clq.model:Model for clq (default: sonnet)'
                 'aliases.clq.effort:Effort for clq (default: medium)'
+                'aliases.clf.model:Model for clf (default: fable)'
+                'aliases.clf.effort:Effort for clf (default: high)'
                 'fallback.enabled:Auto-fallback on outage (true/false)'
                 'fallback.opus.model:Fallback model when opus is down'
                 'fallback.sonnet.model:Fallback model when sonnet is down'

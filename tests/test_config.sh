@@ -17,6 +17,9 @@ assert_eq "config get aliases.cl.model" "sonnet" "$output"
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get aliases.clo.effort 2>&1)
 assert_eq "config get aliases.clo.effort" "high" "$output"
 
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get aliases.clf.model 2>&1)
+assert_eq "config get aliases.clf.model" "fable" "$output"
+
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get fallback.enabled 2>&1)
 assert_eq "config get fallback.enabled" "true" "$output"
 

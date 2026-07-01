@@ -128,6 +128,7 @@ cl       # Sonnet, high effort — general default
 clo      # Opus, high effort — complex tasks, server work
 clm      # Opus, xhigh effort — hardest problems, maximum reasoning
 clq      # Sonnet, medium effort — search mode
+clf      # Fable, high effort — most capable model, long-horizon agentic work
 clh      # alias table + live model health
 ```
 

@@ -1,4 +1,4 @@
-# claudii shell functions — cl, clo, clm, clq, clh
+# claudii shell functions — cl, clo, clm, clq, clf, clh
 
 # Shared relative-time formatters (_fmt_rel) — bash 3.2 file, zsh-safe.
 source "${CLAUDII_HOME}/lib/timefmt.sh"
@@ -148,7 +148,7 @@ function _claudii_launch {
 }
 
 # Register alias shell functions dynamically from config (aliases.*)
-# Creates functions like cl, clo, clm, clq — no hardcoded list.
+# Creates functions like cl, clo, clm, clq, clf — no hardcoded list.
 function _claudii_register_aliases {
   local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
   [[ -f "$config" ]] || return
