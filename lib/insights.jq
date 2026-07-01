@@ -34,7 +34,7 @@ def reponame($cwd):
   | (if $w != null and $w > 0 then $p[$w-1] else ($p | last) end) // "";
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 7,
+  schema_version: 8,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -76,6 +76,19 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       .assistant_messages += 1
       | (($r.timestamp // "")[:10]) as $day
       | ($r.message.model // "unknown") as $model
+      # 5h session-limit hits arrive as synthetic assistant messages
+      # (model: "<synthetic>", isApiErrorMessage:true, error:"rate_limit"),
+      # never as a tool_result. Scope to "hit your session limit" text —
+      # "rate_limit" also covers the monthly spend cap and transient
+      # server-side throttling ("not your usage limit"), which are a
+      # different budget than the one this command reports on. Attribute to
+      # .last_assistant_model (still the pre-overwrite value here) since the
+      # synthetic record itself carries no real model.
+      | (if ($r.isApiErrorMessage // false) and (($r.error // "") == "rate_limit")
+            and (($r.message.content // [] | map(select(.type == "text") | (.text // "")) | join(""))
+                 | contains("hit your session limit")) then
+          .limit_hits += [{timestamp: ($r.timestamp // ""), model: (.last_assistant_model // "unknown")}]
+        else . end)
       | .last_assistant_model = $model
       | ($day + "|" + $model) as $key
       # Effective skill: the record's own attributionSkill wins; subagent
@@ -168,9 +181,6 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           | (.pending_tools[$tid] // "unknown") as $tname
           | (if ($c.is_error // false) then
               .tool_errors[$tname] = ((.tool_errors[$tname] // 0) + 1)
-            else . end)
-          | (if (($c.content // "") | tostring | contains("hit your limit")) then
-              .limit_hits += [{timestamp: ($r.timestamp // ""), model: (.last_assistant_model // "unknown")}]
             else . end)
           # Agent tool_result: promote the skill recorded at spawn to the
           # agentId so subagent transcript lines can attribute to it.

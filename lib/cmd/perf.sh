@@ -278,7 +278,7 @@ _cmd_perf() {
         | ["E", (.[0].status_code|tostring), (length|tostring)] | @tsv )
   ' <<< "$merged")
 
-  local -a _m_rows _w_rows _d_rows _r_rows _g_rows _e_rows
+  local -a _m_rows=() _w_rows=() _d_rows=() _r_rows=() _g_rows=() _e_rows=()
   local _s_row="" _t_row="" _x_row="" _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue

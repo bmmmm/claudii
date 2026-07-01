@@ -88,7 +88,7 @@ _is_stale() {
 
 # Must match `schema_version` in lib/insights.jq — bump both together on any
 # breaking change to the per-session cache shape (drives the rebuild gate below).
-SCHEMA_VERSION=7
+SCHEMA_VERSION=8
 
 # Schema gate: compare the .schema marker written after the last successful
 # rebuild. The previous approach (min schema_version across ALL cache files)

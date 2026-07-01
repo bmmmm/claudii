@@ -14,16 +14,20 @@ mkdir -p "$_LIM_PROJ/-test-project"
 _SID="33333333-4444-5555-6666-777777777777"
 _JSONL="$_LIM_PROJ/-test-project/$_SID.jsonl"
 
-# A limit hit = a user tool_result whose content contains "hit your limit"; its
-# model is the last assistant model seen. Two hits in hour 11 (Opus), one in
-# hour 20 (Haiku) → cluster around 11:00, tally 2× Opus · 1× Haiku.
+# A limit hit = a synthetic assistant message (model:"<synthetic>",
+# isApiErrorMessage:true, error:"rate_limit", text "hit your session limit");
+# its model is the last real assistant model seen. Two hits in hour 11
+# (Opus), one in hour 20 (Haiku) → cluster around 11:00, tally 2× Opus ·
+# 1× Haiku. A monthly-spend-limit hit is interspersed to confirm it's
+# excluded (different budget than the 5h session limit this command reports).
 {
   printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:29:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"user","timestamp":"2026-06-10T11:30:00Z","sessionId":"'"$_SID"'","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x1","content":"You have hit your limit. Try later."}]}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:30:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 2am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
   printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:44:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"user","timestamp":"2026-06-10T11:45:00Z","sessionId":"'"$_SID"'","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x2","content":"You have hit your limit. Try later."}]}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:45:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 3am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T12:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your monthly spend limit · raise it at claude.ai/settings/usage"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
   printf '%s\n' '{"type":"assistant","timestamp":"2026-06-11T19:59:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"user","timestamp":"2026-06-11T20:00:00Z","sessionId":"'"$_SID"'","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x3","content":"You have hit your limit. Try later."}]}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-11T20:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 9pm (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
 } > "$_JSONL"
 
 _LIM_OUT=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \

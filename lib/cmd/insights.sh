@@ -339,7 +339,7 @@ _cmd_cache() {
     )
   ' <<< "$merged")
 
-  local -a _d_rows _m_rows
+  local -a _d_rows=() _m_rows=()
   local _s_row="" _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue
@@ -504,7 +504,7 @@ _cmd_tokens() {
       )
   ' <<< "$merged")
 
-  local -a _t_rows _m_rows _d_rows
+  local -a _t_rows=() _m_rows=() _d_rows=()
   local _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue
@@ -667,7 +667,7 @@ _cmd_session() {
 
   local first_seen="" last_seen="" think="0" tcalls="0" terrs="0" dom=""
   local t_in=0 t_out=0 t_cr=0 t_cw=0 sub_tot=0 sub_str="" stop_str=""
-  local -a _stool_rows _slh_rows
+  local -a _stool_rows=() _slh_rows=()
   local _sl _tag _rest
   while IFS= read -r _sl; do
     [[ -z "$_sl" ]] && continue
