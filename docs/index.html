@@ -50,6 +50,11 @@
   }
   .panel pre { margin: 0; white-space: pre; font-size: 13px; line-height: 1.5; }
   .hero pre { font-size: 13.5px; }
+
+  .proof-caption { color: var(--dim); font-size: .8rem; text-align: center; margin: .6rem 0; }
+  .proof { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0 0 2.8rem; }
+  .proof img { flex: 1 1 380px; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  .proof img.chrome { border: none; }
   .prompt { color: var(--dim); }
   .g { color: var(--green); }
   .c { color: var(--cyan); }
@@ -93,6 +98,12 @@
 <span class="d">5h:</span>28%  <span class="d">7d:</span>12%  <span class="d">eta:</span>4h  <span class="g">+47</span>/<span class="y">-12</span>
 <span class="d">api:</span>23m  12.4k<span class="g">↑</span> 4.2k<span class="y">↓</span>  23m  feature-branch  <span class="d">⌂ gateii</span>
 Opus <span class="g">✓</span>  Sonnet <span class="g">✓</span>  Haiku <span class="g">✓</span>  <span class="d">│</span>  <span class="c">@orchestrate</span></pre></div>
+
+  <p class="proof-caption">the real thing, in a real terminal</p>
+  <div class="proof">
+    <img src="screenshot-sessionline.png" alt="claudii sessionline status bar inside a Claude Code session" loading="lazy" width="1904" height="386">
+    <img class="chrome" src="screenshot-claudestatus.png" alt="claudii ClaudeStatus segment in a shell RPROMPT" loading="lazy" width="805" height="244">
+  </div>
 
   <h2>Install</h2>
   <div class="panel"><pre><span class="prompt">$</span> brew tap bmmmm/tap &amp;&amp; brew install claudii
