@@ -123,7 +123,8 @@ assert_eq "label: unknown fable->tier" "Fable"     "$(_insights_model_label clau
 assert_eq "label: opus 4.8 (latest)"  "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
 assert_eq "label: opus 4.7 (older)"   "Opus 4.7"   "$(_insights_model_label claude-opus-4-7)"
 assert_eq "label: opus 4.6 (older)"   "Opus 4.6"   "$(_insights_model_label claude-opus-4-6)"
-assert_eq "label: sonnet 4.6"         "Sonnet 4.6" "$(_insights_model_label claude-sonnet-4-6)"
+assert_eq "label: sonnet 5 (latest)"  "Sonnet 5"   "$(_insights_model_label claude-sonnet-5)"
+assert_eq "label: sonnet 4.6 (older)" "Sonnet 4.6" "$(_insights_model_label claude-sonnet-4-6)"
 assert_eq "label: haiku 4.5"          "Haiku 4.5"  "$(_insights_model_label claude-haiku-4-5)"
 assert_eq "label: unknown opus->tier" "Opus"       "$(_insights_model_label claude-opus-9-9)"
 

@@ -61,6 +61,7 @@ _insights_model_label() {
     *opus-4-7*)   printf 'Opus 4.7'   ;;
     *opus-4-6*)   printf 'Opus 4.6'   ;;
     *opus*)       printf 'Opus'       ;;
+    *sonnet-5*)   printf 'Sonnet 5'   ;;
     *sonnet-4-6*) printf 'Sonnet 4.6' ;;
     *sonnet*)     printf 'Sonnet'     ;;
     *haiku-4-5*)  printf 'Haiku 4.5'  ;;

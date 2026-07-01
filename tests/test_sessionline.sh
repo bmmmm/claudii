@@ -403,10 +403,11 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cache-create absent when zero" "0" "$(echo "$strip" | grep -c '✎' || true)"
 
 # Window / pricing marker — model-aware (exceeds_200k_tokens handling).
-# Opus bills a flat rate across its whole 1M window (no >200k premium), so the
-# flag is a non-event there — Opus shows a dim 1M label, never a >200k warning.
-# Non-opus crossing 200k is a real signal: yellow on a native 1M window
-# (sonnet[1m], the pricing tier), red on a 200k-class window (genuine overflow).
+# Opus and Sonnet 5+ bill a flat rate across their whole 1M window (no >200k
+# premium), so the flag is a non-event there — dim 1M label, never a >200k
+# warning. Legacy-sonnet (4.6 and earlier) crossing 200k is a real signal:
+# yellow on a native 1M window (sonnet[1m], the paid pricing tier), red on a
+# 200k-class window (genuine overflow).
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
@@ -426,6 +427,13 @@ _wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"con
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "window marker: sonnet[1m]/1M >200k is yellow" $'\033[0;33m>200k' "$_wm"
 assert_eq "window marker: sonnet[1m] not red" "0" "$(printf '%s' "$_wm" | grep -cF $'\033[0;31m>200k' || true)"
+# Sonnet 5 on its 1M window + exceeds_200k → dim 1M label, NEVER >200k — same
+# flat-billing treatment as opus (1M is the default, no [1m] opt-in, confirmed
+# 2026-07-01), unlike Sonnet 4.6 and earlier above.
+_wm=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_contains "window marker: sonnet-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: sonnet-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 unset _wm
 
 # session-name segment: shown when session_name set

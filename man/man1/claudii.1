@@ -989,22 +989,25 @@ green < 70%, yellow 70\(en89%, red >= 90% of the
 .I usable
 context \(em the raw used-percentage rescaled to the model's practical (pre-compact)
 window, so the bar fills as the compact point nears rather than at 100%. The
-practical window is model-aware: opus (incl.\& the 1M window) ends at 80%, while a
-non-opus model whose window exceeds ~244k (e.g.\& sonnet[1m]) ends at a 195k habit
-ceiling \(em so a 1M sonnet[1m] bar fills near 195k, not 800k.
+practical window is model-aware: opus and sonnet 5+ (incl.\& their 1M window) end
+at 80%, while a legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k
+(e.g.\& sonnet[1m]) ends at a 195k habit ceiling \(em so a 1M sonnet[1m] bar fills
+near 195k, not 800k. Sonnet 5 ships 1M as its default window (no [1m] opt-in
+needed), so it gets the same flat-rate treatment as opus here.
 .B CLAUDE_CODE_AUTO_COMPACT_WINDOW
 (inherited from Claude Code) overrides the default scale.
 A window marker is appended after the bar, and it is
 .IR model-aware .
-Opus bills a flat rate across its entire 1M window (no >200k long-context
-premium, and its real capacity edge is the ~780k compact point, not 200k), so
-Claude Code's
+Opus and Sonnet 5+ bill a flat rate across their entire 1M window (no >200k
+long-context premium; Opus's real capacity edge is the ~780k compact point, not
+200k), so Claude Code's
 .I exceeds_200k_tokens
-flag is a non-event on Opus \(em Opus shows a dim
+flag is a non-event there \(em a dim
 .B 1M
-window label and never a >200k warning. For a non-opus model, crossing 200k
-still matters: on a native 1M window (e.g.\& sonnet[1m]) it is the long-context
-pricing tier, shown as a yellow
+window label is shown and never a >200k warning. For a legacy-sonnet model
+(4.6 and earlier), crossing 200k still matters: on a native 1M window (e.g.\&
+sonnet[1m], a paid opt-in) it is the long-context pricing tier, shown as a
+yellow
 .BR >200k ;
 on a 200k-class window it is a genuine overflow of the standard window, shown as
 a red
