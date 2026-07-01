@@ -989,18 +989,20 @@ green < 70%, yellow 70\(en89%, red >= 90% of the
 .I usable
 context \(em the raw used-percentage rescaled to the model's practical (pre-compact)
 window, so the bar fills as the compact point nears rather than at 100%. The
-practical window is model-aware: opus and sonnet 5+ (incl.\& their 1M window) end
-at 80%, while a legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k
-(e.g.\& sonnet[1m]) ends at a 195k habit ceiling \(em so a 1M sonnet[1m] bar fills
-near 195k, not 800k. Sonnet 5 ships 1M as its default window (no [1m] opt-in
-needed), so it gets the same flat-rate treatment as opus here.
+practical window is model-aware: flat-1M-billing models \(em opus, fable,
+mythos, and sonnet 5+ (incl.\& their 1M window) \(em end at 80%, while a
+legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k (e.g.\&
+sonnet[1m]) ends at a 195k habit ceiling \(em so a 1M sonnet[1m] bar fills
+near 195k, not 800k. Sonnet 5, Fable, and Mythos ship 1M as their default
+window (no [1m] opt-in needed), so they get the same flat-rate treatment as
+opus here.
 .B CLAUDE_CODE_AUTO_COMPACT_WINDOW
 (inherited from Claude Code) overrides the default scale.
 A window marker is appended after the bar, and it is
 .IR model-aware .
-Opus and Sonnet 5+ bill a flat rate across their entire 1M window (no >200k
-long-context premium; Opus's real capacity edge is the ~780k compact point, not
-200k), so Claude Code's
+Opus, Fable, Mythos, and Sonnet 5+ bill a flat rate across their entire 1M
+window (no >200k long-context premium; Opus's real capacity edge is the ~780k
+compact point, not 200k), so Claude Code's
 .I exceeds_200k_tokens
 flag is a non-event there \(em a dim
 .B 1M

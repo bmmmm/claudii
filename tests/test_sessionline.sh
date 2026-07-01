@@ -434,6 +434,15 @@ _wm=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "window marker: sonnet-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
 assert_eq "window marker: sonnet-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
+# Fable 5 and Mythos 5 have the same flat-1M-billing shape as opus/sonnet-5.
+_wm=$(echo '{"model":{"display_name":"Fable 5","id":"claude-fable-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_contains "window marker: fable-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: fable-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
+_wm=$(echo '{"model":{"display_name":"Mythos 5","id":"claude-mythos-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_contains "window marker: mythos-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: mythos-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 unset _wm
 
 # session-name segment: shown when session_name set
@@ -736,6 +745,12 @@ unset _ac_json _ac_nown
 #   = win*80%, so scale = 80 and a raw 40% → 40*100/80 = 50%.
 output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: opus/1M keeps 80% scale (40%→50%)" "50%" "$output"
+# Sonnet 5 and Fable 5 ship 1M as their default, flat-billed window — same
+# full-window floor as opus, not the legacy sonnet[1m] 195k habit ceiling.
+output=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet-5/1M keeps 80% scale (40%→50%)" "50%" "$output"
+output=$(echo '{"model":{"display_name":"Fable 5","id":"claude-fable-5"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: fable-5/1M keeps 80% scale (40%→50%)" "50%" "$output"
 output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: sonnet/200k keeps 80% scale (40%→50%)" "50%" "$output"
 

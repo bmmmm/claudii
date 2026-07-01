@@ -321,33 +321,45 @@ if [[ -n "$model" ]]; then
   [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${ACCENT}▲${RST}"
 fi
 
+# Flat-1M-billing check: true for model families with a native 1M window and
+# no >200k long-context premium — opus (all versions), fable/mythos (all
+# versions — same pricing/window per Anthropic's docs), and sonnet-5+ (unlike
+# sonnet-4.6 and earlier, where 1M is a paid [1m] opt-in with its own long-
+# context pricing tier). Matches model id or display name; add new flat-
+# billing families/versions here (see "When a new Claude model ships" in
+# CLAUDE.md — same most-specific-first discipline as _insights_model_label()).
+_flat_1m_model() {
+  case "$1" in
+    *[Oo]pus*|*[Ff]able*|*[Mm]ythos*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Context bar: usable % = raw scaled to the model's practical (pre-compact) window.
 # >200k flag, 1M label, cache hit %. used_percentage is pre-calculated against the
 # FULL context_window_size, but the useful window ends at the compact point, not
 # 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
 # point nears. The default scale is *model-aware*, mirroring the FLOOR rule in
 # ~/.claude/hooks/reflect-nudge.sh: compact point = min(window * 80%, FLOOR), with
-# FLOOR = the full window on flat-1M-billing models (opus, sonnet-5+ — the 80%
+# FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the 80%
 # practical-window rule wins) and 195k on every other model (a habit ceiling — so
 # a 1M sonnet-4.6[1m] window fills near 195k, not 800k, instead of reading "20%"
-# while you're already past the compact point). Sonnet 5 ships 1M as the default
-# window with flat pricing (no [1m] opt-in, no long-context premium — confirmed
-# 2026-07-01), unlike Sonnet 4.6 and earlier where 1M was a paid opt-in; treat it
-# like opus here. Expressed as a % of the window. 80% here is claudii's
-# auto-compact assumption, deliberately distinct from the nudge's 78% *manual*-
-# compact point; on the common windows (opus/sonnet-5 at 1M, any 200k model) it
-# resolves to 80 either way, so the only behaviour change is the large-window
-# legacy-sonnet case. Window source: context_window_size, else inferred from the
-# model id (opus/sonnet-5+ → 1M, else 200k). CLAUDE_CODE_AUTO_COMPACT_WINDOW
-# (inherited from Claude Code) overrides the default: a value > 1 is a token
-# count (fraction = value / window size), a value in (0,1] is the fraction
-# itself; clamped to [50,100]%, garbage → the default.
+# while you're already past the compact point). Expressed as a % of the window.
+# 80% here is claudii's auto-compact assumption, deliberately distinct from the
+# nudge's 78% *manual*-compact point; on the common windows (flat-1M models,
+# any 200k model) it resolves to 80 either way, so the only behaviour change is
+# the large-window legacy-sonnet case. Window source: context_window_size, else
+# inferred from the model id (flat-1M models → 1M, else 200k).
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW (inherited from Claude Code) overrides the
+# default: a value > 1 is a token count (fraction = value / window size), a
+# value in (0,1] is the fraction itself; clamped to [50,100]%, garbage → the
+# default.
 _ac_win="${ctx_size%.*}"
 _ac_mid="${model_id:-$model}"
 if [[ ! "$_ac_win" =~ ^[0-9]+$ ]] || (( _ac_win < 1 )); then
-  case "$_ac_mid" in *[Oo]pus*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) _ac_win=1000000 ;; *) _ac_win=200000 ;; esac
+  if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi
 fi
-case "$_ac_mid" in *[Oo]pus*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) _ac_floor=$_ac_win ;; *) _ac_floor=195000 ;; esac
+if _flat_1m_model "$_ac_mid"; then _ac_floor=$_ac_win; else _ac_floor=195000; fi
 _ac_thr=$(( _ac_win * 80 / 100 ))
 (( _ac_floor < _ac_thr )) && _ac_thr=$_ac_floor
 _ac_dflt=$(( _ac_thr * 100 / _ac_win ))
@@ -378,31 +390,29 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
-  # Window / pricing marker — model-aware. Opus and Sonnet 5+ bill a flat rate
-  # across their entire 1M window (no >200k long-context premium; Opus's real
-  # capacity edge is the ~780k compact point, not 200k), so Claude Code's
-  # exceeds_200k_tokens flag is a non-event there: show the dim 1M window label
-  # and NEVER a >200k warning. For a legacy-sonnet model (4.6 and earlier)
-  # crossing 200k still means something — on a native 1M window (sonnet[1m],
-  # a paid opt-in) it is the long-context pricing tier → informational yellow;
-  # on a 200k-class window it is a genuine overflow of the standard window →
-  # red. (Was unconditionally red, a false alarm on Opus/1M.)
+  # Window / pricing marker — model-aware (_flat_1m_model). Opus/Fable-Mythos/
+  # Sonnet-5+ bill a flat rate across their entire 1M window (no >200k long-
+  # context premium; Opus's real capacity edge is the ~780k compact point, not
+  # 200k), so Claude Code's exceeds_200k_tokens flag is a non-event there: show
+  # the dim 1M window label and NEVER a >200k warning. For a legacy-sonnet
+  # model (4.6 and earlier) crossing 200k still means something — on a native
+  # 1M window (sonnet[1m], a paid opt-in) it is the long-context pricing tier
+  # → informational yellow; on a 200k-class window it is a genuine overflow of
+  # the standard window → red. (Was unconditionally red, a false alarm on
+  # Opus/1M.)
   win=""
   _win_1m=0
   [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null && _win_1m=1
-  case "${model_id:-$model}" in
-    *[Oo]pus*|*[Ss]onnet-5*|*[Ss]onnet\ 5*)
-      (( _win_1m )) && win=" ${DIM}1M${RST}"
-      ;;
-    *)
-      if [[ "$exceeds_200k" == "true" ]]; then
-        if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
-        else                   win=" ${RED}>200k${RST}"; fi
-      elif (( _win_1m )); then
-        win=" ${DIM}1M${RST}"
-      fi
-      ;;
-  esac
+  if _flat_1m_model "${model_id:-$model}"; then
+    (( _win_1m )) && win=" ${DIM}1M${RST}"
+  else
+    if [[ "$exceeds_200k" == "true" ]]; then
+      if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
+      else                   win=" ${RED}>200k${RST}"; fi
+    elif (( _win_1m )); then
+      win=" ${DIM}1M${RST}"
+    fi
+  fi
   _thr "$_usable_pct"; _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
   if _isset "$cache_read" && _isset "$_cache_pct"; then
     if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
