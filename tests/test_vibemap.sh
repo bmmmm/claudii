@@ -227,6 +227,35 @@ assert_eq "overview: Activity placeholder shows enable command" "1" "$_ok"
 
 rm -rf "$_vm_home2"
 
+# ── mini-strip: torn/empty cache never renders a blank Activity strip ─────────
+# The shared vibemap-mini.cache is written by concurrent overview renders. A
+# non-atomic writer (or any corruption) can leave it momentarily empty; an empty
+# cache is not a valid strip. Seed a FRESH but EMPTY cache — the torn-read
+# artifact — and confirm the render recomputes the density strip instead of
+# echoing the empty cache back (which would flash a blank Activity section).
+# Regression for the parallel torn-read race — see lib/cmd/vibemap.sh
+# _vibemap_mini_strip (read-side empty-guard + atomic temp+mv publish).
+_vm_home6=$(mktemp -d)
+_vm_path6="$_vm_home6/.cache/claudii/vibemap.tsv"
+mkdir -p "${_vm_path6%/*}"
+mkdir -p "$_vm_home6/.config/claudii"
+_now6=$(date +%s)
+printf '%s\t1\t9\t0\tOpus\tjjjjjjjj\t0\n' "$_now6" >> "$_vm_path6"
+printf '%s\t2\t14\t0\tSonnet\tkkkkkkkk\t0\n' "$(( _now6 - 86400 ))" >> "$_vm_path6"
+cat > "$_vm_home6/.config/claudii/config.json" <<EOF
+{ "vibemap": { "enabled": true, "path": "$_vm_path6" } }
+EOF
+# Fresh-but-empty cache = the torn-read artifact a non-atomic writer exposes.
+: > "$_vm_home6/.cache/claudii/vibemap-mini.cache"
+_ov_out6=$(HOME="$_vm_home6" XDG_CACHE_HOME="$_vm_home6/.cache" \
+  XDG_CONFIG_HOME="$_vm_home6/.config" \
+  bash "$CLAUDII_HOME/bin/claudii" 2>&1)
+_act_block6=$(echo "$_ov_out6" | grep -A2 "Activity")
+echo "$_act_block6" | grep -qE '[░▒▓█]' && _ok=1 || _ok=0
+assert_eq "mini-strip: empty (torn) cache recomputes, never blank Activity" "1" "$_ok"
+rm -rf "$_vm_home6"
+unset _vm_home6 _vm_path6 _now6 _ov_out6 _act_block6
+
 # ── strip today-row: ▶ marker + future hours blank ────────────────────────────
 
 _vm_home3=$(mktemp -d)

@@ -307,8 +307,15 @@ _vibemap_mini_strip() {
   if [[ -f "$cache_file" ]]; then
     local mt; mt=$(_mtime "$cache_file")
     if (( now - mt < 60 )); then
-      cat "$cache_file"
-      return 0
+      # Guard the shared cache against a torn read: a concurrent overview
+      # publishing this file can expose a brief empty window (see the atomic
+      # write below), and an empty cache is never a valid strip. Recompute
+      # instead of echoing it back, so the Activity section never renders blank.
+      local _cached; _cached=$(cat "$cache_file" 2>/dev/null) || _cached=""
+      if [[ -n "$_cached" ]]; then
+        printf '%s\n' "$_cached"
+        return 0
+      fi
     fi
   fi
   local tz_off; tz_off=$(_tz_offset_secs)   # bucket by local calendar day
@@ -354,7 +361,21 @@ _vibemap_mini_strip() {
   done
 
   mkdir -p "$cache_dir" 2>/dev/null
-  printf '%s\n' "$strip" > "$cache_file" 2>/dev/null
+  # Publish the cache atomically: write a private temp in the same dir, then
+  # rename it over the shared file. A plain `> "$cache_file"` truncates before
+  # it writes, exposing a zero-byte window a concurrent overview render can
+  # `cat` as an empty strip — the Activity section would flash blank. rename(2)
+  # within one filesystem is atomic, so a reader sees the old file or the whole
+  # new one, never a truncated one. Falls back to the in-place write when
+  # mktemp/rename is unavailable (no worse than before, and the read-side
+  # empty-guard above still covers it).
+  local _tmp; _tmp=$(mktemp "$cache_file.XXXXXX" 2>/dev/null) || _tmp=""
+  if [[ -n "$_tmp" ]] && printf '%s\n' "$strip" > "$_tmp" 2>/dev/null && mv -f "$_tmp" "$cache_file" 2>/dev/null; then
+    :
+  else
+    [[ -n "$_tmp" ]] && rm -f "$_tmp" 2>/dev/null
+    printf '%s\n' "$strip" > "$cache_file" 2>/dev/null
+  fi
   printf '%s\n' "$strip"
   return 0
 }
