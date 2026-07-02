@@ -782,10 +782,7 @@ if [[ "$_lines_raw" == *sessions* ]]; then
       (( _PSC_is_active )) || continue
       (( ++_sess_other ))
     done
-    if (( _sess_other > 0 )); then
-      _sess_plural=""; (( _sess_other != 1 )) && _sess_plural="s"
-      _seg_sessions="${YELLOW}⚠${RST} ${_sess_other} other session${_sess_plural} here"
-    fi
+    (( _sess_other > 0 )) && _seg_sessions="${YELLOW}⚠${_sess_other}${RST}"
   fi
 fi
 
