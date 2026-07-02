@@ -235,7 +235,7 @@ function _claudii_collect_sessions {
   _CLAUDII_SDASH_COUNT=0
 
   local -A _sfst
-  local _sf_mt _sf_age sc s_ppid
+  local _sf _sf_mt _sf_age sc s_ppid
   local s_model s_ctx s_tok s_5h s_r5h _best_r5h="" _best_r5h_mt=0
   for _sf in "$_cache_base"/session-*(N); do
     [[ "$_sf" == *.tmp.* ]] && continue

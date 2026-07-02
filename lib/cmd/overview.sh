@@ -15,7 +15,7 @@ _norm_model_short() {
     *[Oo]pus*)   echo "Opus"   ;;
     *[Ss]onnet*) echo "Sonnet" ;;
     *[Hh]aiku*)  echo "Haiku"  ;;
-    *[Ff]able*)  echo "Fable"  ;;
+    *[Ff]able*|*[Mm]ythos*)  echo "Fable"  ;;
     *)           echo "$1"     ;;
   esac
 }
@@ -454,7 +454,7 @@ _ov_render_agents() {
 
   # Group agent entries by model tier. No declare -A (bash 3.2 in bin/) —
   # four flat accumulator strings, tier resolved via _norm_model_short + case.
-  local _ag_haiku="" _ag_sonnet="" _ag_opus="" _ag_other=""
+  local _ag_haiku="" _ag_sonnet="" _ag_opus="" _ag_fable="" _ag_other=""
   local _a_model _a_entry
   while IFS=$'\t' read -r _a_model _a_entry; do
     [[ -z "$_a_entry" ]] && continue
@@ -462,6 +462,7 @@ _ov_render_agents() {
       Haiku)  _ag_haiku+="${_ag_haiku:+ · }${_a_entry}"   ;;
       Sonnet) _ag_sonnet+="${_ag_sonnet:+ · }${_a_entry}" ;;
       Opus)   _ag_opus+="${_ag_opus:+ · }${_a_entry}"     ;;
+      Fable)  _ag_fable+="${_ag_fable:+ · }${_a_entry}"   ;;
       *)      _ag_other+="${_ag_other:+ · }${_a_entry}"   ;;
     esac
   done < <(jq -r 'to_entries | sort_by(.key)[] | [(.value.model // "?"), (.key + (if (.value.effort // "") == "" then "" else "/" + .value.effort end))] | @tsv' <<< "$_ov_agents_json")
@@ -469,6 +470,7 @@ _ov_render_agents() {
   [[ -n "$_ag_haiku"  ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "haiku"  "$_ag_haiku"
   [[ -n "$_ag_sonnet" ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "sonnet" "$_ag_sonnet"
   [[ -n "$_ag_opus"   ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "opus"   "$_ag_opus"
+  [[ -n "$_ag_fable"  ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "fable"  "$_ag_fable"
   [[ -n "$_ag_other"  ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "other"  "$_ag_other"
   [[ -n "$_ov_alias_names" ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "shell"  "${_ov_alias_names// / · }"
 

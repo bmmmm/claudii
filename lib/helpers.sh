@@ -428,7 +428,8 @@ _session_resolve() {
       msg = ""
       if (last_user != "") {
         if (match(last_user, /"text":"[^"]*"/)) {
-          msg = substr(last_user, RSTART+7, RLENGTH-8)
+          # the text-key prefix is 8 chars; strip it and the trailing quote
+          msg = substr(last_user, RSTART+8, RLENGTH-9)
         }
         if (length(msg) > 80) msg = substr(msg, 1, 80)
       }

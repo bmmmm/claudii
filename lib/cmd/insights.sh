@@ -78,10 +78,10 @@ _insights_day_label() {
   local today; today=$(date -u +%Y-%m-%d)
   if [[ "$day" == "$today" ]]; then
     printf 'Today'
-  elif date -j -f %Y-%m-%d "$day" +%a >/dev/null 2>&1; then
-    date -j -f %Y-%m-%d "$day" +%a
+  elif LC_TIME=C date -j -f %Y-%m-%d "$day" +%a >/dev/null 2>&1; then
+    LC_TIME=C date -j -f %Y-%m-%d "$day" +%a
   else
-    date -d "$day" +%a 2>/dev/null || printf '%s' "$day"
+    LC_TIME=C date -d "$day" +%a 2>/dev/null || printf '%s' "$day"
   fi
 }
 
@@ -572,7 +572,7 @@ _cmd_tokens() {
     done
     for _dr in "${_d_rows[@]}"; do
       IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
-      wd=$(date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
+      wd=$(LC_TIME=C date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || LC_TIME=C date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
       if [[ "$d" == "$today" ]]; then lbl="Today $wd"; else lbl="$wd"; fi
       bf2=$(_bar_filled "$io" "$maxio" "$BAR_W")
       hit=$(_cache_hit_pct "$ccr" $(( cinp + ccw )))

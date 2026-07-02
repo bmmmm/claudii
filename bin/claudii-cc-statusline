@@ -204,6 +204,12 @@ fi
 # (next_cron_at=, bg_tasks=) set by claudii-stop-hook so a statusLine update
 # does not erase them. Keys are read from the existing cache via _cache_get
 # and included in the new file write.
+# FIXME(race): read-modify-write here races claudii-stop-hook's write of the
+# same session-<sid> file. Both are atomic per-file (mktemp→mv) so no
+# corruption, but if the Stop hook writes fresh next_cron_at/bg_tasks between
+# our _cache_get (L208-210) and the mv below, this write clobbers them with the
+# stale values we read (lost update). Rare (needs a Stop hook mid-render); a
+# clean fix needs a lock or merge-on-write — deferred, not worth it yet.
 _ppid="${PPID:-}"
 _cache_get pinned "";       _cached_pinned="$_CG"
 _cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
@@ -468,9 +474,12 @@ _fmt_reset() {
   fi
 }
 
-# Rate segment builder. Args: label, rate, reset_at → echoes segment to stdout.
+# Rate segment builder. Args: label, rate, reset_at → writes to _seg_result.
 # Coloring keyed on used %; in remaining mode the displayed number flips.
+# Result-global (no subshell) — call sites used to wrap this in $(...), one
+# fork() each on every render (same reason as _cache_get/_tok/_dur above).
 _mk_rate_seg() {
+  _seg_result=""
   local label=$1 rate=$2 reset_at=$3
   [[ -z "$rate" || "$rate" == "null" ]] && return
   local pct=${rate%.*}
@@ -487,10 +496,10 @@ _mk_rate_seg() {
       [[ -n "$_reset_fmt" ]] && out+=" ${_reset_color}↺${_reset_fmt}${RST}"
     fi
   fi
-  printf '%s' "$out"
+  _seg_result="$out"
 }
-_seg_rate5h=$(_mk_rate_seg 5h "$rate_5h" "$reset_5h")
-_seg_rate7d=$(_mk_rate_seg 7d "$rate_7d" "$reset_7d")
+_mk_rate_seg 5h "$rate_5h" "$reset_5h"; _seg_rate5h=$_seg_result
+_mk_rate_seg 7d "$rate_7d" "$reset_7d"; _seg_rate7d=$_seg_result
 
 _seg_tokens=""
 if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
@@ -576,9 +585,11 @@ if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
   _dur "$api_duration_ms"; [[ -n "$_dur_result" ]] && _seg_api_dur="${DIM}api:${_dur_result}${RST}"
 fi
 
-# Delta segment builder. Args: label, current_rate, start_rate → echoes segment.
+# Delta segment builder. Args: label, current_rate, start_rate → writes _seg_result.
 # Sign flips in remaining mode (magnitude unchanged). Color keyed on usage delta.
+# Result-global (no subshell) — see _mk_rate_seg.
 _mk_delta_seg() {
+  _seg_result=""
   local label=$1 cur=$2 start=$3
   [[ -z "$start" || "$start" == "null" || -z "$cur" || "$cur" == "null" ]] && return
   local d disp sign clr
@@ -593,10 +604,10 @@ _mk_delta_seg() {
     return
   fi
   sign=""; (( disp > 0 )) && sign="+"
-  printf '%s' "${DIM}Δ${label}:${RST}${clr}${sign}${disp}%${RST}"
+  _seg_result="${DIM}Δ${label}:${RST}${clr}${sign}${disp}%${RST}"
 }
-_seg_delta5h=$(_mk_delta_seg 5h "$rate_5h" "$_rate_5h_start")
-_seg_delta7d=$(_mk_delta_seg 7d "$rate_7d" "$_rate_7d_start")
+_mk_delta_seg 5h "$rate_5h" "$_rate_5h_start"; _seg_delta5h=$_seg_result
+_mk_delta_seg 7d "$rate_7d" "$_rate_7d_start"; _seg_delta7d=$_seg_result
 
 # Cache writes — distinct from ⚡ hit ratio.
 _seg_cache_create=""
@@ -620,12 +631,6 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-# Terminal width for ruler segment.
-_term_cols=""
-[[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
-[[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
-(( _term_cols > 20 )) || _term_cols=0
-
 _DEFAULT_LINES="model,tokens,cache-create
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,dir,remotes,git-sync
@@ -634,6 +639,17 @@ claude-status,vpn"
 
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+
+# Terminal width for the ruler segment — computed only when ruler is in the
+# layout (off by default), else the `tput cols` fork ran on every render for a
+# value nothing reads. Gated like the remotes/git-sync segments below.
+_term_cols=0
+if [[ "$_lines_raw" == *ruler* ]]; then
+  _term_cols=""
+  [[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
+  [[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
+  (( _term_cols > 20 )) || _term_cols=0
+fi
 
 # Repo-remotes segment — where this working copy is published. Classifies the
 # cwd's git remotes by host: a github.com URL → GitHub (gh); any other remote

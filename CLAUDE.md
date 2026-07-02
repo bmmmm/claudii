@@ -12,6 +12,8 @@ bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
 bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, session-cache keys
 bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
+bin/claudii-otel           # OTLP control (setup/off/receiver/doctor) — exact perf metrics vs transcript estimate
+bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → ~/.cache/claudii/otel/
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
 lib/cmd/cost.sh         # Commands: cost, cost --forecast (history aggregation, D-grid + amount-sorted bars)
@@ -20,6 +22,7 @@ lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin/MCP cost, --com
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/cmd/insights.sh     # Commands: cache, tokens, tools, limits, session (insights-cache views; cycleable window + --json)
+lib/cmd/perf.sh         # Command: perf (response-time p50/p90/p99, tok/s, latency trend; OTLP metrics or transcript estimate)
 lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
 lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
@@ -33,6 +36,7 @@ lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projecti
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline
 lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
 lib/tier.jq             # jq module: tier() model→rate-tier mapping
+lib/otel.jq             # jq: Claude Code OTLP/JSON export → perf-cache shape (claudii-otel-receiver)
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
 lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)

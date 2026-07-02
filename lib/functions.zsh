@@ -11,7 +11,7 @@ function _claudii_rl_warn {
   local _model="${(P)_model_var}"
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local -A _rfst
-  local _sf_mt _sf_content _rl_5h _rl_reset _rl_int _reset_str _remaining
+  local _sf _sf_mt _sf_content _rl_5h _rl_reset _rl_int _reset_str _remaining
   local _color _fb_model _choice _fb_effort
   local _best_mt=0 _best_5h="" _best_reset=""
 

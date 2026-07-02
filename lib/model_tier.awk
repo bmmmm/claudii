@@ -9,7 +9,7 @@
 # CLAUDE.md for the jq/_rates siblings).
 function tier_label(m,   l) {
   l = tolower(m)
-  if (l ~ /(^|[^a-z])fable([^a-z]|$)/)  return "Fable"
+  if (l ~ /(^|[^a-z])(fable|mythos)([^a-z]|$)/)  return "Fable"
   if (l ~ /(^|[^a-z])opus([^a-z]|$)/)   return "Opus"
   if (l ~ /(^|[^a-z])sonnet([^a-z]|$)/) return "Sonnet"
   if (l ~ /(^|[^a-z])haiku([^a-z]|$)/)  return "Haiku"
