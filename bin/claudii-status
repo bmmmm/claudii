@@ -105,7 +105,7 @@ if [[ -f "$CACHE_STATUS" ]]; then
         esac
       done < "$CACHE_STATUS"
     fi
-    grep -q "=down\|=degraded" "$CACHE_STATUS" 2>/dev/null && exit 1
+    grep -qE '=(down|degraded)$' "$CACHE_STATUS" 2>/dev/null && exit 1
     exit 0
   fi
   _claudii_log debug "Cache stale (${cache_age}s > TTL ${eff_ttl}s, base ${CACHE_TTL}s)"
