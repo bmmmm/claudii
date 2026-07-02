@@ -212,20 +212,40 @@ fi
 # our _cache_get (L208-210) and the mv below, this write clobbers them with the
 # stale values we read (lost update). Rare (needs a Stop hook mid-render); a
 # clean fix needs a lock or merge-on-write — deferred, not worth it yet.
-# FIXME(ppid-not-stable): $PPID here is the immediate parent of THIS render —
-# observed to change between renders of the same session (e.g. 42834 then
-# 16372 minutes apart) and to already be dead within seconds of being
-# recorded. Claude Code apparently re-execs a fresh wrapper per statusLine
-# invocation, so this is not the persistent top-level `claude` PID.
-# _parse_session_cache's kill-0 fallback (lib/helpers.sh _PSC_is_active) is
-# therefore an unreliable liveness signal — it will read "dead" for almost
-# every session almost all the time. The `sessions` segment below sidesteps
-# this by using cache-file mtime freshness instead of PID liveness. A real
-# fix would walk the process tree to the actual `claude` ancestor (like
-# ~/ops/scripts/claude-sessions' self_claude_pid()) before storing ppid —
-# deferred: touches every _PSC_is_active consumer (claudii se/si, dashboard),
-# bigger blast radius than this task warranted.
-_ppid="${PPID:-}"
+# Stable ppid resolution. $PPID is the immediate parent of THIS render — Claude
+# Code re-execs a fresh wrapper per statusLine invocation, so it is already
+# dead within seconds of being recorded (confirmed: 42834 then 16372 minutes
+# apart, both dead on check) and useless as a liveness signal for
+# _parse_session_cache's kill-0 fallback (_PSC_is_active — read by claudii
+# se/si/gc/dashboard). Fix: walk the process tree from $PPID up to the actual
+# `claude` binary ancestor (same technique as ~/ops/scripts/claude-sessions'
+# self_claude_pid()) — that PID persists for the session's whole lifetime.
+# Cost is only paid on first resolution per session: the previous render's
+# ppid is reused via _cache_get + kill -0 as long as it's still alive, so a
+# living session forks `ps` here at most once (right after the walk finds it),
+# not on every render. Re-resolves automatically if the cached ancestor ever
+# dies for real (Claude Code restart, session recycle).
+_cache_get ppid ""; _prev_ppid="$_CG"
+if [[ "$_prev_ppid" =~ ^[0-9]+$ ]] && kill -0 "$_prev_ppid" 2>/dev/null; then
+  _ppid="$_prev_ppid"
+else
+  _ppid=""
+  _anc_p="${PPID:-}"
+  _anc_n=0
+  while [[ "$_anc_p" =~ ^[0-9]+$ ]] && (( _anc_p > 1 )) && (( _anc_n < 10 )); do
+    _anc_comm=$(ps -o comm= -p "$_anc_p" 2>/dev/null)
+    _anc_comm="${_anc_comm##*/}"
+    if [[ "$_anc_comm" == "claude" ]]; then
+      _ppid="$_anc_p"
+      break
+    fi
+    _anc_p=$(ps -o ppid= -p "$_anc_p" 2>/dev/null | tr -d ' ')
+    (( ++_anc_n ))
+  done
+  # No `claude` ancestor found (standalone/manual invocation, renamed binary,
+  # walk exhausted) — fall back to the raw PPID rather than storing empty.
+  [[ -z "$_ppid" ]] && _ppid="${PPID:-}"
+fi
 _cache_get pinned "";       _cached_pinned="$_CG"
 _cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
 _cache_get bg_tasks "";     _cached_bg_tasks="$_CG"
@@ -740,33 +760,26 @@ fi
 # this same project_path, so a long session doesn't silently drift out of sync
 # with a parallel one (the failure mode that motivated this: git state moved
 # under a session that had no idea another one was pushing to the same repo).
-# Reuses the per-render session cache (lib/helpers.sh: _session_files — the
-# same file-based store `claudii se`/`si` read, written by THIS script further
-# up) instead of polling processes: no new writer, just a read of state that
-# already exists.
-# Liveness signal: cache-file mtime freshness, NOT _parse_session_cache's
-# ppid/kill-0 check — see the FIXME(ppid-not-stable) above the `_ppid=`
-# assignment. That PID is a fresh-per-render wrapper, already dead within
-# seconds, so kill-0 would read "dead" for nearly every session nearly always.
-# mtime freshness is the same staleness-proxy idiom the ClaudeStatus segment
-# already uses (_sc_age/_sc_ttl below). 15m window: generous enough to survive
-# a quiet stretch in a genuinely active session (observed real gaps up to
-# ~20m between renders), tight enough to drop actually-abandoned sessions.
-# Gated like remotes/git-sync — the file scan only runs when the segment is
-# actually in the layout.
+# Reuses the per-render session cache (lib/helpers.sh: _session_files /
+# _parse_session_cache — the same file-based store `claudii se`/`si` read,
+# written by THIS script further up) instead of polling processes: no new
+# writer, just a read of state that already exists. _PSC_is_active is now
+# trustworthy (the ppid resolved above is the stable `claude` ancestor, not
+# the per-render wrapper it used to be) — no mtime-freshness workaround
+# needed. Gated like remotes/git-sync — the file scan only runs when the
+# segment is actually in the layout.
 _seg_sessions=""
 if [[ "$_lines_raw" == *sessions* ]]; then
   _sess_dir="${cwd:-$workspace_project_dir}"
   if [[ -n "$_sess_dir" && "$_sess_dir" != "null" ]]; then
+    _NOW="$_now"
     _session_files "$_cache_dir"
     _sess_other=0
-    _sess_fresh_secs=$(( 15 * 60 ))
     for _sf in "${_SESSION_FILES[@]}"; do
       [[ "$_sf" == "$_session_file" ]] && continue   # skip this render's own row
-      _sf_path=$(grep -m1 '^project_path=' "$_sf" 2>/dev/null)
-      [[ "${_sf_path#project_path=}" == "$_sess_dir" ]] || continue
-      _sf_mtime=$(_mtime "$_sf")
-      (( _now - _sf_mtime <= _sess_fresh_secs )) || continue
+      _parse_session_cache "$_sf"
+      [[ "$_PSC_project_path" == "$_sess_dir" ]] || continue
+      (( _PSC_is_active )) || continue
       (( ++_sess_other ))
     done
     if (( _sess_other > 0 )); then
