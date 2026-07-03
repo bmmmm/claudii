@@ -370,6 +370,12 @@ fi
 # billing families/versions here (see "When a new Claude model ships" in
 # CLAUDE.md — same most-specific-first discipline as _insights_model_label()).
 _flat_1m_model() {
+  # SYNC flat-1m-families [opus fable mythos sonnet-5]: this model-family match is
+  # mirrored in 3 repos — a new flat-1M family must be added to all three
+  # (grep the marker to find them):
+  #   autocompact  bin/autocompact-daemon        (_win_thresh)
+  #   dotfiles     claude/hooks/compact-nudge.sh
+  #   claudii      bin/claudii-cc-statusline     (_flat_1m_model)
   case "$1" in
     *[Oo]pus*|*[Ff]able*|*[Mm]ythos*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) return 0 ;;
     *) return 1 ;;
