@@ -1034,6 +1034,7 @@ dir	\[u2302] my-app	Working directory basename (dim)
 github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
 remotes	\[u21E1]fj\[u00B7]gh	Where the repo is published (from git remotes) \(em \fBfj\fR self-hosted forge (any non-GitHub host) / \fBgh\fR GitHub / \fBlocal\fR no remote
 git-sync	\[u25CF]2 \[u2191]1 \[u2193]1	Working-copy sync state vs.\& upstream. See the colour key below
+sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)

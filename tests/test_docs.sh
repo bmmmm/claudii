@@ -41,7 +41,7 @@ assert_eq "toggle removed from bin/claudii" "" \
 SL_SEGMENTS=(
   model context-bar rate-5h rate-7d cost tokens lines-changed duration
   api-duration burn-eta pace cron bg-tasks compactions delta-5h delta-7d cache-create session-name
-  worktree agent ruler claude-status github remotes git-sync
+  worktree agent ruler claude-status github remotes git-sync sessions
 )
 for seg in "${SL_SEGMENTS[@]}"; do
   assert_contains "man page documents segment: $seg" "$seg" "$(cat "$MAN")"
