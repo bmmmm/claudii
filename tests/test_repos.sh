@@ -129,6 +129,16 @@ _RP_BAD=$(_rp_run repos --frobnicate; echo "rc=$?")
 assert_contains "repos --frobnicate: names bad option" "unknown repos option" "$_RP_BAD"
 assert_contains "repos --frobnicate: exit 1" "rc=1" "$_RP_BAD"
 
+# Bare number is a window typo, not a repo drilldown → actionable error
+_RP_NUM=$(_rp_run repos 14; echo "rc=$?")
+assert_contains "repos 14: suggests 14d"  "did you mean 14d" "$_RP_NUM"
+assert_contains "repos 14: exit 1"        "rc=1"             "$_RP_NUM"
+
+# Trailing value-less --days errors instead of silently becoming 7d
+_RP_ND=$(_rp_run repos --days; echo "rc=$?")
+assert_contains "repos --days (no value): actionable error" "needs a value" "$_RP_ND"
+assert_contains "repos --days (no value): exit 1"           "rc=1"          "$_RP_ND"
+
 _RP_HELP=$(bash "$CLAUDII_HOME/bin/claudii" repos --help 2>&1)
 assert_contains "repos --help: usage line" "Usage: claudii repos" "$_RP_HELP"
 
@@ -148,6 +158,6 @@ _RP_TSV=$(_rp_run repos --tsv; echo "rc=$?")
 assert_contains "repos --tsv: rejected, points to --json" "use --json" "$_RP_TSV"
 
 unset _RP_PROJ _RP_CACHE _RP_BASE _RP_SID_A _RP_SID_B _RP_SID_C _RP_SID_D _RP_A_JSON
-unset _RP_OUT _RP_ALL _RP_JSON _RP_DRILL _RP_DAILY _RP_DAY_A _RP_LBL _RP_BAD _RP_HELP
+unset _RP_OUT _RP_ALL _RP_JSON _RP_DRILL _RP_DAILY _RP_DAY_A _RP_LBL _RP_BAD _RP_NUM _RP_ND _RP_HELP
 unset _RP_EPROJ _RP_ECACHE _RP_EOUT _RP_EJSON _RP_TSV
 unset -f _rp_iso _rp_run

@@ -63,6 +63,10 @@ def ts: .[0:19] + "Z" | fromdateiso8601;
       | {n: ($h | length), total_active: ([$h[].active | select(. != null)] | add // 0)}
     ),
     by_day: (
+      # day totals sum the raw active_by_day values — unlike by_repo they are
+      # NOT span-capped (there is no per-day span to cap against). The known
+      # overshoot is a few seconds per session (truncated millis /
+      # out-of-order timestamps), invisible after minute-rounding in --daily.
       [ $vis[]
         # a session counts on every day it was active on; sessions without
         # active data (pre-v9 orphans) count on their start day

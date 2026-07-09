@@ -1137,7 +1137,14 @@ _cmd_repos() {
     case "$1" in
       --daily)   daily=1 ;;
       --all)     all=1 ;;
-      --days|-d) wargs+=("$1" "${2:-}"); shift ;;
+      --days|-d)
+        # fail here, not in _insights_window: a trailing value-less --days
+        # would silently fall back to the 7d default there instead of 30d
+        if [[ -z "${2:-}" ]]; then
+          printf 'claudii: %s needs a value (e.g. --days 30)\n' "$1" >&2
+          return 1
+        fi
+        wargs+=("$1" "$2"); shift ;;
       today|day|week|month|quarter|year|[0-9]*d) wargs+=("$1") ;;
       -h|--help)
         printf 'Usage: claudii repos [REPO] [WINDOW] [--daily] [--all] [--json]\n\n'
@@ -1154,6 +1161,12 @@ _cmd_repos() {
         return 1
         ;;
       *)
+        # a bare number is almost certainly a window typo, not a repo name —
+        # the window token needs the d suffix (14d)
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+          printf 'claudii: bare number %s is not a window — did you mean %sd, or --days %s?\n' "$1" "$1" "$1" >&2
+          return 1
+        fi
         if [[ -z "$repo" ]]; then repo="$1"; else
           printf 'claudii: unexpected repos argument: %s (repo already set: %s)\n' "$1" "$repo" >&2
           return 1
