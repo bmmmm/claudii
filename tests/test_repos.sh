@@ -56,6 +56,35 @@ _RP_SID_C="cccccccc-1111-2222-3333-444444444444"
   printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/alpha","sessionId":"%s","message":{"role":"user","content":"a"}}\n' "$(_rp_iso $(( _RP_BASE + 5030 )))" "$_RP_SID_C"
 } > "$_RP_PROJ/-test-repos/$_RP_SID_C.jsonl"
 
+# Session E (repo gamma) — F1 regression: a main-thread record with an EMPTY
+# timestamp (truthy-but-unparseable in jq). It must NOT crash aggregation and
+# must NOT credit active time or move the active-time baseline. Deltas: r1
+# baseline → [empty, skipped] → r3 60s later → active 60. The empty "" also
+# leaks into first_seen (empty string sorts before any real ISO), so this cache
+# additionally exercises repos.jq's corrupt-end select-guard: the session is
+# dropped from the view instead of crashing the whole `claudii repos` render.
+_RP_SID_E="eeeeeeee-1111-2222-3333-444444444444"
+{
+  printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/gamma","sessionId":"%s","message":{"role":"user","content":"g1"}}\n' "$(_rp_iso $(( _RP_BASE + 10 )))" "$_RP_SID_E"
+  printf '{"type":"user","timestamp":"","cwd":"/opt/tester/gamma","sessionId":"%s","message":{"role":"user","content":"garbage"}}\n' "$_RP_SID_E"
+  printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/gamma","sessionId":"%s","message":{"role":"user","content":"g3"}}\n' "$(_rp_iso $(( _RP_BASE + 70 )))" "$_RP_SID_E"
+} > "$_RP_PROJ/-test-repos/$_RP_SID_E.jsonl"
+
+# Session F (repo snaptest) — F5 regression: an isSnapshotUpdate record must be
+# excluded from active time exactly like a sidechain. Deltas: r1 baseline → r2
+# (+130, delta 130 ≤ 600) → snapshot at +190 (60s after r2) → r3 at +900 (gap
+# from r2 = 770 > 600, idle → skipped). Active = 130. If the snapshot were
+# counted it would add its own 60s delta (130 → 190) AND move the baseline to
+# +190, so the assert on 130 fails the moment snapshots leak in. 130 ≥ 120 keeps
+# the session non-headless so the existing "headless n=2" asserts stay valid.
+_RP_SID_F="ffffffff-1111-2222-3333-444444444444"
+{
+  printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/snaptest","sessionId":"%s","message":{"role":"user","content":"s1"}}\n' "$(_rp_iso $(( _RP_BASE + 0 )))" "$_RP_SID_F"
+  printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/snaptest","sessionId":"%s","message":{"role":"user","content":"s2"}}\n' "$(_rp_iso $(( _RP_BASE + 130 )))" "$_RP_SID_F"
+  printf '{"type":"user","isSnapshotUpdate":true,"timestamp":"%s","cwd":"/opt/tester/snaptest","sessionId":"%s","message":{"role":"user","content":"snap"}}\n' "$(_rp_iso $(( _RP_BASE + 190 )))" "$_RP_SID_F"
+  printf '{"type":"user","timestamp":"%s","cwd":"/opt/tester/snaptest","sessionId":"%s","message":{"role":"user","content":"s3"}}\n' "$(_rp_iso $(( _RP_BASE + 900 )))" "$_RP_SID_F"
+} > "$_RP_PROJ/-test-repos/$_RP_SID_F.jsonl"
+
 _rp_run() {
   CLAUDE_PROJECTS_DIR="$_RP_PROJ" CLAUDII_CACHE_DIR="$_RP_CACHE" \
     bash "$CLAUDII_HOME/bin/claudii" "$@" 2>&1
@@ -67,7 +96,25 @@ _RP_A_JSON="$_RP_CACHE/insights/$_RP_SID_A.json"
 assert_eq "repos: session A cache exists" "1" "$([ -s "$_RP_A_JSON" ] && echo 1 || echo 0)"
 assert_eq "repos: A active total == 240 (gap>600s skipped, sidechain excluded)" "240" \
   "$(jq '[.active_by_day[]] | add' "$_RP_A_JSON")"
-assert_eq "repos: A schema_version == 9" "9" "$(jq '.schema_version' "$_RP_A_JSON")"
+assert_eq "repos: A schema_version == 10" "10" "$(jq '.schema_version' "$_RP_A_JSON")"
+
+# ── F1: empty-timestamp record neither crashes aggregation nor moves baseline ──
+_RP_E_JSON="$_RP_CACHE/insights/$_RP_SID_E.json"
+assert_eq "repos: F1 session E cache still written (empty ts did not crash agg)" "1" \
+  "$([ -s "$_RP_E_JSON" ] && echo 1 || echo 0)"
+assert_eq "repos: F1 E active == 60 (empty-ts record skipped, baseline unmoved)" "60" \
+  "$(jq '[.active_by_day[]] | add' "$_RP_E_JSON")"
+# The corrupt first_seen ("" from the empty-ts record) must not kill the view:
+# repos.jq drops session E via its parse-guard, alpha still renders.
+assert_contains "repos: F1 view still renders (no aggregation-failed crash)" "alpha" "$_RP_OUT"
+assert_not_contains "repos: F1 no aggregation-failed message" "aggregation failed" "$_RP_OUT"
+
+# ── F5: isSnapshotUpdate record excluded from active time ──
+_RP_F_JSON="$_RP_CACHE/insights/$_RP_SID_F.json"
+assert_eq "repos: F5 session F cache exists" "1" \
+  "$([ -s "$_RP_F_JSON" ] && echo 1 || echo 0)"
+assert_eq "repos: F5 F active == 130 (snapshot excluded; counted would give 190)" "130" \
+  "$(jq '[.active_by_day[]] | add' "$_RP_F_JSON")"
 
 # ── Default view: repo table, headless folded ──
 assert_contains "repos: header"            "claudii repos"  "$_RP_OUT"
@@ -157,7 +204,7 @@ assert_eq "repos --json (empty): well-formed, by_repo []" "0" \
 _RP_TSV=$(_rp_run repos --tsv; echo "rc=$?")
 assert_contains "repos --tsv: rejected, points to --json" "use --json" "$_RP_TSV"
 
-unset _RP_PROJ _RP_CACHE _RP_BASE _RP_SID_A _RP_SID_B _RP_SID_C _RP_SID_D _RP_A_JSON
+unset _RP_PROJ _RP_CACHE _RP_BASE _RP_SID_A _RP_SID_B _RP_SID_C _RP_SID_D _RP_SID_E _RP_SID_F _RP_A_JSON _RP_E_JSON _RP_F_JSON
 unset _RP_OUT _RP_ALL _RP_JSON _RP_DRILL _RP_DAILY _RP_DAY_A _RP_LBL _RP_BAD _RP_NUM _RP_ND _RP_HELP
 unset _RP_EPROJ _RP_ECACHE _RP_EOUT _RP_EJSON _RP_TSV
 unset -f _rp_iso _rp_run

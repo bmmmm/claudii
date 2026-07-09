@@ -10,16 +10,27 @@
 # all:    true = headless sessions stay in by_repo/by_day instead of the
 #         (headless) summary bucket.
 #
-# "active" is the gap-capped active time (active_by_day, schema v9) — the
-# real working time. Pre-v9 orphaned caches (source JSONL gone, can never be
-# re-aggregated) lack the field: active stays null there, they are never
-# classified as micro, and they are skipped in median/total sums.
+# "active" is the gap-capped active time (active_by_day, since schema v9) — the
+# real working time. Caches without active_by_day (pre-v9 orphans; source JSONL
+# gone, can never be re-aggregated) lack the field: active stays null there,
+# they are never classified as micro, and they are skipped in median/total sums.
 def ts: .[0:19] + "Z" | fromdateiso8601;
 
 [ inputs
   | select(type == "object")
   | select((.first_seen // null) != null and (.last_seen // null) != null)
-  | select(($cutoff == "") or (.last_seen >= $cutoff))
+  # Compare 19-char prefixes so a millis-bearing last_seen ("…:00.789Z") is not
+  # dropped at the exact cutoff second ('.' < 'Z' at index 19 makes the raw
+  # string compare false). Keep the "" arm = no bound.
+  | select(($cutoff == "") or (.last_seen[0:19] >= $cutoff[0:19]))
+  # Parse the two ends ONCE (reused for span + both active min-caps). A corrupt
+  # cache whose first_seen/last_seen won't parse (e.g. a "" leaked in from a
+  # malformed transcript record) is skipped here rather than crashing the whole
+  # view via a bare `ts` further down.
+  | (try (.first_seen | ts) catch null) as $fs
+  | (try (.last_seen | ts) catch null) as $ls
+  | select($fs != null and $ls != null)
+  | ($ls - $fs) as $span
   | {
       sid:   (.sessionId // ""),
       repo:  (if ((.project.path // "") | test("^(/private)?(/var/folders/|/tmp/)")) then "(tmp)"
@@ -28,18 +39,18 @@ def ts: .[0:19] + "Z" | fromdateiso8601;
       first: .first_seen,
       last:  .last_seen,
       msgs:  (.messages // 0),
-      span:  ((.last_seen | ts) - (.first_seen | ts)),
+      span:  $span,
       # capped at span: truncated millis / rare out-of-order timestamps can
       # push the delta sum a few seconds past the wall clock, which renders
       # as "active > span" after rounding
       active: (if has("active_by_day")
-               then ([([.active_by_day[]] | add // 0), ((.last_seen | ts) - (.first_seen | ts))] | min)
+               then ([([.active_by_day[]] | add // 0), $span] | min)
                else null end),
       # window-floored variant for by_repo: a session is admitted by last_seen,
       # but activity on days before the window must not inflate the table
       active_win: (if has("active_by_day")
                then ([([.active_by_day | to_entries[] | select(($floor == "") or (.key >= $floor)) | .value] | add // 0),
-                      ((.last_seen | ts) - (.first_seen | ts))] | min)
+                      $span] | min)
                else null end),
       abd:   (.active_by_day // {})
     }

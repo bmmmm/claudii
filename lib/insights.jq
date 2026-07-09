@@ -39,7 +39,7 @@ def reponame($cwd):
      else ($p | last) end) // "";
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 9,
+  schema_version: 10,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -80,14 +80,21 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   # current record's day. Sidechain/subagent records interleave (subagent files
   # stream after the parent) and would produce negative or double-counted
   # deltas — excluded; their runtime is covered by the main thread's own
-  # Agent-call gap anyway.
-  | (if $r.timestamp and (($r.isSidechain // false) | not) and (($r.agentId // null) == null) then
-      ($r.timestamp | ts) as $t
-      | (if .last_main_ts != null and ($t - .last_main_ts) > 0 and ($t - .last_main_ts) <= 600 then
-          (($r.timestamp // "")[:10]) as $ad
-          | .active_by_day[$ad] = ((.active_by_day[$ad] // 0) + ($t - .last_main_ts))
-        else . end)
-      | .last_main_ts = $t
+  # Agent-call gap anyway. isSnapshotUpdate records (file-watcher snapshots
+  # taken while the user is away) are excluded too: they would credit up to the
+  # 600s gap-cap of idle time as active work. A truthy-but-unparseable timestamp
+  # ("" is TRUTHY in jq) must neither credit time NOR move .last_main_ts — the
+  # try-parse yields null and the whole record is skipped for active purposes.
+  | (if $r.timestamp and (($r.isSidechain // false) | not) and (($r.isSnapshotUpdate // false) | not) and (($r.agentId // null) == null) then
+      (try ($r.timestamp | ts) catch null) as $t
+      | (if $t == null then .
+         else
+           (if .last_main_ts != null and ($t - .last_main_ts) > 0 and ($t - .last_main_ts) <= 600 then
+              (($r.timestamp // "")[:10]) as $ad
+              | .active_by_day[$ad] = ((.active_by_day[$ad] // 0) + ($t - .last_main_ts))
+            else . end)
+           | .last_main_ts = $t
+         end)
     else . end)
   | (if ($r.isSidechain // false) then .sidechain_msgs += 1 else . end)
   | (if ($r.isSnapshotUpdate // false) then .snapshots += 1 else . end)
