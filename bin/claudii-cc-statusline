@@ -775,6 +775,10 @@ if [[ "$_lines_raw" == *sessions* ]]; then
     _NOW="$_now"
     _session_files "$_cache_dir"
     _sess_other=0
+    # _parse_session_cache assigns _PSC_* dynamically (printf -v) — initialize
+    # here so the reads below are bound even if a field is missing (also
+    # silences shellcheck SC2154, which can't see the dynamic assignment)
+    _PSC_project_path="" _PSC_is_active=0
     for _sf in "${_SESSION_FILES[@]}"; do
       [[ "$_sf" == "$_session_file" ]] && continue   # skip this render's own row
       _parse_session_cache "$_sf"
