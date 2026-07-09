@@ -111,7 +111,7 @@ Example agent aliases — see
 .B \-\-json
 Output structured JSON instead of formatted text.
 Available for:
-.BR status ", " sessions ", " cost ", " skills-cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " limits ", " cache .
+.BR status ", " sessions ", " cost ", " skills-cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " repos ", " limits ", " cache .
 .TP
 .B \-\-tsv
 Output tab-separated values (header + data rows).
@@ -572,6 +572,52 @@ Override the rolling window with an explicit day count.
 .TP
 .B \-\-json
 Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
+.RE
+.TP
+.B repos [REPO]
+Sessions per repository for the rolling window (default: 30 days): how many
+sessions ran in which repo and how long they really took. Duration is the
+.B active
+time \(em gap-capped main-thread activity where pauses longer than 10 minutes
+count as idle \(em not the wall-clock span, which idle time and resumed
+sessions inflate (shown alongside as
+.BR span ).
+The default view is a per-repo table (sessions, median active, total active,
+total span). Headless noise \(em TMPDIR runs and micro sessions with under
+2 minutes of activity \(em folds into one dim
+.B (headless)
+summary line. A positional
+.I REPO
+argument lists that repo's sessions one per row (day, active, span, messages,
+session id).
+.RS
+.TP
+.B \-\-daily
+Per-day breakdown instead of the repo table: one row per calendar day
+(newest first) listing each active repo with its session count and active time.
+.TP
+.B \-\-all
+Include headless/micro sessions in the repo and daily views (TMPDIR sessions
+appear as
+.BR (tmp) ).
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (by_repo, by_day, sessions, headless) instead
 of the formatted tables.
 .RE
 .TP

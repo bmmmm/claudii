@@ -83,6 +83,7 @@ usage() {
   printf "    %-33s $d %s\n" "tokens [--days N]"               "token usage by type / model / day"
   printf "    %-33s $d %s\n" "perf (pf) [--repo NAME]"         "response-time p50/p90/p99, tok/s, latency trend, health"
   printf "    %-33s $d %s\n" "tools [--days N]"                "tool call counts, error rates, subagents"
+  printf "    %-33s $d %s\n" "repos [REPO] [--daily]"          "sessions per repo — count + real duration"
   printf "    %-33s $d %s\n" "limits [--days N]"               "rate-limit hits — when + which model"
   printf "    %-33s $d %s\n" "cache [--days N]"                "prompt-cache hit-rate insights"
   printf '\n'
@@ -181,6 +182,7 @@ case "${1:-}" in
   cache)               _cmd_cache "$@"        ;;
   tokens)              _cmd_tokens "$@"       ;;
   tools)               _cmd_tools "$@"        ;;
+  repos)               _cmd_repos "${@:2}"    ;;
   perf)                _cmd_perf "$@"         ;;
   limits)              _cmd_limits "$@"       ;;
   session)             _cmd_session "${@:2}"  ;;

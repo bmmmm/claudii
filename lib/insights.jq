@@ -26,19 +26,25 @@
 def ts: .[0:19] + "Z" | fromdateiso8601;
 
 # Repo identity from a working directory: basename, but for git worktrees
-# (.../<repo>/.claude-worktrees/<wt>) collapse to the parent <repo> so a
-# worktree's perf rolls up under its repo rather than a throwaway wt name.
+# (.../<repo>/.claude-worktrees/<wt> — old style — or
+#  .../<repo>/.claude/worktrees/<wt> — current harness style) collapse to the
+# parent <repo> so a worktree's activity rolls up under its repo rather than a
+# throwaway agent-* name.
 def reponame($cwd):
   ($cwd | split("/")) as $p
   | ($p | index(".claude-worktrees")) as $w
-  | (if $w != null and $w > 0 then $p[$w-1] else ($p | last) end) // "";
+  | ($p | index(".claude")) as $c
+  | (if $w != null and $w > 0 then $p[$w-1]
+     elif $c != null and $c > 0 and $p[$c+1] == "worktrees" then $p[$c-1]
+     else ($p | last) end) // "";
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 8,
+  schema_version: 9,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
   last_seen: null,
+  active_by_day: {},       # "YYYY-MM-DD" -> active seconds (gap-capped main-thread deltas; gaps > 600s count as idle, matching the latency cap). last_seen - first_seen is wall clock incl. idle/resume — this is the "real" working time.
   messages: 0,
   assistant_messages: 0,
   days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create}
@@ -62,6 +68,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   pending_agent_skill: {}, # transient: tool_use_id -> attributionSkill at Agent spawn
   agent_skill_map: {},     # transient: agentId -> attributionSkill at spawn
   seen_ts: {},             # transient: uuid -> timestamp (resolves parentUuid -> ts for latency deltas)
+  last_main_ts: null,      # transient: epoch of the previous main-thread record (active-time deltas)
   last_assistant_model: null
 };
   .messages += 1
@@ -69,6 +76,19 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   | (if $r.cwd then .project = {path: $r.cwd, repo: reponame($r.cwd), branch: ($r.gitBranch // "")} else . end)
   | (if $r.timestamp and (.first_seen == null or $r.timestamp < .first_seen) then .first_seen = $r.timestamp else . end)
   | (if $r.timestamp and (.last_seen == null or $r.timestamp > .last_seen) then .last_seen = $r.timestamp else . end)
+  # Active time: delta between consecutive MAIN-THREAD records, credited to the
+  # current record's day. Sidechain/subagent records interleave (subagent files
+  # stream after the parent) and would produce negative or double-counted
+  # deltas — excluded; their runtime is covered by the main thread's own
+  # Agent-call gap anyway.
+  | (if $r.timestamp and (($r.isSidechain // false) | not) and (($r.agentId // null) == null) then
+      ($r.timestamp | ts) as $t
+      | (if .last_main_ts != null and ($t - .last_main_ts) > 0 and ($t - .last_main_ts) <= 600 then
+          (($r.timestamp // "")[:10]) as $ad
+          | .active_by_day[$ad] = ((.active_by_day[$ad] // 0) + ($t - .last_main_ts))
+        else . end)
+      | .last_main_ts = $t
+    else . end)
   | (if ($r.isSidechain // false) then .sidechain_msgs += 1 else . end)
   | (if ($r.isSnapshotUpdate // false) then .snapshots += 1 else . end)
   | (if $r.permissionMode then .permission_modes[$r.permissionMode] = ((.permission_modes[$r.permissionMode] // 0) + 1) else . end)
@@ -198,4 +218,5 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
 | del(.pending_agent_skill)
 | del(.agent_skill_map)
 | del(.seen_ts)
+| del(.last_main_ts)
 | del(.last_assistant_model)

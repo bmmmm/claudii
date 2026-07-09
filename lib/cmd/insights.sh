@@ -1099,3 +1099,192 @@ _cmd_limits() {
   fi
   echo
 }
+
+# ── claudii repos ────────────────────────────────────────────────────────────
+# Sessions per repo with REAL duration: gap-capped active time (schema v9
+# active_by_day — gaps > 10min count as idle), not the wall-clock span that
+# idle/resume inflates. Three views: per-repo table (default), per-day
+# breakdown (--daily), and a per-session drilldown (positional REPO).
+# Headless noise (TMPDIR runs, sessions with < 2min activity) folds into one
+# summary line; --all keeps it inline. Data comes straight from the
+# per-session caches via lib/repos.jq — not from merge, which flattens the
+# per-session grain this command is about.
+
+# Duration cell: _fmt_rel, with "—" for null (-1) / zero.
+_repos_dur() {
+  local _v="${1:-0}"
+  [[ "$_v" == "-1" ]] && { printf '—'; return 0; }
+  _fmt_rel "$_v"
+  printf '%s' "${_REL_FMT:-—}"
+}
+
+# ISO day (YYYY-MM-DD, UTC) → "Today" / "Mon 06 Jul" (English, like tokens).
+_repos_day_label() {
+  local _d="$1"
+  if [[ "$_d" == "$(date -u +%Y-%m-%d)" ]]; then printf 'Today'; return 0; fi
+  LC_TIME=C date -j -f %Y-%m-%d "$_d" +'%a %d %b' 2>/dev/null \
+    || LC_TIME=C date -d "$_d" +'%a %d %b' 2>/dev/null \
+    || printf '%s' "$_d"
+}
+
+_cmd_repos() {
+  _cfg_init
+  _insights_refresh
+
+  local daily=0 all=0 repo=""
+  local -a wargs=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --daily)   daily=1 ;;
+      --all)     all=1 ;;
+      --days|-d) wargs+=("$1" "${2:-}"); shift ;;
+      today|day|week|month|quarter|year|[0-9]*d) wargs+=("$1") ;;
+      -h|--help)
+        printf 'Usage: claudii repos [REPO] [WINDOW] [--daily] [--all] [--json]\n\n'
+        printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d); default 30d.\n'
+        printf 'Sessions per repo with real duration (active time; gaps > 10min = idle).\n'
+        printf '  REPO      drilldown: list that repo'"'"'s sessions\n'
+        printf '  --daily   per-day breakdown (which repos, how many sessions, how long)\n'
+        printf '  --all     include headless/micro sessions (TMPDIR runs, < 2min activity)\n'
+        return 0
+        ;;
+      -*)
+        printf 'claudii: unknown repos option: %s\n' "$1" >&2
+        printf '  try: claudii repos [REPO] [today|7d|30d|year] [--daily] [--all]\n' >&2
+        return 1
+        ;;
+      *)
+        if [[ -z "$repo" ]]; then repo="$1"; else
+          printf 'claudii: unexpected repos argument: %s (repo already set: %s)\n' "$1" "$repo" >&2
+          return 1
+        fi
+        ;;
+    esac
+    shift || break
+  done
+  (( ${#wargs[@]} == 0 )) && wargs=(30d)   # history view — a week is too short a default
+  _insights_window repos "${wargs[@]}" || return 1
+  local days="$_IW_DAYS"
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv repos; return 1; }
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}"
+  local RW=66
+
+  local idir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/insights"
+  shopt -s nullglob
+  local files=("$idir"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    if [[ "$fmt" == "json" ]]; then
+      jq -n --argjson days "$days" \
+        '{window_days: $days, by_repo: [], headless: {n: 0, total_active: 0}, by_day: [], sessions: []}'
+      return 0
+    fi
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  # Window cutoffs (BSD/GNU date, same pattern as claudii-insights merge).
+  local cutoff floor
+  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+    cutoff=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+    floor=$(date -u -v "-$(( days - 1 ))d" +%Y-%m-%d)
+  else
+    cutoff=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
+    floor=$(date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d)
+  fi
+
+  local all_json=false; (( all )) && all_json=true
+  local data
+  data=$(jq -n --arg cutoff "$cutoff" --arg floor "$floor" --arg repo "$repo" \
+           --argjson all "$all_json" -f "$CLAUDII_HOME/lib/repos.jq" "${files[@]}" 2>/dev/null)
+  if [[ -z "$data" ]]; then
+    printf 'claudii: repos aggregation failed — rebuild the cache with: claudii-insights aggregate --force\n' >&2
+    return 1
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    jq --argjson days "$days" '{window_days: $days} + .' <<< "$data"
+    return 0
+  fi
+
+  local note hpad; note=$(_insights_window_label "$days")
+  hpad=$(( RW - 13 - ${#note} ))
+  [[ -n "$repo" ]] && hpad=$(( hpad - ${#repo} - 1 ))   # ${repo:+ …} adds a space
+  (( hpad < 1 )) && hpad=1
+  printf '\n  %sclaudii repos%s%s%*s%s%s%s\n\n' \
+    "$cyan" "$reset" "${repo:+ ${accent}${repo}${reset}}" \
+    "$hpad" "" "$dim" "$note" "$reset"
+
+  # ── Drilldown: one repo, one row per session ──
+  if [[ -n "$repo" ]]; then
+    local _RMAX=30 shown=0 more=0
+    local sid sday act span msgs hl dlbl al sl
+    while IFS=$'\t' read -r sid sday act span msgs hl; do
+      [[ -z "$sid" ]] && continue
+      if (( shown >= _RMAX )); then (( ++more )); continue; fi
+      dlbl=$(_repos_day_label "$sday")
+      al=$(_repos_dur "$act"); sl=$(_repos_dur "$span")
+      printf '  %-11s %s%8s%s  %sspan %-8s%s  %s%4s msgs%s  %s%s%s%s\n' \
+        "$dlbl" \
+        "$cyan" "$al" "$reset" \
+        "$dim" "$sl" "$reset" \
+        "$dim" "$msgs" "$reset" \
+        "$dim" "${sid:0:8}" "$([[ "$hl" == "true" ]] && printf ' · headless')" "$reset"
+      (( ++shown ))
+    done < <(jq -r '.sessions[] | [.sid, .day, (.active // -1), .span, .msgs, .headless] | @tsv' <<< "$data")
+    if (( shown == 0 )); then
+      printf '  %sno sessions for %s in this window%s\n' "$dim" "$repo" "$reset"
+    fi
+    (( more > 0 )) && printf '  %s+%d earlier sessions%s\n' "$dim" "$more" "$reset"
+    echo
+    return 0
+  fi
+
+  # ── Daily view: one row per day, repos with count + active time ──
+  if (( daily )); then
+    local d r n a cur="" line="" al
+    _flush_day() {
+      [[ -z "$cur" ]] && return 0
+      printf '  %-11s %s\n' "$(_repos_day_label "$cur")" "$line"
+    }
+    while IFS=$'\t' read -r d r n a; do
+      [[ -z "$d" ]] && continue
+      if [[ "$d" != "$cur" ]]; then _flush_day; cur="$d"; line=""; fi
+      al=$(_repos_dur "$a")
+      [[ -n "$line" ]] && line+=" ${dim}·${reset} "
+      line+="${accent}${r}${reset} ${cyan}${n}×${reset} ${dim}${al}${reset}"
+    done < <(jq -r '.by_day[] | [.day, .repo, .n, .active] | @tsv' <<< "$data")
+    _flush_day
+    unset -f _flush_day
+    [[ -z "$cur" ]] && printf '  %s(no sessions in this window)%s\n' "$dim" "$reset"
+    echo
+    return 0
+  fi
+
+  # ── Default: per-repo table (D-grid, like tokens "By model") ──
+  local rows="" r n med tot span
+  while IFS=$'\t' read -r r n med tot span; do
+    [[ -z "$r" ]] && continue
+    rows+="${r}"$'\x1f'"${n}"$'\x1f'"$(_repos_dur "$med")"$'\x1f'"$(_repos_dur "$tot")"$'\x1f'"$(_repos_dur "$span")"$'\n'
+  done < <(jq -r '.by_repo[] | [.repo, .n, (.median_active // -1), .total_active, .total_span] | @tsv' <<< "$data")
+  if [[ -z "$rows" ]]; then
+    printf '  %s(no sessions in this window)%s\n' "$dim" "$reset"
+  else
+    printf '%s' "$rows" | _render_dgrid "Repo" $'sessions\x1fmedian\x1factive\x1fspan'
+  fi
+
+  # Headless summary (suppressed under --all — those rows are already inline).
+  if (( ! all )); then
+    local hn ha
+    IFS=$'\t' read -r hn ha < <(jq -r '[.headless.n, .headless.total_active] | @tsv' <<< "$data")
+    if [[ "$hn" =~ ^[0-9]+$ ]] && (( hn > 0 )); then
+      printf '  %s(headless) %d runs · %s active — TMPDIR/micro sessions, --all to include%s\n' \
+        "$dim" "$hn" "$(_repos_dur "$ha")" "$reset"
+    fi
+  fi
+  echo
+}
