@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 9" "9" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 10" "10" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
