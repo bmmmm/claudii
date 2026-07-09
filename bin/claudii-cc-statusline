@@ -225,26 +225,64 @@ fi
 # living session forks `ps` here at most once (right after the walk finds it),
 # not on every render. Re-resolves automatically if the cached ancestor ever
 # dies for real (Claude Code restart, session recycle).
+#
+# The walk matches `claude` two ways: argv[0] basename == "claude" (Homebrew /
+# native binary), OR argv[0] basename is node/bun AND argv[1] basename ==
+# "claude" (npm-installed Claude Code runs via a node shebang, so `comm` is
+# "node"). Exactly "claude" for argv[1] — not "claudii-*" — so wrapper scripts
+# in the chain don't get mistaken for the session process. Each walk level is a
+# single `ps -o ppid=,command=` call (was 3 forks/level: ps comm + ps ppid + tr).
+#
+# The resolved ancestor's start time (ppid_lstart) is captured once here and
+# persisted, so _parse_session_cache can detect PID recycling (a dead session
+# whose long-lived PID got reused) — kill -0 alone only proves the PID exists,
+# not that it's still THIS session. The cheap reuse path below stays kill-0-only
+# on purpose (a per-render `ps` fork is not acceptable there); the lstart
+# recycle-guard runs only in _parse_session_cache's consumers (se/si/gc/…).
 _cache_get ppid ""; _prev_ppid="$_CG"
+_cache_get ppid_lstart ""; _prev_ppid_lstart="$_CG"
+_ppid_lstart=""
 if [[ "$_prev_ppid" =~ ^[0-9]+$ ]] && kill -0 "$_prev_ppid" 2>/dev/null; then
   _ppid="$_prev_ppid"
+  _ppid_lstart="$_prev_ppid_lstart"   # reuse path: kill-0 only, carry stored lstart
 else
   _ppid=""
   _anc_p="${PPID:-}"
   _anc_n=0
   while [[ "$_anc_p" =~ ^[0-9]+$ ]] && (( _anc_p > 1 )) && (( _anc_n < 10 )); do
-    _anc_comm=$(ps -o comm= -p "$_anc_p" 2>/dev/null)
-    _anc_comm="${_anc_comm##*/}"
-    if [[ "$_anc_comm" == "claude" ]]; then
+    # One ps call: field 1 = parent pid, rest = full command line. `read` strips
+    # the leading right-justified padding and splits argv[0] from the remainder.
+    _anc_line=$(ps -o ppid=,command= -p "$_anc_p" 2>/dev/null)
+    read -r _anc_pp _anc_cmd <<< "$_anc_line"
+    _anc_b0="${_anc_cmd%% *}"; _anc_b0="${_anc_b0##*/}"
+    if [[ "$_anc_b0" == "claude" ]]; then
       _ppid="$_anc_p"
       break
     fi
-    _anc_p=$(ps -o ppid= -p "$_anc_p" 2>/dev/null | tr -d ' ')
+    if [[ "$_anc_b0" == "node" || "$_anc_b0" == "bun" ]]; then
+      _anc_rest="${_anc_cmd#* }"
+      if [[ "$_anc_rest" != "$_anc_cmd" ]]; then
+        _anc_b1="${_anc_rest%% *}"; _anc_b1="${_anc_b1##*/}"
+        if [[ "$_anc_b1" == "claude" ]]; then
+          _ppid="$_anc_p"
+          break
+        fi
+      fi
+    fi
+    _anc_p="$_anc_pp"
     (( ++_anc_n ))
   done
   # No `claude` ancestor found (standalone/manual invocation, renamed binary,
   # walk exhausted) — fall back to the raw PPID rather than storing empty.
   [[ -z "$_ppid" ]] && _ppid="${PPID:-}"
+  # Capture the ancestor's start time (one fork, amortized — this path already
+  # forked ps in the walk). Leading whitespace trimmed; the value itself
+  # contains spaces (e.g. "Wed Jul 10 12:34:56 2026"), preserved by the
+  # first-'=' cache-line split on read-back.
+  if [[ "$_ppid" =~ ^[0-9]+$ ]]; then
+    _ppid_lstart=$(ps -o lstart= -p "$_ppid" 2>/dev/null)
+    _ppid_lstart="${_ppid_lstart#"${_ppid_lstart%%[![:space:]]*}"}"
+  fi
 fi
 _cache_get pinned "";       _cached_pinned="$_CG"
 _cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
@@ -263,6 +301,7 @@ _tmp_session="${_session_file}.tmp.$$"
   "cache_pct=$_cache_pct" \
   "tok=$_tok_total" \
   "ppid=$_ppid" \
+  "ppid_lstart=$_ppid_lstart" \
   "rate_7d_start=$_rate_7d_start" \
   "rate_5h_start=$_rate_5h_start" \
   "last_duration_ms=$duration_ms" \
@@ -768,6 +807,33 @@ fi
 # the per-render wrapper it used to be) — no mtime-freshness workaround
 # needed. Gated like remotes/git-sync — the file scan only runs when the
 # segment is actually in the layout.
+#
+# Same-project match is normalized (_same_project), not exact string equality:
+# a sibling session running in a worktree (<repo>/.claude/worktrees/<x>, old
+# style <repo>/.claude-worktrees/<x>) or a subdirectory of the same repo is the
+# very case this segment exists to warn about, and those have a different raw
+# project_path. Both sides are collapsed to a repo root (worktree component and
+# everything after it stripped), then matched as equal or one being a
+# /-boundary path-prefix of the other (subdir).
+_norm_repo_root() {
+  local _p="$1"
+  case "$_p" in
+    */.claude/worktrees/*)  _p="${_p%%/.claude/worktrees/*}" ;;
+    */.claude-worktrees/*)  _p="${_p%%/.claude-worktrees/*}" ;;
+  esac
+  _NORM_ROOT="$_p"
+}
+_same_project() {
+  local _a _b
+  _norm_repo_root "$1"; _a="$_NORM_ROOT"
+  _norm_repo_root "$2"; _b="$_NORM_ROOT"
+  [[ -z "$_a" || -z "$_b" ]] && return 1
+  [[ "$_a" == "$_b" ]] && return 0
+  # subdir: require the boundary slash so /repo doesn't match /repo2
+  [[ "$_a" == "$_b"/* ]] && return 0
+  [[ "$_b" == "$_a"/* ]] && return 0
+  return 1
+}
 _seg_sessions=""
 if [[ "$_lines_raw" == *sessions* ]]; then
   _sess_dir="${cwd:-$workspace_project_dir}"
@@ -775,14 +841,25 @@ if [[ "$_lines_raw" == *sessions* ]]; then
     _NOW="$_now"
     _session_files "$_cache_dir"
     _sess_other=0
-    # _parse_session_cache assigns _PSC_* dynamically (printf -v) — initialize
-    # here so the reads below are bound even if a field is missing (also
-    # silences shellcheck SC2154, which can't see the dynamic assignment)
+    # _parse_session_cache always initializes _PSC_project_path/_PSC_is_active
+    # itself (static reset + case-assign per field, not printf -v). This init
+    # exists ONLY to satisfy ShellCheck's SC2154: it can't see assignments in a
+    # sourced file, so without a local assignment here it flags the reads below
+    # as possibly-unset (it's what fixed the 2b292b0 CI failure).
     _PSC_project_path="" _PSC_is_active=0
     for _sf in "${_SESSION_FILES[@]}"; do
       [[ "$_sf" == "$_session_file" ]] && continue   # skip this render's own row
+      # Cheap pre-filter: read ONLY the project_path line (pure bash, no _mtime
+      # fork) and drop non-matching projects BEFORE the full parse + stat +
+      # liveness work. Only same-project files pay for _parse_session_cache.
+      _sf_pp=""
+      while IFS= read -r _pp_line; do
+        case "$_pp_line" in
+          project_path=*) _sf_pp="${_pp_line#project_path=}"; break ;;
+        esac
+      done < "$_sf"
+      _same_project "$_sf_pp" "$_sess_dir" || continue
       _parse_session_cache "$_sf"
-      [[ "$_PSC_project_path" == "$_sess_dir" ]] || continue
       (( _PSC_is_active )) || continue
       (( ++_sess_other ))
     done

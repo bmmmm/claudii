@@ -444,7 +444,7 @@ _session_resolve() {
 # Parse session cache file (key=value lines) into _PSC_* variables.
 _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
-  _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid=
+  _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid= _PSC_ppid_lstart=
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
   _PSC_rate_5h_start= _PSC_project_path= _PSC_tok=
   _PSC_pinned= _PSC_kind= _PSC_pace= _PSC_cron= _PSC_bg_tasks=
@@ -460,6 +460,7 @@ _parse_session_cache() {
       reset_7d)       _PSC_reset_7d="$_v" ;;
       session_id)     _PSC_session_id="$_v" ;;
       ppid)           _PSC_ppid="$_v" ;;
+      ppid_lstart)    _PSC_ppid_lstart="$_v" ;;
       worktree)       _PSC_worktree="$_v" ;;
       agent)          _PSC_agent="$_v" ;;
       cache_pct)      _PSC_cache_pct="$_v" ;;
@@ -490,7 +491,20 @@ _parse_session_cache() {
       _PSC_is_active=1
       _PSC_kind=$(_pid_kind "$_PSC_ppid")
     elif (( _PSC_age < 86400 )) && kill -0 "$_PSC_ppid" 2>/dev/null; then
-      _PSC_is_active=1
+      # kill -0 proves the PID exists, not that it's still THIS session — once a
+      # session ends its long-lived claude PID can be recycled onto an unrelated
+      # process. When the cache carries the ancestor's start time (ppid_lstart,
+      # written by claudii-cc-statusline), confirm identity by comparing it to
+      # the live process's lstart; a mismatch means the PID was recycled → not
+      # active. Caches without the key keep the original kill-0-only behaviour.
+      if [[ -n "$_PSC_ppid_lstart" ]]; then
+        local _psc_live_lstart
+        _psc_live_lstart=$(ps -o lstart= -p "$_PSC_ppid" 2>/dev/null)
+        _psc_live_lstart="${_psc_live_lstart#"${_psc_live_lstart%%[![:space:]]*}"}"
+        [[ "$_psc_live_lstart" == "$_PSC_ppid_lstart" ]] && _PSC_is_active=1
+      else
+        _PSC_is_active=1
+      fi
     fi
   fi
 }
