@@ -918,3 +918,60 @@ assert_contains "git-sync behind → ↓1" "↓1" "$(_gs_run "$_gs_behind")"
 _gs_plain="$(mktemp -d)"; _SL_TMPDIRS+=("$_gs_plain")
 assert_eq "git-sync non-git → empty output" "" "$(_gs_run "$_gs_plain")"
 unset -f _gs_ci _gs_mkrepo _gs_run; unset _gs_d_strip
+
+# ── sessions segment — concurrent same-repo live sessions (⚠N) ───────────────
+# The segment scans the per-session cache for OTHER active sessions whose
+# project_path resolves to the same repo root as this render's cwd. Each case
+# pre-seeds a sibling session-* cache file (a live ppid = the test's own $$, a
+# matching ppid_lstart, a project_path) and asserts the ⚠ count. The current
+# render's own row is written under a distinct session id and skipped.
+_ss_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ss_cfg")
+mkdir -p "$_ss_cfg/claudii"
+printf '{"statusline":{"lines":[["model","sessions"]]}}\n' > "$_ss_cfg/claudii/config.json"
+# Trimmed lstart of a live pid — mirrors the write-side trim in the statusline
+# and the compare-side trim in _parse_session_cache.
+_ss_lstart() { local _l; _l=$(ps -o lstart= -p "$1" 2>/dev/null); _l="${_l#"${_l%%[![:space:]]*}"}"; printf '%s' "$_l"; }
+# Write a sibling session cache file. Args: cachedir, name, project_path, ppid, lstart
+_ss_sib() {
+  printf 'model=Sonnet\nsession_id=%s\nproject_path=%s\nppid=%s\nppid_lstart=%s\n' \
+    "$2" "$3" "$4" "$5" > "$1/session-$2"
+}
+# Run the statusline against a cwd + cache dir; echoes stripped output.
+_ss_run() {  # $1 = cwd, $2 = cachedir
+  echo "{\"session_id\":\"selfrender0001\",\"model\":{\"display_name\":\"Opus\"},\"cwd\":\"$1\",\"context_window\":{\"used_percentage\":10,\"total_input_tokens\":1000,\"total_output_tokens\":200,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.05}}" \
+    | XDG_CONFIG_HOME="$_ss_cfg" CLAUDII_CACHE_DIR="$2" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+_ss_live_lstart="$(_ss_lstart "$$")"
+
+# (a) sibling with same project_path + live ppid → ⚠1
+_ss_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_cache")
+_ss_proj="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_proj")
+_ss_sib "$_ss_cache" "sibsame1" "$_ss_proj" "$$" "$_ss_live_lstart"
+assert_contains "sessions: same-project live sibling → ⚠1" "⚠1" "$(_ss_run "$_ss_proj" "$_ss_cache")"
+
+# (b) sibling in a worktree UNDER the same repo → counted (normalized match)
+_ss_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_cache")
+_ss_proj="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_proj")
+_ss_sib "$_ss_cache" "sibwt1" "$_ss_proj/.claude/worktrees/agent-x" "$$" "$_ss_live_lstart"
+assert_contains "sessions: worktree sibling under same repo → ⚠1" "⚠1" "$(_ss_run "$_ss_proj" "$_ss_cache")"
+
+# (c) sibling from a DIFFERENT project → not counted
+_ss_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_cache")
+_ss_proj="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_proj")
+_ss_other="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_other")
+_ss_sib "$_ss_cache" "sibother1" "$_ss_other" "$$" "$_ss_live_lstart"
+assert_not_contains "sessions: different project → no ⚠" "⚠" "$(_ss_run "$_ss_proj" "$_ss_cache")"
+
+# (d) sibling with a dead ppid → not counted
+_ss_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_cache")
+_ss_proj="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_proj")
+_ss_sib "$_ss_cache" "sibdead1" "$_ss_proj" "999999" ""
+assert_not_contains "sessions: dead-pid sibling → no ⚠" "⚠" "$(_ss_run "$_ss_proj" "$_ss_cache")"
+
+# (e) recycled-pid: live ppid but a MISMATCHED ppid_lstart → not counted (F4)
+_ss_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_cache")
+_ss_proj="$(mktemp -d)"; _SL_TMPDIRS+=("$_ss_proj")
+_ss_sib "$_ss_cache" "sibrecyc1" "$_ss_proj" "$$" "Wed Jan  1 00:00:00 2000"
+assert_not_contains "sessions: recycled pid (lstart mismatch) → no ⚠" "⚠" "$(_ss_run "$_ss_proj" "$_ss_cache")"
+
+unset -f _ss_lstart _ss_sib _ss_run; unset _ss_cfg _ss_cache _ss_proj _ss_other _ss_live_lstart
