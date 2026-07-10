@@ -71,49 +71,96 @@ _insights_model_label() {
   esac
 }
 
-# Map ISO date (YYYY-MM-DD) to a 3-letter weekday or "Today".
-# UTC because the aggregator buckets on timestamp[:10] (Z-suffixed ISO).
+# Map ISO date (YYYY-MM-DD) to "Today" or a strftime label (default %a, the
+# 3-letter weekday; repos passes '%a %d %b'). UTC because the aggregator buckets
+# on timestamp[:10] (Z-suffixed ISO). Today is memoized in _IDL_TODAY so a
+# multi-row drilldown pays one date fork, not one per row.
 _insights_day_label() {
-  local day="$1"
-  local today; today=$(date -u +%Y-%m-%d)
-  if [[ "$day" == "$today" ]]; then
+  local day="$1" fmt="${2:-%a}"
+  [[ -n "${_IDL_TODAY:-}" ]] || _IDL_TODAY=$(date -u +%Y-%m-%d)
+  if [[ "$day" == "$_IDL_TODAY" ]]; then
     printf 'Today'
-  elif LC_TIME=C date -j -f %Y-%m-%d "$day" +%a >/dev/null 2>&1; then
-    LC_TIME=C date -j -f %Y-%m-%d "$day" +%a
+  elif LC_TIME=C date -j -f %Y-%m-%d "$day" +"$fmt" >/dev/null 2>&1; then
+    LC_TIME=C date -j -f %Y-%m-%d "$day" +"$fmt"
   else
-    LC_TIME=C date -d "$day" +%a 2>/dev/null || printf '%s' "$day"
+    LC_TIME=C date -d "$day" +"$fmt" 2>/dev/null || printf '%s' "$day"
   fi
 }
 
-# Shared rolling-window argument parser for cache/tokens/tools/limits. Lets the
-# window be *cycled* without remembering --days: a named window (today/day,
-# week, month, quarter, year), a generic <N>d token (e.g. 14d), or the explicit
-# --days N / -d N. Sets _IW_DAYS (validated positive int) and _IW_HELP (1 when
-# -h/--help was seen, so the caller prints its own usage). Prints an actionable
-# error and returns 1 on an unknown token or non-numeric window.
+# Shared rolling-window argument parser for cache/tokens/tools/limits/repos.
+# Lets the window be *cycled* without remembering --days: a named window
+# (today/day, week, month, quarter, year), a generic <N>d token (e.g. 14d), or
+# the explicit --days N / -d N. Sets _IW_DAYS (validated positive int), _IW_HELP
+# (1 when -h/--help was seen) and _IW_WINDOW_GIVEN (1 when any explicit window
+# was consumed — repos uses it to apply its 30d default). Prints an actionable
+# error and returns 1 on:
+#   • --days/-d with no value or a following flag → "needs a value"
+#   • a bare integer (window typo, never a valid repo either) → "did you mean Nd"
+#   • an unknown token (unless positional mode captures it)
+# Opt-in positional mode: a caller setting _IW_ALLOW_POSITIONAL=1 (repos) has
+# exactly ONE non-flag, non-window token captured into _IW_POSITIONAL (a second
+# → error). Shadowing precedence: the FIRST window-looking token is the window;
+# once a window is consumed, a SECOND window-looking token becomes the positional
+# (so `repos 365d year` drills into a repo named "year"). All other callers keep
+# the strict unknown-argument error.
 # Args: command-label, then the command's positional "$@" (bin/claudii has
 # already stripped --json/--tsv into $_FORMAT before dispatch).
 _insights_window() {
   local cmd="$1"; shift
   local days=7
+  local _allow_pos="${_IW_ALLOW_POSITIONAL:-0}"
   _IW_HELP=0
   _IW_DAYS=7   # bind early so callers reading it after a non-zero return stay set-u-safe
+  _IW_WINDOW_GIVEN=0
+  _IW_POSITIONAL=""
   while [[ $# -gt 0 ]]; do
+    local _wv=""
     case "$1" in
-      --days|-d)   shift; days="${1:-7}" ;;
-      today|day)   days=1   ;;
-      week)        days=7   ;;
-      month)       days=30  ;;
-      quarter)     days=90  ;;
-      year)        days=365 ;;
-      [0-9]*d)     days="${1%d}" ;;
+      --days|-d)
+        local _nv="${2:-}"
+        if [[ -z "$_nv" || "${_nv:0:1}" == "-" ]]; then
+          printf 'claudii: %s needs a value (e.g. --days 30)\n' "$1" >&2
+          return 1
+        fi
+        days="$_nv"; _IW_WINDOW_GIVEN=1; shift ;;
+      today|day)   _wv=1   ;;
+      week)        _wv=7   ;;
+      month)       _wv=30  ;;
+      quarter)     _wv=90  ;;
+      year)        _wv=365 ;;
+      [0-9]*d)     _wv="${1%d}" ;;
       -h|--help)   _IW_HELP=1 ;;
       *)
-        printf 'claudii: unknown %s argument: %s\n' "$cmd" "$1" >&2
-        printf '  try: claudii %s [today|7d|30d|year] [--days N]\n' "$cmd" >&2
-        return 1
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+          printf 'claudii: bare number %s is not a window — did you mean %sd, or --days %s?\n' "$1" "$1" "$1" >&2
+          return 1
+        fi
+        if (( _allow_pos )) && [[ "${1:0:1}" != "-" ]]; then
+          if [[ -n "$_IW_POSITIONAL" ]]; then
+            printf 'claudii: unexpected %s argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+            return 1
+          fi
+          _IW_POSITIONAL="$1"
+        else
+          printf 'claudii: unknown %s argument: %s\n' "$cmd" "$1" >&2
+          printf '  try: claudii %s [today|7d|30d|year] [--days N]\n' "$cmd" >&2
+          return 1
+        fi
         ;;
     esac
+    # Window-looking token: it is the window until one has been consumed; after
+    # that, in positional mode, a second window-looking token is the positional.
+    if [[ -n "$_wv" ]]; then
+      if (( _allow_pos && _IW_WINDOW_GIVEN )); then
+        if [[ -n "$_IW_POSITIONAL" ]]; then
+          printf 'claudii: unexpected %s argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+          return 1
+        fi
+        _IW_POSITIONAL="$1"
+      else
+        days="$_wv"; _IW_WINDOW_GIVEN=1
+      fi
+    fi
     shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
   _IW_DAYS="$days"
@@ -454,10 +501,8 @@ _cmd_tokens() {
   # the window; without this floor "last 7 days" shows 8+ rows and the bare
   # weekday labels repeat ambiguously. Empty floor (date failed) → no-op (every
   # string >= ""). Shared by the json and pretty paths.
-  local floor
-  floor=$(date -u -v-"$(( days - 1 ))"d +%Y-%m-%d 2>/dev/null \
-    || date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d 2>/dev/null \
-    || printf '')
+  _window_cutoffs "$days"
+  local floor="$_WC_FLOOR"
 
   if [[ "$fmt" == "json" ]]; then
     _tokens_json "$merged" "$days" "$floor"
@@ -1101,56 +1146,53 @@ _cmd_limits() {
 }
 
 # ── claudii repos ────────────────────────────────────────────────────────────
-# Sessions per repo with REAL duration: gap-capped active time (schema v9
-# active_by_day — gaps > 10min count as idle), not the wall-clock span that
-# idle/resume inflates. Three views: per-repo table (default), per-day
+# Sessions per repo with REAL duration: gap-capped active time (schema v10
+# active_by_day, added in v9 — gaps > 10min count as idle), not the wall-clock
+# span that idle/resume inflates. Three views: per-repo table (default), per-day
 # breakdown (--daily), and a per-session drilldown (positional REPO).
 # Headless noise (TMPDIR runs, sessions with < 2min activity) folds into one
 # summary line; --all keeps it inline. Data comes straight from the
 # per-session caches via lib/repos.jq — not from merge, which flattens the
 # per-session grain this command is about.
 
-# Duration cell: _fmt_rel, with "—" for null (-1) / zero.
+# Duration cell: _fmt_rel, with ASCII "-" for null (-1) / zero. _fmt_rel already
+# yields empty for <= 0, so the ${_REL_FMT:--} fallback covers -1 and 0 — no
+# explicit guard needed. ASCII (not em-dash): printf %Ns pads by BYTES, so a
+# 3-byte '—' misaligns the fixed-width duration columns.
 _repos_dur() {
   local _v="${1:-0}"
-  [[ "$_v" == "-1" ]] && { printf '—'; return 0; }
   _fmt_rel "$_v"
-  printf '%s' "${_REL_FMT:-—}"
-}
-
-# ISO day (YYYY-MM-DD, UTC) → "Today" / "Mon 06 Jul" (English, like tokens).
-_repos_day_label() {
-  local _d="$1"
-  if [[ "$_d" == "$(date -u +%Y-%m-%d)" ]]; then printf 'Today'; return 0; fi
-  LC_TIME=C date -j -f %Y-%m-%d "$_d" +'%a %d %b' 2>/dev/null \
-    || LC_TIME=C date -d "$_d" +'%a %d %b' 2>/dev/null \
-    || printf '%s' "$_d"
+  printf '%s' "${_REL_FMT:--}"
 }
 
 _cmd_repos() {
   _cfg_init
   _insights_refresh
 
-  local daily=0 all=0 repo=""
+  # Own flags are peeled here; everything else (window tokens, the REPO
+  # positional, --days/-d + value) is forwarded to _insights_window, which owns
+  # the whole window vocabulary + arg validation. The window/positional
+  # shadowing and the "needs a value" / "did you mean Nd" errors all live there
+  # now — this loop no longer re-lists window tokens (lockstep-edit trap).
+  local daily=0 all=0
   local -a wargs=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --daily)   daily=1 ;;
       --all)     all=1 ;;
       --days|-d)
-        # fail here, not in _insights_window: a trailing value-less --days
-        # would silently fall back to the 7d default there instead of 30d
-        if [[ -z "${2:-}" ]]; then
-          printf 'claudii: %s needs a value (e.g. --days 30)\n' "$1" >&2
-          return 1
-        fi
-        wargs+=("$1" "$2"); shift ;;
-      today|day|week|month|quarter|year|[0-9]*d) wargs+=("$1") ;;
+        # forward the flag; append the value only when it is not itself a flag,
+        # so a value-less --days reaches _insights_window's "needs a value" error
+        wargs+=("$1")
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then wargs+=("$2"); shift; fi
+        ;;
       -h|--help)
         printf 'Usage: claudii repos [REPO] [WINDOW] [--daily] [--all] [--json]\n\n'
         printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d); default 30d.\n'
         printf 'Sessions per repo with real duration (active time; gaps > 10min = idle).\n'
-        printf '  REPO      drilldown: list that repo'"'"'s sessions\n'
+        printf '  REPO      drilldown: list that repo'"'"'s sessions. Put it AFTER a\n'
+        printf '            window to drill into a repo whose name looks like a\n'
+        printf '            window token, e.g. claudii repos 365d year\n'
         printf '  --daily   per-day breakdown (which repos, how many sessions, how long)\n'
         printf '  --all     include headless/micro sessions (TMPDIR runs, < 2min activity)\n'
         return 0
@@ -1161,23 +1203,18 @@ _cmd_repos() {
         return 1
         ;;
       *)
-        # a bare number is almost certainly a window typo, not a repo name —
-        # the window token needs the d suffix (14d)
-        if [[ "$1" =~ ^[0-9]+$ ]]; then
-          printf 'claudii: bare number %s is not a window — did you mean %sd, or --days %s?\n' "$1" "$1" "$1" >&2
-          return 1
-        fi
-        if [[ -z "$repo" ]]; then repo="$1"; else
-          printf 'claudii: unexpected repos argument: %s (repo already set: %s)\n' "$1" "$repo" >&2
-          return 1
-        fi
-        ;;
+        wargs+=("$1") ;;
     esac
     shift || break
   done
-  (( ${#wargs[@]} == 0 )) && wargs=(30d)   # history view — a week is too short a default
-  _insights_window repos "${wargs[@]}" || return 1
+  _IW_ALLOW_POSITIONAL=1
+  if ! _insights_window repos ${wargs[@]+"${wargs[@]}"}; then
+    unset _IW_ALLOW_POSITIONAL; return 1
+  fi
+  unset _IW_ALLOW_POSITIONAL
+  local repo="$_IW_POSITIONAL"
   local days="$_IW_DAYS"
+  (( _IW_WINDOW_GIVEN )) || days=30   # history view — a week is too short a default
 
   local fmt="${_FORMAT:-}"
   [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv repos; return 1; }
@@ -1200,15 +1237,13 @@ _cmd_repos() {
     return 0
   fi
 
-  # Window cutoffs (BSD/GNU date, same pattern as claudii-insights merge).
-  local cutoff floor
-  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-    cutoff=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
-    floor=$(date -u -v "-$(( days - 1 ))d" +%Y-%m-%d)
-  else
-    cutoff=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
-    floor=$(date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d)
-  fi
+  # Window cutoffs via the shared probe (same idiom as tokens/perf/merge).
+  # F9: floor is the cutoff's OWN date, not day-1 — admission uses last_seen >=
+  # cutoff, so a session admitted late on the cutoff day must still contribute
+  # its active time; a day-1 floor dropped it (n=1, total_active:0). repos.jq
+  # handles the rest.
+  _window_cutoffs "$days"
+  local cutoff="$_WC_CUTOFF" floor="${_WC_CUTOFF:0:10}"
 
   local all_json=false; (( all )) && all_json=true
   local data
@@ -1239,7 +1274,7 @@ _cmd_repos() {
     while IFS=$'\t' read -r sid sday act span msgs hl; do
       [[ -z "$sid" ]] && continue
       if (( shown >= _RMAX )); then (( ++more )); continue; fi
-      dlbl=$(_repos_day_label "$sday")
+      dlbl=$(_insights_day_label "$sday" '%a %d %b')
       al=$(_repos_dur "$act"); sl=$(_repos_dur "$span")
       printf '  %-11s %s%8s%s  %sspan %-8s%s  %s%4s msgs%s  %s%s%s%s\n' \
         "$dlbl" \
@@ -1262,7 +1297,7 @@ _cmd_repos() {
     local d r n a cur="" line="" al
     _flush_day() {
       [[ -z "$cur" ]] && return 0
-      printf '  %-11s %s\n' "$(_repos_day_label "$cur")" "$line"
+      printf '  %-11s %s\n' "$(_insights_day_label "$cur" '%a %d %b')" "$line"
     }
     while IFS=$'\t' read -r d r n a; do
       [[ -z "$d" ]] && continue

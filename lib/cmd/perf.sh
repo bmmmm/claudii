@@ -191,11 +191,10 @@ _cmd_perf() {
   fi
   [[ "$src" == "transcript" ]] && merged=$(_insights_run merge --days "$days" --with-latency 2>/dev/null)
 
-  # Calendar floor identical to `claudii tokens`, so "last N days" is exact.
-  local floor
-  floor=$(date -u -v-"$(( days - 1 ))"d +%Y-%m-%d 2>/dev/null \
-    || date -u -d "$(( days - 1 )) days ago" +%Y-%m-%d 2>/dev/null \
-    || printf '')
+  # Calendar floor identical to `claudii tokens` (shared _window_cutoffs), so
+  # "last N days" is exact.
+  _window_cutoffs "$days"
+  local floor="$_WC_FLOOR"
 
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
     [[ "$fmt" == "json" ]] && { _perf_json "{}" "$days" "$floor" "$repo_filter" "$src"; return 0; }

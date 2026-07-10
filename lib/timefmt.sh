@@ -63,6 +63,25 @@ _iso_epoch() {
   return 0
 }
 
+# _window_cutoffs <days> — rolling-window boundaries via one BSD/GNU date probe.
+# Sets _WC_CUTOFF (ISO-Z timestamp of now-<days>, a last_seen threshold) and
+# _WC_FLOOR (date of now-(<days>-1), the inclusive calendar floor for "last N
+# days" day-bucket filters). Both empty on date failure (callers no-op on "").
+# The same inline probe lives in bin/claudii-otel and bin/claudii-insights —
+# standalone scripts that don't source this file; keep those markers in sync.
+_window_cutoffs() {
+  local _days="${1:-7}"
+  _WC_CUTOFF=""; _WC_FLOOR=""
+  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+    _WC_CUTOFF=$(date -u -v "-${_days}d" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+    _WC_FLOOR=$(date -u -v-"$(( _days - 1 ))"d +%Y-%m-%d 2>/dev/null)
+  else
+    _WC_CUTOFF=$(date -u -d "${_days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+    _WC_FLOOR=$(date -u -d "$(( _days - 1 )) days ago" +%Y-%m-%d 2>/dev/null)
+  fi
+  return 0
+}
+
 # _fmt_brief <seconds> — single-unit age into _BRIEF_FMT ("Xs"/"Xm"/"Xh"/"Xd").
 # Negative input clamps to 0s.
 _fmt_brief() {

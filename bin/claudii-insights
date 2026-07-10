@@ -251,6 +251,7 @@ _cmd_gc() {
     exit 1
   fi
 
+  # window-cutoff probe — keep in sync with _window_cutoffs (lib/timefmt.sh)
   local cutoff_iso cutoff_epoch
   if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
     cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)

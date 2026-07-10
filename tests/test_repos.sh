@@ -1,4 +1,4 @@
-# touches: lib/cmd/insights.sh lib/repos.jq lib/insights.jq bin/claudii-insights
+# touches: lib/cmd/insights.sh lib/repos.jq lib/insights.jq bin/claudii-insights lib/timefmt.sh
 
 # test_repos.sh — claudii repos (sessions per repo with real/active duration)
 # End-to-end against a synthetic project tree. The load-bearing assertions:
@@ -186,6 +186,28 @@ _RP_ND=$(_rp_run repos --days; echo "rc=$?")
 assert_contains "repos --days (no value): actionable error" "needs a value" "$_RP_ND"
 assert_contains "repos --days (no value): exit 1"           "rc=1"          "$_RP_ND"
 
+# --daily must NOT be swallowed as the --days value (was: "got: --daily")
+_RP_NDF=$(_rp_run repos --days --daily; echo "rc=$?")
+assert_contains "repos --days --daily: needs a value (flag not consumed)" "needs a value" "$_RP_NDF"
+assert_contains "repos --days --daily: exit 1"                            "rc=1"          "$_RP_NDF"
+
+# ── Shared-parser coverage: the same guards now protect tokens/tools/etc. ──
+# value-less --days is an actionable error, not a silent 7d fallback.
+_RP_TND=$(_rp_run tokens --days; echo "rc=$?")
+assert_contains "tokens --days (no value): needs a value" "needs a value" "$_RP_TND"
+assert_contains "tokens --days (no value): exit 1"        "rc=1"          "$_RP_TND"
+
+# a bare number is a window typo for tokens too, not a generic unknown-arg.
+_RP_T14=$(_rp_run tokens 14; echo "rc=$?")
+assert_contains "tokens 14: suggests 14d" "did you mean 14d" "$_RP_T14"
+assert_contains "tokens 14: exit 1"       "rc=1"             "$_RP_T14"
+
+# ── Drilldown escape hatch: window FIRST, then a repo name that looks like a
+# window — "year" is captured as the positional, so we drill into repo "year". ──
+_RP_ESC=$(_rp_run repos 365d year)
+assert_contains "repos 365d year: 'year' is the repo positional, not the window" \
+  "no sessions for year" "$_RP_ESC"
+
 _RP_HELP=$(bash "$CLAUDII_HOME/bin/claudii" repos --help 2>&1)
 assert_contains "repos --help: usage line" "Usage: claudii repos" "$_RP_HELP"
 
@@ -206,5 +228,6 @@ assert_contains "repos --tsv: rejected, points to --json" "use --json" "$_RP_TSV
 
 unset _RP_PROJ _RP_CACHE _RP_BASE _RP_SID_A _RP_SID_B _RP_SID_C _RP_SID_D _RP_SID_E _RP_SID_F _RP_A_JSON _RP_E_JSON _RP_F_JSON
 unset _RP_OUT _RP_ALL _RP_JSON _RP_DRILL _RP_DAILY _RP_DAY_A _RP_LBL _RP_BAD _RP_NUM _RP_ND _RP_HELP
+unset _RP_NDF _RP_TND _RP_T14 _RP_ESC
 unset _RP_EPROJ _RP_ECACHE _RP_EOUT _RP_EJSON _RP_TSV
 unset -f _rp_iso _rp_run
