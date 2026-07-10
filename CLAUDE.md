@@ -93,26 +93,19 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 - All settings via config.json, nothing hardcoded
 - jq is required
 - No network calls in precmd (cache only)
-- Background jobs: always `( cmd & )` subshell pattern (prevents [N] PID leak — anonymous functions with no_monitor still leak)
+- Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: gotchas memory #4)
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2** — when a change touches test fixtures or any shell-quoting/default-arg/expansion logic, run `/bin/bash tests/run.sh` before pushing. Local `bash` is Homebrew 5.x and silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on 5.x), so a green local run is not a green CI run.
-- **`(( ++var ))` not `(( var++ ))`** — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI), bash 3.2 (macOS) tolerates it silently. Use pre-increment for all standalone counters.
-- **No `declare -A` in `bin/`** — every script there has `#!/bin/bash` and runs under macOS `/bin/bash` 3.2, which silently falls back to a regular indexed array and evaluates string keys as `arr[0]` (last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays. The test runner uses Homebrew `bash` 5.x so it does NOT catch this — add a regression assert that invokes `/bin/bash` explicitly when adding similar maps.
+- **No `declare -A` in `bin/`** — macOS `/bin/bash` 3.2 silently degrades it to an indexed array (string keys evaluate as `arr[0]`, last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays; guard new maps with a regression assert that invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch it).
 - **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh). The configured command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only the wrap script invokes `claudii-cc-statusline`); literal matching broke twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber the user's chain.
 - **The 5h rate limit is account-wide** — never attribute it to a single model in UI text, and read it from the *newest* fresh `session-*` cache file (glob order is by session id, not freshness). All rate displays follow `statusline.rate_display`; color/thresholds stay keyed on used%.
 - **An awk file carries no semantics of its own — verify any claim about a `lib/*.awk` program against its `-v` bindings at the call site** (`lib/cmd/*.sh`). Variable names lie: `trends.awk`'s `week_start` is bound to the *rolling* `seven_ts`, not the calendar week start. A review finding "confirmed" from the awk side alone produced a false CONFIRMED once (2026-07-02) — the refutation only surfaced on the pre-fix re-read of the binding site.
 
 ## Token efficiency (for Claude-in-session)
 
-Session transcripts show recurring waste patterns. Follow these:
-
-- **Don't re-Read the same file within a session** unless it was just edited. Keep the content in working memory; scroll back if needed.
 - **Use `bash tests/run.sh --summary`** instead of `… | tail -5` — saves ~500 lines per run.
-- **Batch Edits per file** — 3+ sequential Edits to the same file means rewrite with Write instead.
-- **Never `cat`/`grep`/`find` via Bash** — use Read/Grep/Glob tools. Pre-tool hooks should block this; if they don't, fix the hook.
-- **Subagent prompts**: always cap reply length ("under 400 words"). Then split by agent role: *search/Explore* agents (read-only, cheap models) get "only report PROVEN findings with reproducers" — they hallucinate verbose reports otherwise. *Bug-finding/review* agents (Opus) get the opposite — "report every finding incl. low-confidence ones, with a confidence level; filtering happens in a separate step." Claude 4.8 follows "be conservative / only high-severity" literally and silently drops real bugs (recall loss), so move filtering out of the finding stage and verify on the main thread.
-- **Parallelize tool calls** when independent — one message with N Bash/Read/Grep calls, not N sequential messages.
-- **Agent reports are advisory, not authoritative** — always verify claims against current code before fixing (Explore agents hallucinate file paths, CI config, and variable semantics).
+- **Subagent prompts**: always cap reply length ("under 400 words"). Split by agent role: *search/Explore* agents (read-only, cheap models) get "only report PROVEN findings with reproducers" — they hallucinate verbose reports otherwise. *Bug-finding/review* agents (Opus) get the opposite — "report every finding incl. low-confidence ones, with a confidence level; filtering happens in a separate step"; models follow "be conservative / only high-severity" literally and silently drop real bugs, so filter outside the finding stage and verify on the main thread.
+- **Agent reports are advisory, not authoritative** — always verify claims against current code before fixing (agents hallucinate file paths, CI config, and variable semantics).
 
 ## When adding features
 
@@ -135,65 +128,7 @@ Session transcripts show recurring waste patterns. Follow these:
 
 ## When a new Claude model ships
 
-claudii does **not** pick the model for Claude Code — `/model` does. claudii only
-*recognizes and displays* model IDs. The aliases/agent tiers in `config/defaults.json`
-are version-agnostic on purpose (`opus`/`sonnet`/`haiku` + effort — Claude Code resolves
-`opus` to the latest). So a model bump is a display + docs sweep, not a config rename.
-Older versions stay selectable via `/model`; we only keep their friendly labels.
-
-Trigger this checklist when Anthropic releases a new versioned model (e.g. Opus 4.9):
-
-1. `lib/cmd/insights.sh` → `_insights_model_label()` — add `*opus-4-N*) → 'Opus 4.N'`
-   case **above** the bare `*opus*` fallback (most-specific-first). Keep older cases.
-2. `tests/test_cache.sh` — add a `label: opus 4.N (latest)` assert next to the existing
-   ones (sourced `_insights_model_label` guard). Older asserts stay as regression cover.
-3. `config/defaults.json` — bump any agent `description` that names a version
-   (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
-4. `bin/claudii-cc-statusline` shows `.model.display_name` verbatim — no change
-   for a version bump *within* an existing flat-1M-billing family. But check
-   whether the **new model's context-window/pricing shape** matches its
-   family's existing entry in `_flat_1m_model()` (opus/fable/mythos/sonnet-5+
-   get a native 1M window, full-window compact floor, and never show the
-   `>200k` marker; everything else gets the legacy 200k-default / paid-`[1m]`-
-   opt-in treatment). A model that changes this shape (like Sonnet 5 did vs.
-   Sonnet 4.6 — 1M went from paid opt-in to default, no premium) needs a new
-   pattern arm here, confirmed against the `claude-api` skill or the user —
-   don't assume from the family name alone. **The identical `case "$MODEL"`
-   membership test also lives in `~/.claude/hooks/compact-nudge.sh`** (global,
-   not version-controlled, no test suite) — sweep it in the same pass or it
-   silently drifts.
-5. The tier mappings are version-agnostic (match bare `fable`/`opus`/`sonnet`/
-   `haiku`) — no change for version bumps within a tier. A **new tier** (e.g.
-   Fable in 2026-06) needs: a `tier_label()` branch in `lib/model_tier.awk`
-   (most-capable-first; covers cost AND trends), a `tier()` branch in
-   `lib/tier.jq` (covers both skills-cost programs), a `_rates` entry in
-   `lib/cmd/skills-cost.sh`, plus a bare-tier fallback case in
-   `_insights_model_label()` (see pricing note below).
-   Also add the family keyword to `_KNOWN_MODEL_FAMILIES` in
-   `bin/claudii-status` — an incident that names only the new family (and
-   lists the `API` component) would otherwise cascade `degraded` onto
-   opus/sonnet/haiku via the broad-API fallback. The list is the superset of
-   tracked + untracked families; only **new families** need adding (version
-   bumps within `opus`/`sonnet`/`haiku`/`fable` already match).
-   To also **surface the new family in the collapsed health display** (like
-   Fable), add it to the `statusline.models` default in `config/defaults.json`
-   and add its label case in three mirrors kept in sync: `_scm_lbl` (case) in
-   `bin/claudii-cc-statusline`, `_norm_model_short` in `lib/cmd/overview.sh`,
-   and — the zsh RPROMPT capitalizes via `${(C)model}` so no case is needed
-   there. The display collapses to `claude ✓` when all are healthy, so an
-   added family is invisible until it actually has an incident (`[Fable ↓]`).
-6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
-
-If the new model also changes **pricing**, update the per-model `_rates` table in
-`lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc; cache_read = 0.1×
-input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
-(`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
-in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/
-`sonnet`, unknown → sonnet) — keep it in sync with the table. `claudii
-skills-cost` prices each per-model token bucket (schema-v5 `attribution_models`)
-at its tier; pre-v5 / orphaned caches have no per-model split, so their residual
-tokens fall back to the flat Sonnet rate. Verify `claudii skills-cost` totals
-afterwards.
+claudii only *recognizes and displays* model IDs — `/model` picks them, the defaults are version-agnostic — so a model bump is a display + docs sweep, not a config rename. Follow **`docs/model-bump-checklist.md`**: label cases, `_flat_1m_model()` window/pricing-shape check (incl. its untracked mirror in `~/.claude/hooks/compact-nudge.sh`), new-tier wiring across awk/jq/rates, `_KNOWN_MODEL_FAMILIES`, and the pricing `_rates` table.
 
 ## Project skills
 
@@ -207,12 +142,7 @@ Revert one merged agent: `git revert <merge-hash> -m 1 --no-edit`.
 Revert a full wave — `git revert before-wave-N..HEAD` does NOT work once the wave has `--no-ff` merge commits (fails with "commit … is a merge but no -m option given"). Use instead: **unpushed** → `git reset --hard before-wave-N`; **pushed** → revert each merge commit newest-first → `git revert -m 1 --no-edit <merge-N> … <merge-1>`.
 **Agents touching `lib/statusline.zsh`:** warn about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`).
 **Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously.
-
-## After completing planned work
-
-If a `.claude/plans/*.md` file was used to plan the work, delete it after implementing:
-- Plan files are auto-loaded into every future session
-- Stale plans produce false "continue this work" prompts
+**After completing planned work:** if a `.claude/plans/*.md` file guided the work, delete it after implementing — plan files auto-load into every future session, and stale ones produce false "continue this work" prompts.
 
 ## When committing
 
@@ -224,45 +154,20 @@ Only check what the commit actually touches — skip checks that don't apply:
 
 ## When releasing
 
-`scripts/release.sh <version>` is the only entry point. It bumps `bin/claudii`
-VERSION + the man page + `CHANGELOG.md` (`[Unreleased]` → `[vX.Y.Z]`), runs
-tests **twice** (pass 1 before the bump = full suite; pass 2 after the bump =
-only the version-aware test files, grep-discovered via `VERSION=`/`CHANGELOG` —
-the bump touches nothing else), commits, pushes `main` + the tag to `origin`
-(Forgejo), then **watches CI by default** and exits non-zero if the workflow
-fails (`--no-watch` to opt out for headless runs).
+`scripts/release.sh <version>` is the only entry point (bump + double test-pass + tag + push + CI watch). Always `--dry-run` first. **SemVer from the unreleased block:** any `### Added` → bump MINOR; only `### Fixed`/`### Changed` → PATCH (pre-flight enforces it; deliberate under-bump needs `--allow-version-mismatch`).
 
-1. **Version (SemVer):** any `### Added` in the unreleased block → bump MINOR
-   (`0.20.0`); only `### Fixed`/`### Changed` → bump PATCH (`0.20.1`). The
-   pre-flight enforces this (plus a non-empty unreleased block); a deliberate
-   under-bump needs `--allow-version-mismatch`.
-2. **Dry-run first:** `scripts/release.sh X.Y.Z --dry-run` checks pre-flight
-   (clean tree, tag free, on main, CHANGELOG plausibility) + bump targets
-   without mutating anything.
-3. **Real run:** `scripts/release.sh X.Y.Z`. The double test-pass means a
-   bump-induced failure aborts locally (files rolled back, no tag) instead of
-   surfacing only on CI. The tag reaches GitHub via the Forgejo→GitHub mirror
-   and triggers `.github/workflows/release.yml` (clean-env tests → GitHub
-   Release → Homebrew-tap sync); the script polls up to 2min for the run to
-   appear, then blocks on `gh run watch`. A failed run leaves the tag public
-   with **no** Release and **no** tap sync — a half-release; with `--no-watch`
-   you must confirm CI green yourself.
-4. **Recovery from a half-release** (tag pushed, CI failed, no artifact yet): fix
-   + commit on main, `git tag -f vX.Y.Z`, `git push origin main`, then
-   `git push origin vX.Y.Z --force` — the mirror force-carries the tag and
-   re-triggers the workflow. Safe **only** because no artifact was consumed (tap
-   not synced, no Release created); never force-move a tag that already shipped.
+**Dual-remote gap:** the script pushes `origin` only — push GitHub yourself afterwards (`git push github main && git push github vX.Y.Z`) or its CI watch times out (fix pending: issue #1). Full mechanics + half-release recovery: **`docs/release-runbook.md`**.
 
 ## Memory Types
 
 This project overrides the default memory type set. Use these instead of the harness defaults:
 
-- **`rule`** — evergreen discipline / how-to-apply pattern. Reads like "always do X" or "never do Y." No incident story needed. Example: "jq logic > 3 lines belongs in a `.jq` file."
-- **`lesson`** — incident-based learning. Reads like "we got burned when Y, here's the rule that falls out." The story is load-bearing — if you strip it, the rule loses force. Example: "schema bumps require a Consumer-Sweep — we shipped v2 with `merge` still treating `limit_hits` as a counter, debug took bash -x."
-- **`project`** — initiative/state info that decays fast (deadlines, who's doing what, why a rewrite is happening). Convert relative dates to absolute when saving.
+- **`rule`** — evergreen discipline; reads like "always/never do X", no incident story needed.
+- **`lesson`** — incident-based learning; the story is load-bearing — stripped of it, the rule loses force.
+- **`project`** — fast-decaying initiative/state info; convert relative dates to absolute when saving.
 - **`reference`** — pointers to external systems (URLs, repos, dashboards).
 - **`user`** — language profile and collaboration preferences for bmmmm.
 
-`feedback` is retired in this project — it conflated rules and lessons. Migration: every existing `feedback_*.md` should be re-typed to `rule` or `lesson` on next touch.
+`feedback` is retired in this project — re-type any remaining `feedback_*.md` to `rule` or `lesson` on next touch.
 
-**Slug convention (overrides the harness's kebab-case default):** a memory's frontmatter `name:` MUST equal its filename without `.md` (snake_case, e.g. `lesson_otel_delta_temporality`), and `[[links]]` use that exact slug. The harness memory instructions suggest `kebab-case`, but this project's files and cross-links are snake_case — following the harness default here produces dangling `[[links]]` (a whole collection's worth drifted this way once). When writing a memory: pick the filename first, then set `name:` to match it verbatim.
+**Slug convention (overrides the harness's kebab-case default):** a memory's frontmatter `name:` MUST equal its filename without `.md` (snake_case), and `[[links]]` use that exact slug — the harness's kebab-case default produces dangling `[[links]]` here (a whole collection drifted that way once). Pick the filename first, then set `name:` to match it verbatim.
