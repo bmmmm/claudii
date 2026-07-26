@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **Claude Opus 5 showed as bare "Opus" in insights views** — `_insights_model_label()` had specific cases for Opus 4.8/4.7/4.6 but none for `claude-opus-5` (the new CC default as of v2.1.219), so it fell through to the generic `*opus*` fallback. Added `*opus-5*) → 'Opus 5'`. (`lib/cmd/insights.sh`)
+
 ---
 
 ## [v0.26.0] — 2026-07-10

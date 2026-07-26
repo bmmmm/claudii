@@ -57,6 +57,7 @@ _insights_model_label() {
   case "$1" in
     *fable-5*)    printf 'Fable 5'    ;;
     *fable*)      printf 'Fable'      ;;
+    *opus-5*)     printf 'Opus 5'     ;;
     *opus-4-8*)   printf 'Opus 4.8'   ;;
     *opus-4-7*)   printf 'Opus 4.7'   ;;
     *opus-4-6*)   printf 'Opus 4.6'   ;;
