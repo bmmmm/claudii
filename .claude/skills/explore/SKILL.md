@@ -111,7 +111,15 @@ Use `gh api` to scan:
 
 ### Discover new repos
 
-- `gh api "search/repositories?q=claude+code+statusline&sort=stars&per_page=10"` — find new tools
+Rotate across query angles — a single fixed query only ever finds more of what we already know:
+
+- `gh api "search/repositories?q=claude+code+statusline&sort=stars&per_page=10"` — direct competitors
+- `gh api "search/repositories?q=claude+code+dashboard&sort=stars&per_page=10"` — broader than statusline (web/TUI dashboards, e.g. claude-dashboard)
+- `gh api "search/repositories?q=claude+code+rate+limit&sort=stars&per_page=10"` — quota/limit-specific tools
+- `gh api "search/repositories?q=claude+code+plugin&sort=stars&per_page=10"` — Claude Code's plugin-marketplace channel, where new entrants often surface first
+- `gh api "search/repositories?q=claude+code+notification&sort=stars&per_page=10"` — adjacent feature-idea source, not a direct competitor category
+- `gh api "search/repositories?q=zsh+claude+prompt&sort=stars&per_page=10"` — targets our own core differentiator (outer-terminal/RPROMPT); early-warning if that gets crowded
+- Optional, non-GitHub: `hn.algolia.com/api/v1/search?query=claude+code+statusline` (WebFetch) — catches Show-HN tools and sentiment before they have GitHub stars
 - Compare against known list in watchlist.md, report only unknown repos
 
 ## Step 3: Analyze findings
