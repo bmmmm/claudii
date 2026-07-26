@@ -57,16 +57,10 @@ completions/_claudii    # zsh completions
 man/man1/claudii.1      # Man page (groff) — single source of truth for docs
 ```
 
-## Naming
-
-- **ClaudeStatus** — RPROMPT health monitor (our feature)
-- **Session Dashboard** — session lines prepended to PROMPT after claudii commands
-- **Sessionline** — in-session status bar inside Claude Code (native implementation)
-- **Overview** — what `claudii` (bare, no args) shows: account + usage + sessions + agents + services
-- Commands: `claudii on/off`, `claudii status`, `claudii cc-statusline`
-- Config keys: `statusline.*` (internal, don't rename)
-
 ## Command Roles — What Shows Where
+
+- **Sessionline** — in-session status bar inside Claude Code (native, not ours)
+- Config keys: `statusline.*` (internal, don't rename)
 
 | Name | Trigger | Location | Content |
 |------|---------|----------|---------|
@@ -96,7 +90,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 - Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: gotchas memory #4)
 - Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2** — when a change touches test fixtures or any shell-quoting/default-arg/expansion logic, run `/bin/bash tests/run.sh` before pushing. Local `bash` is Homebrew 5.x and silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on 5.x), so a green local run is not a green CI run.
-- **No `declare -A` in `bin/`** — macOS `/bin/bash` 3.2 silently degrades it to an indexed array (string keys evaluate as `arr[0]`, last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays; guard new maps with a regression assert that invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch it).
+- **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array (string keys evaluate as `arr[0]`, last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays; guard new maps with a regression assert that invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch it).
 - **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh). The configured command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only the wrap script invokes `claudii-cc-statusline`); literal matching broke twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber the user's chain.
 - **The 5h rate limit is account-wide** — never attribute it to a single model in UI text, and read it from the *newest* fresh `session-*` cache file (glob order is by session id, not freshness). All rate displays follow `statusline.rate_display`; color/thresholds stay keyed on used%.
 - **An awk file carries no semantics of its own — verify any claim about a `lib/*.awk` program against its `-v` bindings at the call site** (`lib/cmd/*.sh`). Variable names lie: `trends.awk`'s `week_start` is bound to the *rolling* `seven_ts`, not the calendar week start. A review finding "confirmed" from the awk side alone produced a false CONFIRMED once (2026-07-02) — the refutation only surfaced on the pre-fix re-read of the binding site.
@@ -112,7 +106,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 1. Add command function `_cmd_<name>()` in the appropriate `lib/cmd/*.sh` file
 2. Add dispatch entry in `bin/claudii` main case statement
 3. Add completion in `completions/_claudii`
-4. **Update `man/man1/claudii.1`** — this is the single source of truth
+4. **Update `man/man1/claudii.1`**
 5. Add test in `tests/test_*.sh`
 6. `test_docs.sh` verifies all five stay in sync
 7. Wiki is auto-generated from the man page — never edit the wiki directly
@@ -156,7 +150,7 @@ Only check what the commit actually touches — skip checks that don't apply:
 
 `scripts/release.sh <version>` is the only entry point (bump + double test-pass + tag + push + CI watch). Always `--dry-run` first. **SemVer from the unreleased block:** any `### Added` → bump MINOR; only `### Fixed`/`### Changed` → PATCH (pre-flight enforces it; deliberate under-bump needs `--allow-version-mismatch`).
 
-**Dual-remote gap:** the script pushes `origin` only — push GitHub yourself afterwards (`git push github main && git push github vX.Y.Z`) or its CI watch times out (fix pending: issue #1). Full mechanics + half-release recovery: **`docs/release-runbook.md`**.
+**Dual-remote gap:** the script pushes `origin` only — push GitHub yourself afterwards or its CI watch times out (fix pending: issue #1). Commands + half-release recovery: **`docs/release-runbook.md`**.
 
 ## Memory Types
 
