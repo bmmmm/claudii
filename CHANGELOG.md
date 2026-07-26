@@ -9,6 +9,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Fixed
 - **Claude Opus 5 showed as bare "Opus" in insights views** — `_insights_model_label()` had specific cases for Opus 4.8/4.7/4.6 but none for `claude-opus-5` (the new CC default as of v2.1.219), so it fell through to the generic `*opus*` fallback. Added `*opus-5*) → 'Opus 5'`. (`lib/cmd/insights.sh`)
+- **`release.sh` didn't push the local `github` remote** — the repo moved to a local dual-remote mirror (origin=Forgejo, github=GitHub, both pushed from this machine, no server-side push mirror), but the script still pushed `origin` only and then polled GitHub for the release workflow — the tag never arrived there by itself, so the poll timed out after 2min with "mirror may be stuck" and exited 1, leaving a half-release that needed a manual `git push github main && git push github vX.Y.Z`. The script now detects a local `github` remote and pushes main + the tag there too, right after `origin`, before the CI poll. (`scripts/release.sh`, `docs/release-runbook.md`)
 
 ---
 
