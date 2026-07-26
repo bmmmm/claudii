@@ -20,8 +20,10 @@ The `github` remote is **local** (no server-side Forgejo→GitHub push mirror
 anymore). The script detects a local `github` remote and, after pushing
 `origin`, pushes main + the release tag there too — before polling GitHub for
 the release workflow. No manual GitHub push needed anymore. If the `github`
-remote is missing, or the push to it fails, the script fails loudly instead of
-silently polling a GitHub repo that never got the tag.
+remote is missing, the script skips this step (prints and continues — there is
+nothing to push to). If the remote exists but the push to it fails — e.g. the
+pre-push leak-gate blocks it — the script fails loudly and prints the git/hook
+output, instead of silently polling a GitHub repo that never got the tag.
 
 The tag on GitHub triggers `.github/workflows/release.yml` (clean-env tests →
 GitHub Release → Homebrew-tap sync). A failed run leaves the tag public with

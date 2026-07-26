@@ -253,10 +253,22 @@ _step "GitHub Mirror"
 if (( _dry_run )); then
   _ok "Push main + $_rel_tag to github — skipped (dry-run)"
 elif git -C "$CLAUDII_HOME" remote get-url github >/dev/null 2>&1; then
-  git -C "$CLAUDII_HOME" push github "$_branch" >/dev/null 2>&1 \
-    || { _fail "Push to github remote failed (main) — push manually: git push github $_branch"; exit 1; }
-  git -C "$CLAUDII_HOME" push github "$_rel_tag" >/dev/null 2>&1 \
-    || { _fail "Push to github remote failed (tag) — push manually: git push github $_rel_tag"; exit 1; }
+  # Captured (not swallowed): a failure here can be the pre-push leak-gate
+  # doing its job, not a transient glitch — the operator needs to see why.
+  if ! _push_out=$(git -C "$CLAUDII_HOME" push github "$_branch" 2>&1); then
+    _fail "Push to github remote failed (main) — push manually: git push github $_branch"
+    # Per-line indent, not a single substitution (${var//^/} won't do this).
+    # shellcheck disable=SC2001
+    echo "$_push_out" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  if ! _push_out=$(git -C "$CLAUDII_HOME" push github "$_rel_tag" 2>&1); then
+    _fail "Push to github remote failed (tag) — push manually: git push github $_rel_tag"
+    # Per-line indent, not a single substitution (${var//^/} won't do this).
+    # shellcheck disable=SC2001
+    echo "$_push_out" | sed 's/^/  /' >&2
+    exit 1
+  fi
   _ok "Pushed main + $_rel_tag to github"
 else
   _ok "No local 'github' remote — skipping"
