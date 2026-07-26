@@ -14,20 +14,16 @@ non-zero if the workflow fails (`--no-watch` to opt out for headless runs).
 The double test-pass means a bump-induced failure aborts locally (files rolled
 back, no tag) instead of surfacing only on CI.
 
-## Dual-remote caveat (verified v0.26.0, 2026-07-10)
+## Dual-remote (fixed, issue #1)
 
 The `github` remote is **local** (no server-side Forgejo→GitHub push mirror
-anymore), but the script pushes `origin` only and then polls GitHub for the
-release workflow — that poll times out after 2min with "Workflow not visible —
-mirror may be stuck" and exit 1, even though nothing is broken. Until
-https://git.6bm.de/bsz/claudii/issues/1 lands (script pushes the local `github`
-remote itself), finish manually:
-
-```bash
-git push github main && git push github vX.Y.Z
-gh run watch "$(gh run list -R bmmmm/claudii --workflow release.yml --limit 1 \
-  --json databaseId --jq '.[0].databaseId')" -R bmmmm/claudii --exit-status
-```
+anymore). The script detects a local `github` remote and, after pushing
+`origin`, pushes main + the release tag there too — before polling GitHub for
+the release workflow. No manual GitHub push needed anymore. If the `github`
+remote is missing, the script skips this step (prints and continues — there is
+nothing to push to). If the remote exists but the push to it fails — e.g. the
+pre-push leak-gate blocks it — the script fails loudly and prints the git/hook
+output, instead of silently polling a GitHub repo that never got the tag.
 
 The tag on GitHub triggers `.github/workflows/release.yml` (clean-env tests →
 GitHub Release → Homebrew-tap sync). A failed run leaves the tag public with

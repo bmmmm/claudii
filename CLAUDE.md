@@ -150,7 +150,7 @@ Only check what the commit actually touches — skip checks that don't apply:
 
 `scripts/release.sh <version>` is the only entry point (bump + double test-pass + tag + push + CI watch). Always `--dry-run` first. **SemVer from the unreleased block:** any `### Added` → bump MINOR; only `### Fixed`/`### Changed` → PATCH (pre-flight enforces it; deliberate under-bump needs `--allow-version-mismatch`).
 
-**Dual-remote gap:** the script pushes `origin` only — push GitHub yourself afterwards or its CI watch times out (fix pending: issue #1). Commands + half-release recovery: **`docs/release-runbook.md`**.
+**Dual-remote:** the script pushes `origin`, then (if a local `github` remote exists) main + the tag to `github` too, before the CI watch — no manual GitHub push needed anymore (was issue #1). Commands + half-release recovery: **`docs/release-runbook.md`**.
 
 ## Memory Types
 

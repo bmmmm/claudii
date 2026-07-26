@@ -243,6 +243,37 @@ else
   _ok "Tag $_rel_tag pushed"
 fi
 
+# ── GitHub Mirror ─────────────────────────────────────────────────────────────
+# Dual-remote repo (origin=Forgejo, github=GitHub, both pushed from this
+# machine — no server-side Forgejo→GitHub push mirror). The release workflow
+# lives on GitHub, so main + the tag must reach it directly, before the CI
+# poll below — otherwise the poll times out with "mirror may be stuck" even
+# though nothing is broken (issue #1).
+_step "GitHub Mirror"
+if (( _dry_run )); then
+  _ok "Push main + $_rel_tag to github — skipped (dry-run)"
+elif git -C "$CLAUDII_HOME" remote get-url github >/dev/null 2>&1; then
+  # Captured (not swallowed): a failure here can be the pre-push leak-gate
+  # doing its job, not a transient glitch — the operator needs to see why.
+  if ! _push_out=$(git -C "$CLAUDII_HOME" push github "$_branch" 2>&1); then
+    _fail "Push to github remote failed (main) — push manually: git push github $_branch"
+    # Per-line indent, not a single substitution (${var//^/} won't do this).
+    # shellcheck disable=SC2001
+    echo "$_push_out" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  if ! _push_out=$(git -C "$CLAUDII_HOME" push github "$_rel_tag" 2>&1); then
+    _fail "Push to github remote failed (tag) — push manually: git push github $_rel_tag"
+    # Per-line indent, not a single substitution (${var//^/} won't do this).
+    # shellcheck disable=SC2001
+    echo "$_push_out" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  _ok "Pushed main + $_rel_tag to github"
+else
+  _ok "No local 'github' remote — skipping"
+fi
+
 # ── CI Handoff ────────────────────────────────────────────────────────────────
 _step "CI"
 if (( _dry_run )); then
@@ -253,8 +284,8 @@ if (( _dry_run )); then
 fi
 
 if (( _watch )) && command -v gh >/dev/null 2>&1; then
-  # The tag reaches GitHub via the Forgejo→GitHub mirror — the run can take
-  # well over 30s to register. Poll up to 2 minutes, then block on watch.
+  # main + tag were just pushed to github above — the workflow run can still
+  # take well over 30s to register. Poll up to 2 minutes, then block on watch.
   _run_id=""
   for _try in $(seq 1 24); do
     _run_id=$(gh run list --workflow=release.yml --limit=5 \
@@ -273,12 +304,12 @@ if (( _watch )) && command -v gh >/dev/null 2>&1; then
     else
       _fail "Workflow failed — see $_actions_url/runs/${_run_id}"
       echo "  Half-release: tag is public, no GitHub Release / tap sync yet." >&2
-      echo "  Recover: fix + commit on main, git tag -f $_rel_tag, push main," >&2
-      echo "  then git push origin $_rel_tag --force (mirror re-triggers CI)." >&2
+      echo "  Recover: fix + commit on main, git tag -f $_rel_tag, then push main" >&2
+      echo "  + tag --force to BOTH origin and github (re-triggers CI)." >&2
       exit 1
     fi
   else
-    _fail "Workflow not visible after 2min — mirror may be stuck"
+    _fail "Workflow not visible after 2min — GitHub Actions registration delayed"
     echo "  Check $_actions_url — release is NOT confirmed until CI is green." >&2
     exit 1
   fi
