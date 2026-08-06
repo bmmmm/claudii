@@ -420,7 +420,7 @@ _flat_1m_model() {
 # FULL context_window_size, but the useful window ends at the compact point, not
 # 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
 # point nears. The default scale is *model-aware*, mirroring the FLOOR rule in
-# ~/.claude/hooks/reflect-nudge.sh: compact point = min(window * 80%, FLOOR), with
+# ~/.claude/hooks/compact-nudge.sh: compact point = min(window * 80%, FLOOR), with
 # FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the 80%
 # practical-window rule wins) and 195k on every other model (a habit ceiling — so
 # a 1M sonnet-4.6[1m] window fills near 195k, not 800k, instead of reading "20%"
