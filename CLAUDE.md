@@ -14,6 +14,8 @@ bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, sessio
 bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
 bin/claudii-otel           # OTLP control (setup/off/receiver/doctor) — exact perf metrics vs transcript estimate
 bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → ~/.cache/claudii/otel/
+bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pending updates + release inbox)
+bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
 lib/cmd/cost.sh         # Commands: cost, cost --forecast (history aggregation, D-grid + amount-sorted bars)
@@ -39,6 +41,7 @@ lib/tier.jq             # jq module: tier() model→rate-tier mapping
 lib/otel.jq             # jq: Claude Code OTLP/JSON export → perf-cache shape (claudii-otel-receiver)
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
+lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
 lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)
 lib/skills-cost-compare.jq # skills-cost --compare window-join program
 lib/vibemap-grid.awk    # vibemap grid renderer
@@ -84,11 +87,8 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 
 ## Rules
 
-- All settings via config.json, nothing hardcoded
-- jq is required
-- No network calls in precmd (cache only)
+- Settings via config.json only (nothing hardcoded); jq required; no network calls in precmd (cache only); compatible with oh-my-zsh/zinit/manual source
 - Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: gotchas memory #4)
-- Compatible with oh-my-zsh, zinit, manual source
 - Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2** — when a change touches test fixtures or any shell-quoting/default-arg/expansion logic, run `/bin/bash tests/run.sh` before pushing. Local `bash` is Homebrew 5.x and silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on 5.x), so a green local run is not a green CI run.
 - **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array (string keys evaluate as `arr[0]`, last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays; guard new maps with a regression assert that invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch it).
 - **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh). The configured command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only the wrap script invokes `claudii-cc-statusline`); literal matching broke twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber the user's chain.
@@ -108,7 +108,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 3. Add completion in `completions/_claudii`
 4. **Update `man/man1/claudii.1`**
 5. Add test in `tests/test_*.sh`
-6. `test_docs.sh` verifies all five stay in sync
+6. `test_docs.sh` verifies all five stay in sync — but only for names listed in its own hardcoded arrays (`MAN_COMMANDS`/`ALL_COMMANDS`, and `SL_SEGMENTS` for statusline segments): **add the new name there too**, or the gate passes vacuously
 7. Wiki is auto-generated from the man page — never edit the wiki directly
 8. Update `CHANGELOG.md` unreleased block
 
@@ -140,11 +140,7 @@ Revert a full wave — `git revert before-wave-N..HEAD` does NOT work once the w
 
 ## When committing
 
-Only check what the commit actually touches — skip checks that don't apply:
-
-- Touched `bin/claudii` or `lib/cmd/*.sh`? → `bash tests/run.sh` + verify man page, completions, CHANGELOG in sync
-- Removed a command? → orphaned `tests/test_<command>.sh` deleted?
-- Docs/config only? → no checks needed
+Only check what the commit actually touches: code → `bash tests/run.sh` + the doc-sync steps above; a removed command → also delete its `tests/test_<command>.sh`; docs/config only → no checks.
 
 ## When releasing
 
