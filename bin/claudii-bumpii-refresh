@@ -53,9 +53,31 @@ done
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 
-if ! $force && [[ -f "$CACHE_FILE" ]]; then
+# brew renews var/homebrew/locks on every write operation, so a locks dir
+# younger than the cache means the machine changed since the last look —
+# refresh now, not at the TTL mark. Over-triggering (some read ops touch it
+# too) costs a background run; the miss it prevents is an indicator that
+# keeps showing an update the user already installed.
+_brew_prefix="${HOMEBREW_PREFIX:-/opt/homebrew}"
+[[ -d "$_brew_prefix" ]] || _brew_prefix="/usr/local"
+_brew_changed() {
+  local locks="$_brew_prefix/var/homebrew/locks" lm
+  [[ -d "$locks" ]] || return 1
+  lm=$(_mtime "$locks")
+  [[ "$lm" =~ ^[0-9]+$ ]] && (( lm > $(_mtime "$CACHE_FILE") ))
+}
+
+if ! $force && [[ -f "$CACHE_FILE" ]] && ! _brew_changed; then
   cache_age=$(( $(date +%s) - $(_mtime "$CACHE_FILE") ))
-  if (( cache_age < CACHE_TTL )); then
+  # Adaptive gate, same as claudii-status: while the indicator shows anything
+  # (a count, or a "?" half), poll at TTL/12 (min 5m) so a fixed machine
+  # clears within minutes — the quiet state keeps the full TTL.
+  eff_ttl=$CACHE_TTL
+  if grep -qE '^(pending|inbox)=([1-9]|\?)' "$CACHE_FILE" 2>/dev/null; then
+    eff_ttl=$(( CACHE_TTL / 12 ))
+    (( eff_ttl < 300 )) && eff_ttl=300
+  fi
+  if (( cache_age < eff_ttl )); then
     grep -qE '^(pending|inbox)=[1-9]' "$CACHE_FILE" 2>/dev/null && exit 1
     exit 0
   fi

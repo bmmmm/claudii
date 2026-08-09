@@ -1087,9 +1087,26 @@ fi
 if [[ "$_lines_raw" == *bumpii* ]]; then
   _bp_ttl="$_cfg_bumpii_ttl"
   [[ "$_bp_ttl" =~ ^[0-9]+$ ]] || _bp_ttl=21600
+  # Adaptive gate (same as claudii-status): while the segment shows anything —
+  # a count or a "?" half — poll at TTL/12 (min 5m) so "I just upgraded"
+  # clears within minutes; the quiet state keeps the full TTL.
+  if [[ -n "$_seg_bumpii" ]]; then
+    _bp_ttl=$(( _bp_ttl / 12 ))
+    (( _bp_ttl < 300 )) && _bp_ttl=300
+  fi
   [[ "$_bp_mtime" =~ ^[0-9]+$ ]] || _bp_mtime=$(stat -f%m "$_bumpii_cache" 2>/dev/null || stat -c%Y "$_bumpii_cache" 2>/dev/null || echo 0)
   _bp_age=$(( _now - _bp_mtime ))
-  if (( _bp_age > _bp_ttl )); then
+  # brew renews var/homebrew/locks on every write op — younger than the cache
+  # means the machine changed since the last look: refresh now, not at the
+  # TTL mark. One stat per render, only while the segment is in the layout.
+  _bp_brew=0
+  _bp_hb="${HOMEBREW_PREFIX:-/opt/homebrew}"
+  [[ -d "$_bp_hb" ]] || _bp_hb="/usr/local"
+  if [[ -d "$_bp_hb/var/homebrew/locks" ]]; then
+    _bp_lm=$(stat -f%m "$_bp_hb/var/homebrew/locks" 2>/dev/null || stat -c%Y "$_bp_hb/var/homebrew/locks" 2>/dev/null || echo 0)
+    [[ "$_bp_lm" =~ ^[0-9]+$ ]] && (( _bp_lm > _bp_mtime )) && _bp_brew=1
+  fi
+  if (( _bp_age > _bp_ttl || _bp_brew )); then
     _bpid_file="$_cache_dir/bumpii-refresh.pid"
     _bpid=""
     [[ -f "$_bpid_file" ]] && { _bpid=$(<"$_bpid_file"); } 2>/dev/null
