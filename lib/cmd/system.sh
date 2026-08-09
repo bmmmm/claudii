@@ -405,10 +405,11 @@ _cc_statusline_preset_json() {
   case "$1" in
     focused)
       # 3 lines, dense. Line 1: model+dir (identity).
-      # Line 2: context-bar+rates (metrics). Line 3: claude-status+vpn (env).
+      # Line 2: context+rates (metrics). Line 3: claude-status+vpn (env).
+      # Dense means compact: the one-glyph `context` segment, not the bar.
       # cc-insomnii (if installed) prepends its own line via --after wrapper,
       # so the clock segment is intentionally absent here.
-      printf '%s' '[["model","dir"],["context-bar","rate-5h","rate-7d"],["claude-status","vpn"]]'
+      printf '%s' '[["model","dir"],["context","rate-5h","rate-7d"],["claude-status","vpn"]]'
       ;;
     calm)
       # 2 lines, bare. Model on top, context bar below. Nothing else.
@@ -416,7 +417,7 @@ _cc_statusline_preset_json() {
       ;;
     default)
       # Restore the shipped default layout (mirrors config/defaults.json).
-      printf '%s' '[["model","tokens","cache-create"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","dir","remotes","git-sync"],["omlx","proxy","cost","context-bar"],["claude-status"]]'
+      printf '%s' '[["model","tokens","cache-create","cache-hit"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","worktrees","dir","remotes","git-sync"],["omlx","proxy","cost","context"],["claude-status"]]'
       ;;
     *)
       return 1

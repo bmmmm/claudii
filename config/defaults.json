@@ -36,10 +36,10 @@
     "bedtime": "23:00",
     "insomnii": "auto",
     "lines": [
-      ["model", "tokens", "cache-create"],
+      ["model", "tokens", "cache-create", "cache-hit"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
-      ["api-duration", "duration", "worktree", "dir", "remotes", "git-sync"],
-      ["omlx", "proxy", "cost", "context-bar"],
+      ["api-duration", "duration", "worktree", "worktrees", "dir", "remotes", "git-sync"],
+      ["omlx", "proxy", "cost", "context"],
       ["claude-status"]
     ]
   },

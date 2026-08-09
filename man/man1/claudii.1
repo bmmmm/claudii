@@ -1012,7 +1012,9 @@ l l l.
 Segment	Example	Description
 _
 model	\fBClaude Opus 4.8\fR	Model name (bold); effort level appended (ultracode/xhigh/max highlighted); \[u25B2] when thinking active
-context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62% \[u26A1]73%	10-block bar + usable% + cache hit ratio
+context	\[u25D1]62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF] ramp, threshold-coloured). The compact default
+context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
+cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%)
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
 cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
@@ -1029,7 +1031,8 @@ delta-5h	\[u03B4]5h:+12%	5h rate change since session start
 delta-7d	\[u03B4]7d:+3%	7d rate change since session start
 cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
 session-name	my-feature	Custom session name (from /rename or --name)
-worktree	feat/login \[u23B7] main	Worktree + branch (dim)
+worktree	feat/login \[u23B7] main	Worktree + branch (dim) \(em the one this session runs in
+worktrees	\[u2442]3 \[u232B]1	Linked worktrees in this repo (cyan), prunable ones called out as \[u232B]P (yellow). See below
 dir	\[u2302] my-app	Working directory basename (dim)
 github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
 remotes	\[u21E1]fj\[u00B7]gh	Where the repo is published (from git remotes) \(em \fBfj\fR self-hosted forge (any non-GitHub host) / \fBgh\fR GitHub / \fBlocal\fR no remote
@@ -1041,11 +1044,18 @@ claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from C
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
 .TE
 .PP
-.B context-bar color thresholds:
+.B context / context-bar color thresholds:
 green < 70%, yellow 70\(en89%, red >= 90% of the
 .I usable
 context \(em the raw used-percentage rescaled to the model's practical (pre-compact)
-window, so the bar fills as the compact point nears rather than at 100%. The
+window, so the display fills as the compact point nears rather than at 100%.
+Both segments render the same number; they differ only in width \(em
+.B context
+spends one column on a
+.BR \[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF]
+fill glyph (the level stays readable without colour), while
+.B context-bar
+spends ten on the block bar. The
 practical window is model-aware: flat-1M-billing models \(em opus, fable,
 mythos, and sonnet 5+ (incl.\& their 1M window) \(em end at 80%, while a
 legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k (e.g.\&
@@ -1055,25 +1065,28 @@ window (no [1m] opt-in needed), so they get the same flat-rate treatment as
 opus here.
 .B CLAUDE_CODE_AUTO_COMPACT_WINDOW
 (inherited from Claude Code) overrides the default scale.
-A window marker is appended after the bar, and it is
+A
+.B >200k
+marker is appended when the context exceeds 200k tokens on a model where that
+still means something, and it is
 .IR model-aware .
 Opus, Fable, Mythos, and Sonnet 5+ bill a flat rate across their entire 1M
 window (no >200k long-context premium; Opus's real capacity edge is the ~780k
 compact point, not 200k), so Claude Code's
 .I exceeds_200k_tokens
-flag is a non-event there \(em a dim
-.B 1M
-window label is shown and never a >200k warning. For a legacy-sonnet model
-(4.6 and earlier), crossing 200k still matters: on a native 1M window (e.g.\&
-sonnet[1m], a paid opt-in) it is the long-context pricing tier, shown as a
-yellow
+flag is a non-event there and no marker is shown at all. For a legacy-sonnet
+model (4.6 and earlier), crossing 200k still matters: on a native 1M window
+(e.g.\& sonnet[1m], a paid opt-in) it is the long-context pricing tier, shown
+as a yellow
 .BR >200k ;
 on a 200k-class window it is a genuine overflow of the standard window, shown as
 a red
 .BR >200k .
-Cache hit ratio
-.B \[u26A1]XX%
-is shown when cache-read tokens are present (green >= 60%, yellow < 30%).
+No constant window label is rendered \(em a dim
+.B 1M
+next to every reading said nothing that ever changed. The prompt-cache hit
+ratio moved out of this segment into its own opt-in
+.BR cache-hit .
 .PP
 .B git-sync color key:
 the working copy's state vs.\& its upstream, as a compact traffic light \(em
@@ -1094,6 +1107,29 @@ that omits
 .BR git-sync .
 No upstream or a detached HEAD shows only the dirty state;
 outside a git repo the segment is empty.
+.PP
+.B worktrees:
+.B \[u2442]N
+counts the
+.I linked
+worktrees of the repo the session is working in \(em the main working tree is
+never counted, so N is exactly what
+.B git worktree remove
+can act on. Leftover orchestration worktrees are what this exists for: from
+inside the main checkout they are invisible, they keep branches and stale state
+alive, and they accumulate across waves. Worktrees git reports as
+.I prunable
+(their directory is gone, only stale admin data is left) are called out
+separately as a yellow
+.BR \[u232B]P ,
+since those are garbage rather than parallel work \(em clear them with
+.BR "git worktree prune" .
+The worktree this session itself runs in is named by the
+.B worktree
+segment instead. One
+.B git worktree list
+fork per render, only when the segment is in the active layout; empty at zero
+linked worktrees and outside a git repo.
 .PP
 .B rate-5h / rate-7d:
 color is cyan < 50%, yellow 50\(en79%, red >= 80%.

@@ -416,8 +416,10 @@ _flat_1m_model() {
   esac
 }
 
-# Context bar: usable % = raw scaled to the model's practical (pre-compact) window.
-# >200k flag, 1M label, cache hit %. used_percentage is pre-calculated against the
+# Context display: usable % = raw scaled to the model's practical (pre-compact)
+# window. Two renderings share the computation — `context` (compact: one fill
+# glyph + the number) and `context-bar` (the legacy 10-block bar).
+# used_percentage is pre-calculated against the
 # FULL context_window_size, but the useful window ends at the compact point, not
 # 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
 # point nears. The default scale is *model-aware*, mirroring the FLOOR rule in
@@ -460,6 +462,7 @@ if [[ "$_ac_env" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
   [[ "$_ac_scale_pct" =~ ^[0-9]+$ ]] || _ac_scale_pct=$_ac_dflt
 fi
 _seg_context=""
+_seg_context_compact=""
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
   (( local_pct < 0 )) && local_pct=0
@@ -471,37 +474,46 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   bar=""
   (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
   (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
-  # Window / pricing marker — model-aware (_flat_1m_model). Opus/Fable-Mythos/
-  # Sonnet-5+ bill a flat rate across their entire 1M window (no >200k long-
-  # context premium; Opus's real capacity edge is the ~780k compact point, not
-  # 200k), so Claude Code's exceeds_200k_tokens flag is a non-event there: show
-  # the dim 1M window label and NEVER a >200k warning. For a legacy-sonnet
-  # model (4.6 and earlier) crossing 200k still means something — on a native
-  # 1M window (sonnet[1m], a paid opt-in) it is the long-context pricing tier
-  # → informational yellow; on a 200k-class window it is a genuine overflow of
-  # the standard window → red. (Was unconditionally red, a false alarm on
-  # Opus/1M.)
+  # Fill glyph for the compact `context` segment — the ○◔◑◕● ramp carries the
+  # same fill level the threshold colour does, so the reading survives a
+  # colour-blind eye, a monochrome terminal, and a copy-paste that strips ANSI
+  # (a bare coloured number does not). One column instead of the bar's ten.
+  if   (( _usable_pct >= 88 )); then _ctx_glyph="●"
+  elif (( _usable_pct >= 63 )); then _ctx_glyph="◕"
+  elif (( _usable_pct >= 38 )); then _ctx_glyph="◑"
+  elif (( _usable_pct >= 13 )); then _ctx_glyph="◔"
+  else                               _ctx_glyph="○"
+  fi
+  # Window / pricing marker — model-aware (_flat_1m_model). Only the >200k
+  # warning is rendered; the dim "1M" window label was dropped as pure noise
+  # (it is a constant per model — it never tells you anything that changed).
+  # On Opus/Fable/Mythos/Sonnet-5+ the flat 1M rate makes Claude Code's
+  # exceeds_200k_tokens flag a non-event, so those models get no marker at all.
+  # For a legacy-sonnet model (4.6 and earlier) crossing 200k still means
+  # something — on a native 1M window (sonnet[1m], a paid opt-in) it is the
+  # long-context pricing tier → informational yellow; on a 200k-class window it
+  # is a genuine overflow of the standard window → red.
   win=""
-  _win_1m=0
-  [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null && _win_1m=1
-  if _flat_1m_model "${model_id:-$model}"; then
-    (( _win_1m )) && win=" ${DIM}1M${RST}"
-  else
-    if [[ "$exceeds_200k" == "true" ]]; then
-      if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
-      else                   win=" ${RED}>200k${RST}"; fi
-    elif (( _win_1m )); then
-      win=" ${DIM}1M${RST}"
-    fi
+  if [[ "$exceeds_200k" == "true" ]] && ! _flat_1m_model "${model_id:-$model}"; then
+    _win_1m=0
+    [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null && _win_1m=1
+    if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
+    else                   win=" ${RED}>200k${RST}"; fi
   fi
-  _thr "$_usable_pct"; _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
-  if _isset "$cache_read" && _isset "$_cache_pct"; then
-    if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
-    elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
-    else                              _cc="${DIM}"
-    fi
-    _seg_context+=" ${_cc}⚡${_cache_pct}%${RST}"
+  _thr "$_usable_pct"
+  _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
+  _seg_context_compact="${_CLR}${_ctx_glyph}${_usable_pct}%${RST}${win}"
+fi
+
+# Cache hit ratio — was glued to the context bar, now its own opt-in segment so
+# a compact context display doesn't have to carry it. Green >= 60%, yellow < 30%.
+_seg_cache_hit=""
+if _isset "$cache_read" && _isset "$_cache_pct"; then
+  if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
+  elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
+  else                              _cc="${DIM}"
   fi
+  _seg_cache_hit="${_cc}⚡${_cache_pct}%${RST}"
 fi
 
 _seg_cost=""
@@ -706,10 +718,10 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-_DEFAULT_LINES="model,tokens,cache-create
+_DEFAULT_LINES="model,tokens,cache-create,cache-hit
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,duration,worktree,dir,remotes,git-sync
-omlx,proxy,cost,context-bar
+api-duration,duration,worktree,worktrees,dir,remotes,git-sync
+omlx,proxy,cost,context
 claude-status,vpn"
 
 _lines_raw="$_DEFAULT_LINES"
@@ -792,6 +804,40 @@ if [[ "$_lines_raw" == *git-sync* ]]; then
       (( _gs_ahead  > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${YELLOW}↑${_gs_ahead}${RST}"
       (( _gs_behind > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${RED}↓${_gs_behind}${RST}"
       [[ -z "$_seg_git_sync" ]] && _seg_git_sync="${GREEN}✓${RST}"
+    fi
+  fi
+fi
+
+# Worktrees segment — how many linked worktrees this repo carries. Leftover
+# orchestration worktrees are the failure mode it exists for: from inside the
+# main checkout they are invisible, they keep branches and stale state alive,
+# and they accumulate silently across waves. N counts LINKED worktrees only —
+# the first `worktree ` record is the main working tree and is never counted —
+# so N is exactly what `git worktree remove` can act on. Prunable ones (gitdir
+# gone / stale admin data, git's own `prunable` marker) are called out
+# separately as ⌫P, since those are pure garbage rather than parallel work.
+# Rendered ⑂N; the current worktree keeps being named by the `worktree`
+# segment. Empty at zero worktrees and outside a git repo. One
+# `git worktree list --porcelain` fork, gated on the segment being in the
+# active layout (like remotes/git-sync/sessions).
+_seg_worktrees=""
+if [[ "$_lines_raw" == *worktrees* ]]; then
+  _wl_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_wl_dir" && "$_wl_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _wl_out=$(git -C "$_wl_dir" worktree list --porcelain 2>/dev/null); _wl_rc=$?
+    if (( _wl_rc == 0 )); then
+      _wl_n=0; _wl_prune=0
+      while IFS= read -r _wl_line; do
+        case "$_wl_line" in
+          'worktree '*) (( ++_wl_n ))     ;;
+          prunable*)    (( ++_wl_prune )) ;;
+        esac
+      done <<< "$_wl_out"
+      _wl_n=$(( _wl_n - 1 ))              # first record = the main working tree
+      if (( _wl_n > 0 )); then
+        _seg_worktrees="${CYAN}⑂${_wl_n}${RST}"
+        (( _wl_prune > 0 )) && _seg_worktrees+=" ${YELLOW}⌫${_wl_prune}${RST}"
+      fi
     fi
   fi
 fi
@@ -1126,7 +1172,9 @@ while IFS= read -r _line_segs; do
   for _seg in "${_segs[@]}"; do
     case "$_seg" in
       model)         _val="$_seg_model"    ;;
+      context)       _val="$_seg_context_compact" ;;
       context-bar)   _val="$_seg_context"  ;;
+      cache-hit)     _val="$_seg_cache_hit" ;;
       cost)          _val="$_seg_cost"     ;;
       rate-5h)       _val="$_seg_rate5h"   ;;
       rate-7d)       _val="$_seg_rate7d"   ;;
@@ -1139,6 +1187,7 @@ while IFS= read -r _line_segs; do
       bg-tasks)      _val="$_seg_bg"       ;;
       compactions)   _val="$_seg_compactions" ;;
       worktree)      _val="$_seg_worktree" ;;
+      worktrees)     _val="$_seg_worktrees" ;;
       agent)         _val="$_seg_agent"    ;;
       session-name)  _val="$_seg_session_name" ;;
       api-duration)  _val="$_seg_api_dur"  ;;

@@ -39,9 +39,9 @@ assert_eq "toggle removed from bin/claudii" "" \
 # Every segment in the layout loop must have a row in the man page segments table.
 # Update this list whenever a new segment is added to bin/claudii-cc-statusline.
 SL_SEGMENTS=(
-  model context-bar rate-5h rate-7d cost tokens lines-changed duration
+  model context context-bar cache-hit rate-5h rate-7d cost tokens lines-changed duration
   api-duration burn-eta pace cron bg-tasks compactions delta-5h delta-7d cache-create session-name
-  worktree agent ruler claude-status github remotes git-sync sessions
+  worktree worktrees agent ruler claude-status github remotes git-sync sessions
 )
 for seg in "${SL_SEGMENTS[@]}"; do
   assert_contains "man page documents segment: $seg" "$seg" "$(cat "$MAN")"

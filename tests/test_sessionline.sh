@@ -34,9 +34,10 @@ assert_contains "large tokens formatted" "190.0K" "$output"
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":1500000,"total_output_tokens":300000,"context_window_size":200000},"cost":{"total_cost_usd":15.00,"total_duration_ms":120000}}' | bash "$SL" 2>&1)
 assert_contains "million tokens formatted" "1.5M" "$output"
 
-# Extended context window (1M)
+# Extended context window (1M) — the constant "1M" window label is gone: it was
+# a per-model constant that never told you anything that changed.
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":100000,"total_output_tokens":20000,"context_window_size":1000000},"cost":{"total_cost_usd":1.00,"total_duration_ms":300000}}' | bash "$SL" 2>&1)
-assert_contains "1M context indicator" "1M" "$output"
+assert_eq "1M window label dropped" "0" "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
 
 # Minimal data (no rate limits, no lines, no duration)
 output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percentage":5,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' | bash "$SL" 2>&1)
@@ -407,18 +408,19 @@ assert_eq "cache-create absent when zero" "0" "$(echo "$strip" | grep -c '✎' |
 
 # Window / pricing marker — model-aware (exceeds_200k_tokens handling).
 # Opus and Sonnet 5+ bill a flat rate across their whole 1M window (no >200k
-# premium), so the flag is a non-event there — dim 1M label, never a >200k
-# warning. Legacy-sonnet (4.6 and earlier) crossing 200k is a real signal:
-# yellow on a native 1M window (sonnet[1m], the paid pricing tier), red on a
-# 200k-class window (genuine overflow).
+# premium), so the flag is a non-event there — no marker at all (the constant
+# "1M" label these cases used to render was dropped). Legacy-sonnet (4.6 and
+# earlier) crossing 200k is a real signal: yellow on a native 1M window
+# (sonnet[1m], the paid pricing tier), red on a 200k-class window (genuine
+# overflow).
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
-# Opus on its 1M window + exceeds_200k → dim 1M label, NEVER >200k (the 28%
+# Opus on its 1M window + exceeds_200k → no marker at all, NEVER >200k (the 28%
 # screenshot case: flat pricing, no long-context premium).
 _wm=$(echo '{"model":{"display_name":"Opus 4.8","id":"claude-opus-4-8"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-assert_contains "window marker: opus/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: opus/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
 assert_eq "window marker: opus never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 # Non-opus 200k-class window + exceeds_200k → genuine overflow → red >200k.
 # -F on the count: the needle's '[' is a literal SGR byte, not a regex bracket.
@@ -430,23 +432,97 @@ _wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"con
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "window marker: sonnet[1m]/1M >200k is yellow" $'\033[0;33m>200k' "$_wm"
 assert_eq "window marker: sonnet[1m] not red" "0" "$(printf '%s' "$_wm" | grep -cF $'\033[0;31m>200k' || true)"
-# Sonnet 5 on its 1M window + exceeds_200k → dim 1M label, NEVER >200k — same
+# Sonnet 5 on its 1M window + exceeds_200k → no marker, NEVER >200k — same
 # flat-billing treatment as opus (1M is the default, no [1m] opt-in, confirmed
 # 2026-07-01), unlike Sonnet 4.6 and earlier above.
 _wm=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-assert_contains "window marker: sonnet-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: sonnet-5/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
 assert_eq "window marker: sonnet-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 # Fable 5 and Mythos 5 have the same flat-1M-billing shape as opus/sonnet-5.
 _wm=$(echo '{"model":{"display_name":"Fable 5","id":"claude-fable-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-assert_contains "window marker: fable-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: fable-5/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
 assert_eq "window marker: fable-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 _wm=$(echo '{"model":{"display_name":"Mythos 5","id":"claude-mythos-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
-assert_contains "window marker: mythos-5/1M shows 1M label" "1M" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g')"
+assert_eq "window marker: mythos-5/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
 assert_eq "window marker: mythos-5 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 unset _wm
+
+# ── context (compact) vs context-bar — same number, different width ─────────
+# The compact segment replaces the 10-block bar with one ○◔◑◕● fill glyph, so
+# the level survives without colour (colour-blind eye, monochrome terminal,
+# ANSI-stripped copy-paste) at a tenth of the width.
+_cx_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_cx_cfg")
+mkdir -p "$_cx_cfg/claudii"
+_cx_run() {  # $1 = segment name, $2 = raw used_percentage → stripped output
+  printf '{"statusline":{"lines":[["%s"]]}}\n' "$1" > "$_cx_cfg/claudii/config.json"
+  echo "{\"model\":{\"display_name\":\"Opus\",\"id\":\"claude-opus-4-8\"},\"context_window\":{\"used_percentage\":$2,\"total_input_tokens\":1,\"total_output_tokens\":1,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.1}}" \
+    | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+# Glyph ramp over the *usable* percentage (raw × 100/80): 4→5% ○, 20→25% ◔,
+# 40→50% ◑, 56→70% ◕, 76→95% ●.
+assert_contains "context glyph: 5% → ○"   "○5%"   "$(_cx_run context 4)"
+assert_contains "context glyph: 25% → ◔"  "◔25%"  "$(_cx_run context 20)"
+assert_contains "context glyph: 50% → ◑"  "◑50%"  "$(_cx_run context 40)"
+assert_contains "context glyph: 70% → ◕"  "◕70%"  "$(_cx_run context 56)"
+assert_contains "context glyph: 95% → ●"  "●95%"  "$(_cx_run context 76)"
+# Colour still keyed on the same thresholds as the bar (green <70, red >=90).
+printf '{"statusline":{"lines":[["context"]]}}\n' > "$_cx_cfg/claudii/config.json"
+_cx_raw=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":76,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
+  | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null)
+assert_contains "context 95% is red" $'\033[31m' "$_cx_raw"
+# No bar blocks in the compact segment, and no ⚡ glued to it any more.
+assert_eq "context: no block bar" "0" "$(_cx_run context 40 | grep -c '█' || true)"
+# The bar variant still renders ten blocks for the same input.
+assert_contains "context-bar still draws blocks" "█████░░░░░" "$(_cx_run context-bar 40)"
+unset -f _cx_run; unset _cx_raw
+
+# ── cache-hit — the ⚡ ratio as its own segment (was glued to context-bar) ────
+printf '{"statusline":{"lines":[["context-bar","cache-hit"]]}}\n' > "$_cx_cfg/claudii/config.json"
+_ch_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
+_ch=$(echo "$_ch_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "cache-hit segment renders ⚡33%" "⚡33%" "$_ch"
+# …and the context-bar next to it no longer carries its own copy.
+assert_eq "cache-hit appears exactly once" "1" "$(printf '%s' "$_ch" | grep -o '⚡' | grep -c . || true)"
+printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_cx_cfg/claudii/config.json"
+assert_eq "context-bar alone has no ⚡" "0" \
+  "$(echo "$_ch_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | grep -c '⚡' || true)"
+unset _ch _ch_json
+
+# ── worktrees segment — linked worktrees of the current repo (⑂N ⌫P) ─────────
+# Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives
+# in the SYSTEM temp dir (a repo under $CLAUDII_HOME would let git's upward
+# .git discovery resolve to claudii's own tree) with an empty --template.
+_wt_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_wt_cfg")
+mkdir -p "$_wt_cfg/claudii"
+printf '{"statusline":{"lines":[["worktrees"]]}}\n' > "$_wt_cfg/claudii/config.json"
+_wt_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_wt_tpl")
+_wt_base="$(mktemp -d)"; _SL_TMPDIRS+=("$_wt_base")
+_wt_repo="$_wt_base/repo"
+git init -q --template="$_wt_tpl" -b main "$_wt_repo"
+git -C "$_wt_repo" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m A
+_wt_run() {  # $1 = cwd → stripped statusline output
+  echo "{\"model\":{\"display_name\":\"Opus\"},\"cwd\":\"$1\",\"context_window\":{\"used_percentage\":10}}" \
+    | XDG_CONFIG_HOME="$_wt_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+# Main working tree alone → not counted → segment empty → no output line.
+assert_eq "worktrees: none → empty output" "" "$(_wt_run "$_wt_repo")"
+git -C "$_wt_repo" worktree add -q -b wt1 "$_wt_base/wt1"
+git -C "$_wt_repo" worktree add -q -b wt2 "$_wt_base/wt2"
+assert_contains "worktrees: two linked → ⑂2" "⑂2" "$(_wt_run "$_wt_repo")"
+# A worktree whose directory is gone stays counted but is flagged prunable.
+mv "$_wt_base/wt2" "$_wt_base/wt2-gone"
+assert_contains "worktrees: prunable → ⌫1" "⑂2 ⌫1" "$(_wt_run "$_wt_repo")"
+# Seen from inside a linked worktree the count is the same (repo-wide, not relative).
+assert_contains "worktrees: same count from inside a worktree" "⑂2" "$(_wt_run "$_wt_base/wt1")"
+# Non-git directory → segment omitted entirely.
+assert_eq "worktrees: non-git → empty output" "" "$(_wt_run "$_wt_tpl")"
+# Layout gate: no `worktrees` in the layout → no ⑂ anywhere (and no git fork).
+printf '{"statusline":{"lines":[["model"]]}}\n' > "$_wt_cfg/claudii/config.json"
+assert_eq "worktrees: gated out of layout" "0" "$(_wt_run "$_wt_repo" | grep -c '⑂' || true)"
+unset -f _wt_run
 
 # session-name segment: shown when session_name set
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
