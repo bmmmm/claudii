@@ -1149,6 +1149,16 @@ line always renders in full \(em a line reduced to nothing but an ellipsis
 carries no information \(em which is the one case where the budget can be
 exceeded.
 .PP
+All three count characters, not bytes, in every locale: under
+.B LC_ALL=C
+bash's
+.B ${#…}
+counts bytes and every glyph here is a three-byte sequence, so a column budget
+measured that way reports overflows that do not exist \(em and a cut made that
+way can land inside a character. Lengths therefore drop UTF-8 continuation
+bytes before measuring, and a byte-mode cut backs off to the nearest character
+boundary, which only ever shortens the result.
+.PP
 .B max_width
 is deliberately not auto-detected. Nothing in the statusLine JSON carries the
 terminal width, and the usual fallbacks lie in exactly this context: Claude

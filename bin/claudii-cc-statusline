@@ -84,6 +84,24 @@ _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 [[ "$_cfg_max_label" =~ ^[0-9]+$ ]] || _cfg_max_label=20
 (( _cfg_max_label > 0 && _cfg_max_label < 4 )) && _cfg_max_label=4   # room for "abc…"
 
+# Does ${#…} count characters here, or bytes? Under a UTF-8 locale bash counts
+# characters; under LC_ALL=C it counts bytes, and every glyph in this file is a
+# 3-byte sequence. Both matter: the CI matrix runs a C leg on purpose.
+_CHARLEN=0
+_charlen_probe="ä"
+(( ${#_charlen_probe} == 1 )) && _CHARLEN=1
+
+# _clen <string> → _CLEN, length in characters regardless of locale.
+# UTF-8 continuation bytes (0x80-0xBF) are exactly the bytes that do NOT start
+# a character, so dropping them and measuring what is left counts characters in
+# byte mode and changes nothing in character mode (no standalone continuation
+# byte is a valid character there). Verified on bash 3.2 and 5.x, C and UTF-8.
+_CLEN=0
+_clen() {
+  local _s=${1//[$'\x80'-$'\xbf']/}
+  _CLEN=${#_s}
+}
+
 # _trunc <value> → _TRUNC, capped at max_label with a trailing ellipsis.
 # Also drops the "worktree-" prefix Claude Code puts on worktree branch names
 # (documented convention, e.g. "worktree-my-feature") — the worktree/worktrees
@@ -91,10 +109,21 @@ _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 # of repetition on the longest value in the line.
 _TRUNC=""
 _trunc() {
-  local _v=$1
+  local _v=$1 _cut
   [[ "$_v" == worktree-?* ]] && _v="${_v#worktree-}"
-  if (( _cfg_max_label > 0 )) && (( ${#_v} > _cfg_max_label )); then
-    _TRUNC="${_v:0:$(( _cfg_max_label - 1 ))}…"
+  _clen "$_v"
+  if (( _cfg_max_label > 0 )) && (( _CLEN > _cfg_max_label )); then
+    _cut="${_v:0:$(( _cfg_max_label - 1 ))}"
+    # In byte mode that substring counted bytes, so it can land inside a UTF-8
+    # sequence — a half character renders as garbage. Back off to the nearest
+    # boundary: while the byte just past the cut is a continuation byte, the
+    # cut is mid-character. Costs at most three steps and only ever shortens.
+    if (( ! _CHARLEN )); then
+      while [[ -n "$_cut" && "${_v:${#_cut}:1}" == [$'\x80'-$'\xbf'] ]]; do
+        _cut="${_cut%?}"
+      done
+    fi
+    _TRUNC="${_cut}…"
   else
     _TRUNC="$_v"
   fi
@@ -103,9 +132,8 @@ _trunc() {
 # _visible_len <string> → _VLEN, display columns with SGR sequences removed.
 # Pure bash: the render loop would otherwise fork sed once per line. Params of
 # an SGR escape are digits and semicolons, so "up to the next m" is an exact
-# cut. Under a UTF-8 locale ${#…} counts characters, which equals columns for
-# every glyph this script emits; under LC_ALL=C it counts bytes and the budget
-# errs toward trimming early — a visible ellipsis, never a wrapped line.
+# cut. Length goes through _clen, so a column budget means the same thing under
+# LC_ALL=C as it does under a UTF-8 locale.
 _VLEN=0
 _visible_len() {
   local _s=$1 _out=""
@@ -115,7 +143,8 @@ _visible_len() {
     _s="${_s#*m}"
   done
   _out+="$_s"
-  _VLEN=${#_out}
+  _clen "$_out"
+  _VLEN=$_CLEN
 }
 [[ "$_cfg_insomnii" != "off" && "$_cfg_insomnii" != "on" ]] && _cfg_insomnii="auto"
 # Re-apply opt-out defaults AFTER the read: a failing jq (corrupt config.json)

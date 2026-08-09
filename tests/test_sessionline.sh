@@ -621,9 +621,12 @@ assert_eq "ci: no cache → empty output" "" "$(_ci_run)"
 unset -f _ci_seed _ci_run
 
 # ── Width discipline — max_label / separator / max_width ────────────────────
-# Every assert measures the ANSI-stripped line with bash ${#…} under the test
-# runner's UTF-8 locale, which counts characters = display columns for every
-# glyph this script emits.
+# Lengths go through _wd_len, not bare ${#…}: under LC_ALL=C (a CI matrix leg)
+# ${#…} counts bytes, and every glyph here is a 3-byte sequence — measuring
+# bytes against a column budget reports overflows that do not exist. Dropping
+# UTF-8 continuation bytes first counts characters in either locale, which is
+# the same thing the statusline itself does (_clen).
+_wd_len() { local _s=${1//[$'\x80'-$'\xbf']/}; printf '%s' "${#_s}"; }
 _wd_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_wd_cfg")
 mkdir -p "$_wd_cfg/claudii"
 _wd_json='{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"session_id":"widthsess001","session_name":"a-rather-long-session-name","worktree":{"name":"toasty-petting-moler-cat","branch":"worktree-toasty-petting-moler-cat"},"context_window":{"used_percentage":12},"cost":{"total_cost_usd":0.1}}'
@@ -661,7 +664,7 @@ assert_eq "max_width: off by default (no drop marker)" "0" \
 _wd_over=0; _wd_capped=0
 for _wd_m in 20 24 28 32 36 40 44 48 52 56 60 64 68 72; do
   _wd_line=$(_wd_run ".statusline.max_width = $_wd_m")
-  (( ${#_wd_line} > _wd_m )) && _wd_over=$(( _wd_over + 1 ))
+  (( $(_wd_len "$_wd_line") > _wd_m )) && _wd_over=$(( _wd_over + 1 ))
   [[ "$_wd_line" == *"│ …" ]] && _wd_capped=$(( _wd_capped + 1 ))
 done
 assert_eq "max_width: budget never exceeded across the sweep" "0" "$_wd_over"
@@ -681,7 +684,25 @@ assert_contains "max_width: segment behind a skipped one survives" "a-rather-lon
 assert_eq "max_width: the wide segment is the one dropped" "0" \
   "$(printf '%s' "$_wd_skip" | grep -c 'toasty' || true)"
 assert_contains "max_width: the skip is marked" "│ …" "$_wd_skip"
-unset -f _wd_run; unset _wd_out _wd_full _wd_line _wd_over _wd_capped _wd_tiny _wd_default_len
+# A non-ASCII name must never be cut mid-sequence. The name is built so the
+# naive cut lands INSIDE a character: max_label 10 cuts after 9 units, and the
+# two-byte "ä" occupies bytes 9-10 — so in byte mode a cut without the boundary
+# back-off emits a lone lead byte. Picking a name that happens to break on a
+# boundary would pass with the back-off removed (it did, on the first try).
+_wd_json='{"model":{"display_name":"S"},"session_id":"widthsess002","session_name":"abcdefghähnlich-lang-genug","context_window":{"used_percentage":12},"cost":{"total_cost_usd":0.1}}'
+# The two locales legitimately land on different cuts — character mode keeps
+# 9 characters ("abcdefghä"), byte mode keeps 8 after backing off the split
+# "ä" — so the assert is the invariant both must satisfy, not one exact string:
+# valid UTF-8 out, the intact prefix in, and never longer than the cap.
+_wd_uml=$(_wd_run '.statusline.max_label = 10')
+assert_eq "max_label: truncated output stays valid UTF-8" "0" \
+  "$(printf '%s' "$_wd_uml" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; echo $?)"
+assert_contains "max_label: intact prefix survives the cut" "abcdefgh" "$_wd_uml"
+assert_contains "max_label: multibyte name is marked as cut" "…" "$_wd_uml"
+# "S" + " │ " + at most 10 label characters.
+assert_eq "max_label: never exceeds the cap in either locale" "1" \
+  "$(( $(_wd_len "$_wd_uml") <= 14 ))"
+unset -f _wd_run _wd_len; unset _wd_out _wd_full _wd_line _wd_over _wd_capped _wd_tiny _wd_skip _wd_uml _wd_json
 
 # session-name segment: shown when session_name set
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
