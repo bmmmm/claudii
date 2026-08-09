@@ -30,10 +30,11 @@ _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
 _cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""
+_cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
-    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl < <(
+    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_max_width _cfg_max_label _cfg_separator < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
@@ -48,13 +49,74 @@ if [[ -f "$_config_file" ]]; then
       (.statusline.insomnii // "auto"),
       (.status.cache_ttl // "" | tostring),
       (.bumpii.cache_ttl // "" | tostring),
-      (.ci.cache_ttl // "" | tostring)
+      (.ci.cache_ttl // "" | tostring),
+      (.statusline.max_width // "" | tostring),
+      (.statusline.max_label // "" | tostring),
+      (.statusline.separator // "")
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
 fi
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
 _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
+
+# ── Width discipline ─────────────────────────────────────────────────────────
+# Three independent mechanisms, applied in this order, because a statusline
+# that wraps is worse than one that says less:
+#
+#   max_label   caps the only unbounded values in a line — branch, directory,
+#               worktree, session and agent names. Everything else is a number
+#               or a fixed glyph. 0 disables it.
+#   separator   "tight" (default, " │ ") or "wide" (the old "  │  "). Two
+#               columns per gap sounds like nothing until a dense line has
+#               eight of them.
+#   max_width   the backstop: a hard per-line column budget. Segments that no
+#               longer fit are dropped from the end and replaced by a dim "…",
+#               so a shortened line always says that it was shortened. 0 = off.
+#
+# max_width is deliberately NOT auto-detected. Nothing in the statusLine JSON
+# carries the terminal width (checked against the documented schema), and the
+# usual fallbacks lie in exactly this context: Claude Code hands the command a
+# COLUMNS of 0, and `tput cols` with a piped stdout answers with terminfo's
+# 80 regardless of how wide the window really is. Truncating a 140-column
+# terminal to 80 because a guess said so is worse than not truncating.
+[[ "$_cfg_max_width" =~ ^[0-9]+$ ]] || _cfg_max_width=0
+[[ "$_cfg_max_label" =~ ^[0-9]+$ ]] || _cfg_max_label=20
+(( _cfg_max_label > 0 && _cfg_max_label < 4 )) && _cfg_max_label=4   # room for "abc…"
+
+# _trunc <value> → _TRUNC, capped at max_label with a trailing ellipsis.
+# Also drops the "worktree-" prefix Claude Code puts on worktree branch names
+# (documented convention, e.g. "worktree-my-feature") — the worktree/worktrees
+# segments next to it already say it is a worktree, so the prefix is 9 columns
+# of repetition on the longest value in the line.
+_TRUNC=""
+_trunc() {
+  local _v=$1
+  [[ "$_v" == worktree-?* ]] && _v="${_v#worktree-}"
+  if (( _cfg_max_label > 0 )) && (( ${#_v} > _cfg_max_label )); then
+    _TRUNC="${_v:0:$(( _cfg_max_label - 1 ))}…"
+  else
+    _TRUNC="$_v"
+  fi
+}
+
+# _visible_len <string> → _VLEN, display columns with SGR sequences removed.
+# Pure bash: the render loop would otherwise fork sed once per line. Params of
+# an SGR escape are digits and semicolons, so "up to the next m" is an exact
+# cut. Under a UTF-8 locale ${#…} counts characters, which equals columns for
+# every glyph this script emits; under LC_ALL=C it counts bytes and the budget
+# errs toward trimming early — a visible ellipsis, never a wrapped line.
+_VLEN=0
+_visible_len() {
+  local _s=$1 _out=""
+  while [[ "$_s" == *$'\033['* ]]; do
+    _out+="${_s%%$'\033['*}"
+    _s="${_s#*$'\033['}"
+    _s="${_s#*m}"
+  done
+  _out+="$_s"
+  _VLEN=${#_out}
+}
 [[ "$_cfg_insomnii" != "off" && "$_cfg_insomnii" != "on" ]] && _cfg_insomnii="auto"
 # Re-apply opt-out defaults AFTER the read: a failing jq (corrupt config.json)
 # leaves read with no input, which blanks every listed var — including the
@@ -428,7 +490,13 @@ YELLOW=$'\033[0;33m'
 RED=$'\033[0;31m'
 WHITE=$'\033[0;97m'
 ACCENT=$'\033[38;5;213m'
-SEP="${DIM}  │  ${RST}"
+# Separator width is a real budget item, not decoration: a dense line has up to
+# eight gaps, and the old "  │  " spent 40 columns on them.
+if [[ "$_cfg_separator" == "wide" ]]; then
+  SEP="${DIM}  │  ${RST}"; _SEP_LEN=5
+else
+  SEP="${DIM} │ ${RST}";   _SEP_LEN=3
+fi
 
 # Model + effort + thinking indicator.
 _seg_model=""
@@ -748,16 +816,22 @@ fi
 _seg_worktree=""
 _wt_name="${worktree_name:-$workspace_git_worktree}"
 if [[ -n "$_wt_name" ]]; then
-  _seg_worktree="${DIM}${_wt_name}${RST}"
-  [[ -n "$worktree_name" && -n "$worktree_branch" ]] && _seg_worktree+=" ${DIM}⎇ ${worktree_branch}${RST}"
+  _trunc "$_wt_name"; _seg_worktree="${DIM}${_TRUNC}${RST}"
+  if [[ -n "$worktree_name" && -n "$worktree_branch" ]]; then
+    _trunc "$worktree_branch"; _seg_worktree+=" ${DIM}⎇ ${_TRUNC}${RST}"
+  fi
 fi
 
 _seg_agent=""
 _agent_display="${agent_name:-$session_name}"
-[[ -n "$_agent_display" ]] && _seg_agent="${DIM}@${RST}${ACCENT}${_agent_display}${RST}"
+if [[ -n "$_agent_display" ]]; then
+  _trunc "$_agent_display"; _seg_agent="${DIM}@${RST}${ACCENT}${_TRUNC}${RST}"
+fi
 
 _seg_session_name=""
-[[ -n "$session_name" ]] && _seg_session_name="${DIM}${session_name}${RST}"
+if [[ -n "$session_name" ]]; then
+  _trunc "$session_name"; _seg_session_name="${DIM}${_TRUNC}${RST}"
+fi
 
 _seg_api_dur=""
 if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
@@ -798,7 +872,9 @@ _seg_dir=""
 _dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
 if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   _dir_name="${_dir_path##*/}"
-  [[ -n "$_dir_name" ]] && _seg_dir="${DIM}⌂${RST} ${YELLOW}${_dir_name}${RST}"
+  if [[ -n "$_dir_name" ]]; then
+    _trunc "$_dir_name"; _seg_dir="${DIM}⌂${RST} ${YELLOW}${_TRUNC}${RST}"
+  fi
 fi
 
 # GitHub / repo segment (workspace.repo.*, Claude Code 2.1.145+).
@@ -925,7 +1001,10 @@ if _in_layout git-sync || _in_layout branch || _in_layout ci; then
             main|master|trunk) if (( _gs_dirty > 0 )); then _bc="$YELLOW"; else _bc="$DIM"; fi ;;
             *)                 _bc="$DIM" ;;
           esac
-          _seg_branch="${_bc}⎇ ${_git_head}${RST}"
+          # Truncated (and worktree- prefix stripped) — a branch name is the
+          # longest unbounded value a statusline line carries.
+          _trunc "$_git_head"
+          _seg_branch="${_bc}⎇ ${_TRUNC}${RST}"
         fi
       fi
     fi
@@ -1373,7 +1452,7 @@ fi
 
 while IFS= read -r _line_segs; do
   [[ -z "$_line_segs" ]] && continue
-  _line_out=""; _first=1
+  _line_out=""; _first=1; _line_len=0; _prev_out=""; _prev_len=0; _dropped=0
   IFS=',' read -ra _segs <<< "$_line_segs"
   for _seg in "${_segs[@]}"; do
     case "$_seg" in
@@ -1422,8 +1501,8 @@ while IFS= read -r _line_segs; do
         if (( _first )); then
           _used=0
         else
-          _vis=$(printf '%s' "$_line_out" | sed $'s/\033\\[[0-9;]*m//g')
-          _used=$(( ${#_vis} + 5 ))
+          _visible_len "$_line_out"
+          _used=$(( _VLEN + _SEP_LEN ))
         fi
         _fill=$(( _ruler_cols - _used ))
         if (( _fill > 1 )); then
@@ -1434,10 +1513,41 @@ while IFS= read -r _line_segs; do
       *)             _val=""               ;;
     esac
     if [[ -n "$_val" ]]; then
-      if (( _first )); then _line_out="$_val"; _first=0
-      else _line_out+="${SEP}${_val}"; fi
+      if (( _first )); then
+        # The first segment always renders, however wide. A line reduced to
+        # nothing but an ellipsis carries no information at all — this is the
+        # one case where max_width can be exceeded, and it takes a layout whose
+        # very first segment is already wider than the whole budget.
+        _line_out="$_val"; _first=0
+        _visible_len "$_val"; _line_len=$_VLEN
+      else
+        _visible_len "$_val"
+        if (( _cfg_max_width > 0 )) \
+           && (( _line_len + _SEP_LEN + _VLEN > _cfg_max_width )); then
+          # Over budget: skip this one and keep going, rather than truncating
+          # the rest of the line with it. One wide segment (a long branch name)
+          # would otherwise take every cheap segment behind it down too — and
+          # ⇡fj·gh, ●3 and ⑂1 cost three columns each. The drop is recorded and
+          # marked once, at the end.
+          _dropped=1
+          continue
+        fi
+        _prev_out="$_line_out"; _prev_len=$_line_len
+        _line_out+="${SEP}${_val}"
+        _line_len=$(( _line_len + _SEP_LEN + _VLEN ))
+      fi
     fi
   done
+  # A shortened line has to show that it was shortened — otherwise it reads as
+  # "there was nothing else to show". The marker needs room too: if it has
+  # none, hand back the last segment, which always frees enough (that segment
+  # cost at least a separator plus one column, exactly what the marker needs).
+  if (( _dropped )); then
+    if (( _line_len + _SEP_LEN + 1 > _cfg_max_width )) && [[ -n "$_prev_out" ]]; then
+      _line_out="$_prev_out"; _line_len=$_prev_len
+    fi
+    _line_out+="${SEP}${DIM}…${RST}"
+  fi
   [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 

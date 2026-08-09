@@ -620,6 +620,69 @@ rm -f "$_ci_file"
 assert_eq "ci: no cache → empty output" "" "$(_ci_run)"
 unset -f _ci_seed _ci_run
 
+# ── Width discipline — max_label / separator / max_width ────────────────────
+# Every assert measures the ANSI-stripped line with bash ${#…} under the test
+# runner's UTF-8 locale, which counts characters = display columns for every
+# glyph this script emits.
+_wd_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_wd_cfg")
+mkdir -p "$_wd_cfg/claudii"
+_wd_json='{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"session_id":"widthsess001","session_name":"a-rather-long-session-name","worktree":{"name":"toasty-petting-moler-cat","branch":"worktree-toasty-petting-moler-cat"},"context_window":{"used_percentage":12},"cost":{"total_cost_usd":0.1}}'
+_wd_run() {  # $1 = extra jq filter over the config → stripped output
+  jq -cn --argjson l '[["model","worktree","session-name"]]' \
+    "{statusline:{lines:\$l}} | ${1:-.}" > "$_wd_cfg/claudii/config.json"
+  printf '%s' "$_wd_json" | XDG_CONFIG_HOME="$_wd_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+# max_label: the worktree- prefix Claude Code puts on worktree branches is
+# stripped (the worktree segment beside it already says what this is), and
+# what's left is capped with an ellipsis.
+_wd_out=$(_wd_run)
+assert_eq "max_label: worktree- prefix stripped" "0" "$(printf '%s' "$_wd_out" | grep -c 'worktree-' || true)"
+assert_contains "max_label: long name truncated at 20" "toasty-petting-mole…" "$_wd_out"
+assert_contains "max_label: session-name truncated too" "a-rather-long-sessi…" "$_wd_out"
+# 0 turns truncation off — the full name comes back (the prefix strip does not,
+# it is not part of the budget).
+_wd_full=$(_wd_run '.statusline.max_label = 0')
+assert_contains "max_label 0: full name kept" "a-rather-long-session-name" "$_wd_full"
+# A tiny cap still leaves room for content plus the ellipsis.
+assert_contains "max_label 8: capped to 8 columns" "toasty-…" "$(_wd_run '.statusline.max_label = 8')"
+
+# separator: tight by default, wide restores the historical 5-column gap.
+assert_contains "separator: tight is the default" "5 │ toasty" "$(_wd_run)"
+assert_contains "separator: wide restores 5 columns" "5  │  toasty" "$(_wd_run '.statusline.separator = "wide"')"
+
+# max_width: off by default, and never exceeded once set. The sweep is the
+# actual contract — a single spot check would miss the give-back case, where
+# the ellipsis only fits after handing the last segment back.
+# The drop marker is a LONE ellipsis behind a separator; matching a bare "…"
+# would also hit a max_label-truncated name and pass for the wrong reason.
+assert_eq "max_width: off by default (no drop marker)" "0" \
+  "$(printf '%s' "$_wd_out" | grep -c '│ …' || true)"
+_wd_over=0; _wd_capped=0
+for _wd_m in 20 24 28 32 36 40 44 48 52 56 60 64 68 72; do
+  _wd_line=$(_wd_run ".statusline.max_width = $_wd_m")
+  (( ${#_wd_line} > _wd_m )) && _wd_over=$(( _wd_over + 1 ))
+  [[ "$_wd_line" == *"│ …" ]] && _wd_capped=$(( _wd_capped + 1 ))
+done
+assert_eq "max_width: budget never exceeded across the sweep" "0" "$_wd_over"
+# …and the sweep really did exercise the capping path (a green "never
+# exceeded" on a sweep that never capped anything would prove nothing).
+assert_eq "max_width: sweep actually hit the cap" "14" "$_wd_capped"
+# The first segment always renders, even when it alone blows the budget —
+# that is the documented exception, and it must still show the marker.
+_wd_tiny=$(_wd_run '.statusline.max_width = 5')
+assert_contains "max_width: first segment survives an impossible budget" "Sonnet 5" "$_wd_tiny"
+assert_contains "max_width: impossible budget still marks the cut" "…" "$_wd_tiny"
+# One over-budget segment must not take the cheaper ones behind it down with
+# it. At 40 columns the 43-column worktree segment cannot fit at all, but the
+# 20-column session-name behind it can — and does.
+_wd_skip=$(_wd_run '.statusline.max_width = 40')
+assert_contains "max_width: segment behind a skipped one survives" "a-rather-long-sessi…" "$_wd_skip"
+assert_eq "max_width: the wide segment is the one dropped" "0" \
+  "$(printf '%s' "$_wd_skip" | grep -c 'toasty' || true)"
+assert_contains "max_width: the skip is marked" "│ …" "$_wd_skip"
+unset -f _wd_run; unset _wd_out _wd_full _wd_line _wd_over _wd_capped _wd_tiny _wd_default_len
+
 # session-name segment: shown when session_name set
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"

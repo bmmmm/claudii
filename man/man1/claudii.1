@@ -1112,6 +1112,54 @@ that omits
 No upstream or a detached HEAD shows only the dirty state;
 outside a git repo the segment is empty.
 .PP
+.B WIDTH \(em keeping a line from wrapping:
+three mechanisms, applied in this order, because a statusline that wraps is
+worse than one that says less.
+.B statusline.max_label
+(default 20) caps the only unbounded values a line carries \(em branch,
+directory, worktree, session and agent names \(em with a trailing
+.BR … ;
+everything else is a number or a fixed glyph. It also strips the
+.B worktree-
+prefix Claude Code puts on worktree branch names, since the segments next to it
+already say it is a worktree. 0 disables it.
+.B statusline.separator
+picks
+.B tight
+(default,
+.RB \(dq " │ " \(dq )
+or
+.B wide
+(the historical
+.RB \(dq "  │  " \(dq );
+two columns per gap is invisible until a dense line has eight of them.
+.B statusline.max_width
+(default 0 = off) is the backstop: a hard per-line column budget. A segment
+that does not fit is skipped and the line continues \(em one wide segment (a
+long branch name) must not take every cheap segment behind it down with it,
+since
+.BR ⇡fj·gh ,
+.B ●3
+and
+.B ⑂1
+cost three columns each. A line that lost anything ends in a dim
+.BR … ,
+so a shortened line always shows that it was shortened. The first segment of a
+line always renders in full \(em a line reduced to nothing but an ellipsis
+carries no information \(em which is the one case where the budget can be
+exceeded.
+.PP
+.B max_width
+is deliberately not auto-detected. Nothing in the statusLine JSON carries the
+terminal width, and the usual fallbacks lie in exactly this context: Claude
+Code hands the command a
+.B COLUMNS
+of 0, and
+.B tput cols
+with a piped stdout answers with terminfo's 80 no matter how wide the window
+really is. Truncating a 140-column terminal to 80 on a guess is worse than not
+truncating at all \(em so the number is yours to set.
+.PP
 .B compact-eta:
 how long the remaining context lasts at the rate you are actually filling it \(em
 the question a percentage cannot answer ("does the task I am about to start
@@ -1356,6 +1404,9 @@ display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berl
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku	Models to monitor
 statusline.lines	(5-line default)	CC-Statusline layout — array of segment-ID arrays
+statusline.max_width	0	Hard per-line column budget (0 = off). See WIDTH below
+statusline.max_label	20	Max characters for branch/dir/worktree/session/agent names (0 = off)
+statusline.separator	tight	Segment separator: \fBtight\fR (\(dq │ \(dq) or \fBwide\fR (\(dq  │  \(dq)
 statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
 statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
 statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
