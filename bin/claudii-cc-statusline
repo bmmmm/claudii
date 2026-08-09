@@ -29,11 +29,11 @@ _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
-_cfg_status_ttl=""; _cfg_bumpii_ttl=""
+_cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
-    _cfg_status_ttl _cfg_bumpii_ttl < <(
+    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
@@ -47,7 +47,8 @@ if [[ -f "$_config_file" ]]; then
       (if .statusline.rainbow == false then "false" else "true" end),
       (.statusline.insomnii // "auto"),
       (.status.cache_ttl // "" | tostring),
-      (.bumpii.cache_ttl // "" | tostring)
+      (.bumpii.cache_ttl // "" | tostring),
+      (.ci.cache_ttl // "" | tostring)
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
@@ -173,6 +174,47 @@ if [[ "$ctx_pct" != "null" && -n "$ctx_pct" && "$_last_ctx_pct" =~ ^[0-9]+$ ]]; 
 fi
 _last_ctx_store=""
 [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]] && _last_ctx_store=${ctx_pct%.*}
+
+# Context growth rate — an EWMA over renders, persisted as ctx_rate=, feeding
+# the compact-eta segment. The question a percentage can't answer is "does the
+# task I'm about to start still fit in this window?", and that needs a rate.
+# Unit: milli-percent of the RAW context window per minute (integer math, no
+# awk fork; the usable-scale conversion happens at render time, where the
+# model-aware scale is known). dp * 60000000 / dt_ms = dp‰/min — with dp <= 100
+# the numerator stays far inside int64.
+# Samples shorter than 15s are dropped as noise (several renders can fire
+# inside one turn), and a negative delta — the footprint of a compaction — is
+# skipped rather than fed in: the window shrank, your burn rate did not change.
+# A zero delta over a long gap IS fed in, so an idle session decays toward 0
+# instead of keeping a stale rate from an hour ago. Alpha 1/3.
+_cache_get ctx_rate ""; _ctx_rate="$_CG"
+[[ "$_ctx_rate" =~ ^[0-9]+$ ]] || _ctx_rate=""
+if [[ "$_last_ctx_pct" =~ ^[0-9]+$ && "$_last_ctx_store" =~ ^[0-9]+$ \
+      && "$_last_duration_ms" =~ ^[0-9]+$ && "${duration_ms%.*}" =~ ^[0-9]+$ ]]; then
+  _cr_dt=$(( ${duration_ms%.*} - _last_duration_ms ))
+  _cr_dp=$(( _last_ctx_store - _last_ctx_pct ))
+  if (( _cr_dt >= 15000 && _cr_dp >= 0 )); then
+    _cr_inst=$(( _cr_dp * 60000000 / _cr_dt ))
+    if [[ -n "$_ctx_rate" ]]; then _ctx_rate=$(( (_ctx_rate * 2 + _cr_inst) / 3 ))
+    else                           _ctx_rate=$_cr_inst
+    fi
+  fi
+fi
+
+# Last-response latency — the delta of the cumulative API duration between two
+# renders, i.e. how long the API took for the turn that just finished. Kept in
+# the cache as last_api_delta= and re-rendered until a new turn produces a new
+# one: a render that fires without an API call in between (a plain refresh)
+# would otherwise blank the segment, and "the last response took 4.1s" stays
+# true in the meantime. `claudii perf` has the aggregates; this is the live
+# signal that separates "the model is thinking" from "the API is slow today".
+_cache_get last_api_duration_ms ""; _prev_api_total="$_CG"
+_cache_get last_api_delta "";       _api_delta="$_CG"
+if [[ "${api_duration_ms%.*}" =~ ^[0-9]+$ && "$_prev_api_total" =~ ^[0-9]+$ ]]; then
+  _ad=$(( ${api_duration_ms%.*} - _prev_api_total ))
+  (( _ad > 0 )) && _api_delta=$_ad
+fi
+[[ "$_api_delta" =~ ^[0-9]+$ ]] || _api_delta=""
 
 # Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
 # Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
@@ -307,6 +349,9 @@ _tmp_session="${_session_file}.tmp.$$"
   "rate_5h_start=$_rate_5h_start" \
   "last_duration_ms=$duration_ms" \
   "last_ctx_pct=$_last_ctx_store" \
+  "ctx_rate=$_ctx_rate" \
+  "last_api_duration_ms=$api_duration_ms" \
+  "last_api_delta=$_api_delta" \
   "compactions=$_compactions" \
   "project_path=$cwd"
   [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
@@ -503,6 +548,53 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   _thr "$_usable_pct"
   _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
   _seg_context_compact="${_CLR}${_ctx_glyph}${_usable_pct}%${RST}${win}"
+fi
+
+# Compact ETA — how long the remaining context lasts at the current burn rate.
+# The rate (ctx_rate, computed and smoothed above) is milli-percent of the RAW
+# window per minute; the usable scale stretches it, so a raw rate of 2%/min on
+# an 80% scale is 2.5 usable-%/min. Remaining usable % over that rate = minutes
+# to the compact point. Beyond 10h it is not a signal anyone acts on, so the
+# segment stays empty. No forks — pure arithmetic over values already in hand.
+_seg_compact_eta=""
+if [[ "$_ctx_rate" =~ ^[0-9]+$ ]] && (( _ctx_rate > 0 )) && [[ -n "${_usable_pct:-}" ]]; then
+  _ce_left=$(( 100 - _usable_pct ))
+  _ce_rate=$(( _ctx_rate * 100 / _ac_scale_pct ))
+  if (( _ce_left > 0 && _ce_rate > 0 )); then
+    _ce_min=$(( _ce_left * 1000 / _ce_rate ))
+    if (( _ce_min > 0 && _ce_min <= 600 )); then
+      if   (( _ce_min < 5 ));  then _ce_clr="$RED"
+      elif (( _ce_min < 15 )); then _ce_clr="$YELLOW"
+      elif (( _ce_min < 30 )); then _ce_clr="$WHITE"
+      else                          _ce_clr="$DIM"
+      fi
+      _fmt_rel $(( _ce_min * 60 ))
+      [[ -n "$_REL_FMT" ]] && _seg_compact_eta="${_ce_clr}⇲${_REL_FMT}${RST}"
+    fi
+  fi
+fi
+
+# Last-response latency (_api_delta, carried across renders above). Dim under
+# 15s, plain to 30s, yellow to 60s, red beyond — a minute of API time for one
+# turn is the point where "slow" stops being the model thinking.
+_seg_response=""
+if [[ "$_api_delta" =~ ^[0-9]+$ ]] && (( _api_delta > 0 )); then
+  if   (( _api_delta < 10000 )); then
+    _rs_s=$(( _api_delta / 1000 )); _rs_d=$(( (_api_delta % 1000 + 50) / 100 ))
+    (( _rs_d == 10 )) && { (( ++_rs_s )); _rs_d=0; }
+    printf -v _rs_fmt '%d.%ds' "$_rs_s" "$_rs_d"
+  elif (( _api_delta < 60000 )); then
+    printf -v _rs_fmt '%ds' $(( (_api_delta + 500) / 1000 ))
+  else
+    _rs_s=$(( _api_delta / 1000 ))
+    printf -v _rs_fmt '%dm%02ds' $(( _rs_s / 60 )) $(( _rs_s % 60 ))
+  fi
+  if   (( _api_delta >= 60000 )); then _rs_clr="$RED"
+  elif (( _api_delta >= 30000 )); then _rs_clr="$YELLOW"
+  elif (( _api_delta >= 15000 )); then _rs_clr="$WHITE"
+  else                                 _rs_clr="$DIM"
+  fi
+  _seg_response="${_rs_clr}↯${_rs_fmt}${RST}"
 fi
 
 # Cache hit ratio — was glued to the context bar, now its own opt-in segment so
@@ -718,20 +810,28 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-_DEFAULT_LINES="model,tokens,cache-create,cache-hit
+_DEFAULT_LINES="model,tokens,cache-create,cache-hit,response
 rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,duration,worktree,worktrees,dir,remotes,git-sync
-omlx,proxy,cost,context
+api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
+omlx,proxy,cost,context,compact-eta
 claude-status,vpn"
 
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
 
+# Layout membership — the gate every fork-owning segment asks before doing its
+# work. Exact match on a comma-delimited copy of the layout, not a substring
+# test: `ci` must not fire on `compactions`, and the old `*git-sync*`-style
+# gates only avoided that collision by luck of the naming (`*git*` would have
+# matched the `github` segment — that near-miss is documented below).
+_lines_csv=",${_lines_raw//$'\n'/,},"
+_in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
+
 # Terminal width for the ruler segment — computed only when ruler is in the
 # layout (off by default), else the `tput cols` fork ran on every render for a
 # value nothing reads. Gated like the remotes/git-sync segments below.
 _term_cols=0
-if [[ "$_lines_raw" == *ruler* ]]; then
+if _in_layout ruler; then
   _term_cols=""
   [[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
   [[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
@@ -745,7 +845,7 @@ fi
 # Gated on the segment being in the active layout so the one git fork only
 # happens when the segment is actually shown.
 _seg_remotes=""
-if [[ "$_lines_raw" == *remotes* ]]; then
+if _in_layout remotes; then
   _rr_dir="${cwd:-$workspace_project_dir}"
   if [[ -n "$_rr_dir" && "$_rr_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
     _rr_out=$(git -C "$_rr_dir" remote -v 2>/dev/null); _rr_rc=$?
@@ -768,20 +868,30 @@ if [[ "$_lines_raw" == *remotes* ]]; then
   fi
 fi
 
-# Repo sync-state segment — the working copy's git status as a compact traffic
-# light: ●N uncommitted (commit pending, yellow), ↑N ahead of upstream (push
-# pending, yellow), ↓N behind upstream (pull pending, red — you're missing
-# commits, the highest merge-conflict risk). Clean and in sync → a green ✓.
-# One `git status --porcelain=v2 --branch` fork yields both the dirty count and
-# the ahead/behind counts. Gated on the segment being in the active layout so
-# the working-tree scan (the most expensive segment fork) is skipped by any
-# custom layout that drops git-sync — it ships in the default layout, but the
-# gate keeps the fork off when the segment isn't actually rendered.
-# No upstream / detached HEAD → no branch.ab line → only the dirty state shows.
-# Outside a git repo (rc != 0) → empty.
-# Matched as *git-sync* (not *git*) so it never false-fires on the github segment.
+# Working-copy git state — one `git status --porcelain=v2 --branch` fork feeds
+# three segments, so a layout using all of them still pays for a single scan:
+#
+#   git-sync  ●N uncommitted (commit pending, yellow), ↑N ahead of upstream
+#             (push pending, yellow), ↓N behind upstream (pull pending, red —
+#             you're missing commits, the highest merge-conflict risk). Clean
+#             and in sync → a green ✓.
+#   branch    ⎇ <name> — the branch nothing else showed: the worktree segment
+#             only names one when the session actually runs inside a worktree,
+#             so a plain checkout rendered no branch at all. Dim, except when
+#             uncommitted work is sitting directly on the trunk (main/master/
+#             trunk + dirty) — that is WIP that wants a feature branch, and it
+#             turns yellow as a nudge, not an alarm.
+#   ci        needs the branch name to look up the right run (below).
+#
+# The working-tree scan is the most expensive segment fork, so it is gated on
+# at least one of those three being in the active layout.
+# No upstream / detached HEAD → no branch.ab line → only the dirty state shows;
+# branch.head then reads "(detached)" and the branch segment says so in yellow.
+# Outside a git repo (rc != 0) → all three empty.
 _seg_git_sync=""
-if [[ "$_lines_raw" == *git-sync* ]]; then
+_seg_branch=""
+_git_head=""
+if _in_layout git-sync || _in_layout branch || _in_layout ci; then
   _gs_dir="${cwd:-$workspace_project_dir}"
   if [[ -n "$_gs_dir" && "$_gs_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
     _gs_out=$(git -C "$_gs_dir" status --porcelain=v2 --branch 2>/dev/null); _gs_rc=$?
@@ -789,6 +899,7 @@ if [[ "$_lines_raw" == *git-sync* ]]; then
       _gs_ahead=0; _gs_behind=0; _gs_dirty=0
       while IFS= read -r _gl; do
         case "$_gl" in
+          '# branch.head '*) _git_head="${_gl#\# branch.head }" ;;
           '# branch.ab '*)
             _gs_ab="${_gl#\# branch.ab }"        # "+A -B"
             _gs_a="${_gs_ab%% *}"; _gs_b="${_gs_ab##* }"
@@ -800,10 +911,23 @@ if [[ "$_lines_raw" == *git-sync* ]]; then
           *) (( ++_gs_dirty )) ;;                # 1/2/u/? line = one changed path
         esac
       done <<< "$_gs_out"
-      (( _gs_dirty  > 0 )) && _seg_git_sync="${YELLOW}●${_gs_dirty}${RST}"
-      (( _gs_ahead  > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${YELLOW}↑${_gs_ahead}${RST}"
-      (( _gs_behind > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${RED}↓${_gs_behind}${RST}"
-      [[ -z "$_seg_git_sync" ]] && _seg_git_sync="${GREEN}✓${RST}"
+      if _in_layout git-sync; then
+        (( _gs_dirty  > 0 )) && _seg_git_sync="${YELLOW}●${_gs_dirty}${RST}"
+        (( _gs_ahead  > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${YELLOW}↑${_gs_ahead}${RST}"
+        (( _gs_behind > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${RED}↓${_gs_behind}${RST}"
+        [[ -z "$_seg_git_sync" ]] && _seg_git_sync="${GREEN}✓${RST}"
+      fi
+      if _in_layout branch && [[ -n "$_git_head" ]]; then
+        if [[ "$_git_head" == "(detached)" ]]; then
+          _seg_branch="${YELLOW}⎇ detached${RST}"
+        else
+          case "$_git_head" in
+            main|master|trunk) if (( _gs_dirty > 0 )); then _bc="$YELLOW"; else _bc="$DIM"; fi ;;
+            *)                 _bc="$DIM" ;;
+          esac
+          _seg_branch="${_bc}⎇ ${_git_head}${RST}"
+        fi
+      fi
     fi
   fi
 fi
@@ -821,7 +945,7 @@ fi
 # `git worktree list --porcelain` fork, gated on the segment being in the
 # active layout (like remotes/git-sync/sessions).
 _seg_worktrees=""
-if [[ "$_lines_raw" == *worktrees* ]]; then
+if _in_layout worktrees; then
   _wl_dir="${cwd:-$workspace_project_dir}"
   if [[ -n "$_wl_dir" && "$_wl_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
     _wl_out=$(git -C "$_wl_dir" worktree list --porcelain 2>/dev/null); _wl_rc=$?
@@ -839,6 +963,88 @@ if [[ "$_lines_raw" == *worktrees* ]]; then
         (( _wl_prune > 0 )) && _seg_worktrees+=" ${YELLOW}⌫${_wl_prune}${RST}"
       fi
     fi
+  fi
+fi
+
+# CI segment — the state of the newest GitHub Actions run on the branch this
+# session is on, so "did the push go green?" stops being a manual `gh run list`
+# after every push. Same cache-plus-background-refresher shape as
+# claude-status/bumpii: this render only ever READS a cache file and spawns
+# bin/claudii-ci-refresh when it is older than the TTL — no network here.
+#
+# The cache is per repo AND branch (two sessions in different repos, or in two
+# worktrees of one repo, must not fight over one file). The key is _str_hash
+# (lib/helpers.sh) over "<dir>\n<branch>" — no fork, bounded filename length,
+# no collisions from truncating deep paths; the readable basename is kept as a
+# prefix so the cache dir stays greppable. The session's cwd (not the repo
+# root) is the key's dir part: resolving the root would cost another git fork,
+# and the only cost of not doing it is that a session started in a subdirectory
+# keeps its own cache entry.
+#
+# States and what they mean — see bin/claudii-ci-refresh for how they're
+# derived: success ✓ green · failure ✗ red · running ● cyan · queued ◌ dim ·
+# other (cancelled/skipped/neutral) ⊘ dim · error ? dim (the refresh itself
+# broke — never rendered as "green", same rule as bumpii's "?") · none and
+# unavailable render nothing at all (no runs yet / not a GitHub repo — a
+# permanent state, so a permanent glyph would be permanent noise).
+_seg_ci=""
+_ci_cache=""
+if _in_layout ci && [[ -n "$_git_head" ]]; then
+  _ci_dir="${cwd:-$workspace_project_dir}"
+  _str_hash "${_ci_dir}"$'\n'"${_git_head}"
+  _ci_base="${_ci_dir##*/}"; _ci_base="${_ci_base//[^A-Za-z0-9_.-]/_}"
+  _ci_cache="$_cache_dir/ci-${_ci_base}-${_HASH}"
+  _ci_state=""; _ci_checked=""
+  if [[ -f "$_ci_cache" ]]; then
+    _ci_raw=""
+    { _ci_raw=$(<"$_ci_cache"); } 2>/dev/null
+    _ci_nl=$'\n'"$_ci_raw"
+    if [[ "$_ci_nl" == *$'\n'state=* ]]; then _ci_state="${_ci_raw#*state=}"; _ci_state="${_ci_state%%$'\n'*}"; fi
+    if [[ "$_ci_nl" == *$'\n'checked=* ]]; then _ci_checked="${_ci_raw#*checked=}"; _ci_checked="${_ci_checked%%$'\n'*}"; fi
+  fi
+  # Stale beats every state but silence: an hour-old "✓" is a claim about a
+  # push that may since have been followed by three more.
+  if [[ "$_ci_checked" =~ ^[0-9]+$ ]] && (( _now - _ci_checked > 3600 )) \
+     && [[ -n "$_ci_state" && "$_ci_state" != "none" && "$_ci_state" != "unavailable" ]]; then
+    _seg_ci="${DIM}CI stale${RST}"
+  else
+    case "$_ci_state" in
+      success) _seg_ci="${DIM}CI${RST} ${GREEN}✓${RST}"  ;;
+      failure) _seg_ci="${DIM}CI${RST} ${RED}✗${RST}"    ;;
+      running) _seg_ci="${DIM}CI${RST} ${CYAN}●${RST}"   ;;
+      queued)  _seg_ci="${DIM}CI${RST} ${DIM}◌${RST}"    ;;
+      other)   _seg_ci="${DIM}CI${RST} ${DIM}⊘${RST}"    ;;
+      error)   _seg_ci="${DIM}CI ?${RST}"                ;;
+    esac
+  fi
+fi
+
+# CI self-refresh — same mechanics as claude-status/bumpii. Adaptive TTL: while
+# a run is in flight poll at TTL/10 (min 30s) so a green/red verdict lands while
+# you're still looking, and back off 6× when the branch has no runs at all
+# (nothing to watch — but keep polling, the first push to a new branch creates
+# one). Nothing to refresh without a branch, so the whole block needs _git_head.
+if _in_layout ci && [[ -n "$_ci_cache" ]]; then
+  _ci_ttl="$_cfg_ci_ttl"
+  [[ "$_ci_ttl" =~ ^[0-9]+$ ]] || _ci_ttl=300
+  case "$_ci_state" in
+    running|queued) _ci_ttl=$(( _ci_ttl / 10 )); (( _ci_ttl < 30 )) && _ci_ttl=30 ;;
+    none)           _ci_ttl=$(( _ci_ttl * 6 )) ;;
+  esac
+  _ci_mtime=$(stat -f%m "$_ci_cache" 2>/dev/null || stat -c%Y "$_ci_cache" 2>/dev/null || echo 0)
+  [[ "$_ci_mtime" =~ ^[0-9]+$ ]] || _ci_mtime=0
+  if (( _now - _ci_mtime > _ci_ttl )); then
+    _cipid_file="$_cache_dir/ci-refresh-${_HASH}.pid"
+    _cipid=""
+    [[ -f "$_cipid_file" ]] && { _cipid=$(<"$_cipid_file"); } 2>/dev/null
+    _ci_fresh=0
+    if [[ "$_cipid" =~ ^[0-9]+$ ]] && kill -0 "$_cipid" 2>/dev/null; then
+      _cip_mt=$(stat -f%m "$_cipid_file" 2>/dev/null || stat -c%Y "$_cipid_file" 2>/dev/null || echo 0)
+      (( _now - _cip_mt < 120 )) && _ci_fresh=1
+    fi
+    (( _ci_fresh )) || ( "$CLAUDII_HOME/bin/claudii-ci-refresh" --quiet \
+        --pid-file "$_cipid_file" --dir "$_ci_dir" --branch "$_git_head" \
+        --out "$_ci_cache" >/dev/null 2>&1 & )
   fi
 fi
 
@@ -882,7 +1088,7 @@ _same_project() {
   return 1
 }
 _seg_sessions=""
-if [[ "$_lines_raw" == *sessions* ]]; then
+if _in_layout sessions; then
   _sess_dir="${cwd:-$workspace_project_dir}"
   if [[ -n "$_sess_dir" && "$_sess_dir" != "null" ]]; then
     _NOW="$_now"
@@ -998,7 +1204,7 @@ fi
 # exits fast on a fresh cache; the PID-file liveness check prevents stacking
 # fetches across rapid renders and parallel sessions. Skipped entirely when
 # the layout doesn't render the claude-status segment.
-if [[ "$_lines_raw" == *claude-status* ]]; then
+if _in_layout claude-status; then
   _sc_ttl="$_cfg_status_ttl"
   [[ "$_sc_ttl" =~ ^[0-9]+$ ]] || _sc_ttl=300
   # Reuse the mtime already stat'd for the age display; only fork stat when the
@@ -1101,7 +1307,7 @@ fi
 _seg_bumpii=""
 _bumpii_cache="${_cache_dir}/status-bumpii"
 _bp_mtime=""
-if [[ "$_lines_raw" == *bumpii* && -f "$_bumpii_cache" ]]; then
+if _in_layout bumpii && [[ -f "$_bumpii_cache" ]]; then
   _bp=""
   { _bp=$(<"$_bumpii_cache"); } 2>/dev/null
   _bp_nl=$'\n'"$_bp"
@@ -1130,7 +1336,7 @@ fi
 # re-checks the TTL itself, and the PID-file guard prevents stacking fetches
 # across rapid renders and parallel sessions. Skipped entirely when the
 # layout does not render the segment.
-if [[ "$_lines_raw" == *bumpii* ]]; then
+if _in_layout bumpii; then
   _bp_ttl="$_cfg_bumpii_ttl"
   [[ "$_bp_ttl" =~ ^[0-9]+$ ]] || _bp_ttl=21600
   # Adaptive gate (same as claudii-status): while the segment shows anything —
@@ -1174,7 +1380,9 @@ while IFS= read -r _line_segs; do
       model)         _val="$_seg_model"    ;;
       context)       _val="$_seg_context_compact" ;;
       context-bar)   _val="$_seg_context"  ;;
+      compact-eta)   _val="$_seg_compact_eta" ;;
       cache-hit)     _val="$_seg_cache_hit" ;;
+      response)      _val="$_seg_response" ;;
       cost)          _val="$_seg_cost"     ;;
       rate-5h)       _val="$_seg_rate5h"   ;;
       rate-7d)       _val="$_seg_rate7d"   ;;
@@ -1198,6 +1406,8 @@ while IFS= read -r _line_segs; do
       github)        _val="$_seg_github"   ;;
       remotes)       _val="$_seg_remotes"  ;;
       git-sync)      _val="$_seg_git_sync" ;;
+      branch)        _val="$_seg_branch"   ;;
+      ci)            _val="$_seg_ci"       ;;
       sessions)      _val="$_seg_sessions" ;;
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;

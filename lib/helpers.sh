@@ -531,3 +531,19 @@ _render_age() {
   _fmt_brief "${1:-0}"
   _AGE_STR="${_BRIEF_FMT} ago"
 }
+
+# _str_hash <string> — djb2 into _HASH (8 hex chars), pure bash, no fork.
+# Used to key per-repo/per-branch cache files (the `ci` statusline segment):
+# sanitizing a path into a filename either truncates deep paths — which turns
+# two different repos into one cache entry — or grows past the filename limit,
+# and forking a hash tool on every statusline render is not an option.
+# Deterministic across bash 3.2/5.x for byte-identical input; callers that need
+# to predict the filename (tests) source this file rather than reimplement it.
+_str_hash() {
+  local _s=$1 _i _c _h=5381
+  for (( _i = 0; _i < ${#_s}; _i++ )); do
+    printf -v _c '%d' "'${_s:_i:1}"
+    _h=$(( (_h * 33 + _c) & 0xFFFFFFFF ))
+  done
+  printf -v _HASH '%08x' "$_h"
+}

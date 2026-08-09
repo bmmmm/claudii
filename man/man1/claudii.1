@@ -1014,7 +1014,9 @@ _
 model	\fBClaude Opus 4.8\fR	Model name (bold); effort level appended (ultracode/xhigh/max highlighted); \[u25B2] when thinking active
 context	\[u25D1]62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF] ramp, threshold-coloured). The compact default
 context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
+compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
 cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%)
+response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
 cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
@@ -1037,6 +1039,8 @@ dir	\[u2302] my-app	Working directory basename (dim)
 github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
 remotes	\[u21E1]fj\[u00B7]gh	Where the repo is published (from git remotes) \(em \fBfj\fR self-hosted forge (any non-GitHub host) / \fBgh\fR GitHub / \fBlocal\fR no remote
 git-sync	\[u25CF]2 \[u2191]1 \[u2193]1	Working-copy sync state vs.\& upstream. See the colour key below
+branch	\[u2387] main	Current branch (dim; yellow when uncommitted work sits on main/master/trunk, or on a detached HEAD). See below
+ci	CI \[u2713]	Newest GitHub Actions run on this branch. See below
 sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
@@ -1107,6 +1111,80 @@ that omits
 .BR git-sync .
 No upstream or a detached HEAD shows only the dirty state;
 outside a git repo the segment is empty.
+.PP
+.B compact-eta:
+how long the remaining context lasts at the rate you are actually filling it \(em
+the question a percentage cannot answer ("does the task I am about to start
+still fit?"). The rate is an exponential moving average of the context growth
+between renders, persisted per session; samples shorter than 15 seconds are
+dropped as noise, and the negative jump a compaction produces is skipped rather
+than fed in (the window shrank, the burn rate did not change). A long gap with
+no growth decays the rate, so an idle session does not keep claiming an
+hour-old pace. Colour: dim >= 30 min, plain 15\(en29, yellow 5\(en14, red < 5.
+Beyond 10 hours nothing is rendered \(em that is not a number anyone acts on.
+Needs at least two renders to have a rate at all.
+.PP
+.B response:
+the API time the last completed turn took, as the delta of the cumulative
+.I total_api_duration_ms
+between two renders. It keeps showing that value until a new turn produces a
+new one \(em a render without an API call in between (a plain refresh) would
+otherwise blank it, and "the last response took 4.1s" stays true meanwhile.
+This is the live counterpart to
+.BR "claudii perf" ,
+which has the aggregates: it is what separates "the model is thinking" from
+"the API is slow today" \(em and the
+.B claude-status
+segment next to it says which.
+.PP
+.B branch:
+the branch nothing else showed. The
+.B worktree
+segment only names a branch when the session actually runs inside a worktree,
+so a plain checkout rendered no branch at all. Dim by default; yellow when
+uncommitted changes are sitting directly on
+.BR main / master / trunk
+\(em WIP that wants a feature branch, a nudge rather than an alarm \(em and
+yellow
+.B \[u2387] detached
+on a detached HEAD. It shares the single
+.B git status
+fork with
+.B git-sync
+(and
+.BR ci ,
+which needs the branch name to look up the right run), so a layout using all
+three still scans the working tree once.
+.PP
+.B ci:
+the newest GitHub Actions run on the branch this session is on \(em
+.B CI \[u2713]
+green success,
+.B CI \[u2717]
+red failure,
+.B CI \[u25CF]
+cyan in progress,
+.B CI \[u25CC]
+dim queued,
+.B CI \[u2298]
+dim cancelled/skipped/neutral, and a dim
+.B CI ?
+when the refresh itself broke (an indicator whose lookup failed must never be
+indistinguishable from a green one). A branch with no runs yet, a repo with no
+GitHub remote, and a missing
+.BR gh (1)
+render nothing at all \(em those are permanent states, and a permanent glyph
+would be permanent noise. Past an hour without a successful refresh the segment
+reads
+.BR "CI stale" .
+No render ever makes a network call: the segment reads a cache file that
+.BR claudii-ci-refresh (1)
+maintains in the background, keyed per repo
+.I and
+branch so parallel sessions and worktrees never fight over one entry. The TTL
+(\fBci.cache_ttl\fR, default 300s) adapts \(em a run in flight is polled 10x
+more often, a branch with no runs backs off 6x. Opt-in: not in the default
+layout, because it is the only segment whose refresher talks to the network.
 .PP
 .B worktrees:
 .B \[u2442]N
@@ -1273,6 +1351,7 @@ aliases.clf.model	fable	Model for \fBclf\fR
 fallback.enabled	true	Auto-fallback on outage
 fallback.opus.model	sonnet	Fallback when opus is down
 status.cache_ttl	900	Status cache TTL in seconds
+ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
 display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku	Models to monitor

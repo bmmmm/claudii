@@ -30,16 +30,19 @@
   "bumpii": {
     "cache_ttl": 21600
   },
+  "ci": {
+    "cache_ttl": 300
+  },
   "statusline": {
     "enabled": true,
     "models": "opus,sonnet,haiku,fable",
     "bedtime": "23:00",
     "insomnii": "auto",
     "lines": [
-      ["model", "tokens", "cache-create", "cache-hit"],
+      ["model", "tokens", "cache-create", "cache-hit", "response"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
-      ["api-duration", "duration", "worktree", "worktrees", "dir", "remotes", "git-sync"],
-      ["omlx", "proxy", "cost", "context"],
+      ["api-duration", "duration", "worktree", "worktrees", "branch", "dir", "remotes", "git-sync"],
+      ["omlx", "proxy", "cost", "context", "compact-eta"],
       ["claude-status"]
     ]
   },

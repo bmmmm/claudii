@@ -32,10 +32,10 @@ first_line=$(jq -r '.statusline.lines[0] | join(",")' "$CFG")
 assert_contains "preset focused: first line has model" "model" "$first_line"
 assert_contains "preset focused: first line has dir"   "dir"   "$first_line"
 
-# Second line: context + rates (metrics). Dense means the compact one-glyph
-# `context` segment, not the ten-column `context-bar`.
+# Second line: context + compact-eta + rates (metrics). Dense means the compact
+# one-glyph `context` segment, not the ten-column `context-bar`.
 second_line=$(jq -r '.statusline.lines[1] | join(",")' "$CFG")
-assert_eq "preset focused: second line uses compact context" "context,rate-5h,rate-7d" "$second_line"
+assert_eq "preset focused: second line uses compact context" "context,compact-eta,rate-5h,rate-7d" "$second_line"
 assert_contains "preset focused: second line has rate-5h"     "rate-5h"     "$second_line"
 assert_contains "preset focused: second line has rate-7d"     "rate-7d"     "$second_line"
 

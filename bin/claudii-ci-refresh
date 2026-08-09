@@ -1,0 +1,178 @@
+#!/bin/bash
+# claudii-ci-refresh — refresh the CI-state cache for one repo + branch.
+#
+# Spawned in the background by the `ci` statusline segment (never by a render
+# itself — no statusline render makes a network call). Asks gh(1) for the
+# newest GitHub Actions run on the given branch and writes what the segment
+# renders:
+#
+#   state=success|failure|running|queued|other|none|unavailable|error
+#   url=<run url>          (empty unless a run was found)
+#   repo=<dir>  branch=<b> (what was asked — the cache is per repo AND branch)
+#   checked=<epoch>
+#
+# The two states that render nothing are deliberately distinct from the two
+# that render a "?"-ish glyph:
+#   none         the branch simply has no runs yet — normal, not a problem
+#   unavailable  no gh, or the repo has no GitHub remote — permanent here, so
+#                a glyph would be permanent noise
+#   error        the call itself broke (network, auth, rate limit) — rendered,
+#                because an indicator whose refresh failed must never be
+#                indistinguishable from a green one (same rule as bumpii's "?")
+#
+# Freshness is the cache file's mtime, and the TTL is re-checked here rather
+# than only in the spawner, so renders that race past the PID guard still exit
+# without spending an API call.
+#
+# Exit codes: 0 = cache fresh or refreshed, 1 = the newest run failed (so a
+# cron/hook can act on it). A broken call is not an abort — it is a state.
+set -uo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-ci-refresh: jq not found — install jq\n' >&2; exit 1; }
+
+CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
+_cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
+_def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+
+CACHE_TTL="${CLAUDII_CI_TTL:-$(_cfg ci.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-$(_def ci.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-300}"
+
+quiet=false
+force=false
+_pid_file=""
+_dir=""
+_branch=""
+_out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet)      quiet=true ;;
+    --force)      force=true ;;
+    --pid-file)   shift; _pid_file="${1:-}" ;;
+    --pid-file=*) _pid_file="${1#--pid-file=}" ;;
+    --dir)        shift; _dir="${1:-}" ;;
+    --dir=*)      _dir="${1#--dir=}" ;;
+    --branch)     shift; _branch="${1:-}" ;;
+    --branch=*)   _branch="${1#--branch=}" ;;
+    --out)        shift; _out="${1:-}" ;;
+    --out=*)      _out="${1#--out=}" ;;
+    *) printf 'claudii-ci-refresh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+[[ -n "$_dir" && -n "$_branch" && -n "$_out" ]] || {
+  printf 'claudii-ci-refresh: --dir, --branch and --out are all required\n' >&2
+  exit 2
+}
+[[ -d "$_dir" ]] || { printf 'claudii-ci-refresh: not a directory: %s\n' "$_dir" >&2; exit 2; }
+# The cache file must land in the cache dir — the path comes from a caller, so
+# it is checked rather than trusted.
+case "$_out" in
+  "$CACHE_DIR"/*) : ;;
+  *) printf 'claudii-ci-refresh: --out must be inside %s\n' "$CACHE_DIR" >&2; exit 2 ;;
+esac
+
+[[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
+_now=$(date +%s)
+
+# TTL re-check, with the same adaptive shape the spawner uses: a run in flight
+# is worth polling 10× more often (the verdict is what you are waiting for),
+# and a branch with no runs at all backs off 6×.
+if ! $force && [[ -f "$_out" ]]; then
+  eff_ttl=$CACHE_TTL
+  if grep -qE '^state=(running|queued)$' "$_out" 2>/dev/null; then
+    eff_ttl=$(( CACHE_TTL / 10 )); (( eff_ttl < 30 )) && eff_ttl=30
+  elif grep -qE '^state=none$' "$_out" 2>/dev/null; then
+    eff_ttl=$(( CACHE_TTL * 6 ))
+  fi
+  if (( _now - $(_mtime "$_out") < eff_ttl )); then
+    grep -qE '^state=failure$' "$_out" 2>/dev/null && exit 1
+    exit 0
+  fi
+fi
+
+_write() {  # state url
+  local _tmp
+  _tmp=$(mktemp "${_out}.XXXXXX") || return 0
+  {
+    printf 'state=%s\n' "$1"
+    printf 'url=%s\n'   "${2:-}"
+    printf 'repo=%s\n'   "$_dir"
+    printf 'branch=%s\n' "$_branch"
+    printf 'checked=%s\n' "$_now"
+  } > "$_tmp" && chmod 0600 "$_tmp" && mv -f "$_tmp" "$_out"
+}
+
+if ! command -v gh >/dev/null 2>&1; then
+  _write unavailable ""
+  $quiet || printf 'claudii-ci-refresh: gh not on PATH\n' >&2
+  exit 0
+fi
+
+# stdout and stderr are captured separately: the JSON is the answer, and the
+# stderr text is the only way to tell "this repo has no GitHub remote"
+# (permanent → unavailable) from "the call broke" (transient → error).
+_err_file=$(mktemp "${TMPDIR:-/tmp}/claudii-ci.XXXXXX") || exit 0
+_json=$(cd "$_dir" && gh run list --branch "$_branch" --limit 1 \
+          --json status,conclusion,url 2>"$_err_file")
+_rc=$?
+_err=$(<"$_err_file")
+rm -f "$_err_file"
+
+if (( _rc != 0 )); then
+  case "$_err" in
+    *"no git remotes"*|*"not a git repository"*|*"known GitHub host"*|*"could not determine"*|*"no such remote"*)
+      _write unavailable "" ;;
+    *)
+      _write error ""
+      $quiet || printf 'claudii-ci-refresh: gh failed: %s\n' "${_err%%$'\n'*}" >&2 ;;
+  esac
+  exit 0
+fi
+
+# A well-formed empty array is "no runs on this branch", which is not the same
+# as unparseable output — the type check keeps a gh that changed its JSON shape
+# from being read as "no runs".
+_count=$(jq -r 'if type == "array" then (length | tostring) else "x" end' <<< "$_json" 2>/dev/null)
+if [[ "$_count" == "x" || -z "$_count" ]]; then
+  _write error ""
+  exit 0
+fi
+if [[ "$_count" == "0" ]]; then
+  _write none ""
+  exit 0
+fi
+
+# One jq call, three lines out — line-delimited rather than joined on a
+# separator byte, so no control character has to live in this source file.
+_status=""; _concl=""; _url=""
+{ read -r _status; read -r _concl; read -r _url; } < <(
+  jq -r '.[0].status // "", .[0].conclusion // "", .[0].url // ""' <<< "$_json" 2>/dev/null
+)
+
+case "$_status" in
+  completed)
+    case "$_concl" in
+      success)                                              _state=success ;;
+      failure|timed_out|startup_failure|action_required)    _state=failure ;;
+      *)                                                    _state=other   ;;
+    esac
+    ;;
+  in_progress)                          _state=running ;;
+  queued|waiting|requested|pending)     _state=queued  ;;
+  "")                                   _state=error   ;;
+  *)                                    _state=other   ;;
+esac
+
+_write "$_state" "$_url"
+$quiet || printf 'ci: %s (%s)\n' "$_state" "$_url" >&2
+[[ "$_state" == "failure" ]] && exit 1
+exit 0

@@ -522,7 +522,103 @@ assert_eq "worktrees: non-git → empty output" "" "$(_wt_run "$_wt_tpl")"
 # Layout gate: no `worktrees` in the layout → no ⑂ anywhere (and no git fork).
 printf '{"statusline":{"lines":[["model"]]}}\n' > "$_wt_cfg/claudii/config.json"
 assert_eq "worktrees: gated out of layout" "0" "$(_wt_run "$_wt_repo" | grep -c '⑂' || true)"
-unset -f _wt_run
+
+# ── branch segment — the branch nothing else showed (⎇ name) ─────────────────
+# Reuses the worktree test repo (main + wt1/wt2 branches, main is clean here).
+printf '{"statusline":{"lines":[["branch"]]}}\n' > "$_wt_cfg/claudii/config.json"
+assert_contains "branch: names the current branch" "⎇ main" "$(_wt_run "$_wt_repo")"
+# Clean trunk is dim; uncommitted work sitting on the trunk turns it yellow.
+_br_raw() { echo "{\"model\":{\"display_name\":\"O\"},\"cwd\":\"$1\",\"context_window\":{\"used_percentage\":10}}" \
+    | XDG_CONFIG_HOME="$_wt_cfg" bash "$SL" 2>/dev/null; }
+assert_contains "branch: clean main is dim" $'\033[2m⎇ main' "$(_br_raw "$_wt_repo")"
+printf 'x\n' > "$_wt_repo/dirty-file"
+assert_contains "branch: dirty main is yellow" $'\033[0;33m⎇ main' "$(_br_raw "$_wt_repo")"
+# A feature branch stays dim even when dirty — the nudge is about the trunk.
+assert_contains "branch: dirty feature branch stays dim" $'\033[2m⎇ wt1' "$(_br_raw "$_wt_base/wt1")"
+# Detached HEAD → the branch.head line reads "(detached)".
+git -C "$_wt_repo" checkout -q --detach HEAD
+assert_contains "branch: detached HEAD says so" "⎇ detached" "$(_wt_run "$_wt_repo")"
+git -C "$_wt_repo" checkout -q main
+# Non-git directory → segment omitted entirely.
+assert_eq "branch: non-git → empty output" "" "$(_wt_run "$_wt_tpl")"
+unset -f _wt_run _br_raw
+
+# ── compact-eta + response — both derive from deltas between two renders ────
+# One session id rendered twice against the same cache dir: the first render
+# only seeds the baseline (no rate yet, no api delta), the second produces both.
+_dl_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_dl_cfg")
+mkdir -p "$_dl_cfg/claudii"
+printf '{"statusline":{"lines":[["context","compact-eta","response"]]}}\n' > "$_dl_cfg/claudii/config.json"
+_dl_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_dl_cache")
+_dl_run() {  # $1 = raw ctx%, $2 = duration_ms, $3 = api_duration_ms
+  printf '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"session_id":"deltasess001","context_window":{"used_percentage":%s,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1,"total_duration_ms":%s,"total_api_duration_ms":%s}}' "$1" "$2" "$3" \
+    | XDG_CONFIG_HOME="$_dl_cfg" CLAUDII_CACHE_DIR="$_dl_cache" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+_dl_first=$(_dl_run 20 60000 20000)
+assert_eq "compact-eta: no rate on the first render" "0" "$(printf '%s' "$_dl_first" | grep -c '⇲' || true)"
+assert_eq "response: no delta on the first render"   "0" "$(printf '%s' "$_dl_first" | grep -c '↯' || true)"
+# +6 raw points in 120s on an 80% scale = 3.75 usable-%/min; usable is 32%, so
+# 68 points remain → 18 min. The response delta is 64500-20000 = 44.5s → "45s".
+_dl_second=$(_dl_run 26 180000 64500)
+assert_contains "compact-eta: 6%/2min → ⇲18m" "⇲18m" "$_dl_second"
+assert_contains "response: api delta renders as 45s" "↯45s" "$_dl_second"
+# The rate is persisted, not recomputed from scratch each render.
+assert_contains "compact-eta: ctx_rate cached" "ctx_rate=3000" "$(cat "$_dl_cache/session-deltases")"
+# A render with no new API time keeps showing the last response's duration
+# instead of blanking the segment.
+assert_contains "response: survives a render with no new API time" "↯45s" "$(_dl_run 26 200000 64500)"
+# Sub-10s deltas get one decimal; a compaction (ctx drop) must not produce a
+# negative rate — the ETA either holds or disappears, it never inverts.
+assert_contains "response: sub-10s delta has one decimal" "↯4.1s" "$(_dl_run 27 260000 68600)"
+_dl_compact=$(_dl_run 3 320000 68600)
+assert_eq "compact-eta: compaction produces no negative ETA" "0" "$(printf '%s' "$_dl_compact" | grep -c -- '-' || true)"
+unset -f _dl_run; unset _dl_first _dl_second _dl_compact
+
+# ── ci segment — reads the cache claudii-ci-refresh maintains ────────────────
+# Every seed below is written fresh, so its mtime is younger than the TTL and
+# the render never spawns the (network-touching) refresher.
+_ci_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ci_cfg")
+mkdir -p "$_ci_cfg/claudii"
+printf '{"statusline":{"lines":[["ci"]]}}\n' > "$_ci_cfg/claudii/config.json"
+_ci_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ci_cache")
+_ci_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_ci_tpl")
+_ci_repo="$(mktemp -d)"; _SL_TMPDIRS+=("$_ci_repo")
+git init -q --template="$_ci_tpl" -b main "$_ci_repo"
+git -C "$_ci_repo" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m A
+# The cache filename is _str_hash(dir\nbranch) — sourced from lib/helpers.sh
+# rather than reimplemented, so a change to the hash breaks this test loudly
+# instead of silently seeding a file nothing reads.
+# shellcheck source=lib/timefmt.sh
+source "$CLAUDII_HOME/lib/timefmt.sh"
+# shellcheck source=lib/helpers.sh
+source "$CLAUDII_HOME/lib/helpers.sh"
+_str_hash "${_ci_repo}"$'\n'"main"
+_ci_file="$_ci_cache/ci-${_ci_repo##*/}-${_HASH}"
+_ci_seed() {  # $1 = state, $2 = checked epoch offset (default now)
+  printf 'state=%s\nurl=u\nrepo=%s\nbranch=main\nchecked=%s\n' \
+    "$1" "$_ci_repo" "$(( $(date +%s) - ${2:-0} ))" > "$_ci_file"
+}
+_ci_run() {
+  echo "{\"model\":{\"display_name\":\"O\"},\"cwd\":\"$_ci_repo\",\"context_window\":{\"used_percentage\":10}}" \
+    | XDG_CONFIG_HOME="$_ci_cfg" CLAUDII_CACHE_DIR="$_ci_cache" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+_ci_seed success; assert_contains "ci: success → CI ✓" "CI ✓" "$(_ci_run)"
+_ci_seed failure; assert_contains "ci: failure → CI ✗" "CI ✗" "$(_ci_run)"
+_ci_seed running; assert_contains "ci: running → CI ●" "CI ●" "$(_ci_run)"
+_ci_seed queued;  assert_contains "ci: queued → CI ◌"  "CI ◌" "$(_ci_run)"
+_ci_seed other;   assert_contains "ci: other → CI ⊘"   "CI ⊘" "$(_ci_run)"
+# A broken refresh is rendered as broken — never as a green tick.
+_ci_seed error;   assert_contains "ci: error → CI ?"   "CI ?" "$(_ci_run)"
+# Permanent states render nothing: no runs yet, and no GitHub remote at all.
+_ci_seed none;        assert_eq "ci: none → empty output"        "" "$(_ci_run)"
+_ci_seed unavailable; assert_eq "ci: unavailable → empty output" "" "$(_ci_run)"
+# An hour-old verdict is a claim about a push that may have been superseded.
+_ci_seed success 7200; assert_contains "ci: hour-old cache → CI stale" "CI stale" "$(_ci_run)"
+# No cache file at all → nothing rendered (and the refresher spawn is the only
+# thing that happens, in the background).
+rm -f "$_ci_file"
+assert_eq "ci: no cache → empty output" "" "$(_ci_run)"
+unset -f _ci_seed _ci_run
 
 # session-name segment: shown when session_name set
 _test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")

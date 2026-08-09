@@ -279,6 +279,7 @@ _claudii() {
                 'fallback.sonnet.model:Fallback model when sonnet is down'
                 'status.cache_ttl:Status cache TTL in seconds (default: 900)'
                 'status.rss_url:Status RSS feed URL'
+                'ci.cache_ttl:CI-state cache TTL in seconds for the ci segment (default: 300)'
                 'statusline.enabled:Show RPROMPT statusline (true/false)'
                 'statusline.models:Models to show (opus,sonnet,haiku)'
                 'statusline.lines:CC-Statusline layout (array of segment arrays)'
