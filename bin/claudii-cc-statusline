@@ -644,7 +644,7 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   fi
   _thr "$_usable_pct"
   _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
-  _seg_context_compact="${_CLR}${_ctx_glyph}${_usable_pct}%${RST}${win}"
+  _seg_context_compact="${_CLR}${_ctx_glyph} ${_usable_pct}%${RST}${win}"
 fi
 
 # Compact ETA — how long the remaining context lasts at the current burn rate.

@@ -463,11 +463,11 @@ _cx_run() {  # $1 = segment name, $2 = raw used_percentage → stripped output
 }
 # Glyph ramp over the *usable* percentage (raw × 100/80): 4→5% ○, 20→25% ◔,
 # 40→50% ◑, 56→70% ◕, 76→95% ●.
-assert_contains "context glyph: 5% → ○"   "○5%"   "$(_cx_run context 4)"
-assert_contains "context glyph: 25% → ◔"  "◔25%"  "$(_cx_run context 20)"
-assert_contains "context glyph: 50% → ◑"  "◑50%"  "$(_cx_run context 40)"
-assert_contains "context glyph: 70% → ◕"  "◕70%"  "$(_cx_run context 56)"
-assert_contains "context glyph: 95% → ●"  "●95%"  "$(_cx_run context 76)"
+assert_contains "context glyph: 5% → ○"   "○ 5%"   "$(_cx_run context 4)"
+assert_contains "context glyph: 25% → ◔"  "◔ 25%"  "$(_cx_run context 20)"
+assert_contains "context glyph: 50% → ◑"  "◑ 50%"  "$(_cx_run context 40)"
+assert_contains "context glyph: 70% → ◕"  "◕ 70%"  "$(_cx_run context 56)"
+assert_contains "context glyph: 95% → ●"  "● 95%"  "$(_cx_run context 76)"
 # Colour still keyed on the same thresholds as the bar (green <70, red >=90).
 printf '{"statusline":{"lines":[["context"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _cx_raw=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":76,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
