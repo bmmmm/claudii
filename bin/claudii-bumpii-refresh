@@ -1,0 +1,103 @@
+#!/bin/bash
+# claudii-bumpii-refresh — refresh the bumpii statusline cache.
+#
+# Runs bumpii twice with --no-judge (a background refresh must not spend an
+# engine — the judged digest happens when the user deliberately opens the
+# report) and writes the two numbers the segment renders:
+#
+#   pending=<N|?>   tracked tools with releases behind   (bumpii --json)
+#   inbox=<K|?>     repos with unread release news       (bumpii inbox --json)
+#
+# "?" means that half could not be checked, and it is rendered as such —
+# never as 0. An update indicator whose refresh broke and which then shows
+# "nothing pending" is the one wrong answer it must not give.
+#
+# Freshness is the cache file's mtime (same contract as status-models). The
+# TTL is re-checked here, not only in the spawner, so rapid renders that race
+# past the statusline's PID guard still exit fast on a fresh cache.
+#
+# Exit codes: 0 = cache fresh or refreshed, 1 = something pending (mirrors
+# bumpii, so a cron can act on it), 2 = never (a failed half is a "?", not
+# an abort — the other half is still worth writing).
+set -uo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-bumpii-refresh: jq not found — install jq\n' >&2; exit 1; }
+
+CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
+CACHE_FILE="$CACHE_DIR/status-bumpii"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
+_cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
+_def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+
+CACHE_TTL="${CLAUDII_BUMPII_TTL:-$(_cfg bumpii.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-$(_def bumpii.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-21600}"
+
+quiet=false
+force=false
+_pid_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) quiet=true ;;
+    --force) force=true ;;
+    --pid-file) shift; _pid_file="${1:-}" ;;
+    --pid-file=*) _pid_file="${1#--pid-file=}" ;;
+  esac
+  shift
+done
+
+[[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
+if ! $force && [[ -f "$CACHE_FILE" ]]; then
+  cache_age=$(( $(date +%s) - $(_mtime "$CACHE_FILE") ))
+  if (( cache_age < CACHE_TTL )); then
+    grep -qE '^(pending|inbox)=[1-9]' "$CACHE_FILE" 2>/dev/null && exit 1
+    exit 0
+  fi
+fi
+
+# bumpii not installed: write the cache anyway — "?" on both halves. Skipping
+# the write would leave a stale file whose numbers still render as current,
+# and every render would fork this script again for nothing.
+if ! command -v bumpii >/dev/null 2>&1; then
+  _tmp=$(mktemp "${CACHE_FILE}.XXXXXX") || exit 0
+  printf 'pending=?\ninbox=?\n' > "$_tmp" && mv -f "$_tmp" "$CACHE_FILE"
+  $quiet || printf 'claudii-bumpii-refresh: bumpii not on PATH\n' >&2
+  exit 0
+fi
+
+# Each half fails independently to "?": a dead forge must not blank the inbox
+# count, and a missing GitHub token (inbox needs one) must not blank the brew
+# half. bumpii exits 1 when something is pending — a result, not a failure.
+# Both jq filters demand the expected array by TYPE before counting it. A
+# bare `.entries | length` answers 0 on JSON that has no .entries at all —
+# measured, not hypothetical: a bumpii too old to know `inbox` treats the
+# word as a stray argument, runs the digest, and its JSON counted as a
+# silent "inbox=0" instead of the "?" that says nothing was checked.
+pending="?"
+_out=$(bumpii --json --no-judge 2>/dev/null)
+_rc=$?
+if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -n "$_out" ]]; then
+  _n=$(jq -r 'if (.reports | type) == "array" then ([.reports[] | select((.error == null) and ((.behind | length) > 0))] | length | tostring) else "?" end' <<< "$_out" 2>/dev/null)
+  [[ "$_n" =~ ^[0-9]+$ ]] && pending="$_n"
+fi
+
+inbox="?"
+_out=$(bumpii inbox --json --no-judge 2>/dev/null)
+_rc=$?
+if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -n "$_out" ]]; then
+  _k=$(jq -r 'if (.entries | type) == "array" then (.entries | length | tostring) else "?" end' <<< "$_out" 2>/dev/null)
+  [[ "$_k" =~ ^[0-9]+$ ]] && inbox="$_k"
+fi
+
+_tmp=$(mktemp "${CACHE_FILE}.XXXXXX") || exit 0
+printf 'pending=%s\ninbox=%s\n' "$pending" "$inbox" > "$_tmp" && mv -f "$_tmp" "$CACHE_FILE"
+
+$quiet || printf 'bumpii: %s pending, %s inbox\n' "$pending" "$inbox" >&2
+{ [[ "$pending" =~ ^[0-9]+$ ]] && (( pending > 0 )); } || { [[ "$inbox" =~ ^[0-9]+$ ]] && (( inbox > 0 )); } && exit 1
+exit 0

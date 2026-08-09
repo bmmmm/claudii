@@ -29,11 +29,11 @@ _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
-_cfg_status_ttl=""
+_cfg_status_ttl=""; _cfg_bumpii_ttl=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
-    _cfg_status_ttl < <(
+    _cfg_status_ttl _cfg_bumpii_ttl < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
@@ -46,7 +46,8 @@ if [[ -f "$_config_file" ]]; then
       (if .statusline.motivation == false then "false" else "true" end),
       (if .statusline.rainbow == false then "false" else "true" end),
       (.statusline.insomnii // "auto"),
-      (.status.cache_ttl // "" | tostring)
+      (.status.cache_ttl // "" | tostring),
+      (.bumpii.cache_ttl // "" | tostring)
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
@@ -1045,6 +1046,62 @@ if [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
   fi
 fi
 
+# bumpii — pending tool updates (⬆) and unread release news (✉), read from
+# the cache claudii-bumpii-refresh maintains. A "?" in the cache is a half
+# that could not be checked and renders as such — the one thing an update
+# indicator must not do is show a broken refresh as "nothing pending". The
+# same rule ages the whole segment: past 26h the numbers are yesterday's,
+# and "stale" is the honest render, not a clean nothing.
+_seg_bumpii=""
+_bumpii_cache="${_cache_dir}/status-bumpii"
+_bp_mtime=""
+if [[ "$_lines_raw" == *bumpii* && -f "$_bumpii_cache" ]]; then
+  _bp=""
+  { _bp=$(<"$_bumpii_cache"); } 2>/dev/null
+  _bp_nl=$'\n'"$_bp"
+  _bp_pending=""; _bp_inbox=""
+  if [[ "$_bp_nl" == *$'\n'pending=* ]]; then _bp_pending="${_bp#*pending=}"; _bp_pending="${_bp_pending%%$'\n'*}"; fi
+  if [[ "$_bp_nl" == *$'\n'inbox=* ]]; then _bp_inbox="${_bp#*inbox=}"; _bp_inbox="${_bp_inbox%%$'\n'*}"; fi
+  _bp_mtime=$(stat -f%m "$_bumpii_cache" 2>/dev/null || stat -c%Y "$_bumpii_cache" 2>/dev/null || echo 0)
+  if [[ "$_bp_mtime" =~ ^[0-9]+$ ]] && (( _bp_mtime > 0 )) && (( _now - _bp_mtime > 93600 )); then
+    _seg_bumpii="${DIM}⬆ stale${RST}"
+  else
+    if [[ "$_bp_pending" == "?" ]]; then
+      _seg_bumpii="${DIM}⬆?${RST}"
+    elif [[ "$_bp_pending" =~ ^[0-9]+$ ]] && (( _bp_pending > 0 )); then
+      _seg_bumpii="${YELLOW}⬆${_bp_pending}${RST}"
+    fi
+    if [[ "$_bp_inbox" == "?" ]]; then
+      _seg_bumpii+="${_seg_bumpii:+ }${DIM}✉?${RST}"
+    elif [[ "$_bp_inbox" =~ ^[0-9]+$ ]] && (( _bp_inbox > 0 )); then
+      _seg_bumpii+="${_seg_bumpii:+ }${YELLOW}✉${_bp_inbox}${RST}"
+    fi
+  fi
+fi
+
+# bumpii self-refresh — same mechanics as claude-status above: fork the
+# refresher when the cache is older than the TTL or missing. The refresher
+# re-checks the TTL itself, and the PID-file guard prevents stacking fetches
+# across rapid renders and parallel sessions. Skipped entirely when the
+# layout does not render the segment.
+if [[ "$_lines_raw" == *bumpii* ]]; then
+  _bp_ttl="$_cfg_bumpii_ttl"
+  [[ "$_bp_ttl" =~ ^[0-9]+$ ]] || _bp_ttl=21600
+  [[ "$_bp_mtime" =~ ^[0-9]+$ ]] || _bp_mtime=$(stat -f%m "$_bumpii_cache" 2>/dev/null || stat -c%Y "$_bumpii_cache" 2>/dev/null || echo 0)
+  _bp_age=$(( _now - _bp_mtime ))
+  if (( _bp_age > _bp_ttl )); then
+    _bpid_file="$_cache_dir/bumpii-refresh.pid"
+    _bpid=""
+    [[ -f "$_bpid_file" ]] && { _bpid=$(<"$_bpid_file"); } 2>/dev/null
+    _bp_fresh=0
+    if [[ "$_bpid" =~ ^[0-9]+$ ]] && kill -0 "$_bpid" 2>/dev/null; then
+      _bp_mt=$(stat -f%m "$_bpid_file" 2>/dev/null || stat -c%Y "$_bpid_file" 2>/dev/null || echo 0)
+      (( _now - _bp_mt < 30 )) && _bp_fresh=1
+    fi
+    (( _bp_fresh )) || ( "$CLAUDII_HOME/bin/claudii-bumpii-refresh" --quiet --pid-file "$_bpid_file" >/dev/null 2>&1 & )
+  fi
+fi
+
 while IFS= read -r _line_segs; do
   [[ -z "$_line_segs" ]] && continue
   _line_out=""; _first=1
@@ -1079,6 +1136,7 @@ while IFS= read -r _line_segs; do
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;
       omlx)          _val="$_seg_omlx"     ;;
+      bumpii)        _val="$_seg_bumpii"   ;;
       proxy)         _val="$_seg_proxy"    ;;
       clock)         _val="$_seg_clock"    ;;
       ruler)

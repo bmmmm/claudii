@@ -27,6 +27,9 @@
     "rss_url": "https://status.claude.com/history.rss",
     "cache_ttl": 300
   },
+  "bumpii": {
+    "cache_ttl": 21600
+  },
   "statusline": {
     "enabled": true,
     "models": "opus,sonnet,haiku,fable",
