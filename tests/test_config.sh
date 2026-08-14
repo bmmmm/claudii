@@ -15,7 +15,7 @@ output=$(bash "$CLAUDII_HOME/bin/claudii" config get aliases.cl.model 2>&1)
 assert_eq "config get aliases.cl.model" "sonnet" "$output"
 
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get aliases.clo.effort 2>&1)
-assert_eq "config get aliases.clo.effort" "high" "$output"
+assert_eq "config get aliases.clo.effort" "xhigh" "$output"
 
 output=$(bash "$CLAUDII_HOME/bin/claudii" config get aliases.clf.model 2>&1)
 assert_eq "config get aliases.clf.model" "fable" "$output"

@@ -78,10 +78,10 @@ Auto-fallback to a healthy model when the configured model is down
 .RB ( fallback.enabled ).
 .TP
 .B cl
-Claude Sonnet, high effort. General-purpose default.
+Claude Sonnet, xhigh effort. General-purpose default.
 .TP
 .B clo
-Claude Opus, high effort. Complex tasks, server work.
+Claude Opus, xhigh effort. Complex tasks, server work.
 .TP
 .B clm
 Claude Opus, xhigh effort. Hardest problems, maximum reasoning.
@@ -96,7 +96,7 @@ Equivalent to
 .BR "claudii search" .
 .TP
 .B clf
-Claude Fable, high effort. Anthropic's most capable model, for the hardest
+Claude Fable, xhigh effort. Anthropic's most capable model, for the hardest
 reasoning and long-horizon agentic work.
 .TP
 .B clh
@@ -1044,7 +1044,7 @@ ci	CI \[u2713]	Newest GitHub Actions run on this branch. See below
 sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
-claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
+claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
 .TE
 .PP
@@ -1401,7 +1401,7 @@ l l l.
 Key	Default	Description
 _
 aliases.cl.model	sonnet	Model for \fBcl\fR
-aliases.cl.effort	high	Effort for \fBcl\fR
+aliases.cl.effort	xhigh	Effort for \fBcl\fR
 aliases.clo.model	opus	Model for \fBclo\fR
 aliases.clm.effort	xhigh	Effort for \fBclm\fR
 aliases.clq.model	sonnet	Model for \fBclq\fR / search
@@ -1412,7 +1412,7 @@ status.cache_ttl	900	Status cache TTL in seconds
 ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
 display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
-statusline.models	opus,sonnet,haiku	Models to monitor
+statusline.models	opus,sonnet,haiku,fable	Models to monitor
 statusline.lines	(5-line default)	CC-Statusline layout — array of segment-ID arrays
 statusline.max_width	0	Hard per-line column budget (0 = off). See WIDTH below
 statusline.max_label	20	Max characters for branch/dir/worktree/session/agent names (0 = off)

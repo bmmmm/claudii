@@ -53,7 +53,7 @@ Dense metrics on every turn via the native `statusLine` hook:
 Opus xhigh ▲  ████████░░  ⚡73%
 5h:28%  7d:12%  eta:4h  +47/-12
 api:23m  12.4k↑ 4.2k↓  23m  feature-branch  ⌂ gateii
-Opus ✓  Sonnet ✓  Haiku ✓  │  @orchestrate
+Opus ✓  Sonnet ✓  Haiku ✓  Fable ✓  │  @orchestrate
 ⚡ commit-msg Qwen3.5-9B 2s
 ```
 
@@ -124,11 +124,11 @@ Each pairs a model with an [effort level](https://platform.claude.com/docs/en/bu
 and token spend, `xhigh`/`max` for the heaviest work:
 
 ```bash
-cl       # Sonnet, high effort — general default
-clo      # Opus, high effort — complex tasks, server work
+cl       # Sonnet, xhigh effort — general default
+clo      # Opus, xhigh effort — complex tasks, server work
 clm      # Opus, xhigh effort — hardest problems, maximum reasoning
 clq      # Sonnet, medium effort — search mode
-clf      # Fable, high effort — most capable model, long-horizon agentic work
+clf      # Fable, xhigh effort — most capable model, long-horizon agentic work
 clh      # alias table + live model health
 ```
 
