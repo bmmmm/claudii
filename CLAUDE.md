@@ -89,17 +89,15 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 
 - Settings via config.json only (nothing hardcoded); jq required; no network calls in precmd (cache only); compatible with oh-my-zsh/zinit/manual source
 - Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: gotchas memory #4)
-- Tests in tests/, run with `bash tests/run.sh` (add `--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2** — when a change touches test fixtures or any shell-quoting/default-arg/expansion logic, run `/bin/bash tests/run.sh` before pushing. Local `bash` is Homebrew 5.x and silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on 5.x), so a green local run is not a green CI run.
-- **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array (string keys evaluate as `arr[0]`, last-write-wins). Use `case` for label maps, `printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or parallel indexed arrays; guard new maps with a regression assert that invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch it).
-- **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh). The configured command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only the wrap script invokes `claudii-cc-statusline`); literal matching broke twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber the user's chain.
+- Tests in tests/, `bash tests/run.sh` (`--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2**, local `bash` is Homebrew 5.x and masks 3.2-only breakage — a green local run is not a green CI run. Details + repro: `docs/gotchas.md`.
+- **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array. Details + workarounds: `docs/gotchas.md`.
+- **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh) instead; literal matching has broken this twice. Details: `docs/gotchas.md`.
 - **The 5h rate limit is account-wide** — never attribute it to a single model in UI text, and read it from the *newest* fresh `session-*` cache file (glob order is by session id, not freshness). All rate displays follow `statusline.rate_display`; color/thresholds stay keyed on used%.
-- **An awk file carries no semantics of its own — verify any claim about a `lib/*.awk` program against its `-v` bindings at the call site** (`lib/cmd/*.sh`). Variable names lie: `trends.awk`'s `week_start` is bound to the *rolling* `seven_ts`, not the calendar week start. A review finding "confirmed" from the awk side alone produced a false CONFIRMED once (2026-07-02) — the refutation only surfaced on the pre-fix re-read of the binding site.
+- **An awk file carries no semantics of its own** — verify any claim about a `lib/*.awk` program against its `-v` bindings at the call site (`lib/cmd/*.sh`); variable names lie. Incident + details: `docs/gotchas.md`.
 
 ## Token efficiency (for Claude-in-session)
 
 - **Use `bash tests/run.sh --summary`** instead of `… | tail -5` — saves ~500 lines per run.
-- **Subagent prompts**: always cap reply length ("under 400 words"). Split by agent role: *search/Explore* agents (read-only, cheap models) get "only report PROVEN findings with reproducers" — they hallucinate verbose reports otherwise. *Bug-finding/review* agents (Opus) get the opposite — "report every finding incl. low-confidence ones, with a confidence level; filtering happens in a separate step"; models follow "be conservative / only high-severity" literally and silently drop real bugs, so filter outside the finding stage and verify on the main thread.
-- **Agent reports are advisory, not authoritative** — always verify claims against current code before fixing (agents hallucinate file paths, CI config, and variable semantics).
 
 ## When adding features
 
@@ -122,7 +120,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 
 ## When a new Claude model ships
 
-claudii only *recognizes and displays* model IDs — `/model` picks them, the defaults are version-agnostic — so a model bump is a display + docs sweep, not a config rename. Follow **`docs/model-bump-checklist.md`**: label cases, `_flat_1m_model()` window/pricing-shape check (incl. its untracked mirror in `~/.claude/hooks/compact-nudge.sh`), new-tier wiring across awk/jq/rates, `_KNOWN_MODEL_FAMILIES`, and the pricing `_rates` table.
+A model bump is a display + docs sweep, not a config rename (background: `docs/model-bump-checklist.md`). Checklist: label cases, `_flat_1m_model()` window/pricing-shape check (incl. its untracked mirror in `~/.claude/hooks/compact-nudge.sh`), new-tier wiring across awk/jq/rates, `_KNOWN_MODEL_FAMILIES`, and the pricing `_rates` table.
 
 ## Project skills
 
@@ -130,13 +128,10 @@ claudii only *recognizes and displays* model IDs — `/model` picks them, the de
 
 ## When orchestrating
 
-Use `/orchestrate`. Each agent works on its own `worktree-<name>` branch — orchestrator merges back to main.
-Set `git tag -f before-wave-N` before spawning, `git tag -f wave-N-done` after tests are green.
-Revert one merged agent: `git revert <merge-hash> -m 1 --no-edit`.
-Revert a full wave — `git revert before-wave-N..HEAD` does NOT work once the wave has `--no-ff` merge commits (fails with "commit … is a merge but no -m option given"). Use instead: **unpushed** → `git reset --hard before-wave-N`; **pushed** → revert each merge commit newest-first → `git revert -m 1 --no-edit <merge-N> … <merge-1>`.
-**Agents touching `lib/statusline.zsh`:** warn about removed functions (`_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`).
-**Dashboard test preconditions:** `jq '."session-dashboard".enabled = "on"'` in config + `_CLAUDII_CMD_RAN=1` in zsh subprocess — both required or tests pass vacuously.
-**After completing planned work:** if a `.claude/plans/*.md` file guided the work, delete it after implementing — plan files auto-load into every future session, and stale ones produce false "continue this work" prompts.
+Use `/orchestrate` — each agent works its own `worktree-<name>` branch,
+orchestrator merges back to main. Wave-tag/revert recipes, known
+`lib/statusline.zsh` / dashboard-test regressions, and the post-work
+plan-file cleanup reminder: **`docs/orchestration-notes.md`**.
 
 ## When committing
 
