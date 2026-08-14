@@ -20,15 +20,29 @@ _JSONL="$_LIM_PROJ/-test-project/$_SID.jsonl"
 # (Opus), one in hour 20 (Haiku) → cluster around 11:00, tally 2× Opus ·
 # 1× Haiku. A monthly-spend-limit hit is interspersed to confirm it's
 # excluded (different budget than the 5h session limit this command reports).
+#
+# Dates are computed relative to "now" (10/9 days back), not hardcoded — a
+# fixed calendar date eventually ages out of the --days 60 window the first
+# block below asserts against (was: 2026-06-10/11, broke once "now" passed
+# 60 days past it). Hours stay fixed since the hour-strip/cluster assertions
+# depend on them.
+_LIM_D1=$(date -u -v-10d +%Y-%m-%d 2>/dev/null || date -u -d "10 days ago" +%Y-%m-%d)
+_LIM_D2=$(date -u -v-9d  +%Y-%m-%d 2>/dev/null || date -u -d "9 days ago"  +%Y-%m-%d)
 {
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:29:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:30:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 2am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:44:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T11:45:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 3am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-10T12:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your monthly spend limit · raise it at claude.ai/settings/usage"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-11T19:59:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
-  printf '%s\n' '{"type":"assistant","timestamp":"2026-06-11T20:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 9pm (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:29:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:30:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 2am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:44:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:45:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 3am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T12:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your monthly spend limit · raise it at claude.ai/settings/usage"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D2"'T19:59:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D2"'T20:00:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 9pm (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
 } > "$_JSONL"
+
+# Expected "by day" label for _LIM_D1, formatted the same way _cmd_limits
+# does (LC_TIME=C '%d %b', no weekday — the assertion below is a substring
+# match so the weekday prefix doesn't matter).
+_LIM_D1_LBL=$(LC_TIME=C date -j -f '%Y-%m-%d' "$_LIM_D1" '+%d %b' 2>/dev/null \
+  || LC_TIME=C date -d "$_LIM_D1" '+%d %b' 2>/dev/null)
 
 _LIM_OUT=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" limits --days 60 2>&1)
@@ -46,10 +60,10 @@ assert_contains "limits: haiku in tally"  "Haiku 4.5"     "$_LIM_OUT"
 assert_contains "limits: hour strip label" "when"         "$_LIM_OUT"
 assert_contains "limits: model tally"     "models"        "$_LIM_OUT"
 assert_contains "limits: cluster insight (UTC hour 11)" "11:00" "$_LIM_OUT"
-# Per-day distribution: two Opus hits on 2026-06-10 (UTC) collapse into one
-# "2×" day row — the old flat list would have printed two separate lines.
+# Per-day distribution: two Opus hits on day 1 (UTC) collapse into one "2×"
+# day row — the old flat list would have printed two separate lines.
 assert_contains "limits: by-day section label" "by day"   "$_LIM_OUT"
-assert_contains "limits: by-day row shows local date" "10 Jun" "$_LIM_OUT"
+assert_contains "limits: by-day row shows local date" "$_LIM_D1_LBL" "$_LIM_OUT"
 assert_contains "limits: same-day hits aggregated to 2×" "2×" "$_LIM_OUT"
 
 # ── No hits → clear-runway line, exit 0 ──
@@ -89,8 +103,8 @@ _LIM_HELP=$(bash "$CLAUDII_HOME/bin/claudii" limits --help 2>&1)
 assert_contains "limits --help: usage" "Usage: claudii limits" "$_LIM_HELP"
 
 # ── --json: hits newest-first + per-model tally, well-formed ──
-# 3 hits: 2026-06-11 20:00 (Haiku), 2026-06-10 11:45 + 11:29 (Opus). Window 90d
-# covers them (same lifespan as the --days 60 run above).
+# 3 hits: day2 20:00 (Haiku), day1 11:45 + 11:29 (Opus). Window 90d covers
+# them (same lifespan as the --days 60 run above).
 _LIM_JSON=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" limits --json --days 90 2>&1)
 assert_eq "limits --json: well-formed JSON" "0" \
@@ -99,7 +113,7 @@ assert_eq "limits --json: total=3" "3" \
   "$(printf '%s' "$_LIM_JSON" | jq -r '.total')"
 assert_eq "limits --json: 3 hits listed" "3" \
   "$(printf '%s' "$_LIM_JSON" | jq -r '.hits | length')"
-assert_eq "limits --json: newest hit first (2026-06-11 20:00)" "2026-06-11T20:00:00Z" \
+assert_eq "limits --json: newest hit first (day2 20:00)" "${_LIM_D2}T20:00:00Z" \
   "$(printf '%s' "$_LIM_JSON" | jq -r '.hits[0].timestamp')"
 assert_contains "limits --json: by_model top is opus" "opus" \
   "$(printf '%s' "$_LIM_JSON" | jq -r '.by_model[0].model')"
@@ -111,4 +125,4 @@ assert_contains "limits --tsv: rejected, points to --json" "use --json" "$_LIM_T
 assert_contains "limits --tsv: exit 1" "rc=1" "$_LIM_TSV"
 
 unset _SID _JSONL _LIM_OUT _LIM_RC _LIM_NOUT _LIM_EOUT _LIM_DV _LIM_HELP
-unset _LIM_JSON _LIM_TSV
+unset _LIM_JSON _LIM_TSV _LIM_D1 _LIM_D2 _LIM_D1_LBL
