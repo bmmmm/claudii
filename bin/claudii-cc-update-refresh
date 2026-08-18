@@ -1,0 +1,106 @@
+#!/bin/bash
+# claudii-cc-update-refresh — refresh the "is a newer Claude Code out" cache.
+#
+# Spawned in the background by the `cc-version` statusline segment (never by a
+# render itself — no render makes a network call). Asks GitHub's public
+# releases API for anthropics/claude-code and writes what the segment reads:
+#
+#   latest=<version>   newest release, no leading "v"           (e.g. 2.1.234)
+#   tags=<v,v,v,...>   recent releases, newest first, no "v",
+#                      comma-joined, capped at PER_PAGE entries
+#   checked=<epoch>
+#
+# `tags` (not just `latest`) is what lets the segment show an exact "+N
+# releases behind" instead of a bare "outdated" guess: N is the position of
+# the session's installed version in that list, i.e. how many *actual*
+# releases sit between it and latest — release numbers are not sequential
+# (yanked/skipped tags happen), so diffing version numbers would lie.
+#
+# Deliberately independent of bumpii: bumpii already tracks a "claude" tool
+# entry with the same installed/latest/behind shape (see `bumpii --json`), but
+# making that a hard dependency would mean claudii users without bumpii
+# installed never see this segment work at all. This script is the
+# always-available default; a future refresher could populate the same cache
+# schema from bumpii's own data (same file, same fields) without the segment
+# reader needing to change at all — the schema is the only contract.
+#
+# Freshness is the cache file's mtime, and the TTL is re-checked here rather
+# than only in the spawner, so renders that race past the PID guard still exit
+# without spending an API call. A failed fetch still bumps `checked=` (so a
+# rate-limited or offline machine doesn't retry on every single render) while
+# leaving any previously known `latest`/`tags` in place — stale data the
+# segment can still use beats no data.
+set -uo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-cc-update-refresh: jq not found — install jq\n' >&2; exit 1; }
+
+CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
+CACHE_FILE="$CACHE_DIR/status-cc-version"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
+_cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
+_def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+
+CACHE_TTL="${CLAUDII_CC_VERSION_TTL:-$(_cfg cc_version.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-$(_def cc_version.cache_ttl)}"
+CACHE_TTL="${CACHE_TTL:-3600}"
+
+quiet=false
+force=false
+_pid_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) quiet=true ;;
+    --force) force=true ;;
+    --pid-file) shift; _pid_file="${1:-}" ;;
+    --pid-file=*) _pid_file="${1#--pid-file=}" ;;
+  esac
+  shift
+done
+
+[[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+_now=$(date +%s)
+
+if ! $force && [[ -f "$CACHE_FILE" ]] && (( _now - $(_mtime "$CACHE_FILE") < CACHE_TTL )); then
+  exit 0
+fi
+
+_prev_latest=""; _prev_tags=""
+if [[ -f "$CACHE_FILE" ]]; then
+  _prev=$(<"$CACHE_FILE")
+  _prev_nl=$'\n'"$_prev"
+  [[ "$_prev_nl" == *$'\n'latest=* ]] && { _prev_latest="${_prev#*latest=}"; _prev_latest="${_prev_latest%%$'\n'*}"; }
+  [[ "$_prev_nl" == *$'\n'tags=* ]]   && { _prev_tags="${_prev#*tags=}";   _prev_tags="${_prev_tags%%$'\n'*}"; }
+fi
+
+PER_PAGE=60
+_api_url="https://api.github.com/repos/anthropics/claude-code/releases?per_page=${PER_PAGE}"
+_json=$(curl -fsSL --max-time 10 "$_api_url" 2>/dev/null)
+_rc=$?
+
+_latest="$_prev_latest"; _tags="$_prev_tags"
+if (( _rc == 0 )) && [[ -n "$_json" ]]; then
+  _fetched_tags=$(printf '%s' "$_json" | jq -r '
+    [.[] | select(.draft == false and .prerelease == false) | .tag_name | sub("^v"; "")]
+    | join(",")
+  ' 2>/dev/null)
+  if [[ -n "$_fetched_tags" ]]; then
+    _tags="$_fetched_tags"
+    _latest="${_tags%%,*}"
+  fi
+elif ! $quiet; then
+  printf 'claudii-cc-update-refresh: release check failed (network or rate limit)\n' >&2
+fi
+
+_tmp=$(mktemp "${CACHE_FILE}.XXXXXX") || exit 0
+{
+  printf 'latest=%s\n'  "$_latest"
+  printf 'tags=%s\n'    "$_tags"
+  printf 'checked=%s\n' "$_now"
+} > "$_tmp" && chmod 0600 "$_tmp" && mv -f "$_tmp" "$CACHE_FILE"
+
+exit 0

@@ -315,11 +315,13 @@ strip_1M=$(echo "$output_1M" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 
 # ── Tailscale segment reads the ~30s TTL cache (no per-render ifconfig fork) ──
-# Deterministic: pre-seed $cache/vpnii-ts with a fresh epoch so the ifconfig
-# probe is skipped entirely and the cached up/down value drives the segment.
+# Its own segment (not glued to `vpn`), so a layout can place WireGuard and
+# Tailscale on different lines. Deterministic: pre-seed $cache/vpnii-ts with a
+# fresh epoch so the ifconfig probe is skipped entirely and the cached
+# up/down value drives the segment.
 _ts_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cfg_dir")
 mkdir -p "$_ts_cfg_dir/claudii"
-printf '{"statusline":{"lines":[["vpn"]]}}\n' > "$_ts_cfg_dir/claudii/config.json"
+printf '{"statusline":{"lines":[["tailscale"]]}}\n' > "$_ts_cfg_dir/claudii/config.json"
 _ts_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cache_dir")
 _ts_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}'
 
@@ -336,6 +338,26 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_not_contains "tailscale: fresh cache up=0 → ts hidden" "ts" "$strip"
 
 unset _ts_cfg_dir _ts_cache_dir _ts_json output strip
+
+# ── vpn segment is WireGuard-only now — independent of tailscale ──
+_vpn_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cfg_dir")
+mkdir -p "$_vpn_cfg_dir/claudii"
+printf '{"statusline":{"lines":[["vpn"]]}}\n' > "$_vpn_cfg_dir/claudii/config.json"
+_vpn_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cache_dir")
+_vpn_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
+
+# Tailscale up, but `vpn` alone must not show "ts" — the segments are split now.
+printf '%s 1\n' "$(date +%s)" > "$_vpn_cache_dir/vpnii-ts"
+output=$(echo "$_vpn_json" | XDG_CONFIG_HOME="$_vpn_cfg_dir" CLAUDII_CACHE_DIR="$_vpn_cache_dir" bash "$SL" 2>/dev/null)
+assert_eq "vpn: tailscale up but vpn segment alone stays empty" "" "$output"
+
+# WireGuard tunnel active → vpn shows the tunnel name.
+printf 'HomeLab\n' > "$_vpn_cache_dir/vpnii"
+output=$(echo "$_vpn_json" | XDG_CONFIG_HOME="$_vpn_cfg_dir" CLAUDII_CACHE_DIR="$_vpn_cache_dir" bash "$SL" 2>/dev/null)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "vpn: WireGuard tunnel name shown" "HomeLab" "$strip"
+
+unset _vpn_cfg_dir _vpn_cache_dir _vpn_json output strip
 
 # No bc in the script
 assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-cc-statusline" || true)"
@@ -817,6 +839,62 @@ output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_not_contains "github: owner alone → no ◆"     "◆"      "$strip"
 assert_not_contains "github: owner alone → no slash" "bmmmm/" "$strip"
+
+# cc-version segment — top-level .version from the statusLine payload, plus
+# the red "+N releases behind" annotation sourced from status-cc-version
+# (written by claudii-cc-update-refresh). Cache dir is isolated per case: this
+# segment now touches a real shared cache file, and the real machine's cache
+# (if any) must never leak into the assertions.
+_ccv_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cfg")
+mkdir -p "$_ccv_cfg/claudii"
+printf '{"statusline":{"lines":[["cc-version"]]}}\n' > "$_ccv_cfg/claudii/config.json"
+
+# No update-cache yet: plain, dim — never a false "behind" before there is data.
+_ccv_cache_none="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_none")
+_j=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.90","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_none" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: no update-cache yet → plain version" "v2.1.90" "$strip"
+assert_not_contains "cc-version: no update-cache yet → not red" $'\033[0;31m' "$output"
+
+# version absent entirely: line renders nothing
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}' \
+  | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_none" bash "$SL" 2>&1)
+assert_eq "cc-version: empty when version absent" "" "$output"
+
+# Up to date (installed == latest): plain, dim, no red, no +N.
+_ccv_cache_uptodate="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_uptodate")
+printf 'latest=2.1.90\ntags=2.1.90,2.1.89,2.1.88\nchecked=9999999999\n' > "$_ccv_cache_uptodate/status-cc-version"
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_uptodate" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: up to date → plain version" "v2.1.90" "$strip"
+assert_not_contains "cc-version: up to date → not red" $'\033[0;31m' "$output"
+
+# One release behind: red, "+1".
+_ccv_cache_1behind="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_1behind")
+printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=9999999999\n' > "$_ccv_cache_1behind/status-cc-version"
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_1behind" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: 1 behind → red +1" "v2.1.90 +1" "$strip"
+assert_contains "cc-version: 1 behind → red color code" $'\033[0;31m' "$output"
+
+# Several releases behind, with a skipped tag in between: the count is the
+# number of ACTUAL releases, not a numeric version diff (91 - 88 = 3 would be
+# wrong here — 2.1.89 was skipped, so only 2 releases are newer than 2.1.88).
+_ccv_cache_2behind="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_2behind")
+printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.88\nchecked=9999999999\n' > "$_ccv_cache_2behind/status-cc-version"
+_j88=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.88","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j88" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_2behind" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: skipped tag → correct release count, not a version diff" "v2.1.88 +2" "$strip"
+
+# Installed version fell off the cached window: red, "+?" — never a fabricated count.
+_ccv_cache_unknown="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_unknown")
+printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=9999999999\n' > "$_ccv_cache_unknown/status-cc-version"
+_jold=$(jq -cn '{"model":{"display_name":"Opus"},"version":"1.0.0","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_jold" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: fell off cached window → red +?" "v1.0.0 +?" "$strip"
 
 # ── Pace tri-state segment tests ───────────────────────────────────────────────
 _pace_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")

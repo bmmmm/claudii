@@ -66,7 +66,7 @@ _cmd_config() {
       # Derive the known set from defaults.json so it never drifts when a new
       # config block ships (perf, …); fall back to a literal set if unreadable.
       _known=$(jq -c 'keys' "$DEFAULTS" 2>/dev/null) \
-        || _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence","perf"]'
+        || _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence","perf","bumpii","ci","cc_version"]'
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
       [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
 

@@ -33,6 +33,9 @@
   "ci": {
     "cache_ttl": 300
   },
+  "cc_version": {
+    "cache_ttl": 3600
+  },
   "statusline": {
     "enabled": true,
     "models": "opus,sonnet,haiku,fable",
@@ -42,7 +45,7 @@
     "max_label": 20,
     "separator": "tight",
     "lines": [
-      ["model", "tokens", "cache-create", "cache-hit", "response"],
+      ["model", "cc-version", "tokens", "cache-create", "cache-hit", "response"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
       ["api-duration", "duration", "worktree", "worktrees", "branch", "dir", "remotes", "git-sync"],
       ["omlx", "proxy", "cost", "context", "compact-eta"],

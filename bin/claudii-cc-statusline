@@ -29,12 +29,12 @@ _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
-_cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""
+_cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""; _cfg_cc_version_ttl=""
 _cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
-    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_max_width _cfg_max_label _cfg_separator < <(
+    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label _cfg_separator < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
@@ -50,6 +50,7 @@ if [[ -f "$_config_file" ]]; then
       (.status.cache_ttl // "" | tostring),
       (.bumpii.cache_ttl // "" | tostring),
       (.ci.cache_ttl // "" | tostring),
+      (.cc_version.cache_ttl // "" | tostring),
       (.statusline.max_width // "" | tostring),
       (.statusline.max_label // "" | tostring),
       (.statusline.separator // "")
@@ -175,7 +176,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   session_name worktree_branch api_duration_ms exceeds_200k \
   effort_level thinking_enabled workspace_git_worktree \
   workspace_project_dir worktree_original_cwd \
-  repo_host repo_owner repo_name repo_pr <<< "$(
+  repo_host repo_owner repo_name repo_pr cc_version <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -209,8 +210,9 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.repo.host // ""),
     (.workspace.repo.owner // ""),
     (.workspace.repo.name // ""),
-    (.workspace.repo.pr_number // "" | tostring)
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.workspace.repo.pr_number // "" | tostring),
+    (.version // "")
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -915,11 +917,11 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-_DEFAULT_LINES="model,tokens,cache-create,cache-hit,response
+_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,response
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
 omlx,proxy,cost,context,compact-eta
-claude-status,vpn"
+claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
 [[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
@@ -931,6 +933,78 @@ _lines_raw="$_DEFAULT_LINES"
 # matched the `github` segment — that near-miss is documented below).
 _lines_csv=",${_lines_raw//$'\n'/,},"
 _in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
+
+# Claude Code app/CLI version (top-level .version in the statusLine payload),
+# red + "+N releases behind" when a newer build exists. N is exact — the
+# position of the installed version inside the cached release-tag list, not a
+# version-number diff — because Claude Code's release numbers are not
+# sequential (yanked/skipped tags happen: 2.1.230 was skipped entirely on
+# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". "+?"
+# means "definitely outdated, but the installed version fell off the cached
+# window" rather than a fabricated number. A cache miss (first run, or the
+# background refresher never having succeeded yet) renders plain, same as
+# up to date, until there is an actual answer.
+#
+# Deliberately independent of bumpii (see claudii-cc-update-refresh): the
+# cache schema (latest=/tags=/checked=) is the only contract, so a future
+# bumpii-backed refresher could populate the same file without this reader
+# changing at all.
+_seg_cc_version=""
+_ccup_cache="${_cache_dir}/status-cc-version"
+if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
+  _cc_latest=""; _cc_tags=""
+  if [[ -f "$_ccup_cache" ]]; then
+    _ccup=""
+    { _ccup=$(<"$_ccup_cache"); } 2>/dev/null
+    _ccup_nl=$'\n'"$_ccup"
+    [[ "$_ccup_nl" == *$'\n'latest=* ]] && { _cc_latest="${_ccup#*latest=}"; _cc_latest="${_cc_latest%%$'\n'*}"; }
+    [[ "$_ccup_nl" == *$'\n'tags=* ]]   && { _cc_tags="${_ccup#*tags=}";     _cc_tags="${_cc_tags%%$'\n'*}"; }
+  fi
+  _cc_behind=""
+  if [[ -n "$_cc_latest" ]]; then
+    if [[ "$cc_version" == "$_cc_latest" ]]; then
+      _cc_behind=0
+    elif [[ -n "$_cc_tags" ]]; then
+      _cc_tags_csv=",${_cc_tags},"
+      if [[ "$_cc_tags_csv" == *",$cc_version,"* ]]; then
+        # Everything before the (exact, comma-bounded) match — its comma
+        # count is exactly the number of newer releases ahead of it.
+        _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
+        _cc_commas="${_cc_before//[^,]/}"
+        _cc_behind=${#_cc_commas}
+      else
+        _cc_behind="?"
+      fi
+    fi
+  fi
+  if [[ -z "$_cc_behind" || "$_cc_behind" == "0" ]]; then
+    _seg_cc_version="${DIM}v${cc_version}${RST}"
+  else
+    _seg_cc_version="${RED}v${cc_version} +${_cc_behind}${RST}"
+  fi
+fi
+
+# cc-version self-refresh — same mechanics as claude-status/bumpii/ci: fork
+# claudii-cc-update-refresh when the cache is older than the TTL or missing.
+# The refresher re-checks the TTL itself, and the PID-file guard prevents
+# stacking fetches across rapid renders and parallel sessions. Skipped
+# entirely when the segment is not in the active layout.
+if _in_layout cc-version; then
+  _ccup_ttl="$_cfg_cc_version_ttl"
+  [[ "$_ccup_ttl" =~ ^[0-9]+$ ]] || _ccup_ttl=3600
+  _ccup_mtime=$(stat -f%m "$_ccup_cache" 2>/dev/null || stat -c%Y "$_ccup_cache" 2>/dev/null || echo 0)
+  if (( _now - _ccup_mtime > _ccup_ttl )); then
+    _ccuppid_file="$_cache_dir/cc-update-refresh.pid"
+    _ccuppid=""
+    [[ -f "$_ccuppid_file" ]] && { _ccuppid=$(<"$_ccuppid_file"); } 2>/dev/null
+    _ccup_fresh=0
+    if [[ "$_ccuppid" =~ ^[0-9]+$ ]] && kill -0 "$_ccuppid" 2>/dev/null; then
+      _ccup_mt=$(stat -f%m "$_ccuppid_file" 2>/dev/null || stat -c%Y "$_ccuppid_file" 2>/dev/null || echo 0)
+      (( _now - _ccup_mt < 30 )) && _ccup_fresh=1
+    fi
+    (( _ccup_fresh )) || ( "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file" >/dev/null 2>&1 & )
+  fi
+fi
 
 # Terminal width for the ruler segment — computed only when ruler is in the
 # layout (off by default), else the `tput cols` fork ran on every render for a
@@ -1353,17 +1427,21 @@ if [[ -f "$_omlx_active_path" ]]; then
   fi
 fi
 
-# VPN — WireGuard (state file) + Tailscale (CGNAT 100.64.0.0/10).
+# VPN — WireGuard tunnel name from the state file.
 _seg_vpn=""
 _vpn_state="${_cache_dir}/vpnii"
 if [[ -f "$_vpn_state" ]]; then
   _vpn_tunnel=$(<"$_vpn_state")
   [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
 fi
-# Tailscale — the ifconfig probe is a fork + grep on every render, so cache the
-# up/down result ~30s (shared with the zsh RPROMPT segment in lib/vpnii.zsh:
-# $_cache_dir/vpnii-ts, "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through
-# to a re-probe via the numeric guard.
+
+# Tailscale (CGNAT 100.64.0.0/10) — its own segment, not glued to `vpn`, so a
+# layout can place WireGuard and Tailscale on different lines. The ifconfig
+# probe is a fork + grep on every render, so cache the up/down result ~30s
+# (shared with the zsh RPROMPT segment in lib/vpnii.zsh: $_cache_dir/vpnii-ts,
+# "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through to a re-probe via
+# the numeric guard.
+_seg_tailscale=""
 _ts_cache="${_cache_dir}/vpnii-ts"
 _ts_up=1; _ts_have=0
 if [[ -r "$_ts_cache" ]]; then
@@ -1379,10 +1457,7 @@ if (( ! _ts_have )); then
   ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' && _ts_up=0
   printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_cache" 2>/dev/null || true
 fi
-if (( _ts_up == 0 )); then
-  [[ -n "$_seg_vpn" ]] && _seg_vpn+="  "
-  _seg_vpn+="${GREEN}⬢${RST} ${DIM}ts${RST}"
-fi
+(( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"
 
 # Proxy — non-empty only when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
 _seg_proxy=""
@@ -1486,6 +1561,7 @@ while IFS= read -r _line_segs; do
   for _seg in "${_segs[@]}"; do
     case "$_seg" in
       model)         _val="$_seg_model"    ;;
+      cc-version)    _val="$_seg_cc_version" ;;
       context)       _val="$_seg_context_compact" ;;
       context-bar)   _val="$_seg_context"  ;;
       compact-eta)   _val="$_seg_compact_eta" ;;
@@ -1519,6 +1595,7 @@ while IFS= read -r _line_segs; do
       sessions)      _val="$_seg_sessions" ;;
       claude-status) _val="$_seg_claude_status" ;;
       vpn)           _val="$_seg_vpn"      ;;
+      tailscale)     _val="$_seg_tailscale" ;;
       omlx)          _val="$_seg_omlx"     ;;
       bumpii)        _val="$_seg_bumpii"   ;;
       proxy)         _val="$_seg_proxy"    ;;

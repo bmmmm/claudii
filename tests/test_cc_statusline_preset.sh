@@ -39,10 +39,11 @@ assert_eq "preset focused: second line uses compact context" "context,compact-et
 assert_contains "preset focused: second line has rate-5h"     "rate-5h"     "$second_line"
 assert_contains "preset focused: second line has rate-7d"     "rate-7d"     "$second_line"
 
-# Third line: claude-status + vpn (env)
+# Third line: claude-status + vpn + tailscale (env)
 third_line=$(jq -r '.statusline.lines[2] | join(",")' "$CFG")
 assert_contains "preset focused: third line has claude-status" "claude-status" "$third_line"
 assert_contains "preset focused: third line has vpn"           "vpn"           "$third_line"
+assert_contains "preset focused: third line has tailscale"     "tailscale"     "$third_line"
 
 # Insomnii is NOT a segment in focused — it owns its own first line via the wrapper
 all_segs=$(jq -r '.statusline.lines | flatten | join(",")' "$CFG")

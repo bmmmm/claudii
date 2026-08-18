@@ -908,7 +908,10 @@ Alias:
 .BR "vpnii status" .
 .PP
 Tailscale is detected separately via interface scan
-(IPv4 in 100.64.0.0/10) and needs no state file.
+(IPv4 in 100.64.0.0/10) and needs no state file \(em it renders as its own
+.B tailscale
+statusline segment, independent of
+.BR vpn .
 .
 .SS Activity Heatmap (vibemap)
 Opt-in prompt-timing tracker, rendered as an ASCII heatmap.
@@ -1012,6 +1015,7 @@ l l l.
 Segment	Example	Description
 _
 model	\fBClaude Opus 4.8\fR	Model name (bold); effort level appended (ultracode/xhigh/max highlighted); \[u25B2] when thinking active
+cc-version	v2.1.90 +2	Claude Code app/CLI version, from the statusLine payload's top-level \fIversion\fR field. Dim when current; red with a \fB+N\fR releases-behind count when a newer build exists. See below
 context	\[u25D1] 62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF] ramp, threshold-coloured). The compact default
 context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
 compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
@@ -1044,6 +1048,8 @@ ci	CI \[u2713]	Newest GitHub Actions run on this branch. See below
 sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
+vpn	\[u2B21] HomeLab	Active WireGuard tunnel name, from the \fBvpnii\fR state file. Empty when no tunnel is active
+tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Its own segment \(em not glued to \fBvpn\fR \(em so the two can sit on different lines
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
 .TE
@@ -1091,6 +1097,36 @@ No constant window label is rendered \(em a dim
 next to every reading said nothing that ever changed. The prompt-cache hit
 ratio moved out of this segment into its own opt-in
 .BR cache-hit .
+.PP
+.B cc-version:
+red instead of dim, with a
+.B +N
+suffix, once a newer Claude Code build exists.
+.I N
+is exact \(em the position of the installed version inside a cached list of
+recent release tags, not a version-number diff \(em because Claude Code's
+release numbers are not sequential (a tag gets skipped/yanked now and then),
+so
+.RI "\[u201C]" 2.1.233\ vs.\&\ 2.1.231 "\[u201D] "
+is not reliably \[u201C]2 releases\[u201D]. A
+.B +?
+means the installed version fell out of the cached window \(em definitely
+outdated, count unknown \(em rather than a fabricated number. No cache yet
+(first run, or the background check never having succeeded) renders the
+plain dim version, same as up to date, until there is an actual answer. No
+render ever makes a network call:
+.BR claudii-cc-update-refresh (1)
+maintains
+.I status-cc-version
+in the background under the TTL
+.RB ( cc_version.cache_ttl ,
+default 3600s), asking GitHub's public releases API for
+.IR anthropics/claude-code .
+The cache schema (
+.IR latest= / tags= / checked= )
+is the only contract a future refresher needs to honor \(em a
+.BR bumpii (1)-backed
+one could populate the same file without this segment changing at all.
 .PP
 .B git-sync color key:
 the working copy's state vs.\& its upstream, as a compact traffic light \(em
@@ -1242,7 +1278,9 @@ maintains in the background, keyed per repo
 branch so parallel sessions and worktrees never fight over one entry. The TTL
 (\fBci.cache_ttl\fR, default 300s) adapts \(em a run in flight is polled 10x
 more often, a branch with no runs backs off 6x. Opt-in: not in the default
-layout, because it is the only segment whose refresher talks to the network.
+layout, since it needs
+.BR gh (1)
+and a GitHub-hosted repo.
 .PP
 .B worktrees:
 .B \[u2442]N
@@ -1410,6 +1448,7 @@ fallback.enabled	true	Auto-fallback on outage
 fallback.opus.model	sonnet	Fallback when opus is down
 status.cache_ttl	900	Status cache TTL in seconds
 ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
+cc_version.cache_ttl	3600	Claude Code release-check cache TTL in seconds (\fBcc-version\fR segment)
 display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku,fable	Models to monitor
