@@ -101,19 +101,31 @@ fi
 # measured, not hypothetical: a bumpii too old to know `inbox` treats the
 # word as a stray argument, runs the digest, and its JSON counted as a
 # silent "inbox=0" instead of the "?" that says nothing was checked.
+#
+# Both halves land in a file, never in a `$( )`: bumpii is a Node program
+# whose entrypoint ends in process.exit(), and Node's stdout is synchronous on
+# a file but asynchronous on a pipe — so a command substitution silently loses
+# everything still buffered past the 64 KiB pipe buffer. Measured: `bumpii
+# inbox --json` writes 93646 bytes to a file and exactly 65536 through a pipe,
+# and jq answered "Unfinished string at EOF" on the truncated document. That
+# rendered the inbox as "?" while it was perfectly readable — and only the
+# inbox, because the pending half's 33 KiB stays under the buffer.
+_json=$(mktemp "${CACHE_FILE}.json.XXXXXX") || exit 0
+trap 'rm -f "$_json"' EXIT
+
 pending="?"
-_out=$(bumpii --json --no-judge 2>/dev/null)
+bumpii --json --no-judge > "$_json" 2>/dev/null
 _rc=$?
-if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -n "$_out" ]]; then
-  _n=$(jq -r 'if (.reports | type) == "array" then ([.reports[] | select((.error == null) and ((.behind | length) > 0))] | length | tostring) else "?" end' <<< "$_out" 2>/dev/null)
+if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -s "$_json" ]]; then
+  _n=$(jq -r 'if (.reports | type) == "array" then ([.reports[] | select((.error == null) and ((.behind | length) > 0))] | length | tostring) else "?" end' "$_json" 2>/dev/null)
   [[ "$_n" =~ ^[0-9]+$ ]] && pending="$_n"
 fi
 
 inbox="?"
-_out=$(bumpii inbox --json --no-judge 2>/dev/null)
+bumpii inbox --json --no-judge > "$_json" 2>/dev/null
 _rc=$?
-if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -n "$_out" ]]; then
-  _k=$(jq -r 'if (.entries | type) == "array" then (.entries | length | tostring) else "?" end' <<< "$_out" 2>/dev/null)
+if [[ ( $_rc -eq 0 || $_rc -eq 1 ) && -s "$_json" ]]; then
+  _k=$(jq -r 'if (.entries | type) == "array" then (.entries | length | tostring) else "?" end' "$_json" 2>/dev/null)
   [[ "$_k" =~ ^[0-9]+$ ]] && inbox="$_k"
 fi
 

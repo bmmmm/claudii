@@ -1502,14 +1502,14 @@ if _in_layout bumpii && [[ -f "$_bumpii_cache" ]]; then
     _seg_bumpii="${DIM}⬆ stale${RST}"
   else
     if [[ "$_bp_pending" == "?" ]]; then
-      _seg_bumpii="${DIM}⬆?${RST}"
+      _seg_bumpii="${DIM}⬆ ?${RST}"
     elif [[ "$_bp_pending" =~ ^[0-9]+$ ]] && (( _bp_pending > 0 )); then
-      _seg_bumpii="${YELLOW}⬆${_bp_pending}${RST}"
+      _seg_bumpii="${YELLOW}⬆ ${_bp_pending}${RST}"
     fi
     if [[ "$_bp_inbox" == "?" ]]; then
-      _seg_bumpii+="${_seg_bumpii:+ }${DIM}✉?${RST}"
+      _seg_bumpii+="${_seg_bumpii:+ }${DIM}✉ ?${RST}"
     elif [[ "$_bp_inbox" =~ ^[0-9]+$ ]] && (( _bp_inbox > 0 )); then
-      _seg_bumpii+="${_seg_bumpii:+ }${YELLOW}✉${_bp_inbox}${RST}"
+      _seg_bumpii+="${_seg_bumpii:+ }${YELLOW}✉ ${_bp_inbox}${RST}"
     fi
   fi
 fi

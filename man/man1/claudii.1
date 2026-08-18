@@ -1051,6 +1051,9 @@ ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 vpn	\[u2B21] HomeLab	Active WireGuard tunnel name, from the \fBvpnii\fR state file. Empty when no tunnel is active
 tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Its own segment \(em not glued to \fBvpn\fR \(em so the two can sit on different lines
 claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
+omlx	\[u26A1] digest qwen3-30b-a3b 42s	Active local-agent run from \fBgateii\fR's \fIactive.json\fR \(em task, model and age. Hidden once the run is older than 300s
+proxy	\[u21C4] gateii	Where this session's API traffic goes, read from \fIANTHROPIC_BASE_URL\fR in the project's \fB.claude/settings.local.json\fR (\fBgateii\fR for localhost:8888, otherwise the host). Dim \[u2192] api when that file exists without the key; empty when it does not
+bumpii	\[u2B06] 2 \[u2709] 8	Pending tool updates and unread release news, from the \fBbumpii\fR(1)-backed cache. Opt-in. See below
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
 .TE
 .PP
@@ -1127,6 +1130,32 @@ The cache schema (
 is the only contract a future refresher needs to honor \(em a
 .BR bumpii (1)-backed
 one could populate the same file without this segment changing at all.
+.PP
+.B bumpii:
+.B \[u2B06]N
+tracked tools with a newer release, and
+.B \[u2709]K
+repos with unread release news \(em both yellow, both omitted at zero. A half
+that could not be checked renders a dim
+.B ?
+instead of a zero:
+.RI \[u201C] "nothing pending" \[u201D]
+is the one answer a broken update check must never give. The same rule ages
+the whole segment \(em past 26h the numbers are yesterday's, and it reads a
+dim
+.BR "\[u2B06] stale" .
+No render makes a network call:
+.BR claudii-bumpii-refresh (1)
+maintains
+.I status-bumpii
+in the background under the TTL
+.RB ( bumpii.cache_ttl ,
+default 21600s), which tightens to TTL/12 (min 5m) while anything is showing,
+so a machine you just upgraded clears within minutes rather than at the TTL
+mark. Opt-in \(em add
+.B bumpii
+to
+.BR statusline.lines .
 .PP
 .B git-sync color key:
 the working copy's state vs.\& its upstream, as a compact traffic light \(em
@@ -1449,6 +1478,7 @@ fallback.opus.model	sonnet	Fallback when opus is down
 status.cache_ttl	900	Status cache TTL in seconds
 ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
 cc_version.cache_ttl	3600	Claude Code release-check cache TTL in seconds (\fBcc-version\fR segment)
+bumpii.cache_ttl	21600	Update/release-news cache TTL in seconds (\fBbumpii\fR segment; adaptive \(em see above)
 display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
 statusline.enabled	true	ClaudeStatus in RPROMPT
 statusline.models	opus,sonnet,haiku,fable	Models to monitor

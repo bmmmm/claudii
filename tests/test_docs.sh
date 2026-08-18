@@ -36,17 +36,25 @@ assert_eq "toggle removed from bin/claudii" "" \
   "$(grep -E '^\s+toggle\)' "$CLI" || true)"
 
 # ── Sessionline segments documented in man page ─────────────────────────────
-# Every segment in the layout loop must have a row in the man page segments table.
-# Update this list whenever a new segment is added to bin/claudii-cc-statusline.
-SL_SEGMENTS=(
-  model context context-bar compact-eta cache-hit response rate-5h rate-7d cost tokens
-  lines-changed duration api-duration burn-eta pace cron bg-tasks compactions
-  delta-5h delta-7d cache-create session-name
-  worktree worktrees branch agent ruler claude-status github remotes git-sync ci sessions
-)
-for seg in "${SL_SEGMENTS[@]}"; do
-  assert_contains "man page documents segment: $seg" "$seg" "$(cat "$MAN")"
+# The list is read out of the dispatch case in bin/claudii-cc-statusline, not
+# retyped here. It used to be a hand-maintained array, which made this gate
+# vacuous for exactly the segments nobody remembered to add to it: bumpii,
+# omlx and proxy went undocumented that way, two of them shipping in the
+# default layout. Derived, a new segment fails the gate on the commit that
+# adds it.
+#
+# The assertion is anchored to the table row (name + TAB), not a bare
+# substring — "dir" or "ci" occur all over the page, so a substring check
+# passes for a segment that has no row at all.
+SL_SEGMENTS=$(LC_ALL=C sed -n '/case "$_seg" in/,/^    esac$/p' "$CLAUDII_HOME/bin/claudii-cc-statusline" \
+  | LC_ALL=C sed -n 's/^      \([a-z0-9][a-z0-9-]*\)).*/\1/p')
+assert_eq "statusline segment list is derivable from the dispatch case" "0" \
+  "$([ "$(printf '%s\n' "$SL_SEGMENTS" | grep -c .)" -ge 20 ] && echo 0 || echo 1)"
+for seg in $SL_SEGMENTS; do
+  assert_eq "man page has a table row for segment: $seg" "0" \
+    "$(LC_ALL=C grep -q "^${seg}$(printf '\t')" "$MAN" && echo 0 || echo 1)"
 done
+unset seg
 
 # defaults.json must be readable JSON (basic sanity)
 assert_eq "config/defaults.json is valid JSON" "0" \
