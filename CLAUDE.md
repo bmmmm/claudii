@@ -106,7 +106,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 3. Add completion in `completions/_claudii`
 4. **Update `man/man1/claudii.1`**
 5. Add test in `tests/test_*.sh`
-6. `test_docs.sh` verifies all five stay in sync — but only for names listed in its own hardcoded arrays (`MAN_COMMANDS`/`ALL_COMMANDS`, and `SL_SEGMENTS` for statusline segments): **add the new name there too**, or the gate passes vacuously
+6. `test_docs.sh` verifies all five stay in sync — but only for names in its hardcoded `MAN_COMMANDS`/`ALL_COMMANDS` arrays: **add the new name there too**, or the gate passes vacuously. Statusline segments are the exception: their list is derived from the dispatch `case`, so a new segment goes red until the man page has its `^name<TAB>` row
 7. Wiki is auto-generated from the man page — never edit the wiki directly
 8. Update `CHANGELOG.md` unreleased block
 
