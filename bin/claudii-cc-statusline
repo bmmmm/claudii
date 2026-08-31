@@ -176,7 +176,8 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   session_name worktree_branch api_duration_ms exceeds_200k \
   effort_level thinking_enabled workspace_git_worktree \
   workspace_project_dir worktree_original_cwd \
-  repo_host repo_owner repo_name repo_pr cc_version <<< "$(
+  repo_host repo_owner repo_name repo_pr cc_version \
+  pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -211,15 +212,26 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.repo.owner // ""),
     (.workspace.repo.name // ""),
     (.workspace.repo.pr_number // "" | tostring),
-    (.version // "")
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.version // ""),
+    (.prompt_cache.hit_ratio  | if type == "number" then (. * 100 | round | tostring) else "" end),
+    (.prompt_cache.warm             | if . == null then "" else tostring end),
+    (.prompt_cache.caching_observed | if . == null then "" else tostring end),
+    (.prompt_cache.expires_at // 0  | if . > 0 then ((. - now) | floor | tostring) else "" end),
+    (.prompt_cache.recache_tokens_if_cold // "" | tostring)
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
 _isset() { [[ -n "$1" && "$1" != "null" && "$1" != "0" ]]; }
 
 _cache_pct=""
-if _isset "$cache_read"; then
+if [[ "$pc_hit_pct" =~ ^[0-9]+$ ]]; then
+  # Native prompt_cache.hit_ratio (CC 2.1.251+): the official definition —
+  # cache reads over all input tokens, main conversation only (subagent
+  # requests excluded). Preferred over the context_window derivation below,
+  # which can't tell subagent traffic apart.
+  _cache_pct=$pc_hit_pct
+elif _isset "$cache_read"; then
   _cr=${cache_read%.*}
   _ci=${input_tok%.*}
   if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
@@ -568,15 +580,21 @@ _flat_1m_model() {
 # 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
 # point nears. The default scale is *model-aware*, mirroring the FLOOR rule in
 # ~/.claude/hooks/compact-nudge.sh: compact point = min(window * 80%, FLOOR), with
-# FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the 80%
-# practical-window rule wins) and 195k on every other model (a habit ceiling — so
-# a 1M sonnet-4.6[1m] window fills near 195k, not 800k, instead of reading "20%"
-# while you're already past the compact point). Expressed as a % of the window.
-# 80% here is claudii's auto-compact assumption, deliberately distinct from the
-# nudge's 78% *manual*-compact point; on the common windows (flat-1M models,
-# any 200k model) it resolves to 80 either way, so the only behaviour change is
-# the large-window legacy-sonnet case. Window source: context_window_size, else
-# inferred from the model id (flat-1M models → 1M, else 200k).
+# FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the
+# real auto-compact point wins) and 195k on every other model (a habit
+# ceiling — so a 1M sonnet-4.6[1m] window fills near 195k, not 967k, instead of
+# reading "20%" while you're already past the compact point).
+# The auto-compact point itself is window − 33k: Claude Code reserves a 20k
+# output buffer and compacts 13k before that edge (measured in CC 2.1.198 —
+# see the threshold notes in ~/.claude/hooks/compact-nudge.sh; CC v2.1.247
+# confirms 967K on Sonnet 5's 1M window, aligning it with the other 1M
+# models). That resolves to ~96.7% of a 1M window and 83.5% of a 200k one —
+# the old flat 80% assumption under-sold a 1M session by ~167k tokens. On an
+# implausibly small window (< 66k) the formula degrades to the legacy 80%.
+# The nudge hook's 78% is NOT this number: it targets the summary-precompute
+# point (~80% of the effective window) to fire well before auto-compact.
+# Window source: context_window_size, else inferred from the model id
+# (flat-1M models → 1M, else 200k).
 # CLAUDE_CODE_AUTO_COMPACT_WINDOW (inherited from Claude Code) overrides the
 # default: a value > 1 is a token count (fraction = value / window size), a
 # value in (0,1] is the fraction itself; clamped to [50,100]%, garbage → the
@@ -587,7 +605,8 @@ if [[ ! "$_ac_win" =~ ^[0-9]+$ ]] || (( _ac_win < 1 )); then
   if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi
 fi
 if _flat_1m_model "$_ac_mid"; then _ac_floor=$_ac_win; else _ac_floor=195000; fi
-_ac_thr=$(( _ac_win * 80 / 100 ))
+_ac_thr=$(( _ac_win - 33000 ))                    # auto-compact = window − 33k (measured)
+(( _ac_thr < _ac_win / 2 )) && _ac_thr=$(( _ac_win * 80 / 100 ))
 (( _ac_floor < _ac_thr )) && _ac_thr=$_ac_floor
 _ac_dflt=$(( _ac_thr * 100 / _ac_win ))
 (( _ac_dflt < 10 )) && _ac_dflt=10     # sanity floor — below this the bar is useless
@@ -698,13 +717,38 @@ fi
 
 # Cache hit ratio — was glued to the context bar, now its own opt-in segment so
 # a compact context display doesn't have to carry it. Green >= 60%, yellow < 30%.
+# _cache_pct is the native prompt_cache.hit_ratio when present (no cache_read
+# needed), else derived from context_window — so the gate is the value itself.
 _seg_cache_hit=""
-if _isset "$cache_read" && _isset "$_cache_pct"; then
+if _isset "$_cache_pct"; then
   if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
   elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
   else                              _cc="${DIM}"
   fi
   _seg_cache_hit="${_cc}⚡${_cache_pct}%${RST}"
+fi
+
+# Prompt-cache TTL — the native prompt_cache object (CC 2.1.251+). Warm: a
+# countdown until the cached prefix goes cold (expires_at − now, computed in
+# the same jq pass — no extra fork), yellow once ≤2min remain. Cold while the
+# session HAS seen caching: yellow "cold", with recache_tokens_if_cold as the
+# price of continuing (what the next request re-caches) — the decision signal.
+# Absent object (older CC, before the first API response, or a provider that
+# never reported cache tokens) → empty, like the repo fields.
+_seg_cache_ttl=""
+if [[ "$pc_warm" == "true" && "$pc_ttl_left" =~ ^[0-9]+$ ]] && (( pc_ttl_left > 0 )); then
+  _fmt_rel "$pc_ttl_left"
+  if [[ -n "$_REL_FMT" ]]; then
+    _ct_clr="$DIM"
+    (( pc_ttl_left <= 120 )) && _ct_clr="$YELLOW"
+    _seg_cache_ttl="${_ct_clr}♨${_REL_FMT}${RST}"
+  fi
+elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
+  _seg_cache_ttl="${YELLOW}♨cold${RST}"
+  if _isset "$pc_recache"; then
+    _tok "$pc_recache"
+    [[ -n "$_tok_result" ]] && _seg_cache_ttl="${YELLOW}♨cold·${_tok_result}${RST}"
+  fi
 fi
 
 _seg_cost=""
@@ -917,7 +961,7 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,response
+_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
 omlx,proxy,cost,context,compact-eta
@@ -1566,6 +1610,7 @@ while IFS= read -r _line_segs; do
       context-bar)   _val="$_seg_context"  ;;
       compact-eta)   _val="$_seg_compact_eta" ;;
       cache-hit)     _val="$_seg_cache_hit" ;;
+      cache-ttl)     _val="$_seg_cache_ttl" ;;
       response)      _val="$_seg_response" ;;
       cost)          _val="$_seg_cost"     ;;
       rate-5h)       _val="$_seg_rate5h"   ;;

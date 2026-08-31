@@ -1032,7 +1032,8 @@ cc-version	v2.1.90 +2	Claude Code app/CLI version, from the statusLine payload's
 context	\[u25D1] 62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF] ramp, threshold-coloured). The compact default
 context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
 compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
-cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%)
+cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Native \fIprompt_cache.hit_ratio\fR on Claude Code 2.1.251+, derived from the context window on older builds
+cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price. See below. Requires Claude Code 2.1.251+
 response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
@@ -1247,6 +1248,22 @@ of 0, and
 with a piped stdout answers with terminfo's 80 no matter how wide the window
 really is. Truncating a 140-column terminal to 80 on a guess is worse than not
 truncating at all \(em so the number is yours to set.
+.PP
+.B cache-ttl:
+the prompt cache as a decision, not a statistic. While the cached prefix is
+warm the segment counts down to the moment it goes cold
+.RI ( prompt_cache.expires_at ,
+computed in the same jq pass \(em no extra fork), turning yellow at two
+minutes. Once it is cold \(em and only when the session has actually seen
+caching, so providers that never report cache tokens stay silent \(em it shows
+what continuing costs:
+.IR prompt_cache.recache_tokens_if_cold ,
+the tokens the next request re-caches, e.g.
+.BR "\[u2668]cold\[u00B7]312.0K" .
+That is the number behind "if I pause now, what does resuming cost?".
+Absent entirely on Claude Code builds before 2.1.251 and before the first API
+response. The statistics themselves (misses, expected rebuilds) stay in
+.BR "/cost" .
 .PP
 .B compact-eta:
 how long the remaining context lasts at the rate you are actually filling it \(em

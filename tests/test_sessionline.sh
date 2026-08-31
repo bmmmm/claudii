@@ -17,7 +17,7 @@ trap 'rm -rf "${_SL_TMPDIRS[@]}" 2>/dev/null' EXIT
 # Full data (all fields)
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":42,"total_input_tokens":15234,"total_output_tokens":4521,"context_window_size":200000,"current_usage":{"cache_creation_input_tokens":8000,"cache_read_input_tokens":0}},"cost":{"total_cost_usd":0.55,"total_duration_ms":732000,"total_lines_added":156,"total_lines_removed":23},"rate_limits":{"five_hour":{"used_percentage":23.5},"seven_day":{"used_percentage":71.2}}}' | bash "$SL" 2>&1)
 assert_contains "shows model name" "Opus" "$output"
-assert_contains "shows context %" "52%" "$output"
+assert_contains "shows context %" "50%" "$output"
 assert_contains "shows input tokens" "15.2K" "$output"
 assert_contains "shows output tokens" "4.5K" "$output"
 assert_contains "shows 5h rate" "5h:" "$output"
@@ -483,13 +483,14 @@ _cx_run() {  # $1 = segment name, $2 = raw used_percentage → stripped output
   echo "{\"model\":{\"display_name\":\"Opus\",\"id\":\"claude-opus-4-8\"},\"context_window\":{\"used_percentage\":$2,\"total_input_tokens\":1,\"total_output_tokens\":1,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":0.1}}" \
     | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
 }
-# Glyph ramp over the *usable* percentage (raw × 100/80): 4→5% ○, 20→25% ◔,
-# 40→50% ◑, 56→70% ◕, 76→95% ●.
-assert_contains "context glyph: 5% → ○"   "○ 5%"   "$(_cx_run context 4)"
-assert_contains "context glyph: 25% → ◔"  "◔ 25%"  "$(_cx_run context 20)"
-assert_contains "context glyph: 50% → ◑"  "◑ 50%"  "$(_cx_run context 40)"
-assert_contains "context glyph: 70% → ◕"  "◕ 70%"  "$(_cx_run context 56)"
-assert_contains "context glyph: 95% → ●"  "● 95%"  "$(_cx_run context 76)"
+# Glyph ramp over the *usable* percentage. 200k window → compact point 167k
+# (window − 33k) → scale 83: raw × 100/83 gives 4→4% ○, 20→24% ◔, 40→48% ◑,
+# 56→67% ◕, 76→91% ●.
+assert_contains "context glyph: 4% → ○"   "○ 4%"   "$(_cx_run context 4)"
+assert_contains "context glyph: 24% → ◔"  "◔ 24%"  "$(_cx_run context 20)"
+assert_contains "context glyph: 48% → ◑"  "◑ 48%"  "$(_cx_run context 40)"
+assert_contains "context glyph: 67% → ◕"  "◕ 67%"  "$(_cx_run context 56)"
+assert_contains "context glyph: 91% → ●"  "● 91%"  "$(_cx_run context 76)"
 # Colour still keyed on the same thresholds as the bar (green <70, red >=90).
 printf '{"statusline":{"lines":[["context"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _cx_raw=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":76,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
@@ -498,7 +499,7 @@ assert_contains "context 95% is red" $'\033[31m' "$_cx_raw"
 # No bar blocks in the compact segment, and no ⚡ glued to it any more.
 assert_eq "context: no block bar" "0" "$(_cx_run context 40 | grep -c '█' || true)"
 # The bar variant still renders ten blocks for the same input.
-assert_contains "context-bar still draws blocks" "█████░░░░░" "$(_cx_run context-bar 40)"
+assert_contains "context-bar still draws blocks" "████░░░░░░" "$(_cx_run context-bar 40)"
 unset -f _cx_run; unset _cx_raw
 
 # ── cache-hit — the ⚡ ratio as its own segment (was glued to context-bar) ────
@@ -512,6 +513,33 @@ printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_cx_cfg/claudii/config
 assert_eq "context-bar alone has no ⚡" "0" \
   "$(echo "$_ch_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | grep -c '⚡' || true)"
 unset _ch _ch_json
+
+# ── prompt_cache (CC 2.1.251+): native hit_ratio + cache-ttl segment ─────────
+# The native object wins over the context_window derivation, warm renders a
+# countdown to expires_at, cold renders the recache price, and an absent
+# object leaves cache-ttl empty (older CC) while cache-hit falls back.
+printf '{"statusline":{"lines":[["cache-hit","cache-ttl"]]}}\n' > "$_cx_cfg/claudii/config.json"
+_pc_now=$(date +%s)
+# Native hit_ratio 0.73 beats the derived 33% the context_window values imply.
+_pc_json="{\"model\":{\"display_name\":\"Sonnet\"},\"context_window\":{\"used_percentage\":30,\"total_input_tokens\":10000,\"total_output_tokens\":2000,\"context_window_size\":200000,\"current_usage\":{\"cache_read_input_tokens\":5000}},\"cost\":{\"total_cost_usd\":0.2},\"prompt_cache\":{\"warm\":true,\"caching_observed\":true,\"hit_ratio\":0.73,\"expires_at\":$(( _pc_now + 250 )),\"recache_tokens_if_cold\":312000}}"
+_pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "cache-hit: native hit_ratio wins over derivation" "⚡73%" "$_pc"
+assert_contains "cache-ttl: warm renders countdown to expires_at" "♨4m" "$_pc"
+# Cold with caching observed → the price of continuing (recache tokens).
+_pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.2},"prompt_cache":{"warm":false,"caching_observed":true,"hit_ratio":0.42,"expires_at":null,"recache_tokens_if_cold":312000}}'
+_pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "cache-ttl: cold renders recache price" "♨cold·312.0K" "$_pc"
+assert_contains "cache-hit: native ratio works without cache_read" "⚡42%" "$_pc"
+# No prompt_cache object (older CC): cache-ttl stays empty, cache-hit derives.
+_pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
+_pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cache-ttl: absent object renders nothing" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
+assert_contains "cache-hit: absent object falls back to derivation" "⚡33%" "$_pc"
+# caching never observed (provider without cache reporting) → no cold noise.
+_pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.2},"prompt_cache":{"warm":false,"caching_observed":false,"hit_ratio":0}}'
+_pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cache-ttl: caching_observed=false stays silent" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
+unset _pc _pc_json _pc_now
 
 # ── worktrees segment — linked worktrees of the current repo (⑂N ⌫P) ─────────
 # Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives
@@ -579,10 +607,11 @@ _dl_run() {  # $1 = raw ctx%, $2 = duration_ms, $3 = api_duration_ms
 _dl_first=$(_dl_run 20 60000 20000)
 assert_eq "compact-eta: no rate on the first render" "0" "$(printf '%s' "$_dl_first" | grep -c '⇲' || true)"
 assert_eq "response: no delta on the first render"   "0" "$(printf '%s' "$_dl_first" | grep -c '↯' || true)"
-# +6 raw points in 120s on an 80% scale = 3.75 usable-%/min; usable is 32%, so
-# 68 points remain → 18 min. The response delta is 64500-20000 = 44.5s → "45s".
+# +6 raw points in 120s on the 200k window's 83% scale = 3.61 usable-%/min;
+# usable is 31%, so 69 points remain → 19 min. The response delta is
+# 64500-20000 = 44.5s → "45s".
 _dl_second=$(_dl_run 26 180000 64500)
-assert_contains "compact-eta: 6%/2min → ⇲18m" "⇲18m" "$_dl_second"
+assert_contains "compact-eta: 6%/2min → ⇲19m" "⇲19m" "$_dl_second"
 assert_contains "response: api delta renders as 45s" "↯45s" "$_dl_second"
 # The rate is persisted, not recomputed from scratch each render.
 assert_contains "compact-eta: ctx_rate cached" "ctx_rate=3000" "$(cat "$_dl_cache/session-deltases")"
@@ -1061,7 +1090,7 @@ assert_contains "insomnii env: corrupt config falls back to rainbow=true" "rainb
 unset _ins_dir _ins_env
 
 # ── Auto-compact aware context bar (CLAUDE_CODE_AUTO_COMPACT_WINDOW) ─────────
-# Default (unset, see top of file): 42% raw → 42*100/80 = 52%.
+# Default (unset, see top of file): 200k window → scale 83, override wins below.
 _ac_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"total_input_tokens":1000,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.10}}'
 
 # Fraction form: 0.9 → scale 90 → 40*100/90 = 44%
@@ -1072,34 +1101,39 @@ assert_contains "auto-compact fraction 0.9 scales bar" "44%" "$output"
 output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
 assert_contains "auto-compact token count scales bar" "80%" "$output"
 
-# Garbage value → default 80% scale → 40*100/80 = 50%
+# Garbage value → model default (200k → scale 83) → 40*100/83 = 48%
 output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=banana bash "$SL" 2>&1)
-assert_contains "auto-compact garbage falls back to 80" "50%" "$output"
+assert_contains "auto-compact garbage falls back to model default" "48%" "$output"
 
 # Clamp: fraction 0.2 clamps to 0.5 → 40*100/50 = 80%
 output=$(echo "$_ac_json" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=0.2 bash "$SL" 2>&1)
 assert_contains "auto-compact low fraction clamps to 0.5" "80%" "$output"
 
-# Token count without window size → default scale (opus → 80) → 50%
+# Token count without window size → inferred 1M window (opus) → scale 96 → 41%
 _ac_nown='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"total_input_tokens":1000,"total_output_tokens":100},"cost":{"total_cost_usd":0.10}}'
 output=$(echo "$_ac_nown" | CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 bash "$SL" 2>&1)
-assert_contains "auto-compact token count w/o window size falls back" "50%" "$output"
+assert_contains "auto-compact token count w/o window size falls back" "41%" "$output"
 unset _ac_json _ac_nown
 
 # ── Model-aware practical-window scale (mirrors reflect-nudge FLOOR rule) ─────
-# Standard windows resolve to the same 80% scale as before — no behaviour change:
-#   opus/1M, opus/200k, sonnet/200k all have compact point = min(win*80%, FLOOR)
-#   = win*80%, so scale = 80 and a raw 40% → 40*100/80 = 50%.
+# The compact point is window − 33k (measured; see the scale comment in the
+# binary): 1M → 967k → scale 96, 200k → 167k → scale 83. Only the legacy
+# 195k FLOOR (sonnet[1m]) undercuts it.
 output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
-assert_contains "model-aware: opus/1M keeps 80% scale (40%→50%)" "50%" "$output"
+assert_contains "model-aware: opus/1M uses 96% scale (40%→41%)" "41%" "$output"
 # Sonnet 5 and Fable 5 ship 1M as their default, flat-billed window — same
 # full-window floor as opus, not the legacy sonnet[1m] 195k habit ceiling.
+# (CC v2.1.247 aligned Sonnet 5's auto-compact with the other 1M models at
+# ~967K — the same window − 33k edge.)
 output=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
-assert_contains "model-aware: sonnet-5/1M keeps 80% scale (40%→50%)" "50%" "$output"
+assert_contains "model-aware: sonnet-5/1M uses 96% scale (40%→41%)" "41%" "$output"
+# …and at the real edge the bar reads full: raw 96% → 96*100/96 = 100%.
+output=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":96,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet-5 at raw 96% reads full (100%)" "100%" "$output"
 output=$(echo '{"model":{"display_name":"Fable 5","id":"claude-fable-5"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
-assert_contains "model-aware: fable-5/1M keeps 80% scale (40%→50%)" "50%" "$output"
+assert_contains "model-aware: fable-5/1M uses 96% scale (40%→41%)" "41%" "$output"
 output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
-assert_contains "model-aware: sonnet/200k keeps 80% scale (40%→50%)" "50%" "$output"
+assert_contains "model-aware: sonnet/200k uses 83% scale (40%→48%)" "48%" "$output"
 
 # The only changed case: a non-opus 1M window (sonnet[1m]) hits the 195k FLOOR,
 # so scale = 195000/1000000 = 19.5 → 19. The bar fills near 195k, not 800k.
@@ -1109,9 +1143,9 @@ assert_contains "model-aware: sonnet[1m] raw 5% scales to 26%" "26%" "$output"
 #   raw 20% (=200k of 1M, past the 195k floor) → 20*100/19 = 105 → clamped 100%
 output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: sonnet[1m] past 195k floor reads full (100%)" "100%" "$output"
-# Contrast: opus/1M at the same raw 20% is still early (20*100/80 = 25%).
+# Contrast: opus/1M at the same raw 20% is still early (20*100/96 = 20%).
 output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
-assert_contains "model-aware: opus/1M at raw 20% stays early (25%)" "25%" "$output"
+assert_contains "model-aware: opus/1M at raw 20% stays early (20%)" "20%" "$output"
 
 # ── Compaction counter (context-usage collapse detection) ────────────────────
 _cp_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_cp_cache")
