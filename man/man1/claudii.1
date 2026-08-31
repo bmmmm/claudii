@@ -99,6 +99,19 @@ Equivalent to
 Claude Fable, xhigh effort. Anthropic's most capable model, for the hardest
 reasoning and long-horizon agentic work.
 .TP
+.B clre
+Resume a previous session.
+Without an argument it opens the interactive session picker;
+with a session id it resumes that session directly
+.RB ( "clre " \fIid\fR ).
+Passes no
+.B \-\-model
+or
+.BR \-\-effort ,
+so the session keeps the model it was started with;
+extra flags are forwarded to
+.BR claude .
+.TP
 .B clh
 Show the alias table and run a live model health check.
 .TP

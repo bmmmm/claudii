@@ -129,6 +129,7 @@ clo      # Opus, xhigh effort — complex tasks, server work
 clm      # Opus, xhigh effort — hardest problems, maximum reasoning
 clq      # Sonnet, medium effort — search mode
 clf      # Fable, xhigh effort — most capable model, long-horizon agentic work
+clre     # resume a session — bare opens the picker, `clre <id>` resumes directly
 clh      # alias table + live model health
 ```
 

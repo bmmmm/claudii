@@ -131,7 +131,7 @@ bash "$CLAUDII_HOME/bin/claudii" config import "$bad_agent_file" >/dev/null 2>&1
 assert_eq "config import invalid agent exits non-zero" "1" "$_agent_exit"
 
 # config import — reserved agent name rejected (shadow guard)
-for _reserved in claudii claude clh; do
+for _reserved in claudii claude clh clre; do
   reserved_file="$XDG_CONFIG_HOME/claudii/reserved_${_reserved}.json"
   jq --arg k "$_reserved" '.agents = {($k): {"model": "sonnet", "skill": "x"}}' \
     "$CLAUDII_HOME/config/defaults.json" > "$reserved_file"

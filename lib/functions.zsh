@@ -1,4 +1,4 @@
-# claudii shell functions — cl, clo, clm, clq, clf, clh
+# claudii shell functions — cl, clo, clm, clq, clf, clh, clre
 
 # Shared relative-time formatters (_fmt_rel) — bash 3.2 file, zsh-safe.
 source "${CLAUDII_HOME}/lib/timefmt.sh"
@@ -164,6 +164,21 @@ function _claudii_register_aliases {
 }
 _claudii_register_aliases
 
+# Resume a previous Claude session.
+#   clre           → interactive session picker
+#   clre <id>      → resume that session directly
+#   clre <id> …    → extra flags pass through to claude
+# Deliberately passes no --model/--effort: a resumed session keeps the model it
+# was started with. Only the rate-limit warning is shared with the launch
+# aliases — with an empty model the opus fallback prompt stays out of the way,
+# so the warning informs without offering to switch a session's model.
+function clre {
+  local _resume_model="" _resume_effort=""
+  _claudii_rl_warn _resume_model _resume_effort || return 1
+  _claudii_log info "resume: ${1:-picker}"
+  claude --resume "$@"
+}
+
 # Agent launcher — starts claude with a skill as system prompt
 # Looks in: .claude/skills/<name>/SKILL.md (project) → ~/.claude/agents/<name>.md (global)
 # Empty agent_name = plain worker launch (model/effort only, no system prompt) —
@@ -229,7 +244,7 @@ function _claudii_register_agents {
   while IFS="$_us" read -r name skill model effort; do
     [[ -z "$name" ]] && continue
     [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
-    [[ "$name" == claudii || "$name" == claude || "$name" == clh ]] && { echo "claudii: reserved name: $name" >&2; continue; }
+    [[ "$name" == claudii || "$name" == claude || "$name" == clh || "$name" == clre ]] && { echo "claudii: reserved name: $name" >&2; continue; }
     # skill is optional — agents without one (hk/sn/op/…) register as plain
     # model/effort launchers. Skipping them entirely left every skill-less
     # default agent advertised by `claudii agents` but unregistered (command
