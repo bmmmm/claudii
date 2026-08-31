@@ -512,7 +512,12 @@ _parse_session_cache() {
 # Render 8-block context bar into _CTX_BAR.
 _render_ctx_bar() {
   local _pct=${1:-0}
-  local _filled=$(( _pct * 8 / 100 ))
+  # Round half-up like every sibling renderer (bar_filled in lib/fmt.awk,
+  # _bar_filled in lib/render.sh) — the old floor under-filled by up to one
+  # cell (62% → 4/8 where the shared rule gives 5/8). Same integer trick as
+  # _bar_filled; not calling it directly because helpers.sh must not depend
+  # on render.sh (claudii-cc-statusline sources helpers alone).
+  local _filled=$(( (_pct * 16 / 100 + 1) / 2 ))
   [[ $_filled -gt 8 ]] && _filled=8
   local _empty=$(( 8 - _filled ))
   local _clr

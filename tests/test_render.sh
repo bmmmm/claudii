@@ -82,6 +82,22 @@ assert_eq "render: _bar_filled 50/100 w20 → 10" "10"    "$(_bar_filled 50 100 
 assert_eq "render: _bar_filled max0 → 0"       "0"      "$(_bar_filled 5 0 20)"
 assert_eq "render: _bar_filled clamps to width" "20"    "$(_bar_filled 999 100 20)"
 
+# ── _render_ctx_bar parity (lib/helpers.sh) ──────────────────────────────────
+# The 8-cell session context bar must round half-up like bar_filled/_bar_filled
+# (it used to floor: 62% → 4/8). Pin the boundary pair and cross-check all
+# three implementations on the same inputs.
+source "$CLAUDII_HOME/lib/helpers.sh"
+_ctx_full_count() {  # result lands in _CTX_BAR (fork-free convention), not stdout
+  _CTX_BAR=""; _render_ctx_bar "$1"
+  printf '%s' "$_CTX_BAR" | grep -o "$CLAUDII_SYM_BAR_FULL" | grep -c . || true
+}
+assert_eq "ctx-bar: 62% fills 5/8 (half-up, was 4 with floor)" "5" "$(_ctx_full_count 62)"
+assert_eq "ctx-bar: 56% fills 4/8"                             "4" "$(_ctx_full_count 56)"
+assert_eq "ctx-bar parity: 62% == bar_filled(62,100,8)" "$(_fmtawk 'print bar_filled(62,100,8)')" "$(_ctx_full_count 62)"
+assert_eq "ctx-bar parity: 56% == _bar_filled 56 100 8" "$(_bar_filled 56 100 8)" "$(_ctx_full_count 56)"
+assert_eq "ctx-bar: 100% clamps to 8/8" "8" "$(_ctx_full_count 100)"
+unset -f _ctx_full_count
+
 # ── composite renderers: _rep / _bar_c / _render_bar_row / _render_dgrid ──────
 assert_eq "render: _rep '-' 5 → -----"  "-----" "$(_rep '-' 5)"
 assert_eq "render: _rep x 0 → empty"    ""      "$(_rep x 0)"
