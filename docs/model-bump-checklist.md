@@ -30,7 +30,10 @@ display + docs sweep, not a config rename. Older versions stay selectable via
    not version-controlled, no test suite) — sweep it in the same pass or it
    silently drifts.
 5. The tier mappings are version-agnostic (match bare `fable`/`opus`/`sonnet`/
-   `haiku`) — no change for version bumps within a tier. A **new tier** (e.g.
+   `haiku`) — usually no change for version bumps within a tier, BUT check
+   whether the new version changes the price inside its tier (Sonnet 5 set the
+   precedent: $2/$10 vs 4.x's $3/$15 → a version-aware `tier()` branch plus a
+   `sonnet-legacy` `_rates` key). A **new tier** (e.g.
    Fable in 2026-06) needs: a `tier_label()` branch in `lib/model_tier.awk`
    (most-capable-first; covers cost AND trends), a `tier()` branch in
    `lib/tier.jq` (covers both skills-cost programs), a `_rates` entry in
@@ -58,8 +61,11 @@ If the new model also changes **pricing**, update the per-model `_rates` table i
 input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
 in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/
-`sonnet`, unknown → sonnet) — keep it in sync with the table. `claudii
-skills-cost` prices each per-model token bucket (schema-v5 `attribution_models`)
-at its tier; pre-v5 / orphaned caches have no per-model split, so their residual
-tokens fall back to the flat Sonnet rate. Verify `claudii skills-cost` totals
-afterwards.
+`sonnet-legacy` for sonnet-4* ids/`sonnet`, unknown → sonnet) — keep it in sync
+with the table. A price change WITHIN a tier gets a version-aware `tier()`
+branch and its own `_rates` key rather than overwriting the old rate (Sonnet 5
+precedent — old data must keep its old price). `claudii skills-cost` prices
+each per-model token bucket (schema-v5 `attribution_models`) at its tier;
+pre-v5 / orphaned caches have no per-model split, so their residual tokens fall
+back to the flat legacy-Sonnet rate (that data predates Sonnet 5). Verify
+`claudii skills-cost` totals afterwards.

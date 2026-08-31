@@ -8,7 +8,7 @@
 include "tier";
 
 # Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
-# pricing + Sonnet residual as the single-window view in skills-cost-rows.jq).
+# pricing + legacy-Sonnet residual as the single-window view in skills-cost-rows.jq).
 def rows($m):
   ($m.attribution_models // {} | to_entries
     | map((.key | split("|")) as $p | select($p[0] == $kind)
@@ -26,7 +26,8 @@ def rows($m):
       | (([$row.out_tok      - ($cand|map(.out_tok)|add//0),      0]|max)) as $ro
       | (([$row.cache_read   - ($cand|map(.cache_read)|add//0),   0]|max)) as $rcr
       | (([$row.cache_create - ($cand|map(.cache_create)|add//0), 0]|max)) as $rcc
-      | ($ri*$rates.sonnet.in + $ro*$rates.sonnet.out + $rcr*$rates.sonnet.cr + $rcc*$rates.sonnet.cc) as $rusd
+      | ($rates["sonnet-legacy"]) as $rsl
+      | ($ri*$rsl.in + $ro*$rsl.out + $rcr*$rsl.cr + $rcc*$rsl.cc) as $rusd
       | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
 
 (rows($prior)) as $P

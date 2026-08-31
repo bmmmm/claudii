@@ -264,27 +264,31 @@ assert_eq "skills-cost --json: dominant model is raw id" "claude-opus-4-7" "$_sc
 _sc_model_mix=$(jq -r '.rows[] | select(.name == "split-skill") | .model' <<< "$_sc_model_json" 2>/dev/null)
 assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
 
-# ── Test 11: per-model pricing (schema v5) — opus costs 5×, haiku ⅓ of sonnet ─
+# ── Test 11: per-model pricing (schema v5) — every tier at its own rate ───────
 # Each skill runs 1M input tokens on exactly one model. Priced at that model's
-# own input rate (Opus $5/M, Sonnet $3/M, Haiku $1/M, Fable $10/M), 1M tokens
-# costs exactly the per-MTok price. attribution_models carries the v5 per-model
-# token objects; attribution_skills aggregate matches (residual = 0).
+# own input rate (Opus $5/M, Sonnet 5 $2/M, legacy Sonnet 4.x $3/M, Haiku $1/M,
+# Fable $10/M), 1M tokens costs exactly the per-MTok price. The 4.6-vs-5 pair
+# pins the version-aware sonnet split in lib/tier.jq (first in-tier price
+# change). attribution_models carries the v5 per-model token objects;
+# attribution_skills aggregate matches (residual = 0).
 _SC_PM_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_PM_CACHE")
 mkdir -p "$_SC_PM_CACHE/insights"
 _sc_write_fixture "$_SC_PM_CACHE/insights/sess-pm.json" \
-  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}' \
+  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet5-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}' \
   '{}' '{}' \
-  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}'
+  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet5-skill|claude-sonnet-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}'
 
 _sc_pm_json=$(CLAUDII_CACHE_DIR="$_SC_PM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
 _sc_pm_opus=$(jq -r '.rows[] | select(.name=="opus-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_sonnet=$(jq -r '.rows[] | select(.name=="sonnet-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_sonnet5=$(jq -r '.rows[] | select(.name=="sonnet5-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_haiku=$(jq -r '.rows[] | select(.name=="haiku-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_fable=$(jq -r '.rows[] | select(.name=="fable-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 # 1M input tokens → exactly the per-MTok input price (compare rounded to cents)
 assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(LC_ALL=C awk -v v="$_sc_pm_opus"   'BEGIN{printf "%.2f", v}')"
-assert_eq "skills-cost per-model: sonnet-skill priced at \$3/M" "3.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: sonnet-4-6 priced at legacy \$3/M" "3.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: sonnet-5 priced at \$2/M" "2.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet5" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(LC_ALL=C awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(LC_ALL=C awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
 
@@ -378,7 +382,7 @@ assert_eq "skills-cost --days (no value): falls back, no silent crash" "0" "$_sc
 unset _sc_cmp_noarg _sc_cmp_narc _sc_d_narc
 
 unset _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
-unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_haiku _sc_pm_fable _sc_res_json _sc_res_tot
+unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc \

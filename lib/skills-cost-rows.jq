@@ -7,12 +7,12 @@
 #
 # Pricing: every per-model token bucket in attribution_models is priced at its
 # own tier; any residual not covered by per-model data (pre-v5 orphans) is
-# priced at the flat Sonnet rate. The dominant model per row comes from the
-# per-model call counts: the top model needs >=80% of the row's attributed
-# calls, otherwise "mixed".
+# priced at the flat legacy-Sonnet rate (that data predates Sonnet 5).
+# The dominant model per row comes from the per-model call counts: the top
+# model needs >=80% of the row's attributed calls, otherwise "mixed".
 include "tier";
 
-($rates.sonnet) as $sonnet
+($rates["sonnet-legacy"]) as $sonnet
 | (.attribution_models // {} | to_entries
     | map((.key | split("|")) as $p
         | select($p[0] == $kind)
@@ -39,7 +39,7 @@ include "tier";
     | ($cand | map(($rates[tier(.model)]) as $r
         | (.in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr + .cache_create * $r.cc)
       ) | add // 0) as $model_usd
-    # residual = aggregate − per-model-covered tokens (pre-v5 orphans), flat Sonnet
+    # residual = aggregate − per-model-covered tokens (pre-v5 orphans), legacy Sonnet
     | (([$row.in_tok       - ($cand | map(.in_tok)       | add // 0), 0] | max)) as $res_in
     | (([$row.out_tok      - ($cand | map(.out_tok)      | add // 0), 0] | max)) as $res_out
     | (([$row.cache_read   - ($cand | map(.cache_read)   | add // 0), 0] | max)) as $res_cr

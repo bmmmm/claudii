@@ -145,18 +145,22 @@ _cmd_skills_cost() {
 
   # Per-token pricing (USD), per model tier. These are the only hardcoded rates
   # in claudii (`claudii cost` reads costUSD from history instead). Per MTok:
-  # Opus $5/$25, Sonnet $3/$15, Haiku $1/$5, Fable $10/$50; cache_read = 0.1×
-  # input, cache_create (5m TTL) = 1.25× input. On a tier price change, update
-  # this table AND the tier mapping in lib/tier.jq (shared jq module).
+  # Opus $5/$25, Sonnet 5 $2/$10 (standard list price since CC v2.1.243 — not a
+  # promo), legacy Sonnet 4.x $3/$15, Haiku $1/$5, Fable $10/$50; cache_read =
+  # 0.1× input, cache_create (5m TTL) = 1.25× input. On a tier price change,
+  # update this table AND the tier mapping in lib/tier.jq (shared jq module).
+  # Sonnet 5 is the first price change WITHIN a tier — "sonnet" is the current
+  # rate, "sonnet-legacy" prices 4.x model ids so old data stays correct.
   #
   # tot_usd uses real per-model token attribution (schema v5, attribution_models).
   # Pre-v5 / orphaned caches carry no per-model token split; their residual
-  # tokens (aggregate minus per-model-covered) are priced at the flat Sonnet rate
-  # — matching the old behavior, so old data degrades gracefully rather than
-  # vanishing from the dollar totals.
+  # tokens (aggregate minus per-model-covered) are priced at the flat legacy
+  # Sonnet rate — matching the old behavior (that data predates Sonnet 5), so
+  # old data degrades gracefully rather than vanishing from the dollar totals.
   local _rates='{
     "opus":   {"in":0.000005, "out":0.000025, "cr":0.0000005, "cc":0.00000625},
-    "sonnet": {"in":0.000003, "out":0.000015, "cr":0.0000003, "cc":0.00000375},
+    "sonnet": {"in":0.000002, "out":0.00001,  "cr":0.0000002, "cc":0.0000025},
+    "sonnet-legacy": {"in":0.000003, "out":0.000015, "cr":0.0000003, "cc":0.00000375},
     "haiku":  {"in":0.000001, "out":0.000005, "cr":0.0000001, "cc":0.00000125},
     "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.000001,  "cc":0.0000125}
   }'
