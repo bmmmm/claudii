@@ -14,7 +14,11 @@ source "$CLAUDII_HOME/lib/helpers.sh"
 
 command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found — install jq\n' >&2; exit 1; }
 
-read -r json
+# Slurp ALL of stdin, not just the first line — `read -r` alone made a
+# pretty-printed/multi-line payload silently fall through to the empty-field
+# fallback. read -d '' captures up to EOF (returns non-zero there, content
+# already in place); no fork, bash 3.2-safe.
+IFS= read -r -d '' json || true
 
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 [[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
@@ -232,8 +236,11 @@ if [[ "$pc_hit_pct" =~ ^[0-9]+$ ]]; then
   # which can't tell subagent traffic apart.
   _cache_pct=$pc_hit_pct
 elif _isset "$cache_read"; then
-  _cr=${cache_read%.*}
-  _ci=${input_tok%.*}
+  # Numeric guards before any (( )): these fields are untrusted payload, and
+  # bash arithmetic over an attacker string can execute code via array
+  # subscripts — same discipline as the _tok/_dur formatters below.
+  _cr=${cache_read%.*}; [[ "$_cr" =~ ^[0-9]+$ ]] || _cr=0
+  _ci=${input_tok%.*};  [[ "$_ci" =~ ^[0-9]+$ ]] || _ci=0
   if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
 fi
 
@@ -328,8 +335,9 @@ fi
 _burn_eta=""
 _pace_state=""
 if _isset "$duration_ms"; then
-  _rate_5h_int=${rate_5h%.*}
-  _session_min_int=$(( ${duration_ms%.*} / 60000 ))
+  _rate_5h_int=${rate_5h%.*};   [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
+  _dur_ms_int=${duration_ms%.*}; [[ "$_dur_ms_int" =~ ^[0-9]+$ ]] || _dur_ms_int=0
+  _session_min_int=$(( _dur_ms_int / 60000 ))
   if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
     # Pace: actual rate_5h vs linear burn (session_min / 300 * 100, hits 100% at
     # the 5h mark); ±15% tolerance band → ahead / on_pace / behind.
@@ -353,13 +361,12 @@ fi
 # Per-session cache (atomic write). Preserves pinned= flag and Stop-hook keys
 # (next_cron_at=, bg_tasks=) set by claudii-stop-hook so a statusLine update
 # does not erase them. Keys are read from the existing cache via _cache_get
-# and included in the new file write.
-# FIXME(race): read-modify-write here races claudii-stop-hook's write of the
-# same session-<sid> file. Both are atomic per-file (mktemp→mv) so no
-# corruption, but if the Stop hook writes fresh next_cron_at/bg_tasks between
-# our _cache_get (L208-210) and the mv below, this write clobbers them with the
-# stale values we read (lost update). Rare (needs a Stop hook mid-render); a
-# clean fix needs a lock or merge-on-write — deferred, not worth it yet.
+# and merged again from the live file right before the write (merge-on-write,
+# see the block above _tmp_session below) — the read-modify-write used to race
+# claudii-stop-hook: a hook write landing between the early snapshot and the
+# mv was clobbered with the stale early values (lost update; both writes are
+# mktemp→mv atomic, so never corruption). The re-read shrinks that window from
+# a whole render to a few statements.
 # Stable ppid resolution. $PPID is the immediate parent of THIS render — Claude
 # Code re-execs a fresh wrapper per statusLine invocation, so it is already
 # dead within seconds of being recorded (confirmed: 42834 then 16372 minutes
@@ -435,6 +442,29 @@ fi
 _cache_get pinned "";       _cached_pinned="$_CG"
 _cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
 _cache_get bg_tasks "";     _cached_bg_tasks="$_CG"
+# Test seam: lets the race test interleave a foreign write between the early
+# snapshot and the merge below. Unset outside tests; same privilege as the
+# caller's environment, so eval adds no new surface.
+[[ -n "${CLAUDII_TEST_MID_RENDER_CMD:-}" ]] && eval "$CLAUDII_TEST_MID_RENDER_CMD"
+# Merge-on-write for the externally-written keys (next_cron_at=/bg_tasks= from
+# claudii-stop-hook, pinned= from `claudii pin`): re-read them from the LIVE
+# file immediately before writing, so a foreign write since the early
+# _existing_cache snapshot survives instead of being clobbered with the stale
+# early values. Same no-fork $(<file) + substring extraction as the snapshot.
+if [[ -f "$_session_file" ]]; then
+  _mow=""; { _mow=$(<"$_session_file"); } 2>/dev/null
+  _mow_nl=$'\n'"$_mow"
+  for _mow_key in next_cron_at bg_tasks pinned; do
+    if [[ "$_mow_nl" == *$'\n'"$_mow_key"=* ]]; then
+      _mow_v="${_mow_nl#*$'\n'$_mow_key=}"; _mow_v="${_mow_v%%$'\n'*}"
+      case "$_mow_key" in
+        next_cron_at) _cached_next_cron_at="$_mow_v" ;;
+        bg_tasks)     _cached_bg_tasks="$_mow_v" ;;
+        pinned)       _cached_pinned="$_mow_v" ;;
+      esac
+    fi
+  done
+fi
 _tmp_session="${_session_file}.tmp.$$"
 { printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
@@ -481,7 +511,10 @@ _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${inpu
 _tok_result=""
 _tok() {
   local n=${1%.*}
-  [[ -z "$n" || "$n" == "null" ]] && _tok_result="" && return
+  # Numeric or nothing — (( )) on an untrusted string is an injection surface
+  # (array-subscript command substitution), and the old -z/null check let any
+  # other garbage straight into the arithmetic below.
+  [[ "$n" =~ ^[0-9]+$ ]] || { _tok_result=""; return; }
   (( n == 0 )) && _tok_result="" && return
   local _m _d
   if (( n >= 1000000 )); then
@@ -499,9 +532,9 @@ _tok() {
 
 _dur_result=""
 _dur() {
-  local ms=$1
-  [[ -z "$ms" || "$ms" == "null" ]] && _dur_result="" && return
-  local sec=$(( ${ms%.*} / 1000 ))
+  local ms=${1%.*}
+  [[ "$ms" =~ ^[0-9]+$ ]] || { _dur_result=""; return; }
+  local sec=$(( ms / 1000 ))
   if   (( sec < 60 ));   then _dur_result="<1m"
   elif (( sec < 3600 )); then printf -v _dur_result '%dm' $(( sec / 60 ))
   else                        printf -v _dur_result '%dh%dm' $(( sec / 3600 )) $(( (sec % 3600) / 60 ))
@@ -511,14 +544,14 @@ _dur() {
 # Context threshold color: green <70, yellow 70-89, red 90+.
 _CLR=""
 _thr() {
-  local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
+  local pct=${1%.*}; [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
   if   (( pct >= 90 )); then _CLR=$'\033[31m'
   elif (( pct >= 70 )); then _CLR=$'\033[33m'
   else                       _CLR=$'\033[32m'; fi
 }
 # Rate-limit color, keyed on *used* %: green <50, yellow 50-79, red 80+.
 _rlc() {
-  local pct=${1%.*}; [[ -z "$pct" ]] && pct=0
+  local pct=${1%.*}; [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
   if   (( pct >= 80 )); then _CLR=$'\033[31m'
   elif (( pct >= 50 )); then _CLR=$'\033[33m'
   else                       _CLR=$'\033[32m'; fi
@@ -628,7 +661,7 @@ _seg_context=""
 _seg_context_compact=""
 if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   local_pct=${ctx_pct%.*}
-  (( local_pct < 0 )) && local_pct=0
+  [[ "$local_pct" =~ ^[0-9]+$ ]] || local_pct=0
   (( local_pct > 100 )) && local_pct=100
   (( _usable_pct = local_pct * 100 / _ac_scale_pct ))
   (( _usable_pct > 100 )) && _usable_pct=100
@@ -1511,7 +1544,9 @@ for _p in \
   ".claude/settings.local.json"; do
   [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
 done
-if [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
+# Gated on layout membership like the other fork-owning segments — this jq
+# used to run on every render whenever a settings.local.json existed.
+if _in_layout proxy && [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
   _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
   if [[ -n "$_proxy_url" ]]; then
     if [[ "$_proxy_url" == "http://localhost:8888" ]]; then

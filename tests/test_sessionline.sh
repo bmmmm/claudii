@@ -541,6 +541,33 @@ _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed
 assert_eq "cache-ttl: caching_observed=false stays silent" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
 unset _pc _pc_json _pc_now
 
+# ── multi-line stdin payload (read -r used to take only the first line) ─────
+# A pretty-printed payload must parse like the compact one, not fall through
+# to the empty-field fallback (which renders no model and no context).
+_ml_json='{
+  "model": {"display_name": "Opus"},
+  "context_window": {
+    "used_percentage": 40,
+    "total_input_tokens": 1000,
+    "total_output_tokens": 100,
+    "context_window_size": 200000
+  },
+  "cost": {"total_cost_usd": 0.10}
+}'
+_ml=$(echo "$_ml_json" | bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "multi-line JSON: model parsed" "Opus" "$_ml"
+assert_contains "multi-line JSON: context parsed (40 raw → 48%)" "48%" "$_ml"
+unset _ml _ml_json
+
+# ── proxy segment jq is layout-gated ─────────────────────────────────────────
+# Layout without proxy → no "→ api"/⇄ output even when a settings.local.json
+# with no ANTHROPIC_BASE_URL exists in cwd (the jq must not run at all).
+printf '{"statusline":{"lines":[["model"]]}}\n' > "$_cx_cfg/claudii/config.json"
+_px=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
+  | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "proxy: gated out of layout (no → api)" "0" "$(printf '%s' "$_px" | grep -c 'api' || true)"
+unset _px
+
 # ── worktrees segment — linked worktrees of the current repo (⑂N ⌫P) ─────────
 # Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives
 # in the SYSTEM temp dir (a repo under $CLAUDII_HOME would let git's upward
@@ -1014,6 +1041,25 @@ echo '{"session_id":"slcr4444xxxx","model":{"display_name":"Sonnet"},"context_wi
   | CLAUDII_CACHE_DIR="$_cron_preserve_cache" bash "$SL" 2>/dev/null >/dev/null
 _preserved="$(cat "$_cron_preserve_cache/session-slcr4444" 2>/dev/null)"
 assert_contains "cron: cc-statusline preserves next_cron_at on rewrite" "next_cron_at=${_cron_future_p}" "$_preserved"
+
+# ── lost-update race: a stop-hook write MID-RENDER must survive ──────────────
+# The old read-modify-write clobbered next_cron_at/bg_tasks written between the
+# early cache snapshot and the mv (the FIXME(race) this replaces). The test
+# seam injects a foreign write at exactly that point; merge-on-write must pick
+# the fresh values up instead of writing back the stale snapshot.
+_race_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_race_cache")
+_race_stale=$(( $(date +%s) + 100 ))
+_race_fresh=$(( $(date +%s) + 9000 ))
+printf 'model=Sonnet\nnext_cron_at=%s\nbg_tasks=1\n' "$_race_stale" \
+  > "$_race_cache/session-slrace11"
+_race_inject="printf 'model=Sonnet\nnext_cron_at=${_race_fresh}\nbg_tasks=7\n' > '$_race_cache/session-slrace11'"
+echo '{"session_id":"slrace11xxxx","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' \
+  | CLAUDII_CACHE_DIR="$_race_cache" CLAUDII_TEST_MID_RENDER_CMD="$_race_inject" bash "$SL" 2>/dev/null >/dev/null
+_race_after="$(cat "$_race_cache/session-slrace11" 2>/dev/null)"
+assert_contains "race: mid-render hook write of next_cron_at survives" "next_cron_at=${_race_fresh}" "$_race_after"
+assert_contains "race: mid-render hook write of bg_tasks survives" "bg_tasks=7" "$_race_after"
+assert_not_contains "race: stale snapshot value is gone" "next_cron_at=${_race_stale}" "$_race_after"
+unset _race_cache _race_stale _race_fresh _race_inject _race_after
 assert_contains "cron: cc-statusline preserves bg_tasks on rewrite" "bg_tasks=1" "$_preserved"
 
 # ── bg-tasks segment tests ────────────────────────────────────────────────────
