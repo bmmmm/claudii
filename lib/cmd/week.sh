@@ -1,6 +1,54 @@
 # lib/cmd/week.sh — claudii week (Anthropic weekly rate-limit window)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
+# Observed windows, ascending by first sighting: "reset<TAB>first<TAB>last" rows.
+# Empty before this feature shipped (column 11 did not exist yet).
+_week_observed() {
+  local _dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _collect_history_files "$_dir"
+  (( ${#_HIST_FILES[@]} )) || return 1
+  LC_ALL=C awk -F'\t' -f "$CLAUDII_HOME/lib/window_bounds.awk" "${_HIST_FILES[@]}" 2>/dev/null \
+    | LC_ALL=C sort -t"$(printf '\t')" -k2,2n
+}
+
+# Sharpen _WW_START using what was actually observed, and flag a window that
+# came in short. Anthropic sometimes ends a weekly window early for technical
+# reasons; then the reset it had announced never fires, so "reset minus seven
+# days" would invent a start that never existed. The real boundary is where the
+# announced reset value changes — the first row carrying the current one.
+# Sets _WW_SHORT=1 when the resulting window is materially under seven days.
+_WW_SHORT=0
+_week_resolve_start() {
+  _WW_SHORT=0
+  [[ "$_WW_RESET" =~ ^[0-9]+$ ]] || return 1
+  local _obs; _obs=$(_week_observed 2>/dev/null)
+  [[ -n "$_obs" ]] || return 0
+  # The first sighting of the current reset is only the window's start if an
+  # EARLIER window was observed too. Otherwise it merely marks when recording
+  # began — for the first window after this feature shipped that is today, and
+  # trusting it would shrink the window to a few hours.
+  local _prev_n
+  _prev_n=$(LC_ALL=C awk -F'\t' -v cur="$_WW_RESET" '$1 + 0 < cur {n++} END{print n+0}' <<< "$_obs")
+  [[ "$_prev_n" =~ ^[0-9]+$ ]] && (( _prev_n > 0 )) || return 0
+  local _first
+  _first=$(LC_ALL=C awk -F'\t' -v cur="$_WW_RESET" '$1 + 0 == cur { print $2; exit }' <<< "$_obs")
+  [[ "$_first" =~ ^[0-9]+$ ]] || return 0
+
+  # Round down to the hour: a window opens with the first prompt after a reset
+  # and the reported reset sits on a whole hour, so the first render we see is
+  # a few minutes into it (measured: first prompt 13:06:22, window start 13:00).
+  local _cand=$(( _first - _first % 3600 ))
+  local _grid=$(( _WW_RESET - 604800 ))
+  local _diff=$(( _cand - _grid )); (( _diff < 0 )) && _diff=$(( -_diff ))
+  # Within a couple of hours of the 7-day grid it IS the 7-day grid; the grid
+  # value is the more precise of the two (it needs no first-sighting luck).
+  if (( _diff > 7200 )); then
+    _WW_START=$_cand
+    (( _WW_RESET - _WW_START < 561600 )) && _WW_SHORT=1   # under 6.5d
+  fi
+  return 0
+}
+
 # Fill _WK_* from lib/window.awk for the window _week_window() found.
 # Returns 1 when no window is known (Claude Code drops seven_day once its
 # resets_at passes, and until the next API response), so every caller can
@@ -9,6 +57,7 @@ _WK_TOK= _WK_COST= _WK_SESSIONS= _WK_LIMIT= _WK_LIMIT_SRC= _WK_EXHAUST=
 _week_stats() {
   _WK_TOK=0 _WK_COST=0 _WK_SESSIONS=0 _WK_LIMIT=0 _WK_LIMIT_SRC="" _WK_EXHAUST=0
   _week_window || return 1
+  _week_resolve_start
 
   local _dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   # Keep a month of run-up: attr_delta() needs a session's earlier rows to hold
@@ -104,6 +153,14 @@ _week_render_block() {
   local _rt; _fmt_abs "$_WW_RESET" '%a %H:%M'; _rt="$_ABS_FMT"
   printf '    %sResets%s    in %s  %s(%s)%s\n' "$dim" "$reset" "$_rel" "$dim" "$_rt" "$reset"
 
+  # An Anthropic-shortened window is worth saying out loud: the quota did not
+  # run its usual seven days, so the pace and the estimate below cover less
+  # ground than they normally would.
+  if (( ${_WW_SHORT:-0} )); then
+    printf '    %sNote%s      window is short (%dd) \342\200\224 Anthropic reset it early\n' \
+      "$dim" "$reset" "$(( (_WW_RESET - _WW_START) / 86400 ))"
+  fi
+
   # Pace: the daily burn so far, and whether it outruns the reset.
   local _elapsed=$(( _now - _WW_START ))
   if (( _elapsed > 3600 && _WK_TOK > 0 )); then
@@ -116,6 +173,84 @@ _week_render_block() {
       printf '    %sPace%s      %s/day \302\267 %sholds to reset%s\n' \
         "$dim" "$reset" "$(_fmt_tok "$_per_day")" "$green" "$reset"
     fi
+  fi
+  printf '\n'
+}
+
+# Per-window bars over the last N windows. Boundaries come from what was
+# observed where possible; older ones are extrapolated on the 7-day grid and
+# labelled as such, because Anthropic's early resets mean a grid is an
+# assumption about the past, not a fact.
+_week_history_render() {
+  local _count="${1:-8}"
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
+
+  local _b=() _r _f _l _rounded
+  while IFS=$'\t' read -r _r _f _l; do
+    [[ "$_f" =~ ^[0-9]+$ ]] || continue
+    _rounded=$(( _f - _f % 3600 ))
+    (( _rounded < _WW_START )) && _b+=("$_rounded")
+  done < <(_week_observed 2>/dev/null)
+
+  # Everything below the SECOND observed boundary is reconstructed: the oldest
+  # sighting only marks when recording started, so the window it opens is not
+  # actually pinned down (same reasoning as _week_resolve_start).
+  local _measured_from="$_WW_START"
+  (( ${#_b[@]} >= 2 )) && _measured_from="${_b[1]}"
+  _b+=("$_WW_START")
+  local _earliest="${_b[0]}"
+  while (( ${#_b[@]} < _count )); do
+    _earliest=$(( _earliest - 604800 ))
+    _b=("$_earliest" "${_b[@]}")
+  done
+  _b+=("$_WW_RESET")
+
+  local _bounds; _bounds=$(IFS=,; printf '%s' "${_b[*]}")
+  local _dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _collect_history_files "$_dir" $(( ${_b[0]} - 2592000 ))
+  (( ${#_HIST_FILES[@]} )) || return 1
+
+  local _attr_awk; _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
+  local _hist_awk; _hist_awk=$(<"$CLAUDII_HOME/lib/window_history.awk")
+  local _rows
+  _rows=$(LC_ALL=C awk -F'\t' -v bounds="$_bounds" \
+    "${_attr_awk}
+${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
+  [[ -n "$_rows" ]] || return 1
+
+  local _max=0 _s _e _t _c _n
+  while IFS=$'\t' read -r _s _e _t _c _n; do
+    (( _t > _max )) && _max=$_t
+  done <<< "$_rows"
+  (( _max > 0 )) || return 1
+
+  printf '\n  %sWeekly limit%s %s— last %d windows%s\n\n' \
+    "$accent" "$reset" "$dim" "$_count" "$reset"
+
+  local _now; _now=$(date +%s)
+  local _lbl _bar _cost_fmt _mark _from _to
+  while IFS=$'\t' read -r _s _e _t _c _n; do
+    _fmt_abs "$_s" '%d.%m'; _from="$_ABS_FMT"
+    _fmt_abs "$_e" '%d.%m'; _to="$_ABS_FMT"
+    _lbl="$_from \342\206\222 $_to"
+    LC_ALL=C printf -v _cost_fmt '$%.0f' "$_c"
+    # Flag what the data cannot vouch for: a reconstructed boundary, and a
+    # window that came in short (an early Anthropic reset).
+    _mark=""
+    (( _s < _measured_from )) && _mark="${dim}~${reset}"
+    (( _e - _s < 561600 )) && _mark="${yellow}short${reset}"
+    (( _s == _WW_START )) && _mark="${green}current${reset}"
+    printf '  %-16b %s%9s%s  %s  %s%8s%s  %b\n' \
+      "$_lbl" "$cyan" "$(_fmt_tok "$_t")" "$reset" \
+      "$(_bar_c "$(( _t * 28 / _max ))" 28)" \
+      "$dim" "$_cost_fmt" "$reset" "$_mark"
+  done <<< "$_rows"
+
+  if (( ${_b[0]} < _measured_from )); then
+    printf '\n  %s~ boundary reconstructed on a 7-day grid — Claude Code reports no past\n' "$dim"
+    printf '    resets, and Anthropic may end a window early. Measured from %s.%s\n' \
+      "$(_fmt_abs "$_measured_from" '%d.%m %H:%M'; printf '%s' "$_ABS_FMT")" "$reset"
   fi
   printf '\n'
 }
@@ -139,15 +274,19 @@ _week_json() {
 _cmd_week() {
   _cfg_init
 
-  local _arg
+  local _arg _history=0 _count=8
   for _arg in "${@:2}"; do
     case "$_arg" in
       -h|--help)
-        printf 'Usage: claudii week [--json]\n\n'
+        printf 'Usage: claudii week [--history [N]] [--json]\n\n'
         printf "Usage inside Anthropic's rolling 7-day rate-limit window — the\n"
-        printf 'quota that actually gates work, not the calendar week.\n'
+        printf 'quota that actually gates work, not the calendar week.\n\n'
+        printf '  --history [N]  per-window bars over the last N windows (default 8)\n'
+        printf '  --json         machine-readable output\n'
         return 0 ;;
       --json) _FORMAT=json ;;
+      --history) _history=1 ;;
+      [0-9]|[0-9][0-9]) (( _history )) && _count="$_arg" ;;
       *) printf 'Unknown option: %s\n' "$_arg" >&2; return 1 ;;
     esac
   done
@@ -161,6 +300,12 @@ _cmd_week() {
   fi
 
   [[ "${_FORMAT:-}" == "json" ]] && { _week_json; return 0; }
+  if (( _history )); then
+    _week_history_render "$_count" && return 0
+    printf '\n  %sNot enough history for a per-window view yet.%s\n\n' \
+      "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+    return 0
+  fi
   _week_render_block
   return 0
 }

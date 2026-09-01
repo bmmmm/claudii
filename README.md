@@ -90,7 +90,8 @@ claudii sessions / se            # active sessions: context, cost, rate
 claudii sessions-inactive / si   # ended sessions + GC hint
 claudii gc / g                   # garbage-collect ended sessions
 claudii pin / unpin <id>         # protect a session from garbage collection
-claudii cost / c                 # per-model cost breakdown (--forecast = burn rate)
+claudii cost / c                 # per-model cost breakdown (--forecast = burn rate, --window = quota window)
+claudii week / w                 # usage inside Anthropic's weekly rate-limit window (--history = per-window bars)
 claudii tokens                   # token usage by type, model & day (today/7d/30d/year)
 claudii tools                    # tool-call counts + per-tool error rates
 claudii limits                   # rate-limit hits — when they hit, which model ran

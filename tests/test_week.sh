@@ -132,3 +132,55 @@ if grep -qi '^de_DE\.UTF-8$' <<< "$(locale -a 2>/dev/null)"; then
     '$2.00' "$_wk_de"
   assert_no_literal_ansi "week: comma locale output stays clean" "$_wk_de"
 fi
+
+# ── week: an early Anthropic reset shortens the window ───────────────────────
+# Anthropic sometimes ends a weekly window early for technical reasons. The
+# reset it had announced then never fires, so "reset minus 7d" would place the
+# start before the window actually opened. The real boundary is where the
+# announced reset value changes — recorded in column 11.
+#   window A: announced reset RA, seen at T-8d..T-6d  (>=3 sightings)
+#   window B: announced reset RB, first seen T-2d     → a 3-day window
+_WK5=$(mktemp -d); _WEEK_TMPDIRS+=("$_WK5")
+_RA=$(( _NOW - 432000 ))              # T-5d, announced but overtaken
+_RB=$(( _NOW + 86400 ))               # T+1d, the reset now in force
+_SWITCH=$(( _NOW - 172800 ))          # T-2d, where the value changes
+cat > "$_WK5/session-bbbbbbbb" <<EOF
+model=Opus 5
+rate_7d=50
+reset_7d=$_RB
+session_id=bbbbbbbb-0000-0000-0000-000000000000
+EOF
+# Window A sightings (before the switch) — cumulative cost/tokens climb.
+hist_row "$_WK5/history.tsv" $(( _NOW - 691200 )) "Opus 5" "1.00" 10 5 "sid-a" 400  100  100 10 "$_RA"
+hist_row "$_WK5/history.tsv" $(( _NOW - 604800 )) "Opus 5" "2.00" 10 5 "sid-a" 800  200  100 20 "$_RA"
+hist_row "$_WK5/history.tsv" $(( _NOW - 518400 )) "Opus 5" "3.00" 10 5 "sid-a" 1200 300  100 30 "$_RA"
+# Window B sightings (after the switch).
+hist_row "$_WK5/history.tsv" $(( _SWITCH + 60 ))   "Opus 5" "4.00" 10 5 "sid-b" 1600 400 100 40 "$_RB"
+hist_row "$_WK5/history.tsv" $(( _SWITCH + 3600 )) "Opus 5" "5.00" 10 5 "sid-b" 2000 500 100 45 "$_RB"
+hist_row "$_WK5/history.tsv" $(( _SWITCH + 7200 )) "Opus 5" "6.00" 10 5 "sid-b" 2400 600 100 50 "$_RB"
+_wk5_json=$(CLAUDII_CACHE_DIR="$_WK5" bash "$CLAUDII_HOME/bin/claudii" week --json 2>&1)
+
+# Start is the observed switch (floored to the hour), NOT reset-minus-7d.
+_WK5_EXPECT=$(( (_SWITCH + 60) - (_SWITCH + 60) % 3600 ))
+assert_eq "week: early reset moves the start to the observed switch" \
+  "$_WK5_EXPECT" "$(jq -r '.window_start' <<< "$_wk5_json")"
+assert_not_contains "week: early reset does not fall back to the 7-day grid" \
+  "$(( _RB - 604800 ))" "$(jq -r '.window_start' <<< "$_wk5_json")"
+_wk5_out=$(CLAUDII_CACHE_DIR="$_WK5" bash "$CLAUDII_HOME/bin/claudii" week 2>&1)
+assert_contains "week: a shortened window says so" "window is short" "$_wk5_out"
+
+# ── week: a single observed window must NOT move the start ───────────────────
+# _WK2 has sightings of exactly one reset value. Its first sighting marks when
+# recording began, not when the window opened — trusting it would collapse the
+# window to minutes. Must stay on the 7-day grid.
+assert_eq "week: one observed window keeps the 7-day grid start" \
+  "$(( _RESET - 604800 ))" "$(jq -r '.window_start' <<< "$_wk2_out")"
+assert_not_contains "week: single-sighting window is not flagged short" \
+  "window is short" "$(CLAUDII_CACHE_DIR="$_WK2" bash "$CLAUDII_HOME/bin/claudii" week 2>&1)"
+
+# ── week --history: per-window bars ──────────────────────────────────────────
+_wk_hist=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 4 2>&1)
+assert_contains "week --history: names the view" "last 4 windows" "$_wk_hist"
+assert_contains "week --history: marks the running window" "current" "$_wk_hist"
+assert_contains "week --history: flags reconstructed boundaries" "reconstructed" "$_wk_hist"
+assert_no_literal_ansi "week --history: no literal escapes" "$_wk_hist"

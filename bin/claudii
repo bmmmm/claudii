@@ -75,6 +75,7 @@ usage() {
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}Cost${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
+  printf "    %-33s $d %s\n" "week (w)"                        "usage inside the weekly rate-limit window"
   printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
   printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin / per-MCP-tool cost breakdown"
   printf '\n'
@@ -142,6 +143,7 @@ case "${1:-}" in
   si)    set -- sessions-inactive  "${@:2}" ;;
   about) set -- changelog          "${@:2}" ;;
   c)     set -- cost               "${@:2}" ;;
+  w)     set -- week               "${@:2}" ;;
   t)     set -- trends             "${@:2}" ;;
   d)     set -- doctor             "${@:2}" ;;
   g)     set -- gc                 "${@:2}" ;;

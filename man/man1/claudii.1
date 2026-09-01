@@ -483,8 +483,28 @@ cache differently than raw token counts. A Max plan also carries a second,
 Opus-only weekly limit that the payload does not expose; use
 .B /usage
 in Claude Code to see both.
+.PP
+.B \-\-history " [" N ]
+draws one bar per window over the last
+.I N
+windows (default 8), so a week reads against its neighbours rather than in
+isolation.
+.PP
+Anthropic sometimes ends a weekly window early for technical reasons; the reset
+it had announced then never fires. Because of that, claudii derives a window
+boundary from the point where the reported reset
+.I changes
+\(em recorded per row \(em and only falls back to a 7-day grid where nothing was
+recorded. Reconstructed boundaries are marked
+.RB ( ~ )
+and a window that came in short is labelled
+.BR short .
+Windows predating this feature are all reconstructed, since Claude Code reports
+no past resets.
 Supports
 .BR \-\-json .
+Alias:
+.BR w .
 .RE
 .TP
 .B skills-cost

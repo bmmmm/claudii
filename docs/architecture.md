@@ -38,6 +38,8 @@ lib/fmt.awk             # Shared awk formatters (fmt_tok/fmt_usd/rep/bar — loc
 lib/trends.awk          # awk program for trends aggregation
 lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
 lib/window.awk          # week/cost --window — in-window tokens/cost + quota calibration pair (epoch-gated, uses attr_delta)
+lib/window_bounds.awk   # week --history — weekly windows actually observed (distinct reset_7d in col 11, >=3 sightings)
+lib/window_history.awk  # week --history — tokens/cost bucketed into consecutive windows
 lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/trends)
 lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projection
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline

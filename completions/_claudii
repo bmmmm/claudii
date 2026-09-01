@@ -135,9 +135,10 @@ _claudii() {
           _describe 'cost option' cost_opts
           ;;
 
-        week)
+        week|w)
           local -a week_opts
           week_opts=(
+            '--history:per-window bars over the last N windows (default 8)'
             '--json:JSON output'
           )
           _describe 'week option' week_opts
