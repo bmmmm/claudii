@@ -650,7 +650,33 @@ assert_contains "response: survives a render with no new API time" "↯45s" "$(_
 assert_contains "response: sub-10s delta has one decimal" "↯4.1s" "$(_dl_run 27 260000 68600)"
 _dl_compact=$(_dl_run 3 320000 68600)
 assert_eq "compact-eta: compaction produces no negative ETA" "0" "$(printf '%s' "$_dl_compact" | grep -c -- '-' || true)"
-unset -f _dl_run; unset _dl_first _dl_second _dl_compact
+
+# The same deltas, kept as a window, because one of them is the wrong number
+# for anything asking how slow the API was *while a piece of work happened*.
+# Two calls landed in this session, 44.5s and 4.1s: the mean is 24.3s while the
+# last delta is 4.1s, and a consumer reading from inside a tool call gets the
+# 4.1s kind every single time.
+_dl_cached="$(cat "$_dl_cache/session-deltases")"
+assert_contains "api window: the mean spans the window, not the last call" "api_mean_ms=24300" "$_dl_cached"
+assert_contains "api window: it says how many calls it averaged" "api_mean_n=2" "$_dl_cached"
+assert_contains "api window: the last call stays beside it" "last_api_delta=4100" "$_dl_cached"
+unset -f _dl_run; unset _dl_first _dl_second _dl_compact _dl_cached
+
+# An entry older than the window leaves it: what the API cost an hour ago is
+# not what things are like now, and a mean that never forgets would report a
+# recovered API as still broken.
+_aw_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_aw_cache")
+_aw_now=$(date +%s)
+printf 'session_id=agedsess001\nlast_api_duration_ms=10000\nlast_api_delta=5000\napi_recent=%s:99000,%s:6000\n' \
+  "$(( _aw_now - 3600 ))" "$(( _aw_now - 60 ))" > "$_aw_cache/session-agedsess"
+printf '{"model":{"display_name":"Opus"},"session_id":"agedsess001","context_window":{"used_percentage":10},"cost":{"total_cost_usd":0.1,"total_duration_ms":60000,"total_api_duration_ms":18000}}' \
+  | CLAUDII_CACHE_DIR="$_aw_cache" bash "$SL" >/dev/null 2>&1
+_aw_cached="$(cat "$_aw_cache/session-agedsess")"
+# the 6s from a minute ago and the fresh 8s survive; the hour-old 99s does not
+assert_contains "api window: stale entries are dropped" "api_mean_ms=7000" "$_aw_cached"
+assert_contains "api window: only the fresh entries are counted" "api_mean_n=2" "$_aw_cached"
+assert_not_contains "api window: the hour-old reading is gone" ":99000" "$_aw_cached"
+unset _aw_now _aw_cached
 
 # ── ci segment — reads the cache claudii-ci-refresh maintains ────────────────
 # Every seed below is written fresh, so its mtime is younger than the TTL and

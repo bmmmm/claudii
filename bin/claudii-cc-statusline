@@ -320,13 +320,50 @@ fi
 # would otherwise blank the segment, and "the last response took 4.1s" stays
 # true in the meantime. `claudii perf` has the aggregates; this is the live
 # signal that separates "the model is thinking" from "the API is slow today".
+read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
 _cache_get last_api_duration_ms ""; _prev_api_total="$_CG"
 _cache_get last_api_delta "";       _api_delta="$_CG"
+_ad=0
 if [[ "${api_duration_ms%.*}" =~ ^[0-9]+$ && "$_prev_api_total" =~ ^[0-9]+$ ]]; then
   _ad=$(( ${api_duration_ms%.*} - _prev_api_total ))
   (( _ad > 0 )) && _api_delta=$_ad
 fi
 [[ "$_api_delta" =~ ^[0-9]+$ ]] || _api_delta=""
+
+# The same deltas, kept as a short window, because one of them is the wrong
+# number for anything asking "how slow was the API while this work happened".
+# The calls run heavy-tailed — a normal day has a median near 6s and a mean
+# near 13s — so a single sample almost never sees the tail. Worse, a consumer
+# that reads this from inside a tool call (wallii writing a post, say) always
+# lands on the cheap stretch between two tool calls, which is smaller again:
+# 4s against the 15s the same session takes to answer a fresh prompt. The
+# window is what a mean can be taken over; the last delta stays for the
+# segment, which is about the call that just finished and nothing else.
+_API_WIN_S=${CLAUDII_API_WIN_S:-300}
+_API_WIN_MAX=48
+_cache_get api_recent ""; _api_recent="$_CG"
+[[ "$_api_recent" =~ ^[0-9:,]*$ ]] || _api_recent=""
+(( _ad > 0 )) && _api_recent="${_api_recent:+$_api_recent,}${_now}:${_ad}"
+# cap first, so a burst can never grow the file the statusline rewrites every
+# render; counting commas beats splitting the string for a length check
+_aw_c="${_api_recent//[^,]/}"
+while (( ${#_aw_c} + 1 > _API_WIN_MAX )) && [[ "$_api_recent" == *,* ]]; do
+  _api_recent="${_api_recent#*,}"; _aw_c="${_aw_c#,}"
+done
+_aw_sum=0; _aw_n=0; _aw_keep=""; _aw_rest="$_api_recent"
+while [[ -n "$_aw_rest" ]]; do
+  _aw_one="${_aw_rest%%,*}"
+  if [[ "$_aw_one" == "$_aw_rest" ]]; then _aw_rest=""; else _aw_rest="${_aw_rest#*,}"; fi
+  _aw_t="${_aw_one%%:*}"; _aw_d="${_aw_one#*:}"
+  [[ "$_aw_t" =~ ^[0-9]+$ && "$_aw_d" =~ ^[0-9]+$ ]] || continue
+  # an entry older than the window is not what things are like now
+  (( _now - _aw_t > _API_WIN_S )) && continue
+  _aw_keep="${_aw_keep:+$_aw_keep,}$_aw_one"
+  _aw_sum=$(( _aw_sum + _aw_d )); _aw_n=$(( _aw_n + 1 ))
+done
+_api_recent="$_aw_keep"
+_api_mean_ms=""
+(( _aw_n > 0 )) && _api_mean_ms=$(( (_aw_sum + _aw_n / 2) / _aw_n ))
 
 # Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
 # Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
@@ -487,6 +524,9 @@ _tmp_session="${_session_file}.tmp.$$"
   "ctx_rate=$_ctx_rate" \
   "last_api_duration_ms=$api_duration_ms" \
   "last_api_delta=$_api_delta" \
+  "api_mean_ms=$_api_mean_ms" \
+  "api_mean_n=$_aw_n" \
+  "api_recent=$_api_recent" \
   "compactions=$_compactions" \
   "project_path=$cwd"
   [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
@@ -495,8 +535,8 @@ _tmp_session="${_session_file}.tmp.$$"
   true
   } > "$_tmp_session" 2>/dev/null && mv -f "$_tmp_session" "$_session_file" 2>/dev/null || true
 
-# Flight Recorder — append one TSV row, monthly rotation.
-read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
+# Flight Recorder — append one TSV row, monthly rotation. (_now/_date_ym are
+# read further up, where the api window needs the clock first.)
 _history_file="$_cache_dir/history-${_date_ym}.tsv"
 [[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
