@@ -138,7 +138,7 @@ _claudii() {
         week|w)
           local -a week_opts
           week_opts=(
-            '--history:per-window bars over the last N windows (default 8)'
+            '--history:per-window bars over a span (30d, 90d, or a window count; default 30d)'
             '--json:JSON output'
           )
           _describe 'week option' week_opts

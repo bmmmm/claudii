@@ -504,11 +504,20 @@ and
 .IR limit_high ,
 both null when fewer than two calibration points lie ten points apart.
 .PP
-.B \-\-history " [" N ]
-draws one bar per window over the last
-.I N
-windows (default 8), so a week reads against its neighbours rather than in
-isolation. It combines with
+.B \-\-history " [" SPAN ]
+draws one bar per window, so a week reads against its neighbours rather than in
+isolation.
+.I SPAN
+is a period \(em
+.BR 30d " (the default), " 90d ", any " N d
+\(em or a plain window count
+.RB ( "\-\-history 8" ).
+A period keeps every window that
+.I overlaps
+it; windows are never sliced, so the oldest bar may start before the cutoff and
+its label says so. Days is the default because it is the span the rest of
+claudii speaks, and because a window count stops being a proxy for a period the
+moment Anthropic ends a window early. It combines with
 .BR \-\-json ,
 which then returns
 .I windows

@@ -349,3 +349,78 @@ assert_eq "week --history --json: current window agrees with week --json" "true"
 assert_eq "week --json without --history keeps the single-window shape" "null" \
   "$(jq -r '.windows | type' <<< "$_wk1_cur")"
 assert_no_literal_ansi "week --history --json: no colour codes leak into JSON" "$_wk_hist_json"
+
+# ── week --history: the span defaults to 30 days, not a window count ─────────
+# Days is what the rest of claudii speaks (repos/cost/trends default to 30d),
+# and a window count is a poor proxy for a period once Anthropic ends a window
+# early. A plain number still means windows.
+_wk_def=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 2>&1)
+assert_contains "week --history: default span is 30 days" "last 30 days" "$_wk_def"
+assert_not_contains "week --history: default is not a window count" "windows" "$_wk_def"
+_wk_n=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 6 2>&1)
+assert_contains "week --history N: a plain number still counts windows" "last 6 windows" "$_wk_n"
+
+# A period keeps every window OVERLAPPING it, so the oldest window must contain
+# the cutoff: it starts at or before, and ends after. That pins both halves —
+# nothing older is carried along, nothing inside the period is dropped.
+_wk_def_json=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history --json 2>&1)
+assert_eq "week --history --json: oldest window contains the 30-day cutoff" "true" \
+  "$(jq -n --argjson w "$_wk_def_json" --argjson now "$_NOW" \
+     '($now - 2592000) as $cut
+      | ($w.windows[0].window_start <= $cut) and ($w.windows[0].window_reset > $cut)')"
+# A wider period must never show fewer windows than a narrower one.
+_wk_7=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 7d --json 2>&1)
+_wk_90=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 90d --json 2>&1)
+assert_eq "week --history: a wider span shows more windows" "true" \
+  "$(jq -n --argjson a "$_wk_7" --argjson b "$_wk_def_json" --argjson c "$_wk_90" \
+     '($a.windows|length) < ($b.windows|length) and ($b.windows|length) < ($c.windows|length)')"
+# The running window survives even a span shorter than one window.
+assert_eq "week --history 1d: keeps the running window" "true" \
+  "$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 1d --json 2>&1 \
+    | jq -r '(.windows|length) >= 1 and (.windows[-1].current)')"
+assert_exit_code "week --history: rejects a malformed span" 1 \
+  "CLAUDII_CACHE_DIR='$_WK1' bash '$CLAUDII_HOME/bin/claudii' week --history 30x"
+
+# ── week --history: a period drops observed windows that lie outside it ──────
+# Reachable only with observed boundaries OLDER than the cutoff: after the
+# grid-extension the neighbour is always inside the period already, so the
+# trim never fires on a short fixture — it was dead to the suite until this
+# one. Five observed resets stepping back ~45 days; a 30-day span must keep
+# only the windows that reach into it.
+_WK11=$(mktemp -d); _WEEK_TMPDIRS+=("$_WK11")
+_R11=$(( _NOW + 172800 ))                       # current reset, +2d
+cat > "$_WK11/session-eeeeeeee" <<SESS
+model=Opus 5
+rate_7d=50
+reset_7d=$_R11
+session_id=eeeeeeee-0000-0000-0000-000000000000
+SESS
+# Each announced reset needs >=3 sightings (window_bounds.awk drops singletons)
+# and must lie within 8 days after the row that reported it.
+_wk11_win() {   # $1 = first-sighting epoch; announces a reset 7d later
+  local _f="$1" _r=$(( $1 + 604800 )) _i
+  for _i in 0 60 120; do
+    hist_row "$_WK11/history.tsv" $(( _f + _i )) "Opus 5" "1.00" 10 5 "sid-$_f" \
+      $(( 400 + _i )) 100 100 20 "$_r"
+  done
+}
+_wk11_win $(( _NOW - 3888000 ))   # 45d ago
+_wk11_win $(( _NOW - 3283200 ))   # 38d ago
+_wk11_win $(( _NOW - 2678400 ))   # 31d ago
+_wk11_win $(( _NOW - 2073600 ))   # 24d ago
+_wk11_json=$(CLAUDII_CACHE_DIR="$_WK11" bash "$CLAUDII_HOME/bin/claudii" week --history 30d --json 2>&1)
+
+assert_eq "week --history 30d: observed windows outside the span are dropped" "true" \
+  "$(jq -n --argjson w "$_wk11_json" --argjson now "$_NOW" \
+     '($now - 2592000) as $cut
+      | ($w.windows | length) > 0
+        and ([$w.windows[] | select(.window_reset <= $cut)] | length) == 0')"
+assert_eq "week --history 30d: the oldest kept window still reaches into the span" "true" \
+  "$(jq -n --argjson w "$_wk11_json" --argjson now "$_NOW" \
+     '($now - 2592000) as $cut | ($w.windows[0].window_start <= $cut)')"
+# A wider span must recover exactly the windows the narrower one dropped.
+_wk11_90=$(CLAUDII_CACHE_DIR="$_WK11" bash "$CLAUDII_HOME/bin/claudii" week --history 90d --json 2>&1)
+assert_eq "week --history: 90d is a superset of 30d" "true" \
+  "$(jq -n --argjson a "$_wk11_json" --argjson b "$_wk11_90" \
+     '[$a.windows[].window_start] as $s | [$b.windows[].window_start] as $l
+      | ($s | inside($l)) and (($l | length) > ($s | length))')"

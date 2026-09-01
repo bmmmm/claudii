@@ -244,9 +244,15 @@ _week_render_block() {
 # Sets _WH_ROWS (TSV: start end tokens cost_cents sessions) and
 # _WH_MEASURED_FROM; returns 1 when there is nothing to show.
 _WH_ROWS= _WH_MEASURED_FROM= _WH_EARLIEST=
+# Accepts either form of span: "30d" selects every window OVERLAPPING the last
+# 30 days, a bare "6" selects six windows. Days is the default because it is
+# what the rest of claudii speaks (repos/cost/trends all default to 30d), and
+# because a window count is a poor proxy for a period once Anthropic ends one
+# early. A window is never sliced: the oldest bar may reach back past the
+# cutoff, and its label says so.
 _week_history_rows() {
-  local _count="${1:-8}"
-  _WH_ROWS= _WH_MEASURED_FROM= _WH_EARLIEST=
+  local _spec="${1:-30d}"
+  _WH_ROWS= _WH_MEASURED_FROM= _WH_EARLIEST= _WH_LABEL=
 
   local _b=() _r _f _l _rounded
   while IFS=$'\t' read -r _r _f _l; do
@@ -262,10 +268,27 @@ _week_history_rows() {
   (( ${#_b[@]} >= 2 )) && _measured_from="${_b[1]}"
   _b+=("$_WW_START")
   local _earliest="${_b[0]}"
-  while (( ${#_b[@]} < _count )); do
-    _earliest=$(( _earliest - 604800 ))
-    _b=("$_earliest" "${_b[@]}")
-  done
+  if [[ "$_spec" == *d ]]; then
+    local _days="${_spec%d}"
+    local _cutoff=$(( $(date +%s) - _days * 86400 ))
+    # Reach back past the cutoff on the 7-day grid where nothing was observed,
+    # then drop the windows that ended before it — those lie fully outside the
+    # period. The guard keeps the running window even for a tiny span.
+    while (( _earliest > _cutoff )); do
+      _earliest=$(( _earliest - 604800 ))
+      _b=("$_earliest" "${_b[@]}")
+    done
+    while (( ${#_b[@]} > 1 )) && (( ${_b[1]} <= _cutoff )); do
+      _b=("${_b[@]:1}")
+    done
+    _WH_LABEL="last $_days days"
+  else
+    while (( ${#_b[@]} < _spec )); do
+      _earliest=$(( _earliest - 604800 ))
+      _b=("$_earliest" "${_b[@]}")
+    done
+    _WH_LABEL="last $_spec windows"
+  fi
   _b+=("$_WW_RESET")
 
   local _bounds; _bounds=$(IFS=,; printf '%s' "${_b[*]}")
@@ -288,11 +311,11 @@ ${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
 }
 
 _week_history_render() {
-  local _count="${1:-8}"
+  local _spec="${1:-30d}"
   local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
   local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
 
-  _week_history_rows "$_count" || return 1
+  _week_history_rows "$_spec" || return 1
   local _rows="$_WH_ROWS" _measured_from="$_WH_MEASURED_FROM"
 
   local _max=0 _s _e _t _c _n
@@ -301,8 +324,8 @@ _week_history_render() {
   done <<< "$_rows"
   (( _max > 0 )) || return 1
 
-  printf '\n  %sWeekly limit%s %s— last %d windows%s\n\n' \
-    "$accent" "$reset" "$dim" "$_count" "$reset"
+  printf '\n  %sWeekly limit%s %s— %s%s\n\n' \
+    "$accent" "$reset" "$dim" "$_WH_LABEL" "$reset"
 
   local _now; _now=$(date +%s)
   local _lbl _bar _cost_fmt _mark _from _to
@@ -336,8 +359,8 @@ _week_history_render() {
 # marker, whose last-wins precedence (reconstructed -> short -> current) is a
 # rendering choice, not a fact about the window.
 _week_history_json() {
-  local _count="${1:-8}"
-  if ! _week_history_rows "$_count"; then
+  local _spec="${1:-30d}"
+  if ! _week_history_rows "$_spec"; then
     printf '{"windows":[],"measured_from":null}\n'
     return 0
   fi
@@ -381,19 +404,24 @@ _week_json() {
 _cmd_week() {
   _cfg_init
 
-  local _arg _history=0 _count=8
+  local _arg _history=0 _spec=30d
   for _arg in "${@:2}"; do
     case "$_arg" in
       -h|--help)
-        printf 'Usage: claudii week [--history [N]] [--json]\n\n'
+        printf 'Usage: claudii week [--history [SPAN]] [--json]\n\n'
         printf "Usage inside Anthropic's rolling 7-day rate-limit window — the\n"
         printf 'quota that actually gates work, not the calendar week.\n\n'
-        printf '  --history [N]  per-window bars over the last N windows (default 8)\n'
-        printf '  --json         machine-readable output (combines with --history)\n'
+        printf '  --history [SPAN]  per-window bars. SPAN is a period (30d, 90d —\n'
+        printf '                    default 30d) or a plain window count (8).\n'
+        printf '                    A period keeps every window that overlaps it,\n'
+        printf '                    so the oldest bar may start before the cutoff.\n'
+        printf '  --json            machine-readable output (combines with --history)\n'
         return 0 ;;
       --json) _FORMAT=json ;;
       --history) _history=1 ;;
-      [0-9]|[0-9][0-9]) (( _history )) && _count="$_arg" ;;
+      [0-9]|[0-9][0-9]|[0-9][0-9][0-9]) (( _history )) && _spec="$_arg" ;;
+      [0-9]d|[0-9][0-9]d|[0-9][0-9][0-9]d|[0-9][0-9][0-9][0-9]d)
+        (( _history )) && _spec="$_arg" ;;
       *) printf 'Unknown option: %s\n' "$_arg" >&2; return 1 ;;
     esac
   done
@@ -409,8 +437,8 @@ _cmd_week() {
   # --history first: it selects the VIEW, --json only its encoding. The other
   # order made `week --history --json` answer with the current window instead.
   if (( _history )); then
-    [[ "${_FORMAT:-}" == "json" ]] && { _week_history_json "$_count"; return 0; }
-    _week_history_render "$_count" && return 0
+    [[ "${_FORMAT:-}" == "json" ]] && { _week_history_json "$_spec"; return 0; }
+    _week_history_render "$_spec" && return 0
     printf '\n  %sNot enough history for a per-window view yet.%s\n\n' \
       "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
     return 0
