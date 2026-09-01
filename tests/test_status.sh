@@ -477,14 +477,29 @@ rm -rf "$_adt_dir"
 # read as absent → the model stays "ok" while it is actually down.
 _sp_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_sigpipe.XXXXXX")
 mkdir -p "$_sp_dir/srv"
-# ~200 KB of body text, well past the 64 KiB pipe buffer.
-_sp_body=$(awk 'BEGIN{for(i=0;i<3400;i++) printf "we are continuing to monitor the elevated error rates. "}')
-jq -n --arg body "$_sp_body" '{incidents:[
-  {name:"Elevated error rates for Claude Opus", status:"investigating", impact:"major",
-   incident_updates:[{body:"Opus requests are failing."}], components:[{name:"Claude Opus"}]},
-  {name:"Unrelated dashboard latency", status:"monitoring", impact:"minor",
-   incident_updates:[{body:$body}], components:[{name:"claude.ai"}]}
-]}' > "$_sp_dir/srv/unresolved.json"
+# ~190 KB of body text, well past the 64 KiB pipe buffer. Streamed straight
+# into the file rather than handed to jq as an argument: Linux caps a single
+# argv entry at 128 KiB (MAX_ARG_STRLEN), so `jq --arg body "<190KB>"` fails
+# with E2BIG there while macOS accepts it — which would leave an empty fixture
+# and a green-looking "no incident" run instead of a real test.
+{
+  printf '%s' '{"incidents":[{"name":"Elevated error rates for Claude Opus",'
+  printf '%s' '"status":"investigating","impact":"major",'
+  printf '%s' '"incident_updates":[{"body":"Opus requests are failing."}],'
+  printf '%s' '"components":[{"name":"Claude Opus"}]},'
+  printf '%s' '{"name":"Unrelated dashboard latency","status":"monitoring",'
+  printf '%s' '"impact":"minor","incident_updates":[{"body":"'
+  awk 'BEGIN{for(i=0;i<3400;i++) printf "we are continuing to monitor the elevated error rates. "}'
+  printf '%s\n' '"}],"components":[{"name":"claude.ai"}]}]}'
+} > "$_sp_dir/srv/unresolved.json"
+# The fixture is the test here — assert it before trusting anything downstream.
+# An unparseable or truncated feed makes claudii-status write _api=unreachable,
+# which would read as "opus not flagged" and fail for the wrong reason.
+assert_eq "sigpipe: fixture is valid JSON with two incidents" "2" \
+  "$(jq -r '.incidents | length' "$_sp_dir/srv/unresolved.json" 2>/dev/null || echo ERR)"
+assert_eq "sigpipe: fixture body clears the 64 KiB pipe buffer" "true" \
+  "$(jq -r '(.incidents[1].incident_updates[0].body | length) > 65536' \
+     "$_sp_dir/srv/unresolved.json" 2>/dev/null || echo ERR)"
 cat > "$_sp_dir/curl" <<EOF
 #!/bin/bash
 for arg in "\$@"; do
