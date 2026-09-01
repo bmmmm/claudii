@@ -592,8 +592,8 @@ _ov_render_commands() {
   printf '\n'
   printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_ACTIVE}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}Commands${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}each runs as claudii <command>${CLAUDII_CLR_RESET}\n"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "sessions" "se · si · session · pin · unpin · gc · resume"
-  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "cost"     "cost · trends · skills-cost"
-  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "insights" "tokens · perf · tools · limits · cache · vibemap"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "cost"     "cost · week · trends · skills-cost"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "insights" "tokens · perf · tools · limits · cache · vibemap · repos"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "display"  "on · off · claudestatus · session-dashboard · cc-statusline · insomnii"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "config"   "config · agents · omlx · vpnii · search"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "system"   "status · doctor · explain · update · version · changelog · restart"

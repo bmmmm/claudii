@@ -70,6 +70,33 @@ assert_eq "lint: no standalone (( var++ )) post-increments in lib/ or bin/claudi
   "" "$_lint_postinc"
 unset _lint_postinc
 
+# ── Overview quick reference covers every documented command ────────────────
+# The grouped list in _ov_render_commands is the first thing a bare `claudii`
+# shows, and nothing pinned it: `week` and `repos` both shipped complete in the
+# man page, the completions and the dispatch (all gated above) while never
+# appearing there. Gated against MAN_COMMANDS, which CLAUDE.md already makes
+# the single place a new command gets registered — so adding one now forces a
+# decision: put it in a group, or name it here as deliberately out.
+#
+# Matching is on the "·"-separated items, not a substring: "session" occurs
+# inside "session-dashboard", and a substring check would pass for a command
+# that has no entry at all.
+OV_EXEMPT=(dashboard sessions sessions-inactive layers)   # aliases; targets are listed
+_OV_FN=$(LC_ALL=C sed -n '/^_ov_render_commands()/,/^}/p' "$CLAUDII_HOME/lib/cmd/overview.sh")
+_OV_ITEMS=$(printf '%s\n' "$_OV_FN" \
+  | LC_ALL=C sed -n 's/.*"\([^"]*\)"[[:space:]]*$/\1/p' \
+  | LC_ALL=C tr '·' '\n' | LC_ALL=C tr -d ' ')
+assert_eq "overview command list is extractable" "0" \
+  "$([ "$(printf '%s\n' "$_OV_ITEMS" | grep -c .)" -ge 25 ] && echo 0 || echo 1)"
+for cmd in "${MAN_COMMANDS[@]}"; do
+  _skip=0
+  for _x in "${OV_EXEMPT[@]}"; do [[ "$cmd" == "$_x" ]] && _skip=1; done
+  (( _skip )) && continue
+  assert_eq "bare claudii lists command: $cmd" "0" \
+    "$(printf '%s\n' "$_OV_ITEMS" | LC_ALL=C grep -qx -- "$cmd" && echo 0 || echo 1)"
+done
+unset _OV_FN _OV_ITEMS _skip _x
+
 # ── Static lint: `producer | grep -q` SIGPIPE regression ────────────────────
 # `producer | grep -q` returns 141 under `pipefail`: grep -q exits on the match,
 # the producer's next write gets EPIPE. It fires when the match lands on an
