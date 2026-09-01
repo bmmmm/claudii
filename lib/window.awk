@@ -58,6 +58,11 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
 END {
   n = 0
   for (s in seen_sid) n++
-  printf "%d\t%.6f\t%d\t%.4f\t%d\t%.4f\t%d\n", \
-    win_tok, win_cost, n, pct_lo, tok_at_lo, pct_hi, tok_at_hi
+  # Cost twice: the exact float for JSON, and integer cents for display. The
+  # shell must not run "%.2f" over the float — a VAR=C prefix on bash's printf
+  # builtin does not reliably reload the locale (it kept a comma locale on CI
+  # while working locally), so the pretty path stays integer-only.
+  printf "%d\t%.6f\t%d\t%.4f\t%d\t%.4f\t%d\t%d\n", \
+    win_tok, win_cost, n, pct_lo, tok_at_lo, pct_hi, tok_at_hi, \
+    int(win_cost * 100 + 0.5)
 }

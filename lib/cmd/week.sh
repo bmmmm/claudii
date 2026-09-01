@@ -53,9 +53,21 @@ _week_resolve_start() {
 # Returns 1 when no window is known (Claude Code drops seven_day once its
 # resets_at passes, and until the next API response), so every caller can
 # print its own "nothing to show yet" line.
-_WK_TOK= _WK_COST= _WK_SESSIONS= _WK_LIMIT= _WK_LIMIT_SRC= _WK_EXHAUST=
+_WK_TOK= _WK_COST= _WK_SESSIONS= _WK_LIMIT= _WK_LIMIT_SRC= _WK_EXHAUST= _WK_CENTS=
+
+# Integer cents -> "1234.56". Locale-immune by construction: no %f anywhere on
+# the pretty path, because a VAR=C prefix on bash's printf builtin does not
+# reliably reload the locale — it worked locally and silently kept a comma
+# locale on CI, aborting the render mid-block.
+_usd_from_cents() {
+  local _c="${1:-0}" _neg=""
+  [[ "$_c" =~ ^-?[0-9]+$ ]] || _c=0
+  if (( _c < 0 )); then _neg="-"; _c=$(( -_c )); fi
+  printf '%s%d.%02d' "$_neg" $(( _c / 100 )) $(( _c % 100 ))
+}
+
 _week_stats() {
-  _WK_TOK=0 _WK_COST=0 _WK_SESSIONS=0 _WK_LIMIT=0 _WK_LIMIT_SRC="" _WK_EXHAUST=0
+  _WK_TOK=0 _WK_COST=0 _WK_SESSIONS=0 _WK_LIMIT=0 _WK_LIMIT_SRC="" _WK_EXHAUST=0 _WK_CENTS=0
   _week_window || return 1
   _week_resolve_start
 
@@ -80,7 +92,8 @@ ${_win_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
   [[ -n "$_row" ]] || return 1
 
   local _pct_lo _tok_lo _pct_hi _tok_hi
-  IFS=$'\t' read -r _WK_TOK _WK_COST _WK_SESSIONS _pct_lo _tok_lo _pct_hi _tok_hi <<< "$_row"
+  IFS=$'\t' read -r _WK_TOK _WK_COST _WK_SESSIONS _pct_lo _tok_lo _pct_hi _tok_hi \
+    _WK_CENTS <<< "$_row"
 
   # Quota size in tokens. Anthropic never publishes it, so it is inferred:
   #   measured — from Δtokens across a percentage spread inside this window.
@@ -127,10 +140,7 @@ _week_render_block() {
   printf '\n  %sWeekly limit%s  %s(window: %s \342\206\222 %s)%s\n\n' \
     "$accent" "$reset" "$dim" "$_from" "$_to" "$reset"
 
-  # LC_ALL=C for the one float: bash printf follows LC_NUMERIC, so a comma
-  # locale rejects the dot-decimal awk handed us ("invalid number") and prints
-  # $3206,00. Formatted once here, emitted as a string below.
-  local _cost_fmt; LC_ALL=C printf -v _cost_fmt '%.2f' "$_WK_COST"
+  local _cost_fmt; _cost_fmt=$(_usd_from_cents "$_WK_CENTS")
   printf '    %sUsed%s      %s%s%s tokens \302\267 %s$%s%s \302\267 %d sessions\n' \
     "$dim" "$reset" "$cyan" "$(_fmt_tok "$_WK_TOK")" "$reset" \
     "$cyan" "$_cost_fmt" "$reset" "$_WK_SESSIONS"
@@ -234,7 +244,7 @@ ${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
     _fmt_abs "$_s" '%d.%m'; _from="$_ABS_FMT"
     _fmt_abs "$_e" '%d.%m'; _to="$_ABS_FMT"
     _lbl="$_from \342\206\222 $_to"
-    LC_ALL=C printf -v _cost_fmt '$%.0f' "$_c"
+    _cost_fmt="\$$(( _c / 100 ))"
     # Flag what the data cannot vouch for: a reconstructed boundary, and a
     # window that came in short (an early Anthropic reset).
     _mark=""

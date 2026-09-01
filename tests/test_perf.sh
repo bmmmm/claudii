@@ -232,10 +232,15 @@ assert_not_contains "perf otel: selftest not rendered" "selftest"          "$_OT
 # label map in _perf_json, string keys in the render W-rows), so pin that every
 # --json bucket label also appears in the rendered output for one fixture — a
 # boundary/label edit to only one block then trips this.
+# grep on a here-string, not `printf | grep -qF`: under run.sh's pipefail,
+# grep -q exits at the first match, printf takes SIGPIPE, and the pipeline
+# returns 141 — so a bucket that IS present reads as missing and the parity
+# assert fails for no reason (it did, on the Ubuntu leg only). Same fix as the
+# note at tests/run.sh:44.
 _OTEL_WMISS=0
 while IFS= read -r _wb; do
   [[ -z "$_wb" ]] && continue
-  printf '%s' "$_OTEL_OUT" | grep -qF "$_wb" || _OTEL_WMISS=1
+  grep -qF -- "$_wb" <<< "$_OTEL_OUT" || _OTEL_WMISS=1
 done <<< "$(printf '%s' "$_OTEL_JSON" | jq -r '.by_window[].bucket')"
 assert_eq "perf otel: every --json bucket label also renders (json/render parity)" "0" "$_OTEL_WMISS"
 

@@ -40,6 +40,9 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
 }
 
 END {
+  # Cost as integer cents — the renderer must not format a float (see the note
+  # in lib/window.awk about the unreliable VAR=C prefix on bash printf).
   for (i = 1; i < nb; i++)
-    printf "%s\t%s\t%d\t%.6f\t%d\n", B[i], B[i + 1], tok[i], cost[i], sessions[i]
+    printf "%s\t%s\t%d\t%d\t%d\n", \
+      B[i], B[i + 1], tok[i], int(cost[i] * 100 + 0.5), sessions[i]
 }
