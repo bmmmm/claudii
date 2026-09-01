@@ -508,7 +508,28 @@ both null when fewer than two calibration points lie ten points apart.
 draws one bar per window over the last
 .I N
 windows (default 8), so a week reads against its neighbours rather than in
-isolation.
+isolation. It combines with
+.BR \-\-json ,
+which then returns
+.I windows
+\(em one object per window with
+.IR window_start ,
+.IR window_reset ,
+.IR tokens ,
+.I cost
+and
+.IR sessions ,
+plus the booleans
+.IR reconstructed ,
+.I short
+and
+.I current
+\(em alongside
+.IR measured_from ,
+the epoch from which boundaries stop being extrapolated. The three booleans are
+independent, unlike the single marker the bars show, where
+.I current
+overrides the others.
 .PP
 Anthropic sometimes ends a weekly window early for technical reasons; the reset
 it had announced then never fires. Because of that, claudii derives a window

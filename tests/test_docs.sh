@@ -93,7 +93,7 @@ for cmd in "${MAN_COMMANDS[@]}"; do
   for _x in "${OV_EXEMPT[@]}"; do [[ "$cmd" == "$_x" ]] && _skip=1; done
   (( _skip )) && continue
   assert_eq "bare claudii lists command: $cmd" "0" \
-    "$(printf '%s\n' "$_OV_ITEMS" | LC_ALL=C grep -qx -- "$cmd" && echo 0 || echo 1)"
+    "$(LC_ALL=C grep -qx -- "$cmd" <<< "$_OV_ITEMS" && echo 0 || echo 1)"
 done
 unset _OV_FN _OV_ITEMS _skip _x
 
@@ -105,7 +105,11 @@ unset _OV_FN _OV_ITEMS _skip _x
 # line end first). A *present* value then reads as absent. Use a here-string:
 #   producer | grep -q X   →   grep -q X <<< "$var"
 # Comment lines are exempt (the pattern gets named in prose).
-_lint_grepq=$(grep -rn '|[[:space:]]*grep -q' \
+# The prefix alternation is not decoration: this gate first shipped as
+# '|[[:space:]]*grep -q' and promptly missed `| LC_ALL=C grep -qx` written into
+# this very file, which then failed one leg in four under parallel load — the
+# flaky-looking shape SIGPIPE always takes.
+_lint_grepq=$(grep -rnE '\|[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*grep -q' \
   "$CLAUDII_HOME/lib/" "$CLAUDII_HOME/bin/" "$CLAUDII_HOME/tests/" 2>/dev/null \
   | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
 assert_eq "lint: no pipe-into-grep-quiet pipelines in lib/, bin/ or tests/" \

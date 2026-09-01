@@ -312,3 +312,40 @@ assert_eq "week: skewed slopes keep the outlier only in the band high" \
   "40000" "$(jq -r '.limit_high' <<< "$_wk10_out")"
 assert_eq "week: skewed slopes keep the tight pairs as the band low" \
   "10000" "$(jq -r '.limit_low' <<< "$_wk10_out")"
+
+# ── week --history --json: the bars, machine-readable ────────────────────────
+# --history selects the view, --json only its encoding. They used to be checked
+# in the wrong order, so `--history --json` silently answered with the current
+# window — fully documented, and wrong.
+_wk_hist_json=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 4 --json 2>&1)
+
+assert_eq "week --history --json: emits a windows array" "array" \
+  "$(jq -r '.windows | type' <<< "$_wk_hist_json" 2>/dev/null || echo ERR)"
+assert_eq "week --history --json: honours the window count" "4" \
+  "$(jq -r '.windows | length' <<< "$_wk_hist_json")"
+assert_eq "week --history --json: flags exactly one current window" "1" \
+  "$(jq -r '[.windows[] | select(.current)] | length' <<< "$_wk_hist_json")"
+assert_eq "week --history --json: the current window is the last one" "true" \
+  "$(jq -r '.windows[-1].current' <<< "$_wk_hist_json")"
+assert_eq "week --history --json: earlier boundaries are reconstructed" "true" \
+  "$(jq -r '.windows[0].reconstructed' <<< "$_wk_hist_json")"
+# Type-checked, not just compared: on the old single-window shape both sides
+# are null and a bare equality passes vacuously.
+assert_eq "week --history --json: measured_from matches the current start" "true" \
+  "$(jq -r '(.measured_from | type == "number")
+            and (.measured_from == .windows[-1].window_start)' <<< "$_wk_hist_json")"
+# Windows tile the axis: each one starts where the previous ended.
+assert_eq "week --history --json: windows are contiguous" "true" \
+  "$(jq -r '[.windows[1:][] as $w | ($w.window_start)] as $s
+            | [.windows[:-1][] | .window_reset] as $e | ($s == $e)' <<< "$_wk_hist_json")"
+# The two views must agree on the running window — same computation, one path.
+_wk1_cur=$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --json 2>&1)
+assert_eq "week --history --json: current window agrees with week --json" "true" \
+  "$(jq -n --argjson h "$_wk_hist_json" --argjson c "$_wk1_cur" \
+     '($h.windows[-1].window_start == $c.window_start)
+      and ($h.windows[-1].window_reset == $c.window_reset)
+      and ($h.windows[-1].tokens == $c.tokens)')"
+# --json alone must still describe the current window, not a windows array.
+assert_eq "week --json without --history keeps the single-window shape" "null" \
+  "$(jq -r '.windows | type' <<< "$_wk1_cur")"
+assert_no_literal_ansi "week --history --json: no colour codes leak into JSON" "$_wk_hist_json"

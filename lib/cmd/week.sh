@@ -1,6 +1,11 @@
 # lib/cmd/week.sh — claudii week (Anthropic weekly rate-limit window)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
+# A window materially under seven days — Anthropic ended it early. One name,
+# because the same threshold decides _WW_SHORT, the `short` marker on a history
+# bar, and the `short` flag in --json; three literals would drift apart.
+_WEEK_SHORT_SECS=561600   # 6.5d
+
 # Observed windows, ascending by first sighting: "reset<TAB>first<TAB>last" rows.
 # Empty before this feature shipped (column 11 did not exist yet).
 _week_observed() {
@@ -63,7 +68,7 @@ _week_resolve_start() {
   if (( _diff > 7200 )) && (( _cand < _now )) && (( _WW_RESET > _now )) \
      && (( _len >= 3600 )) && (( _len <= 694800 )); then
     _WW_START=$_cand
-    (( _WW_RESET - _WW_START < 561600 )) && _WW_SHORT=1   # under 6.5d
+    (( _WW_RESET - _WW_START < _WEEK_SHORT_SECS )) && _WW_SHORT=1
   fi
   return 0
 }
@@ -233,10 +238,15 @@ _week_render_block() {
 # observed where possible; older ones are extrapolated on the 7-day grid and
 # labelled as such, because Anthropic's early resets mean a grid is an
 # assumption about the past, not a fact.
-_week_history_render() {
+# Boundary + per-window aggregation, with no rendering in it. Split out so the
+# bars and --json are two views of ONE computation: the entangled version was
+# why --json silently ignored --history for a whole release.
+# Sets _WH_ROWS (TSV: start end tokens cost_cents sessions) and
+# _WH_MEASURED_FROM; returns 1 when there is nothing to show.
+_WH_ROWS= _WH_MEASURED_FROM= _WH_EARLIEST=
+_week_history_rows() {
   local _count="${1:-8}"
-  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
-  local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
+  _WH_ROWS= _WH_MEASURED_FROM= _WH_EARLIEST=
 
   local _b=() _r _f _l _rounded
   while IFS=$'\t' read -r _r _f _l; do
@@ -271,6 +281,20 @@ _week_history_render() {
 ${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
   [[ -n "$_rows" ]] || return 1
 
+  _WH_ROWS="$_rows"
+  _WH_MEASURED_FROM="$_measured_from"
+  _WH_EARLIEST="${_b[0]}"
+  return 0
+}
+
+_week_history_render() {
+  local _count="${1:-8}"
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
+
+  _week_history_rows "$_count" || return 1
+  local _rows="$_WH_ROWS" _measured_from="$_WH_MEASURED_FROM"
+
   local _max=0 _s _e _t _c _n
   while IFS=$'\t' read -r _s _e _t _c _n; do
     (( _t > _max )) && _max=$_t
@@ -291,7 +315,7 @@ ${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
     # window that came in short (an early Anthropic reset).
     _mark=""
     (( _s < _measured_from )) && _mark="${dim}~${reset}"
-    (( _e - _s < 561600 )) && _mark="${yellow}short${reset}"
+    (( _e - _s < _WEEK_SHORT_SECS )) && _mark="${yellow}short${reset}"
     (( _s == _WW_START )) && _mark="${green}current${reset}"
     printf '  %-16b %s%9s%s  %s  %s%8s%s  %b\n' \
       "$_lbl" "$cyan" "$(_fmt_tok "$_t")" "$reset" \
@@ -299,12 +323,40 @@ ${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
       "$dim" "$_cost_fmt" "$reset" "$_mark"
   done <<< "$_rows"
 
-  if (( ${_b[0]} < _measured_from )); then
+  if (( _WH_EARLIEST < _measured_from )); then
     printf '\n  %s~ boundary reconstructed on a 7-day grid — Claude Code reports no past\n' "$dim"
     printf '    resets, and Anthropic may end a window early. Measured from %s.%s\n' \
       "$(_fmt_abs "$_measured_from" '%d.%m %H:%M'; printf '%s' "$_ABS_FMT")" "$reset"
   fi
   printf '\n'
+}
+
+# The bars, machine-readable. Same rows, same boundary reasoning — the flags
+# are emitted as three independent booleans rather than the display's single
+# marker, whose last-wins precedence (reconstructed -> short -> current) is a
+# rendering choice, not a fact about the window.
+_week_history_json() {
+  local _count="${1:-8}"
+  if ! _week_history_rows "$_count"; then
+    printf '{"windows":[],"measured_from":null}\n'
+    return 0
+  fi
+  # Cost is integer cents from window_history.awk; jq divides, so no %f ever
+  # touches a shell printf (see the locale note above _usd_from_cents).
+  LC_ALL=C jq -R -n \
+    --argjson mf "$_WH_MEASURED_FROM" \
+    --argjson cur "$_WW_START" \
+    --argjson shortsecs "$_WEEK_SHORT_SECS" \
+    '{ windows: [ inputs | split("\t") |
+         { window_start: (.[0] | tonumber),
+           window_reset: (.[1] | tonumber),
+           tokens:       (.[2] | tonumber),
+           cost:         ((.[3] | tonumber) / 100),
+           sessions:     (.[4] | tonumber) }
+         | . + { reconstructed: (.window_start < $mf),
+                 short:         ((.window_reset - .window_start) < $shortsecs),
+                 current:       (.window_start == $cur) } ],
+       measured_from: $mf }' <<< "$_WH_ROWS"
 }
 
 _week_json() {
@@ -337,7 +389,7 @@ _cmd_week() {
         printf "Usage inside Anthropic's rolling 7-day rate-limit window — the\n"
         printf 'quota that actually gates work, not the calendar week.\n\n'
         printf '  --history [N]  per-window bars over the last N windows (default 8)\n'
-        printf '  --json         machine-readable output\n'
+        printf '  --json         machine-readable output (combines with --history)\n'
         return 0 ;;
       --json) _FORMAT=json ;;
       --history) _history=1 ;;
@@ -354,13 +406,16 @@ _cmd_week() {
     return 0
   fi
 
-  [[ "${_FORMAT:-}" == "json" ]] && { _week_json; return 0; }
+  # --history first: it selects the VIEW, --json only its encoding. The other
+  # order made `week --history --json` answer with the current window instead.
   if (( _history )); then
+    [[ "${_FORMAT:-}" == "json" ]] && { _week_history_json "$_count"; return 0; }
     _week_history_render "$_count" && return 0
     printf '\n  %sNot enough history for a per-window view yet.%s\n\n' \
       "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
     return 0
   fi
+  [[ "${_FORMAT:-}" == "json" ]] && { _week_json; return 0; }
   _week_render_block
   return 0
 }
