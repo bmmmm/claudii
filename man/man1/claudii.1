@@ -484,6 +484,26 @@ Opus-only weekly limit that the payload does not expose; use
 .B /usage
 in Claude Code to see both.
 .PP
+A
+.I measured
+quota is read as a range \(em
+.RB ( "~3.4M\(en4.6M left" )
+\(em whenever the window's own calibration points disagree by more than ten
+percent. The points are (percent, tokens-at-that-percent) pairs; the quota
+implied by every pair at least ten percentage points apart is collected, and
+the estimate is their median (a Theil\(enSen slope, so one runaway pair cannot
+drag it) with the extremes as the range. Where the pairs agree the range
+collapses back to a single figure, so its width is itself the reading: a wide
+band says the reported percentage does not track raw token counts. In
+.B \-\-json
+the median is
+.I limit_estimate
+(unchanged) alongside
+.I limit_low
+and
+.IR limit_high ,
+both null when fewer than two calibration points lie ten points apart.
+.PP
 .B \-\-history " [" N ]
 draws one bar per window over the last
 .I N
@@ -500,7 +520,11 @@ recorded. Reconstructed boundaries are marked
 and a window that came in short is labelled
 .BR short .
 Windows predating this feature are all reconstructed, since Claude Code reports
-no past resets.
+no past resets. An observed boundary is adopted only when it is plausible \(em
+it must lie in the past, the reset must still be ahead, and the resulting
+window must run between an hour and eight days; anything else falls back to
+the 7-day grid rather than rebasing every figure in the block on a corrupt
+record.
 Supports
 .BR \-\-json .
 Alias:

@@ -42,7 +42,26 @@ _week_resolve_start() {
   local _diff=$(( _cand - _grid )); (( _diff < 0 )) && _diff=$(( -_diff ))
   # Within a couple of hours of the 7-day grid it IS the 7-day grid; the grid
   # value is the more precise of the two (it needs no first-sighting luck).
-  if (( _diff > 7200 )); then
+  #
+  # Sanity guards. The observed boundary is only as good as column 11, and a
+  # corrupt value there would otherwise move the window somewhere impossible —
+  # a start in the future, or weeks back — silently rebasing every number in
+  # the block. A rejected candidate is not an error: _WW_START simply stays on
+  # the reset-minus-7d grid, which is what it was before this feature existed.
+  #   * the window must have started (_cand < now)
+  #   * the window must not already be over (_WW_RESET > now) — a stale
+  #     session cache can carry a reset that has since passed
+  #   * its length must be plausible (1h .. 8d); Anthropic shortens windows,
+  #     but never to minutes, and never past the announced seven days
+  # The upper bound is belt-and-braces: window_bounds.awk already drops a row
+  # whose announced reset is more than eight days out, so _first cannot be
+  # older than that. It is 8d PLUS an hour because _cand is _first floored to
+  # the hour — without the slack, flooring alone could push a legitimate
+  # eight-day boundary over the line.
+  local _now; _now=$(date +%s)
+  local _len=$(( _WW_RESET - _cand ))
+  if (( _diff > 7200 )) && (( _cand < _now )) && (( _WW_RESET > _now )) \
+     && (( _len >= 3600 )) && (( _len <= 694800 )); then
     _WW_START=$_cand
     (( _WW_RESET - _WW_START < 561600 )) && _WW_SHORT=1   # under 6.5d
   fi
@@ -54,6 +73,7 @@ _week_resolve_start() {
 # resets_at passes, and until the next API response), so every caller can
 # print its own "nothing to show yet" line.
 _WK_TOK= _WK_COST= _WK_SESSIONS= _WK_LIMIT= _WK_LIMIT_SRC= _WK_EXHAUST= _WK_CENTS=
+_WK_LIMIT_LO= _WK_LIMIT_HI=
 
 # Integer cents -> "1234.56". Locale-immune by construction: no %f anywhere on
 # the pretty path, because a VAR=C prefix on bash's printf builtin does not
@@ -68,6 +88,7 @@ _usd_from_cents() {
 
 _week_stats() {
   _WK_TOK=0 _WK_COST=0 _WK_SESSIONS=0 _WK_LIMIT=0 _WK_LIMIT_SRC="" _WK_EXHAUST=0 _WK_CENTS=0
+  _WK_LIMIT_LO=0 _WK_LIMIT_HI=0
   _week_window || return 1
   _week_resolve_start
 
@@ -91,28 +112,37 @@ _week_stats() {
 ${_win_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
   [[ -n "$_row" ]] || return 1
 
-  local _pct_lo _tok_lo _pct_hi _tok_hi
-  IFS=$'\t' read -r _WK_TOK _WK_COST _WK_SESSIONS _pct_lo _tok_lo _pct_hi _tok_hi \
+  local _lim_lo _lim_med _lim_hi _lim_pairs
+  IFS=$'\t' read -r _WK_TOK _WK_COST _WK_SESSIONS _lim_lo _lim_med _lim_hi _lim_pairs \
     _WK_CENTS <<< "$_row"
 
   # Quota size in tokens. Anthropic never publishes it, so it is inferred:
-  #   measured — from Δtokens across a percentage spread inside this window.
-  #     Independent of where the window started, so it beats the estimate below,
-  #     but the percentages are 1%-grained: a narrow spread amplifies rounding
-  #     into a wild figure, hence the >=10 gate.
+  #   measured — the Theil-Sen median of the per-pair slopes window.awk found
+  #     inside this window. Independent of where the window started, so it
+  #     beats the estimate below.
   #   estimated — tokens-so-far over percent-used. Available from the first run,
   #     but it inherits any error in the window start.
   # Either way it stays an approximation: Anthropic weighs models and cache
-  # differently than raw token counts, so this is never billed truth.
+  # differently than raw token counts, so this is never billed truth. Which is
+  # the point of the band: _WK_LIMIT_LO/_HI are the extreme slopes, so the
+  # display can admit the spread instead of printing one confident number over
+  # data that disagrees with itself. Whether Anthropic counts proportionally to
+  # raw tokens at all is answered by that width — no separate probe needed.
   local _calc
   _calc=$(LC_ALL=C awk -v tok="$_WK_TOK" -v pct="${_WW_PCT:-0}" \
-    -v plo="$_pct_lo" -v tlo="$_tok_lo" -v phi="$_pct_hi" -v thi="$_tok_hi" \
+    -v lo="$_lim_lo" -v med="$_lim_med" -v hi="$_lim_hi" \
     -v start="$_WW_START" -v now="$(date +%s)" '
     BEGIN {
-      dp = phi - plo
-      if (dp >= 10 && thi > tlo) { limit = (thi - tlo) / (dp / 100); src = "measured" }
-      else if (pct + 0 > 0)      { limit = tok / (pct / 100);        src = "estimated" }
-      else                       { limit = 0; src = "" }
+      if (med + 0 > 0)      { limit = med; src = "measured" }
+      else if (pct + 0 > 0) { limit = tok / (pct / 100); src = "estimated" }
+      else                  { limit = 0; src = "" }
+
+      # Collapse a band narrower than 10% of the estimate: the support points
+      # agree, and a range would then suggest an uncertainty that is not there.
+      blo = 0; bhi = 0
+      if (limit > 0 && hi + 0 > lo + 0 && (hi - lo) * 100 / limit >= 10) {
+        blo = lo; bhi = hi
+      }
 
       # Burn-through moment at the pace held so far. Only meaningful while the
       # window has actually run for a bit and the quota is not already spent.
@@ -121,9 +151,9 @@ ${_win_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
       if (limit > tok && elapsed > 3600 && tok > 0)
         exhaust = now + (limit - tok) / (tok / elapsed)
 
-      printf "%d\t%s\t%d", limit, src, exhaust
+      printf "%d\t%s\t%d\t%d\t%d", limit, src, exhaust, blo, bhi
     }')
-  IFS=$'\t' read -r _WK_LIMIT _WK_LIMIT_SRC _WK_EXHAUST <<< "$_calc"
+  IFS=$'\t' read -r _WK_LIMIT _WK_LIMIT_SRC _WK_EXHAUST _WK_LIMIT_LO _WK_LIMIT_HI <<< "$_calc"
   return 0
 }
 
@@ -152,9 +182,21 @@ _week_render_block() {
   (( _pct_int >= 80 )) && _pc="${CLAUDII_CLR_RED:-$yellow}"
 
   if [[ -n "$_WK_LIMIT_SRC" ]] && (( _WK_LIMIT > _WK_TOK )); then
-    printf '    %sQuota%s     %s%s%%%s used \302\267 ~%s left %s(%s)%s\n' \
-      "$dim" "$reset" "$_pc" "$_pct_int" "$reset" \
-      "$(_fmt_tok $(( _WK_LIMIT - _WK_TOK )))" "$dim" "$_WK_LIMIT_SRC" "$reset"
+    # A band, when the support points disagree by more than 10% — printing one
+    # number over data that spread that wide would claim a precision the
+    # percentages cannot carry. Collapses to the point estimate when they agree,
+    # and when the low end is already spent (a "left" range starting below zero
+    # says nothing the point estimate does not).
+    if (( ${_WK_LIMIT_LO:-0} > _WK_TOK )); then
+      printf '    %sQuota%s     %s%s%%%s used \302\267 ~%s\342\200\223%s left %s(%s)%s\n' \
+        "$dim" "$reset" "$_pc" "$_pct_int" "$reset" \
+        "$(_fmt_tok $(( _WK_LIMIT_LO - _WK_TOK )))" \
+        "$(_fmt_tok $(( _WK_LIMIT_HI - _WK_TOK )))" "$dim" "$_WK_LIMIT_SRC" "$reset"
+    else
+      printf '    %sQuota%s     %s%s%%%s used \302\267 ~%s left %s(%s)%s\n' \
+        "$dim" "$reset" "$_pc" "$_pct_int" "$reset" \
+        "$(_fmt_tok $(( _WK_LIMIT - _WK_TOK )))" "$dim" "$_WK_LIMIT_SRC" "$reset"
+    fi
   else
     printf '    %sQuota%s     %s%s%%%s used\n' "$dim" "$reset" "$_pc" "$_pct_int" "$reset"
   fi
@@ -271,10 +313,13 @@ _week_json() {
     --argjson pct "${_WW_PCT:-0}" --argjson tok "$_WK_TOK" \
     --argjson cost "$_WK_COST" --argjson sessions "$_WK_SESSIONS" \
     --argjson limit "$_WK_LIMIT" --arg src "$_WK_LIMIT_SRC" \
+    --argjson llo "${_WK_LIMIT_LO:-0}" --argjson lhi "${_WK_LIMIT_HI:-0}" \
     --argjson exhaust "$_WK_EXHAUST" '{
       window_start: $start, window_reset: $reset,
       used_percentage: $pct, tokens: $tok, cost: $cost, sessions: $sessions,
       limit_estimate: (if $limit > 0 then $limit else null end),
+      limit_low: (if $llo > 0 then $llo else null end),
+      limit_high: (if $lhi > 0 then $lhi else null end),
       limit_source: (if $src == "" then null else $src end),
       tokens_left: (if $limit > $tok then $limit - $tok else null end),
       exhausts_at: (if $exhaust > 0 then $exhaust else null end)
