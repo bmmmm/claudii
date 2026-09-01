@@ -36,14 +36,17 @@ _fmt_abs() {
   local _e=${1:-} _fmt="${2:-%Y-%m-%d %H:%M}"
   _ABS_FMT=""
   [[ "$_e" =~ ^[0-9]+$ ]] || return 0
-  # LC_TIME=C: keep %a/%b weekday/month names English (project rule: English
-  # CLI output). Numeric formats (%Y-%m-%d %H:%M) are locale-immune anyway.
+  # LC_ALL=C, not LC_TIME=C: keep %a/%b weekday/month names English (project
+  # rule: English CLI output). LC_TIME alone loses to a set LC_ALL — under
+  # LC_ALL=de_DE.UTF-8 this rendered "Mi." instead of "Wed" (same defeat as the
+  # LC_NUMERIC/awk case in docs/gotchas.md). Numeric formats are locale-immune
+  # anyway, so forcing C costs nothing.
   if [[ -n "${_CLAUDII_TZ:-}" ]]; then
-    _ABS_FMT=$(LC_TIME=C TZ="$_CLAUDII_TZ" date -r "$_e" "+$_fmt" 2>/dev/null \
-      || LC_TIME=C TZ="$_CLAUDII_TZ" date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
+    _ABS_FMT=$(LC_ALL=C TZ="$_CLAUDII_TZ" date -r "$_e" "+$_fmt" 2>/dev/null \
+      || LC_ALL=C TZ="$_CLAUDII_TZ" date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
   else
-    _ABS_FMT=$(LC_TIME=C date -r "$_e" "+$_fmt" 2>/dev/null \
-      || LC_TIME=C date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
+    _ABS_FMT=$(LC_ALL=C date -r "$_e" "+$_fmt" 2>/dev/null \
+      || LC_ALL=C date -d "@$_e" "+$_fmt" 2>/dev/null) || _ABS_FMT=""
   fi
   return 0
 }

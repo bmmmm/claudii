@@ -32,6 +32,7 @@ _claudii() {
         'unpin:Remove GC protection from a session'
         'config:Read or write config values'
         'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
+        'week:Usage inside the Anthropic weekly rate-limit window (tokens, cost, pace)'
         'skills-cost:Per-skill, per-plugin and per-MCP-tool cost breakdown from attribution data'
         'trends:Visualization — daily cost chart, 30-day model split, costliest day'
         'tokens:Token usage breakdown by type, model and day (7d default)'
@@ -127,10 +128,19 @@ _claudii() {
           local -a cost_opts
           cost_opts=(
             '--forecast:5h-budget burn rate + this-month spend projection'
+            '--window:Week section over the Anthropic 7-day rate-limit window'
             '--json:JSON output'
             '--tsv:Tab-separated output'
           )
           _describe 'cost option' cost_opts
+          ;;
+
+        week)
+          local -a week_opts
+          week_opts=(
+            '--json:JSON output'
+          )
+          _describe 'week option' week_opts
           ;;
 
         skills-cost)

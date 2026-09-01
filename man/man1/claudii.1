@@ -424,6 +424,18 @@ Alias:
 .RS
 .PP
 With
+.B \-\-window
+the Week section is replaced by
+.BR Window :
+the same per-tier breakdown, but over Anthropic rolling 7-day rate-limit
+window instead of the calendar week set by
+.IR cost.week_start .
+The window boundary sits mid-day, so this bucket is cut on row timestamps
+rather than on dates. Prints a notice and exits when no window is known yet.
+See
+.BR week .
+.PP
+With
 .B \-\-forecast
 the spend tables are replaced by a burn-rate projection in two blocks. The
 .B 5h budget
@@ -441,6 +453,38 @@ block shows spend so far, the $/day pace, the month-end projection with an
 honest \(+- band derived from daily-spend variance, and a comparison against
 last month. Honors
 .BR \-\-json " and " \-\-tsv .
+.RE
+.TP
+.B week
+Usage inside Anthropic rolling 7-day rate-limit window \(em the quota that
+actually gates work, as opposed to the calendar week
+.B cost
+reports. Shows tokens, dollars and session count consumed since the window
+opened, the used percentage, the reset countdown, and the daily pace with the
+moment the quota runs dry if that falls before the reset.
+.RS
+.PP
+The window itself comes from
+.I rate_limits.seven_day
+in the CC-Statusline payload; its start is the reset epoch minus seven days.
+Claude Code reports the window only after a session's first API response and
+drops it once the reset passes, so an empty window is a normal state, not an
+error.
+.PP
+The
+.B quota
+line carries a token estimate Anthropic does not publish. It is labelled
+.I estimated
+while it is derived from tokens-so-far over percent-used, and
+.I measured
+once a wide enough percentage spread inside one window allows deriving it from
+\(*Dtokens instead. Both remain approximations \(em Anthropic weighs models and
+cache differently than raw token counts. A Max plan also carries a second,
+Opus-only weekly limit that the payload does not expose; use
+.B /usage
+in Claude Code to see both.
+Supports
+.BR \-\-json .
 .RE
 .TP
 .B skills-cost

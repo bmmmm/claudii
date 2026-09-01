@@ -21,7 +21,8 @@ bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pendin
 bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
-lib/cmd/cost.sh         # Commands: cost, cost --forecast (history aggregation, D-grid + amount-sorted bars)
+lib/cmd/cost.sh         # Commands: cost, cost --forecast, cost --window (history aggregation, D-grid + amount-sorted bars)
+lib/cmd/week.sh         # Command: week (Anthropic 7-day rate-limit window; _week_stats/_week_render_block reused by limits)
 lib/cmd/overview.sh     # Command: default overview (bare `claudii`)
 lib/cmd/skills-cost.sh  # Command: skills-cost (per-skill/plugin/MCP cost, --compare)
 lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
@@ -36,6 +37,7 @@ lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _spa
 lib/fmt.awk             # Shared awk formatters (fmt_tok/fmt_usd/rep/bar — locale-immune)
 lib/trends.awk          # awk program for trends aggregation
 lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
+lib/window.awk          # week/cost --window — in-window tokens/cost + quota calibration pair (epoch-gated, uses attr_delta)
 lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/trends)
 lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projection
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline

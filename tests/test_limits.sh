@@ -39,10 +39,13 @@ _LIM_D2=$(date -u -v-9d  +%Y-%m-%d 2>/dev/null || date -u -d "9 days ago"  +%Y-%
 } > "$_JSONL"
 
 # Expected "by day" label for _LIM_D1, formatted the same way _cmd_limits
-# does (LC_TIME=C '%d %b', no weekday — the assertion below is a substring
-# match so the weekday prefix doesn't matter).
-_LIM_D1_LBL=$(LC_TIME=C date -j -f '%Y-%m-%d' "$_LIM_D1" '+%d %b' 2>/dev/null \
-  || LC_TIME=C date -d "$_LIM_D1" '+%d %b' 2>/dev/null)
+# does (LC_ALL=C '%d %b', no weekday — the assertion below is a substring
+# match so the weekday prefix doesn't matter). LC_ALL, not LC_TIME: under a set
+# LC_ALL (the CI de_DE leg) LC_TIME is overridden, and this expectation used to
+# build "22 Aug." while the app built the same wrong string — two matching bugs
+# reading as a pass. _fmt_abs now forces LC_ALL=C, so this must too.
+_LIM_D1_LBL=$(LC_ALL=C date -j -f '%Y-%m-%d' "$_LIM_D1" '+%d %b' 2>/dev/null \
+  || LC_ALL=C date -d "$_LIM_D1" '+%d %b' 2>/dev/null)
 
 _LIM_OUT=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" limits --days 60 2>&1)

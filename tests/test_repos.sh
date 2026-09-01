@@ -163,8 +163,9 @@ _RP_DAY_A=$(date -u -r $(( _RP_BASE + 1740 )) +%Y-%m-%d 2>/dev/null \
 if [[ "$_RP_DAY_A" == "$(date -u +%Y-%m-%d)" ]]; then
   _RP_LBL="Today"
 else
-  _RP_LBL=$(LC_TIME=C date -j -f %Y-%m-%d "$_RP_DAY_A" +'%a %d %b' 2>/dev/null \
-    || LC_TIME=C date -d "$_RP_DAY_A" +'%a %d %b' 2>/dev/null)
+  # LC_ALL, not LC_TIME — matches the app's own forcing (see test_limits.sh).
+  _RP_LBL=$(LC_ALL=C date -j -f %Y-%m-%d "$_RP_DAY_A" +'%a %d %b' 2>/dev/null \
+    || LC_ALL=C date -d "$_RP_DAY_A" +'%a %d %b' 2>/dev/null)
 fi
 _RP_DAILY=$(_rp_run repos --daily)
 assert_contains "repos --daily: day label"     "$_RP_LBL" "$_RP_DAILY"

@@ -63,11 +63,16 @@ ${_tier_awk}
       model = $2; cost = $3 + 0; sid = $6; raw = $2
       in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
       model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
-      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok
+      # ts rides along so stage 2 can bucket on an arbitrary epoch boundary.
+      # Day strings have no sub-day resolution, and the Anthropic weekly
+      # window starts mid-day (--window).
+      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok "\t" ts
     }
   ' "${_history_files[@]}" | LC_ALL=C awk -F'\t' \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
+    -v window_start="${_COST_WINDOW_START:-0}" \
+    -v window_label="${_COST_WINDOW_LABEL:-}" \
     -v cols="$_cost_cols" \
     -v fmt="${_FORMAT:-}" \
     -v cyan="$CLAUDII_CLR_CYAN" \
@@ -78,6 +83,13 @@ ${_tier_awk}
 ${_attr_awk}
 ${_fmt_awk}
 "'
+    # Which rows count as "this week". Default is the configured calendar week
+    # (a date-string compare — YYYY-MM-DD sorts lexically == chronologically).
+    # With --window it becomes Anthropic rolling 7-day rate-limit window, whose
+    # boundary sits mid-day and therefore needs the row epoch.
+    function in_week(d, t) {
+      return (window_start > 0) ? (t >= window_start) : (d >= week_start)
+    }
     # Look up one model/period cost cell ("" when the model had no spend there).
     function cell_cost(kind, m, pk,   k) {
       k = m SUBSEP pk
@@ -195,6 +207,7 @@ ${_fmt_awk}
     {
       day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
       in_tok = $6 + 0; out_tok = $7 + 0; total_tok = in_tok + out_tok
+      ts = $8 + 0
       if (sid == "" || day == "" || model == "") next
 
       # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
@@ -222,14 +235,14 @@ ${_fmt_awk}
         all_months[mk] = 1; all_years[yk] = 1
         alltime_cost[model]         += cinc; seen_sid_alltime[model SUBSEP sid]          = 1
         if (day == today)      { today_cost[model] += cinc; seen_sid_today[model SUBSEP sid] = 1 }
-        if (day >= week_start) { week_cost[model]  += cinc; seen_sid_week[model SUBSEP sid]  = 1 }
+        if (in_week(day, ts))  { week_cost[model]  += cinc; seen_sid_week[model SUBSEP sid]  = 1 }
         month_cost[model SUBSEP mk] += cinc; seen_sid_month[model SUBSEP mk SUBSEP sid] = 1
         year_cost[model SUBSEP yk]  += cinc; seen_sid_year[model SUBSEP yk SUBSEP sid]  = 1
       }
       if (tinc > 0) {
         alltime_tok += tinc
         if (day == today)      today_tok += tinc
-        if (day >= week_start) week_tok  += tinc
+        if (in_week(day, ts))  week_tok  += tinc
         month_tok[mk] += tinc
         year_tok[yk]  += tinc
       }
@@ -389,7 +402,10 @@ ${_fmt_awk}
       printf "  %sclaudii cost%s%s%s%s%s\n\n", cyan, reset, rep(" ", _gap), dim, legend, reset
 
       render_bars("Today", "", today_cost, today_tok)
-      render_bars("Week", sprintf("(%s - %s)", week_start, today), week_cost, week_tok)
+      if (window_start > 0)
+        render_bars("Window", window_label, week_cost, week_tok)
+      else
+        render_bars("Week", sprintf("(%s - %s)", week_start, today), week_cost, week_tok)
       printf "  %sMonths%s\n", pink, reset
       render_dgrid(mon_keys, n_mon, "month", "Month")
       printf "  %sYears%s\n", pink, reset
@@ -508,13 +524,32 @@ _cmd_cost_forecast() {
   _spinner_stop
 }
 
+_COST_WINDOW_START=0 _COST_WINDOW_LABEL=
 _cmd_cost() {
-  local _a _forecast=0
+  local _a _forecast=0 _window=0
+  _COST_WINDOW_START=0 _COST_WINDOW_LABEL=
   for _a in "$@"; do
     [[ "$_a" == "--forecast" || "$_a" == "forecast" ]] && _forecast=1
+    [[ "$_a" == "--window" ]] && _window=1
   done
 
   _cfg_init
+
+  # --window swaps the Week section for Anthropic rolling 7-day rate-limit
+  # window. Without a known window there is nothing to swap to, so say so
+  # rather than silently rendering the calendar week under a "Window" heading.
+  if (( _window )); then
+    if _week_window; then
+      _COST_WINDOW_START="$_WW_START"
+      local _wf _wt
+      _fmt_abs "$_WW_START" '%d.%m %H:%M'; _wf="$_ABS_FMT"
+      _fmt_abs "$_WW_RESET" '%d.%m %H:%M'; _wt="$_ABS_FMT"
+      _COST_WINDOW_LABEL="($_wf - $_wt)"
+    else
+      echo "No weekly rate-limit window known yet — Claude Code reports it after the first API response of a session."
+      return 0
+    fi
+  fi
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
   # History (Flight Recorder) is the only data source — it carries correct

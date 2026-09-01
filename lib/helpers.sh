@@ -552,3 +552,34 @@ _str_hash() {
   done
   printf -v _HASH '%08x' "$_h"
 }
+
+# Anthropic's weekly rate-limit window — the rolling 7-day quota that actually
+# gates work, not the calendar week `cost.week_start` describes. Claude Code
+# hands each session `rate_limits.seven_day.{used_percentage,resets_at}`; the
+# quota is account-wide, so every live session carries the same reset epoch.
+#
+# Sets _WW_RESET (epoch the quota refills), _WW_START (_WW_RESET - 7d) and
+# _WW_PCT (used percentage). All three stay empty when no cache knows a window:
+# Claude Code drops the field once resets_at has passed and does not restore it
+# until the next API response, so absence is a normal state, not an error.
+_WW_START= _WW_RESET= _WW_PCT=
+_week_window() {
+  local _dir="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}}"
+  local _f _best_mt=0
+  _WW_START= _WW_RESET= _WW_PCT=
+  _session_files "$_dir"
+  (( ${#_SESSION_FILES[@]} )) || return 1
+  for _f in "${_SESSION_FILES[@]}"; do
+    _parse_session_cache "$_f" || continue
+    [[ -n "$_PSC_reset_7d" ]] || continue
+    # Newest writer wins — the glob is ordered by session id, not by freshness.
+    [[ "$_PSC_mtime" =~ ^[0-9]+$ ]] || continue
+    (( _PSC_mtime > _best_mt )) || continue
+    _best_mt=$_PSC_mtime
+    _WW_RESET="${_PSC_reset_7d%.*}"
+    _WW_PCT="$_PSC_rate_7d"
+  done
+  [[ "$_WW_RESET" =~ ^[0-9]+$ ]] || { _WW_START= _WW_RESET= _WW_PCT=; return 1; }
+  _WW_START=$(( _WW_RESET - 604800 ))
+  return 0
+}

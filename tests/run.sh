@@ -107,9 +107,10 @@ assert_no_literal_ansi() {
   fi
 }
 
-# Canonical CURRENT-format history fixture row — the 9-col layout
+# Canonical CURRENT-format history fixture row — the 11-col layout
 # bin/claudii-cc-statusline writes:
 #   timestamp  model  cost  ctx_pct  rate_5h  session_id  in_tok  out_tok  api_ms
+#   rate_7d  reset_7d
 # Appends one row to the file in $1. Single source of the column layout for
 # test fixtures: a future schema change updates THIS helper (and the
 # consumers), not every printf across cost/trends/cli tests (see the
@@ -117,8 +118,13 @@ assert_no_literal_ansi() {
 # rows) stay as explicit printf in the tests — they exercise format deviations.
 hist_row() {
   local _f="$1" _ts="$2" _model="$3" _cost="$4" _ctx="${5:-0}" _rate="${6:-0}" _sid="$7" _in="${8:-0}" _out="${9:-0}" _api="${10:-0}"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$_ts" "$_model" "$_cost" "$_ctx" "$_rate" "$_sid" "$_in" "$_out" "$_api" >> "$_f"
+  # Cols 10/11 (rate_7d, reset_7d) arrived with the weekly-window feature and
+  # stay empty by default — that is exactly what pre-feature history files
+  # look like, so existing fixtures keep exercising the absent-column path.
+  local _r7="${11:-}" _rst7="${12:-}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$_ts" "$_model" "$_cost" "$_ctx" "$_rate" "$_sid" "$_in" "$_out" "$_api" \
+    "$_r7" "$_rst7" >> "$_f"
 }
 
 assert_matches() {

@@ -81,10 +81,13 @@ _insights_day_label() {
   [[ -n "${_IDL_TODAY:-}" ]] || _IDL_TODAY=$(date -u +%Y-%m-%d)
   if [[ "$day" == "$_IDL_TODAY" ]]; then
     printf 'Today'
-  elif LC_TIME=C date -j -f %Y-%m-%d "$day" +"$fmt" >/dev/null 2>&1; then
-    LC_TIME=C date -j -f %Y-%m-%d "$day" +"$fmt"
+  # LC_ALL=C, not LC_TIME=C — LC_TIME loses to a set LC_ALL, so a de_DE shell
+  # rendered German month/weekday names against the English-output rule. Same
+  # defeat as _fmt_abs in lib/timefmt.sh.
+  elif LC_ALL=C date -j -f %Y-%m-%d "$day" +"$fmt" >/dev/null 2>&1; then
+    LC_ALL=C date -j -f %Y-%m-%d "$day" +"$fmt"
   else
-    LC_TIME=C date -d "$day" +"$fmt" 2>/dev/null || printf '%s' "$day"
+    LC_ALL=C date -d "$day" +"$fmt" 2>/dev/null || printf '%s' "$day"
   fi
 }
 
@@ -618,7 +621,7 @@ _cmd_tokens() {
     done
     for _dr in "${_d_rows[@]}"; do
       IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
-      wd=$(LC_TIME=C date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || LC_TIME=C date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
+      wd=$(LC_ALL=C date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || LC_ALL=C date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
       if [[ "$d" == "$today" ]]; then lbl="Today $wd"; else lbl="$wd"; fi
       bf2=$(_bar_filled "$io" "$maxio" "$BAR_W")
       hit=$(_cache_hit_pct "$ccr" $(( cinp + ccw )))
@@ -1018,6 +1021,14 @@ _cmd_limits() {
 
   local fmt="${_FORMAT:-}"
   [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv limits; return 1; }
+
+  # "Where do I stand" before "where did I hit the wall". Reads the session
+  # cache and history directly, so it shows even when insights are still empty
+  # — hence ahead of the merged-data guard below. JSON keeps its own schema
+  # (`claudii week --json` serves the window).
+  if [[ "$fmt" != "json" ]] && _week_stats; then
+    _week_render_block
+  fi
 
   local merged; merged=$(_insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
