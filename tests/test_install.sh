@@ -61,7 +61,7 @@ done
 
 # source line removed from zshrc
 zshrc=$(cat "$TEST_TMP/zshrc")
-if echo "$zshrc" | grep -q "claudii.plugin.zsh"; then
+if grep -q "claudii.plugin.zsh" <<< "$zshrc"; then
   assert_eq "uninstall: source line removed" "removed" "still present"
 else
   assert_eq "uninstall: source line removed" "true" "true"

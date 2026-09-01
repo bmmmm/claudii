@@ -157,7 +157,7 @@ _write_incidents() {
   # broad flags by populating down_models.
   {
     for model in "${MODELS[@]}"; do
-      if echo "$down_models" | grep -q " $model "; then
+      if grep -q " $model " <<< "$down_models"; then
         printf '%s=%s\n' "$model" "$service_level"
       else
         printf '%s=ok\n' "$model"
@@ -234,12 +234,15 @@ if [[ -n "$unresolved" ]]; then
     # Components are the most reliable signal (Anthropic flips e.g. "Claude
     # Sonnet" or "API" on the status page); name + body are belt-and-braces
     # for incidents whose component list lags the title.
-    # printf, not echo, below: incident text is untrusted API output — a
-    # leading -e/-n or embedded backslashes would get munged by echo.
+    # Here-strings, not pipes, below: `producer | grep -q` returns 141 under
+    # pipefail once grep exits on an early-line match while more than a pipe
+    # buffer still follows — a named model would read as unnamed. The
+    # here-string also sidesteps echo mangling of untrusted API text
+    # (leading -e/-n, embedded backslashes).
     _search_text="$incident_names $incident_bodies $incident_components"
     down_models=" "
     for m in "${MODELS[@]}"; do
-      printf '%s\n' "$_search_text" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
+      grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" <<< "$_search_text" && down_models="$down_models$m "
     done
 
     # Model-scope detection. An incident that names a specific Claude model —
@@ -252,7 +255,7 @@ if [[ -n "$unresolved" ]]; then
     _KNOWN_MODEL_FAMILIES="${CLAUDII_KNOWN_MODELS:-opus sonnet haiku fable mythos}"
     _model_scoped=false
     for _km in $_KNOWN_MODEL_FAMILIES; do
-      printf '%s\n' "$_search_text" | grep -qiE "(^|[^a-zA-Z])${_km}([^a-zA-Z]|$)" && { _model_scoped=true; break; }
+      grep -qiE "(^|[^a-zA-Z])${_km}([^a-zA-Z]|$)" <<< "$_search_text" && { _model_scoped=true; break; }
     done
 
     # No tracked model named: broad-API outage check. Only when the incident is
@@ -262,7 +265,7 @@ if [[ -n "$unresolved" ]]; then
     # gets persisted so consumers show the note indicator without the false
     # "Opus ↓ Sonnet ↓ Haiku ↓" cascade.
     if [[ "$down_models" == " " ]] && ! $_model_scoped && \
-       echo "$incident_components" | grep -qiE '(^|[^a-zA-Z])API([^a-zA-Z]|$)'; then
+       grep -qiE '(^|[^a-zA-Z])API([^a-zA-Z]|$)' <<< "$incident_components"; then
       for m in "${MODELS[@]}"; do
         down_models="$down_models$m "
       done
@@ -298,14 +301,14 @@ down_models=" "
 rss_has_incident=false
 
 while IFS= read -r item; do
-  echo "$item" | grep -qo '&lt;strong&gt;Resolved&lt;/strong&gt;' && continue
-  echo "$item" | grep -qi '<title>[^<]*Resolved[^<]*</title>' && continue
+  grep -qF '&lt;strong&gt;Resolved&lt;/strong&gt;' <<< "$item" && continue
+  grep -qi '<title>[^<]*Resolved[^<]*</title>' <<< "$item" && continue
   title=$(echo "$item" | sed -n 's/.*<title>\(.*\)<\/title>.*/\1/p')
   [[ -z "$title" ]] && continue
   rss_has_incident=true
   [[ -z "$incident_detail" ]] && incident_detail="$title"
   for m in "${MODELS[@]}"; do
-    echo "$title" | grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" && down_models="$down_models$m "
+    grep -qiE "(^|[^a-zA-Z])${m}([^a-zA-Z]|$)" <<< "$title" && down_models="$down_models$m "
   done
   _claudii_log debug "RSS item: '$title' → down: [${down_models}]"
 done < <(

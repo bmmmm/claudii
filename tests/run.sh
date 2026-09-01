@@ -97,7 +97,7 @@ assert_file_exists() {
 
 assert_no_literal_ansi() {
   local desc="$1" text="$2"
-  if echo "$text" | grep -qF '\033'; then
+  if grep -qF '\033' <<< "$text"; then
     echo -e "  ${RED}✗${NC} $desc"
     echo -e "    Output contains literal \\\\033 — ANSI not rendered as ESC bytes"
     (( ++FAIL )); ERRORS+=("$desc")

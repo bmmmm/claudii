@@ -18,7 +18,7 @@ _CLAUDII_SPINNER_MODES=(beam wave dots pulse bounce arc orbit)
 
 # Entry point — UTF-check, then dispatches to a mode.
 _claudii_spinner() {
-  if [[ "${TERM:-}" == "dumb" ]] || ! printf '%s' "${LANG:-}" | grep -qi "utf"; then
+  if [[ "${TERM:-}" == "dumb" ]] || ! grep -qi "utf" <<< "${LANG:-}"; then
     _claudii_spinner_ascii
     return
   fi

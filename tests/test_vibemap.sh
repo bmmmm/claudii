@@ -123,10 +123,10 @@ cat > "$_vm_home/.config/claudii/config.json" <<EOF
 EOF
 
 _status=$(_vm_run status 2>&1)
-echo "$_status" | grep -q "enabled : true" && _ok=1 || _ok=0
+grep -q "enabled : true" <<< "$_status" && _ok=1 || _ok=0
 assert_eq "vibemap status: shows enabled=true" "1" "$_ok"
 
-echo "$_status" | grep -q "entries : 3" && _ok=1 || _ok=0
+grep -q "entries : 3" <<< "$_status" && _ok=1 || _ok=0
 assert_eq "vibemap status: reports correct line count" "1" "$_ok"
 
 _path_out=$(_vm_run path 2>&1)
@@ -141,39 +141,39 @@ fi
 
 # clear on already-empty: no error
 _out=$(_vm_run clear 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=0" && _ok=1 || _ok=0
+grep -q "rc=0" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap clear: idempotent (rc=0 when no file)" "1" "$_ok"
 
 # Unknown subcommand returns rc=2
 _out=$(_vm_run zzzzzz 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap: unknown subcommand returns rc=2" "1" "$_ok"
 
 # --days input validation
 _out=$(_vm_run strip --days 999 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: --days bounds-checked (1..90)" "1" "$_ok"
 
 # strip: positional argument (e.g. strip 45) must error, not silently use 30
 _out=$(_vm_run strip 45 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: positional arg returns rc=2" "1" "$_ok"
-echo "$_out" | grep -q "45" && _ok=1 || _ok=0
+grep -q "45" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: positional arg error mentions the bad argument" "1" "$_ok"
 
 # strip: bogus flag also errors
 _out=$(_vm_run strip bogus 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=2" && _ok=1 || _ok=0
+grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: unrecognized flag returns rc=2" "1" "$_ok"
 
 # strip: --days N still works
 _out=$(_vm_run strip --days 45 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=0" && _ok=1 || _ok=0
+grep -q "rc=0" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: --days N succeeds (rc=0)" "1" "$_ok"
 
 # strip: bare strip still works
 _out=$(_vm_run strip 2>&1; echo "rc=$?")
-echo "$_out" | grep -q "rc=0" && _ok=1 || _ok=0
+grep -q "rc=0" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap strip: bare strip succeeds (rc=0)" "1" "$_ok"
 
 # ── mini-vibemap overview segment ─────────────────────────────────────────────
@@ -198,7 +198,7 @@ EOF
 _ov_out=$(HOME="$_vm_home2" XDG_CACHE_HOME="$_vm_home2/.cache" \
   XDG_CONFIG_HOME="$_vm_home2/.config" \
   bash "$CLAUDII_HOME/bin/claudii" 2>&1)
-echo "$_ov_out" | grep -q "Activity" && _ok=1 || _ok=0
+grep -q "Activity" <<< "$_ov_out" && _ok=1 || _ok=0
 assert_eq "overview: Activity section present when vibemap enabled+data" "1" "$_ok"
 
 # The Activity block must contain a real density char (░▒▓█), not just be non-empty.
@@ -207,7 +207,7 @@ assert_eq "overview: Activity section present when vibemap enabled+data" "1" "$_
 # bash 5.x), the caller's 2>/dev/null fell through to the disabled placeholder. Grep the
 # whole 2-line block (header + strip) for a density char so the strip itself is asserted.
 _act_block=$(echo "$_ov_out" | grep -A2 "Activity")
-echo "$_act_block" | grep -qE '[░▒▓█]' && _ok=1 || _ok=0
+grep -qE '[░▒▓█]' <<< "$_act_block" && _ok=1 || _ok=0
 assert_eq "overview: Activity strip renders density chars (not the disabled placeholder)" "1" "$_ok"
 
 # Config: vibemap disabled → placeholder line
@@ -219,10 +219,10 @@ _ov_out2=$(HOME="$_vm_home2" XDG_CACHE_HOME="$_vm_home2/.cache" \
   XDG_CONFIG_HOME="$_vm_home2/.config" \
   bash "$CLAUDII_HOME/bin/claudii" 2>&1)
 # Should still show Activity section, but as dim placeholder
-echo "$_ov_out2" | grep -q "Activity" && _ok=1 || _ok=0
+grep -q "Activity" <<< "$_ov_out2" && _ok=1 || _ok=0
 assert_eq "overview: Activity placeholder present when vibemap disabled" "1" "$_ok"
 # Placeholder references enabling command
-echo "$_ov_out2" | grep -q "vibemap.enabled true" && _ok=1 || _ok=0
+grep -q "vibemap.enabled true" <<< "$_ov_out2" && _ok=1 || _ok=0
 assert_eq "overview: Activity placeholder shows enable command" "1" "$_ok"
 
 rm -rf "$_vm_home2"
@@ -251,7 +251,7 @@ _ov_out6=$(HOME="$_vm_home6" XDG_CACHE_HOME="$_vm_home6/.cache" \
   XDG_CONFIG_HOME="$_vm_home6/.config" \
   bash "$CLAUDII_HOME/bin/claudii" 2>&1)
 _act_block6=$(echo "$_ov_out6" | grep -A2 "Activity")
-echo "$_act_block6" | grep -qE '[░▒▓█]' && _ok=1 || _ok=0
+grep -qE '[░▒▓█]' <<< "$_act_block6" && _ok=1 || _ok=0
 assert_eq "mini-strip: empty (torn) cache recomputes, never blank Activity" "1" "$_ok"
 rm -rf "$_vm_home6"
 unset _vm_home6 _vm_path6 _now6 _ov_out6 _act_block6
@@ -279,11 +279,11 @@ _strip_out=$(HOME="$_vm_home3" XDG_CACHE_HOME="$_vm_home3/.cache" \
   bash "$CLAUDII_HOME/bin/claudii" vibemap strip 2>&1)
 
 # today-row must contain ▶ marker
-echo "$_strip_out" | grep -q "▶" && _ok=1 || _ok=0
+grep -q "▶" <<< "$_strip_out" && _ok=1 || _ok=0
 assert_eq "strip today-row: ▶ marker present" "1" "$_ok"
 
 # today-row must contain the cursor │ character
-echo "$_strip_out" | grep "▶" | grep -q "│" && _ok=1 || _ok=0
+grep -q "│" <<< "$(grep "▶" <<< "$_strip_out")" && _ok=1 || _ok=0
 assert_eq "strip today-row: │ cursor present in today row" "1" "$_ok"
 
 # Determine current hour — if it's before 23, hour 23 should be blank in today-row
@@ -327,11 +327,11 @@ _grid_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
   bash "$CLAUDII_HOME/bin/claudii" vibemap grid 2>&1)
 
 # Header must contain ▶ marker (today's column)
-echo "$_grid_out" | grep -q "▶" && _ok=1 || _ok=0
+grep -q "▶" <<< "$_grid_out" && _ok=1 || _ok=0
 assert_eq "grid today-column: header contains ▶ marker" "1" "$_ok"
 
 # Output must contain accent ANSI escape (CLAUDII_CLR_ACCENT = \033[38;5;213m)
-printf '%s' "$_grid_out" | grep -q $'\033\[38;5;213m' && _ok=1 || _ok=0
+grep -q $'\033\[38;5;213m' <<< "$_grid_out" && _ok=1 || _ok=0
 assert_eq "grid today-column: output contains accent ANSI escape" "1" "$_ok"
 
 # Legend line must mention today
@@ -341,10 +341,10 @@ assert_contains "grid today-column: legend mentions today" "today" "$_grid_out"
 _def_out=$(HOME="$_vm_home4" XDG_CACHE_HOME="$_vm_home4/.cache" \
   XDG_CONFIG_HOME="$_vm_home4/.config" \
   bash "$CLAUDII_HOME/bin/claudii" vibemap 2>&1)
-echo "$_def_out" | grep -q "last 30 days" && _ok=1 || _ok=0
+grep -q "last 30 days" <<< "$_def_out" && _ok=1 || _ok=0
 assert_eq "vibemap default: bare 'vibemap' renders the 30-day strip" "1" "$_ok"
 # The strip header is "00 03 06 …"; the grid's "00-03" bin labels must be absent.
-echo "$_def_out" | grep -qE '00-03|21-00' && _ok=0 || _ok=1
+grep -qE '00-03|21-00' <<< "$_def_out" && _ok=0 || _ok=1
 assert_eq "vibemap default: bare 'vibemap' is not the weekday grid" "1" "$_ok"
 unset _def_out
 
@@ -371,7 +371,7 @@ _ov_out5=$(HOME="$_vm_home5" XDG_CACHE_HOME="$_vm_home5/.cache" \
   bash "$CLAUDII_HOME/bin/claudii" 2>&1)
 
 # Activity strip must contain the accent ANSI escape for today
-printf '%s' "$_ov_out5" | grep -q $'\033\[38;5;213m' && _ok=1 || _ok=0
+grep -q $'\033\[38;5;213m' <<< "$_ov_out5" && _ok=1 || _ok=0
 assert_eq "mini-strip: today char rendered in accent color" "1" "$_ok"
 
 rm -rf "$_vm_home5"

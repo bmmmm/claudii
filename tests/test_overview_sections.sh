@@ -108,7 +108,7 @@ assert_eq "account: 5h and 7d resets show a wall-clock time (HH:MM)" "1" "$_ok"
 # %a renders "Di. 21:41", not "Di 21:41" — so allow letters+dots before the
 # space ([A-Za-z][A-Za-z.]*). The 5h '%H:%M' sits in "(16:30)" with no such
 # prefix, so this still pins the 7d entry specifically.
-echo "$_ovs_acct" | grep -qE '[A-Za-z][A-Za-z.]* [0-9][0-9]:[0-9][0-9]' && _ok=1 || _ok=0
+grep -qE '[A-Za-z][A-Za-z.]* [0-9][0-9]:[0-9][0-9]' <<< "$_ovs_acct" && _ok=1 || _ok=0
 assert_eq "account: 7d reset wall-clock carries a weekday prefix" "1" "$_ok"
 rm -f "$_ovs_tmp/cache/session-acct"
 unset _ovs_rnow _ovs_acct _ovs_times _ok

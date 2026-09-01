@@ -51,7 +51,7 @@ for model in "${STATUS_MODELS[@]}"; do
   model="${model// /}"
   assert_contains "cache has ${model} entry" "${model}=" "$cached"
   line=$(grep "^${model}=" "$CLAUDII_CACHE_DIR/status-models" || true)
-  if echo "$line" | grep -qE "^${model}=(ok|degraded|down)$"; then
+  if grep -qE "^${model}=(ok|degraded|down)$" <<< "$line"; then
     assert_eq "cache ${model} has valid state" "true" "true"
   else
     assert_eq "cache ${model} has valid state" "${model}=ok|degraded|down" "$line"
@@ -60,7 +60,7 @@ done
 
 # status subcommand via claudii shows output
 output=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
-if echo "$output" | grep -qE '✗|~|✓|available|down|degraded'; then
+if grep -qE '✗|~|✓|available|down|degraded' <<< "$output"; then
   assert_eq "claudii status shows meaningful output" "true" "true"
 else
   assert_eq "claudii status shows meaningful output" "contains status text" "$output"
@@ -94,12 +94,12 @@ exit 0
 STUB
 chmod +x "$_stub_home/bin/claudii-status"
 _inc_out=$(CLAUDII_HOME="$_stub_home" bash "$_stub_home/bin/claudii" status 2>&1 || true)
-if echo "$_inc_out" | grep -q "API Degraded"; then
+if grep -q "API Degraded" <<< "$_inc_out"; then
   assert_eq "claudii status: incident name from unresolved.json shown" "true" "true"
 else
   assert_eq "claudii status: incident name from unresolved.json shown" "API Degraded" "$_inc_out"
 fi
-if echo "$_inc_out" | grep -qi "investigating"; then
+if grep -qi "investigating" <<< "$_inc_out"; then
   assert_eq "claudii status: incident status shown" "true" "true"
 else
   assert_eq "claudii status: incident status shown" "investigating" "$_inc_out"
@@ -140,7 +140,7 @@ rm -rf "$_tz_inc_dir"
 
 # ANSI guard: claudii status output must not contain literal ESC sequences as \033 text
 _status_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
-if printf '%s' "$_status_out" | grep -qF '\033'; then
+if grep -qF '\033' <<< "$_status_out"; then
   assert_eq "claudii status: no literal \\033 in output" "no literal escapes" "found literal \\033"
 else
   assert_eq "claudii status: no literal \\033 in output" "true" "true"
@@ -213,12 +213,12 @@ chmod +x "$_api_inc_dir/curl"
 rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
 PATH="$_api_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
 _api_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
-if echo "$_api_cache" | grep -qE '^opus=(down|degraded)$'; then
+if grep -qE '^opus=(down|degraded)$' <<< "$_api_cache"; then
   assert_eq "API-component incident: opus flagged" "true" "true"
 else
   assert_eq "API-component incident: opus flagged" "down|degraded" "$_api_cache"
 fi
-if echo "$_api_cache" | grep -qE '^sonnet=(down|degraded)$'; then
+if grep -qE '^sonnet=(down|degraded)$' <<< "$_api_cache"; then
   assert_eq "API-component incident: sonnet flagged" "true" "true"
 else
   assert_eq "API-component incident: sonnet flagged" "down|degraded" "$_api_cache"
@@ -279,7 +279,7 @@ assert_contains "status footer: healthy shows adaptive interval" "(adaptive, bas
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$CLAUDII_CACHE_DIR/status-models"
 _ftr_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
 assert_contains "status footer: unreachable shows base interval" "refreshes every" "$_ftr_out"
-if echo "$_ftr_out" | grep -q "(adaptive, base"; then
+if grep -q "(adaptive, base" <<< "$_ftr_out"; then
   assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "suffix present"
 else
   assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "no suffix"
@@ -322,14 +322,14 @@ PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null
 _tr_log=$(cat "$CLAUDII_CACHE_DIR/status-history.tsv" 2>/dev/null || true)
 assert_contains "transition log: opus ok→degraded logged" "$(printf 'opus\tok\tdegraded')" "$_tr_log"
 assert_eq "transition log: only changed model logged" "1" "$(printf '%s\n' "$_tr_log" | grep -c . || true)"
-if printf '%s' "$_tr_log" | head -1 | grep -qE '^[0-9]+	'; then
+if grep -qE '^[0-9]+	' <<< "$(head -1 <<< "$_tr_log")"; then
   assert_eq "transition log: epoch first column" "true" "true"
 else
   assert_eq "transition log: epoch first column" "epoch<TAB>..." "$_tr_log"
 fi
 
 # Internal _incident= keys must never appear as models in the log
-assert_eq "transition log: no _-keys logged" "false" "$(printf '%s' "$_tr_log" | grep -q '	_' && echo true || echo false)"
+assert_eq "transition log: no _-keys logged" "false" "$(grep -q '	_' <<< "$_tr_log" && echo true || echo false)"
 
 # claudii status renders the Recent changes section from the log
 # (ANSI-stripped — the new state is color-wrapped, "ok → degraded" would
@@ -344,7 +344,7 @@ _tr_utc=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | g
 assert_contains "claudii status: UTC timestamp suffix" "UTC" "$_tr_utc"
 bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
 _tr_de=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | grep -A2 "Recent changes" || true)
-if printf '%s' "$_tr_de" | grep -qE 'CET|CEST'; then
+if grep -qE 'CET|CEST' <<< "$_tr_de"; then
   assert_eq "claudii status: Europe/Berlin timestamp suffix" "true" "true"
 else
   assert_eq "claudii status: Europe/Berlin timestamp suffix" "CET|CEST" "$_tr_de"
@@ -376,7 +376,7 @@ assert_eq "status --history: newest-first ordering" "true" "$([[ -n "$_h_first" 
 _h_win=$(bash "$CLAUDII_HOME/bin/claudii" status --history --days 1 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
 assert_contains "status --history --days 1: windowed header" "last 1 day" "$_h_win"
 assert_contains "status --history --days 1: count footer" "2 transitions" "$_h_win"
-if printf '%s' "$_h_win" | grep -q "ok → degraded"; then
+if grep -q "ok → degraded" <<< "$_h_win"; then
   assert_eq "status --history --days 1: old entry filtered out" "filtered" "still present"
 else
   assert_eq "status --history --days 1: old entry filtered out" "filtered" "filtered"
@@ -466,6 +466,44 @@ CLAUDII_CACHE_TTL=300 PATH="$_adt_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-sta
 _adt_ok=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
 assert_contains "adaptive gate: healthy cache (150s, base 300) not refetched" "opus=ok" "$_adt_ok"
 rm -rf "$_adt_dir"
+
+# SIGPIPE regression: `producer | grep -q` returns 141 under `pipefail` when the
+# match lands on an early LINE and more than a pipe buffer (64 KiB) still
+# follows — grep -q exits on the match, the producer's next write gets EPIPE.
+# Bash builtins are NOT exempt; only a single long line is (grep must read to
+# the line end before it can match). _search_text has exactly the fatal shape:
+# incident names are newline-joined, and the (unbounded) update bodies are
+# appended after the LAST name. A model named in the FIRST incident is then
+# read as absent → the model stays "ok" while it is actually down.
+_sp_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_sigpipe.XXXXXX")
+mkdir -p "$_sp_dir/srv"
+# ~200 KB of body text, well past the 64 KiB pipe buffer.
+_sp_body=$(awk 'BEGIN{for(i=0;i<3400;i++) printf "we are continuing to monitor the elevated error rates. "}')
+jq -n --arg body "$_sp_body" '{incidents:[
+  {name:"Elevated error rates for Claude Opus", status:"investigating", impact:"major",
+   incident_updates:[{body:"Opus requests are failing."}], components:[{name:"Claude Opus"}]},
+  {name:"Unrelated dashboard latency", status:"monitoring", impact:"minor",
+   incident_updates:[{body:$body}], components:[{name:"claude.ai"}]}
+]}' > "$_sp_dir/srv/unresolved.json"
+cat > "$_sp_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_sp_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_sp_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_sp_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_sp_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_not_contains "sigpipe: opus named in first incident is not read as ok" "opus=ok" "$_sp_cache"
+assert_contains "sigpipe: opus flagged despite 200 KB of trailing body text" "opus=down" "$_sp_cache"
+# Untouched models must stay ok — proves the fix does not just flag everything.
+assert_contains "sigpipe: sonnet unaffected" "sonnet=ok" "$_sp_cache"
+assert_contains "sigpipe: haiku unaffected" "haiku=ok" "$_sp_cache"
+rm -rf "$_sp_dir"
 
 # Cleanup
 rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"

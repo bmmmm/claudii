@@ -50,12 +50,12 @@ assert_eq "vpnii show: no tunnel after clear" "no tunnel" "$_out"
 
 # `set` without name should fail with usage hint
 _out=$(_vt_run "$_vt_home" set 2>&1; echo "rc=$?")
-if echo "$_out" | grep -q "Usage:.*vpnii set"; then
+if grep -q "Usage:.*vpnii set" <<< "$_out"; then
   assert_eq "vpnii set: rejects empty name" "true" "true"
 else
   assert_eq "vpnii set: rejects empty name" "Usage: vpnii set <name>" "$_out"
 fi
-if echo "$_out" | grep -q "rc=2"; then
+if grep -q "rc=2" <<< "$_out"; then
   assert_eq "vpnii set: empty name returns rc 2" "true" "true"
 else
   assert_eq "vpnii set: empty name returns rc 2" "2" "$_out"
@@ -63,7 +63,7 @@ fi
 
 # Unknown subcommand
 _out=$(_vt_run "$_vt_home" zzzz 2>&1; echo "rc=$?")
-if echo "$_out" | grep -q "rc=2"; then
+if grep -q "rc=2" <<< "$_out"; then
   assert_eq "vpnii: unknown subcommand returns rc 2" "true" "true"
 else
   assert_eq "vpnii: unknown subcommand returns rc 2" "2" "$_out"
@@ -76,7 +76,7 @@ fi
 # home, but resolver uses dscl/getent — sanity-test only that the flag
 # parses without error and writes successfully when target == current user)
 _out=$(_vt_run "$_vt_home" set TestPath --user "$(id -un)" 2>&1; echo "rc=$?")
-if echo "$_out" | grep -q "rc=0"; then
+if grep -q "rc=0" <<< "$_out"; then
   assert_eq "vpnii set --user <self>: exit 0" "true" "true"
 else
   assert_eq "vpnii set --user <self>: exit 0" "0" "$_out"

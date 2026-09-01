@@ -362,12 +362,12 @@ _make_cfg_tmp _AC
 # HOME isolated (empty base, no ~/.claude/settings.json) — see the layers note above.
 _ac_out=$(HOME="$_AC_BASE" XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
-printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
+grep -q $'\033\[' <<< "$_ac_out" && _ac_has=1 || _ac_has=0
 assert_eq "auto colors: piped explain output has no ANSI escapes" "0" "$_ac_has"
 
 _ac_out=$(HOME="$_AC_BASE" XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" CLAUDII_FORCE_COLOR=1 \
   bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
-printf '%s' "$_ac_out" | grep -q $'\033\[' && _ac_has=1 || _ac_has=0
+grep -q $'\033\[' <<< "$_ac_out" && _ac_has=1 || _ac_has=0
 assert_eq "auto colors: CLAUDII_FORCE_COLOR=1 restores ANSI" "1" "$_ac_has"
 
 rm -rf "$_AC_BASE"

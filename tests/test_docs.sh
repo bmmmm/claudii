@@ -70,6 +70,21 @@ assert_eq "lint: no standalone (( var++ )) post-increments in lib/ or bin/claudi
   "" "$_lint_postinc"
 unset _lint_postinc
 
+# ── Static lint: `producer | grep -q` SIGPIPE regression ────────────────────
+# `producer | grep -q` returns 141 under `pipefail`: grep -q exits on the match,
+# the producer's next write gets EPIPE. It fires when the match lands on an
+# early LINE and more than one pipe buffer (64 KiB) still follows — bash
+# builtins included; only a single long line is immune (grep must read to the
+# line end first). A *present* value then reads as absent. Use a here-string:
+#   producer | grep -q X   →   grep -q X <<< "$var"
+# Comment lines are exempt (the pattern gets named in prose).
+_lint_grepq=$(grep -rn '|[[:space:]]*grep -q' \
+  "$CLAUDII_HOME/lib/" "$CLAUDII_HOME/bin/" "$CLAUDII_HOME/tests/" 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+assert_eq "lint: no pipe-into-grep-quiet pipelines in lib/, bin/ or tests/" \
+  "" "$_lint_grepq"
+unset _lint_grepq
+
 # ── CHANGELOG hygiene: [Unreleased] block ───────────────────────────────────
 # Entries get appended over weeks; a second "### Added/Changed/Fixed" header in
 # the unreleased block ships duplicated sections into the tagged release notes.

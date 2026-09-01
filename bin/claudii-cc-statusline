@@ -1532,7 +1532,7 @@ if [[ -r "$_ts_cache" ]]; then
 fi
 if (( ! _ts_have )); then
   _ts_up=1
-  ifconfig 2>/dev/null | grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' && _ts_up=0
+  grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' <<< "$(ifconfig 2>/dev/null)" && _ts_up=0
   printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_cache" 2>/dev/null || true
 fi
 (( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"

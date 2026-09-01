@@ -191,7 +191,7 @@ zsh_out=$(
 )
 assert_contains "zsh: all ok → collapsed claude in RPROMPT" "claude" "$zsh_out"
 assert_contains "zsh: all ok → ✓ in RPROMPT" "✓" "$zsh_out"
-if printf '%s' "$zsh_out" | grep -q "Opus"; then
+if grep -q "Opus" <<< "$zsh_out"; then
   assert_eq "zsh: all ok → no per-model name (collapsed)" "no Opus" "Opus found"
 else
   assert_eq "zsh: all ok → no per-model name (collapsed)" "no Opus" "no Opus"
@@ -225,7 +225,7 @@ zsh_out=$(
 )
 assert_contains "zsh: incident, no model affected → ⓘ note glyph" "ⓘ" "$zsh_out"
 assert_contains "zsh: incident, no model affected → models still ✓" "✓" "$zsh_out"
-if printf '%s' "$zsh_out" | grep -q "◎"; then
+if grep -q "◎" <<< "$zsh_out"; then
   assert_eq "zsh: unaffected incident shows note not stage icon" "note" "stage icon ◎"
 else
   assert_eq "zsh: unaffected incident shows note not stage icon" "note" "note"
@@ -243,7 +243,7 @@ zsh_out=$(
   " 2>/dev/null
 )
 assert_contains "zsh: incident + model affected → ◎ stage icon" "◎" "$zsh_out"
-if printf '%s' "$zsh_out" | grep -q "ⓘ"; then
+if grep -q "ⓘ" <<< "$zsh_out"; then
   assert_eq "zsh: affected incident shows stage not note icon" "stage" "note ⓘ"
 else
   assert_eq "zsh: affected incident shows stage not note icon" "stage" "stage"
@@ -573,7 +573,7 @@ esc_prompt=$(
   " 2>/dev/null
 )
 # ESC[s = \033[s — cursor save must not appear in new minimal dashboard
-if printf '%s' "$esc_prompt" | grep -qF $'\033[s'; then
+if grep -qF $'\033[s' <<< "$esc_prompt"; then
   assert_eq "PROMPT must not contain ESC[s (cursor save)" "no ESC[s" "found ESC[s"
 else
   assert_eq "PROMPT must not contain ESC[s (cursor save)" "no ESC[s" "no ESC[s"
@@ -600,7 +600,7 @@ ls_out=$(
     printf '%s' \"\$PROMPT\"
   " 2>/dev/null
 )
-if printf '%s' "$ls_out" | grep -qF "Sonnet"; then
+if grep -qF "Sonnet" <<< "$ls_out"; then
   assert_eq "dashboard: hidden after non-claudii cmd (ls)" "no Sonnet" "Sonnet found"
 else
   assert_eq "dashboard: hidden after non-claudii cmd (ls)" "no Sonnet" "no Sonnet"
@@ -756,7 +756,7 @@ attl_ok_out=$(
   " 2>/dev/null
 )
 # Fresh all-ok cache: effective TTL = base*2, so no ⟳
-if printf '%s' "$attl_ok_out" | grep -qF '⟳'; then
+if grep -qF '⟳' <<< "$attl_ok_out"; then
   assert_eq "adaptive TTL ok state: fresh cache → no refresh indicator" "no refresh" "refresh shown"
 else
   assert_eq "adaptive TTL ok state: fresh cache → no refresh indicator" "no refresh" "no refresh"
@@ -802,7 +802,7 @@ attl_unr_out=$(
     printf '%s' \"\$RPROMPT\"
   " 2>/dev/null
 )
-if printf '%s' "$attl_unr_out" | grep -qF '⟳'; then
+if grep -qF '⟳' <<< "$attl_unr_out"; then
   assert_eq "adaptive TTL unreachable state: fresh cache → no refresh indicator" "no refresh" "refresh shown"
 else
   assert_eq "adaptive TTL unreachable state: fresh cache → no refresh indicator" "no refresh" "no refresh"
@@ -836,7 +836,7 @@ hist_tok_zero_out=$(
   " 2>/dev/null
 )
 assert_contains "dashboard: tok=0 → session shown" "Sonnet" "$hist_tok_zero_out"
-if printf '%s' "$hist_tok_zero_out" | grep -qF 'tok'; then
+if grep -qF 'tok' <<< "$hist_tok_zero_out"; then
   assert_eq "dashboard: tok=0 → no token amount shown" "no tok" "tok found"
 else
   assert_eq "dashboard: tok=0 → no token amount shown" "no tok" "no tok"
@@ -857,7 +857,7 @@ hist_tok_absent_out=$(
   " 2>/dev/null
 )
 assert_contains "dashboard: tok absent → session shown" "Sonnet" "$hist_tok_absent_out"
-if printf '%s' "$hist_tok_absent_out" | grep -qF 'tok'; then
+if grep -qF 'tok' <<< "$hist_tok_absent_out"; then
   assert_eq "dashboard: tok absent → no token amount shown" "no tok" "tok found"
 else
   assert_eq "dashboard: tok absent → no token amount shown" "no tok" "no tok"
