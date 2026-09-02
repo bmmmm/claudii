@@ -9,14 +9,29 @@
 
 _OV_DEFAULT_SECTIONS="account usage sessions activity agents services commands"
 
-# Normalize model identifier to canonical short form (Opus/Sonnet/Haiku); echoes input on no match.
+# Normalize model identifier to canonical short form (Opus/Sonnet/Haiku/Fable);
+# echoes input on no match.
+#
+# This used to be a second, independently-maintained case list, and it had
+# drifted: it knew the Mythos->Fable alias, _insights_model_label did not, so
+# `claudii` rendered "Fable" for the very status-cache line `claudii perf`
+# rendered as "mythos". The map now lives in ONE bash place —
+# _insights_model_label in lib/cmd/insights.sh; bin/claudii sources every
+# lib/cmd/*.sh unconditionally, so this cross-file call resolves regardless of
+# source order.
+#
+# What stays here is only the tier collapse, which the sole remaining caller
+# (the agents grouping below) needs: it matches `Opus)`/`Sonnet)`/`Haiku)`/
+# `Fable)` exactly, so a versioned label like "Opus 4.8" has to come back as
+# "Opus" or the agent would silently fall into the "other" bucket. Only labels
+# the versioned ladder actually produced are trimmed — an unmatched id is echoed
+# whole, because a foreign model name may legitimately contain a space.
 _norm_model_short() {
-  case "$1" in
-    *[Oo]pus*)   echo "Opus"   ;;
-    *[Ss]onnet*) echo "Sonnet" ;;
-    *[Hh]aiku*)  echo "Haiku"  ;;
-    *[Ff]able*|*[Mm]ythos*)  echo "Fable"  ;;
-    *)           echo "$1"     ;;
+  local _lbl
+  _lbl=$(_insights_model_label "$1")
+  case "$_lbl" in
+    'Opus '*|'Sonnet '*|'Haiku '*|'Fable '*) printf '%s\n' "${_lbl%% *}" ;;
+    *)                                       printf '%s\n' "$_lbl"      ;;
   esac
 }
 
@@ -518,7 +533,12 @@ _ov_render_services() {
         # Capture the incident stage in the same pass (was a 2nd grep|head|cut read).
         [[ "$_om" == "_incident" && -z "$_ov_inc" ]] && _ov_inc="$_os"
         [[ -z "$_om" || "$_om" == _* ]] && continue
-        _om_cap=$(_norm_model_short "$_om")
+        # _insights_model_label, NOT the tier collapse: this block and
+        # _perf_health_line (lib/cmd/perf.sh) render the same status-cache
+        # lines, so they call the same function on the same input and the two
+        # strings agree by construction — not just for today's family keys
+        # (opus/sonnet/haiku/fable) but for whatever `statusline.models` holds.
+        _om_cap=$(_insights_model_label "$_om")
         case "$_os" in
           ok)       (( ++_ov_total )); (( ++_ov_ok )) ;;
           degraded) (( ++_ov_total )); (( ++_ov_degr )); _ov_affected=1

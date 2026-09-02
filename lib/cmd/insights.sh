@@ -53,10 +53,41 @@ _insights_bar() {
 # (most-specific-first; the bare *opus*/*sonnet*/*haiku* lines must stay last).
 # Older versions are kept on purpose so historical cost/insights data still
 # resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
+#
+# THE single bash model->label map. lib/cmd/overview.sh's _norm_model_short
+# delegates here (it only collapses the version off) instead of keeping a second
+# case list — the two used to drift, and `claudii` and `claudii perf` printed
+# different strings for the SAME status-cache line. The awk sibling
+# (lib/model_tier.awk `tier_label`) and the jq sibling (lib/tier.jq `tier`) stay
+# separate implementations — different languages, not duplication worth removing
+# — but tests/test_model_label_agreement.sh pins all four against one fixture
+# list so a drift like that goes red instead of shipping.
+#
+# Case-folded first, like tolower()/ascii_downcase() in those two siblings, so a
+# capitalised id resolves instead of dropping through to the raw passthrough
+# (_norm_model_short matched case-insensitively and callers still rely on that).
+# bash 3.2 has no ${var,,} and the fold costs a fork, so it only runs when the
+# input actually carries an uppercase letter — real model ids ("claude-opus-4-8")
+# and the status-cache family keys never pay it. [[:upper:]], not [A-Z]: bracket
+# RANGES are locale-collated and CI has a de_DE leg.
 _insights_model_label() {
-  case "$1" in
+  local _m="$1"
+  case "$_m" in
+    *[[:upper:]]*) _m=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_m") ;;
+  esac
+  case "$_m" in
     *fable-5*)    printf 'Fable 5'    ;;
     *fable*)      printf 'Fable'      ;;
+    # Mythos is the Fable tier under a different access program (Project
+    # Glasswing): claude-mythos-5-1 has the same 1M window and the same
+    # $10/$50 per MTok as claude-fable-5-1, which is why lib/model_tier.awk,
+    # lib/tier.jq and the _rates table in lib/cmd/skills-cost.sh all bill and
+    # label it as Fable. Bash was the only one of the four that did not know
+    # the alias, so `claudii perf` printed a bare "mythos" where the overview
+    # printed "Fable". No version is claimed here — the tier is what the three
+    # siblings agree on. bin/claudii-status carries the family in
+    # _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
+    *mythos*)     printf 'Fable'      ;;
     *opus-5*)     printf 'Opus 5'     ;;
     *opus-4-8*)   printf 'Opus 4.8'   ;;
     *opus-4-7*)   printf 'Opus 4.7'   ;;

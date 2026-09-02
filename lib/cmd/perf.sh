@@ -50,6 +50,8 @@ _perf_health_line() {
       down)      col="$red" ;;
       *)         col="$dim" ;;
     esac
+    # Same call the overview's ClaudeStatus block makes on the same file
+    # (lib/cmd/overview.sh, _ov_render_services) — one map, one string.
     lbl=$(_insights_model_label "$m")
     parts+="${col}●${reset} ${lbl} ${dim}${st}${reset}   "
   done < "$f"
