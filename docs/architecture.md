@@ -35,6 +35,8 @@ lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
 lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
 lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _sparkline, _cache_hit_pct)
 lib/fmt.awk             # Shared awk formatters (fmt_tok/fmt_usd/rep/bar — locale-immune)
+lib/history_cols.awk    # HC_SCHEMA → HC[name]: the ONE declaration of history.tsv's 11 columns (+ HR[] for normalized rows)
+lib/history_rows.awk    # The ONE stage-1 normalizer (CR strip, row filter, epoch→day, tier collapse); output field list is `-v emit`
 lib/trends.awk          # awk program for trends aggregation
 lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
 lib/window.awk          # week/cost --window — in-window tokens/cost + quota calibration pair (epoch-gated, uses attr_delta)

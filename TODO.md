@@ -6,72 +6,39 @@
 
 ## Pending
 
-> Die folgenden vier stammen aus dem Audit vom 2026-09-02 (PID-Race und
-> Theme sind erledigt, 84b2cd3 / f9b914f). Isolation, Hot-Path,
-> Gates und Docs-Drift sind erledigt und committet; das hier ist der Rest der
-> Entdopplung, datei-disjunkt geschnitten für `/orchestrate`.
+> Die sechs Entdopplungs-Tasks aus dem Audit vom 2026-09-02 sind erledigt
+> (84b2cd3, f9b914f, 796ab53, 3331012, 8bd36a2, 96e52e7). Was hier steht, sind
+> die Reste, die die Tasks selbst offengelegt haben — jeweils weil ihre
+> Touches-Liste den Call-Site nicht enthielt.
 
-### Ein Normalizer für history.tsv, benannte Spalten
+### Die vier positionellen awk-Programme auf HC[] ziehen
 
-**Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/cost.sh, lib/cmd/display.sh, lib/*.awk**
+**Type: Refactor** · **Complexity: Small** · **Touches: lib/cmd/week.sh,
+lib/cmd/overview.sh, lib/window.awk, lib/window_bounds.awk,
+lib/window_history.awk, lib/usage_spark.awk**
 
-`lib/cmd/cost.sh:57-70` und `lib/cmd/display.sh:66-79` sind byte-nah identische
-Stage-1-Normalizer (Unterschied: cost hält `raw=$2`, trends `api_dur=$9`). Die
-11 Spaltenpositionen stehen zusätzlich in acht Dateien hartkodiert
-(`window.awk`, `window_bounds.awk`, `window_history.awk`, `trends.awk`,
-`usage_spark.awk`, `forecast.awk` plus die zwei Inline-Kopien) — eine zwölfte
-Spalte kostet heute acht Edits. Ziel: ein `lib/history_rows.awk` plus ein
-`lib/history_cols.awk` mit benannten Indizes, per mehrfachem `-f` dazugeladen.
-CLAUDE.md-Regel beachten: die `-v`-Bindungen am Call-Site gehören in den
-Kopfkommentar. **Abnahme:** `cost`, `trends`, `week`, `cost --window`
-byte-identisch vorher/nachher auf demselben Cache.
+`lib/history_cols.awk` deklariert die 11 Spalten jetzt an einer Stelle, aber
+`window.awk`, `window_bounds.awk`, `window_history.awk` und `usage_spark.awk`
+lesen weiter positionell — ihre Call-Sites (`week.sh`, `overview.sh`) lagen
+außerhalb der Touches, und awk hat kein include: ohne `-f lib/history_cols.awk`
+am Call-Site würde jeder Feldzugriff still zu `$0` degradieren. Also: das `-f`
+an den vier Call-Sites ergänzen, dann die Positionen durch `HC[]` ersetzen.
+`tests/test_history_cols.sh` pinnt die heutigen Positionen gegen das Schema und
+wird rot, wenn die Umstellung danebengeht.
 
-### Ein Modell→Label-Mapping statt vier
+### Die 17 verbleibenden Commands unter den Exit-Code-Vertrag
 
-**Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/insights.sh, lib/cmd/overview.sh, lib/model_tier.awk, lib/tier.jq**
+**Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/system.sh,
+lib/cmd/sessions.sh, lib/cmd/display.sh, lib/cmd/config.sh, lib/cmd/omlx.sh,
+lib/cmd/vpnii.sh, lib/cmd/vibemap.sh**
 
-`_insights_model_label` (`insights.sh:56-72`, versioniert), `_norm_model_short`
-(`overview.sh:13-21`, nur Tier), `tier_label()` (`model_tier.awk`), `tier()`
-(`tier.jq`). Sichtbare Folge: `overview.sh:461/521` und `perf.sh:53` rendern
-dieselben Cache-Daten mit verschiedenen Labels. Die beiden bash-Kopien
-zusammenlegen; awk und jq bleiben sprachbedingt eigen, bekommen aber einen Test,
-der alle drei gegen eine feste Modell-Liste auf Gleichheit prüft.
-
-### Ein Parser für status-models statt acht
-
-**Type: Refactor** · **Complexity: Medium** · **Touches: lib/helpers.sh, lib/cmd/overview.sh,
-lib/cmd/perf.sh, lib/cmd/system.sh, lib/cmd/display.sh, bin/claudii-status,
-bin/claudii-cc-statusline, lib/statusline.zsh**
-
-Acht Kopien, nicht sechs — nachgemessen 2026-09-02, nachdem die alte Liste
-zwei davon nicht kannte: `display.sh:162` (`cs_cache`) fehlte ganz, und
-`system.sh` hat **zwei** Stellen (`:327`, `:390`), nicht eine. Dazu
-`overview.sh:507`, `perf.sh:35`, `claudii-status:23`, `cc-statusline:1480`,
-`statusline.zsh:91`. Zeilennummern driften — nach den Variablennamen suchen,
-nicht nach der Zahl.
-
-`system.sh` forkt ein `grep` **pro Modell** statt einmal durchzulaufen; das ist
-der konkrete Preis, nicht nur die Ästhetik. Die CLI-Kopien auf einen Helfer in
-`lib/helpers.sh` ziehen. Die zwei Hot-Path-Kopien (`cc-statusline`,
-`statusline.zsh`) bleiben absichtlich eigenständig und fork-frei — sie
-bekommen aber den Test, den die „kept in sync“-Kommentare bisher durch
-Handarbeit ersetzen: gleicher Cache-Inhalt rein, gleicher String raus, bei
-allen dreien.
-
-### Ein Arg-Parser, ein Exit-Code-Vertrag
-
-**Type: Refactor** · **Complexity: Large** · **Touches: bin/claudii, lib/cmd/*.sh**
-
-Sechs Parser-Stile; `--bogus` liefert je nach Command rc 0, 1 oder 2 mit drei
-Präfixen; `cost --bogus` schweigt ganz. Die Aufrufkonvention des Dispatchers ist
-uneinheitlich (`"$@"` vs `"${@:2}"` vs gar nichts), weshalb jeder Parser den
-Command-Namen selbst überspringen muss. Auf `_insights_window`
-(`insights.sh:112`) vereinheitlichen, `skills-cost.sh:118`, `week.sh:407`,
-`cost.sh:531` migrieren. Die unerreichbaren `--json`-Arme (`week.sh:420`,
-`skills-cost.sh:126`) löschen — `bin/claudii:23-30` strippt das Flag vorher.
-Vertrag: unbekannte Option → rc 2, `claudii <cmd>: unknown option: <arg>` auf
-stderr, plus ein Test über alle Commands. **Achtung:** rc 0 → 2 ist eine
-Verhaltensänderung und gehört unter `### Changed`.
+28 von 45 dispatchten Commands liefern bei unbekannter Option rc 2 mit
+`claudii <cmd>: unknown option: <arg>`. Die übrigen stehen in `_AC_PENDING`
+(`tests/test_arg_contract.sh`) und die Liste ist eine **Ratsche**: der Test
+verlangt, dass ein Pending-Command den Vertrag noch *verfehlt*, geht also rot,
+wenn jemand einen konvertiert ohne ihn aus der Liste zu nehmen. Verifiziert
+2026-09-02, indem `perf` konvertiert und in der Liste gelassen wurde — genau
+eine Assertion fiel. Kein Freibrief, nur eine Reihenfolge.
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 

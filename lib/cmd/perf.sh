@@ -164,7 +164,10 @@ _cmd_perf() {
     esac
   done
 
-  _insights_window perf "${_rest[@]+"${_rest[@]}"}" || return 1
+  # `|| return $?`, not `|| return 1`: _insights_window already returns the
+  # contract's rc 2 for a rejected argument, and downgrading it to 1 was the one
+  # thing keeping perf off the contract while it printed the contract message.
+  _insights_window perf "${_rest[@]+"${_rest[@]}"}" || return $?
   if (( _IW_HELP )); then
     printf 'Usage: claudii perf [WINDOW] [--repo NAME] [--watch[=N]] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
