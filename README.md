@@ -85,9 +85,17 @@ Model health in your right prompt, refreshed every 5 minutes. Never blocks your 
 ```bash
 claudii                          # overview: account, usage, sessions, agents, services
 claudii on / off                 # enable/disable all display layers
+claudii claudestatus [on|off]    # ClaudeStatus RPROMPT toggle
+claudii session-dashboard [on|off]
+                                 # Session Dashboard above the prompt
+claudii cc-statusline [on|off|preset]
+                                 # in-session statusline inside Claude Code
+claudii insomnii [on|off|auto|install]
+                                 # bedtime statusline plugin (clock delegation)
 claudii status                   # live model health check
 claudii sessions / se            # active sessions: context, cost, rate
 claudii sessions-inactive / si   # ended sessions + GC hint
+claudii resume <id>              # resume a session by ID
 claudii gc / g                   # garbage-collect ended sessions
 claudii pin / unpin <id>         # protect a session from garbage collection
 claudii cost / c                 # per-model cost breakdown (--forecast = burn rate, --window = quota window)
@@ -97,15 +105,18 @@ claudii tools                    # tool-call counts + per-tool error rates
 claudii limits                   # rate-limit hits — when they hit, which model ran
 claudii cache                    # prompt-cache hit rate + tokens saved, per model & day
 claudii session <id>             # per-session token / tool / subagent drilldown
+claudii repos [REPO]             # sessions per repo — count + real active duration
 claudii trends / t               # token + cost history, 30-day model split
 claudii perf / pf                # response-time (p50/p90/p99) + throughput dashboard (today/7d/30d/year)
 claudii skills-cost              # per-skill / per-plugin / per-MCP cost (--compare · --json)
 claudii explain                  # explain claudii's layers and architecture
 claudii doctor / d               # installation health check
 claudii update                   # self-update (Homebrew or git checkout)
+claudii version                  # show version number
 claudii changelog                # what changed between versions
 claudii config get/set <key>     # read/write config
 claudii agents                   # list configured agent aliases
+claudii search ['query']         # launch Claude in search mode
 claudii omlx [status|connect|test|disconnect]
                                  # local-LLM (oMLX/gateii) sessionline integration
 claudii vpnii [set <name>|clear|show]

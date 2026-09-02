@@ -39,6 +39,7 @@
   "statusline": {
     "enabled": true,
     "models": "opus,sonnet,haiku,fable",
+    "rate_display": "used",
     "bedtime": "23:00",
     "insomnii": "auto",
     "max_width": 0,
@@ -84,6 +85,9 @@
   },
   "debug": {
     "level": "off"
+  },
+  "ui": {
+    "spinner": "random"
   },
   "agents": {
     "sh":      { "model": "haiku",  "effort": "high",   "skill": "shape",       "description": "Shaper — hygiene checks, TODO planning" },

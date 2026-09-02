@@ -149,12 +149,14 @@ fi
 _step "Version Bump"
 _bin_file="$CLAUDII_HOME/bin/claudii"
 _man_file="$CLAUDII_HOME/man/man1/claudii.1"
+_docs_index="$CLAUDII_HOME/docs/index.html"
 _changelog="$CLAUDII_HOME/CHANGELOG.md"
 _today=$(date +%Y-%m-%d)
 
 if (( _dry_run )); then
   _ok "bin/claudii VERSION → $_rel_version (dry-run)"
   _ok "man/man1/claudii.1 → $_rel_version (dry-run)"
+  _ok "docs/index.html → $_rel_version (dry-run)"
   _ok "CHANGELOG.md [Unreleased] → [$_rel_tag] (dry-run)"
 else
   sed -i.bak "s/^VERSION=.*/VERSION=\"${_rel_version}\"/" "$_bin_file"; rm -f "${_bin_file}.bak"
@@ -167,6 +169,15 @@ else
   grep -q "\"claudii ${_rel_version}\"" "$_man_file" \
     || { _fail "man/man1/claudii.1 bump failed"; exit 1; }
   _ok "man/man1/claudii.1 → $_rel_version"
+
+  # The GitHub Pages landing page prints a version in its rendered overview.
+  # It sat at v0.25.0 while the tree was 0.26.0, because nothing bumped it —
+  # tests/test_docs.sh now gates it, and this keeps the gate satisfied.
+  sed -i.bak "s|>v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*<|>v${_rel_version}<|" "$_docs_index"
+  rm -f "${_docs_index}.bak"
+  grep -q ">v${_rel_version}<" "$_docs_index" \
+    || { _fail "docs/index.html bump failed"; exit 1; }
+  _ok "docs/index.html → $_rel_version"
 
   grep -q '^## \[Unreleased\]' "$_changelog" \
     || { _fail "CHANGELOG.md has no [Unreleased] block"; exit 1; }

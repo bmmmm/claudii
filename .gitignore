@@ -1,6 +1,8 @@
 tmp/
 ROADMAP.md
-CLAUDE.md
+# NOT CLAUDE.md — it is tracked on purpose (project instructions ship with the
+# repo). The ignore rule that used to sit here was a no-op, since git ignores
+# .gitignore for already-tracked paths, and it read as "this file is local".
 .claude/worktrees/
 .claude/settings.local.json
 .claude/settings.local.json.*

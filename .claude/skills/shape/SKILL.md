@@ -13,12 +13,13 @@ Find stale references and cross-file drift, root-cause them, report. Static chec
 
 Read each source below and cross-check every reference it makes against what actually exists in `bin/`, `lib/`, `scripts/`, `config/`. A pointer to a removed command/script/file is the typical finding.
 
-- **CLAUDE.md** — architecture table, naming, command-role table, rules still match the code?
+- **CLAUDE.md** — rules and naming still match the code? (The architecture map and the command-role table moved to `docs/architecture.md` on 2026-08-31 — check them there.)
+- **`docs/architecture.md`** — file map and what-shows-where table still current?
 - **`config/defaults.json`** — agent aliases/descriptions current? A description naming an old model version is drift (see CLAUDE.md "When a new Claude model ships").
 - **Memories** — read `MEMORY.md` index first (`~/.claude/projects/-Users-bma-offline-coding-claudii/memory/`); stale entries, contradictions, wrong file/flag names?
 - **Skills** (`.claude/skills/`) — dead references? overlaps? model frontmatter sane (main-thread skill → `opus`/`inherit`, never `sonnet`)?
 - **TODO.md / ROADMAP.md** — bloated, duplicated, or already-shipped items?
-- **`.claude/settings.local.json`** — every `Bash(...)` entry still maps to a real command/script? Plus stale `.gitignore` rules for removed files. Local-only — never commit, never `git add .claude/`.
+- **`.claude/settings.local.json`** — every `Bash(...)` entry still maps to a real command/script? Plus stale `.gitignore` rules for removed files. This one file is local-only (it is the only ignored thing under `.claude/` besides `worktrees/`); skills and `settings.json` are tracked and their edits belong in the commit.
 - **`.github/workflows/`** — reference commands or files that no longer exist?
 - **README.md** — example commands + referenced features still valid?
 - **`scripts/release.sh`** — drifted from the Homebrew tap it syncs (URL/SHA/caveats)?

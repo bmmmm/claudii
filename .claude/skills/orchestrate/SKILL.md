@@ -38,7 +38,7 @@ Before any wave touching `lib/statusline.zsh`, read the file and list which arra
 
 > **Removed functions — do not re-add:** `_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`. If you see references to these anywhere, delete them.
 >
-> **Current session arrays:** `_CLAUDII_SDASH_MODELS`, `_CLAUDII_SDASH_CTXS`, `_CLAUDII_SDASH_COSTS`, `_CLAUDII_SDASH_5HS`, `_CLAUDII_SDASH_R5HS` — no others.
+> **Current session arrays:** `_CLAUDII_SDASH_MODELS`, `_CLAUDII_SDASH_CTXS`, `_CLAUDII_SDASH_TOKS`, `_CLAUDII_SDASH_5HS`, `_CLAUDII_SDASH_R5HS` — no others. (`_COSTS` is gone: the dashboard shows token throughput, not dollars.)
 
 ---
 
@@ -83,5 +83,5 @@ Any wave that touched commands must verify these five stay in sync:
 - **`(( ++var ))`** not `(( var++ ))` — post-increment of 0 exits 1 under `set -e` on bash 5.x (Ubuntu CI)
 - **Background jobs:** always `( cmd & )` subshell pattern — `disown` and `no_monitor` still leak `[N] PID`
 - **jq writes:** always atomic — `mktemp` + `mv`, never write directly to config file
-- **Never commit `.claude/`** — gitignored, local-only; `settings.local.json` especially
+- **`.claude/` is tracked** — skills and `settings.json` ship with the repo; only `settings.local.json` and `worktrees/` are ignored. Never commit `settings.local.json`; do commit skill edits.
 - **Tests:** `bash tests/run.sh` — must stay green throughout all waves

@@ -10,6 +10,12 @@ CLI="$CLAUDII_HOME/bin/claudii"
 BIN_VERSION=$(grep '^VERSION=' "$CLI" | head -1 | tr -d '"' | cut -d= -f2)
 assert_contains "man page version matches bin/claudii" "$BIN_VERSION" "$(cat "$MAN")"
 
+# The GitHub Pages landing page renders a mock overview with a version in it.
+# Nothing bumped it, so it sat at v0.25.0 against a 0.26.0 tree. scripts/release.sh
+# now rewrites it; this is the gate that says so when it does not.
+assert_contains "docs/index.html version matches bin/claudii" ">v$BIN_VERSION<" \
+  "$(cat "$CLAUDII_HOME/docs/index.html")"
+
 # ── Command names, derived from the dispatcher ──────────────────────────────
 # This used to be two hand-typed arrays checked with a bare substring search
 # against the whole file. That is vacuous in both directions: `restart` was in
