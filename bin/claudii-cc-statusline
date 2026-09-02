@@ -34,11 +34,12 @@ _from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
 _cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""; _cfg_cc_version_ttl=""
-_cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""
+_cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""; _cfg_debug_level=""
 if [[ -f "$_config_file" ]]; then
   IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
-    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label _cfg_separator < <(
+    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label \
+    _cfg_separator _cfg_debug_level < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
@@ -57,11 +58,41 @@ if [[ -f "$_config_file" ]]; then
       (.cc_version.cache_ttl // "" | tostring),
       (.statusline.max_width // "" | tostring),
       (.statusline.max_label // "" | tostring),
-      (.statusline.separator // "")
+      (.statusline.separator // ""),
+      (.debug.level // "")
     ] | join("\u001f")' "$_config_file" 2>/dev/null
   )
   _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
 fi
+# Resolve the log level from the parse above instead of leaving it to
+# lib/log.sh. _claudii_log resolves lazily by forking jq on config.json AND on
+# defaults.json, and this file calls it on every render (twice, right after the
+# payload parse) purely to learn that logging is off — two forks per render for
+# a value already in hand. An empty result means what the defaults.json fallback
+# it replaces means: that file ships debug.level = "off".
+CLAUDII_LOG_LEVEL="${_cfg_debug_level:-off}"
+
+_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
+rate-5h,rate-7d,burn-eta,lines-changed
+api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
+omlx,proxy,cost,context,compact-eta
+claude-status"
+
+_lines_raw="$_DEFAULT_LINES"
+[[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+
+# Layout membership — the gate every fork-owning segment asks before doing its
+# work. Exact match on a comma-delimited copy of the layout, not a substring
+# test: `ci` must not fire on `compactions`, and the old `*git-sync*`-style
+# gates only avoided that collision by luck of the naming (`*git*` would have
+# matched the `github` segment — that near-miss is documented further down).
+#
+# Resolved here, immediately after the config parse, rather than in the middle
+# of the segment section where it used to live: the clock, tailscale and omlx
+# segments all fork BEFORE that point, so they could not ask the question and
+# paid their forks on every render regardless of the layout.
+_lines_csv=",${_lines_raw//$'\n'/,},"
+_in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
 _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 
@@ -159,9 +190,15 @@ _visible_len() {
 [[ "$_cfg_motivation" != "false" ]] && _cfg_motivation="true"
 [[ "$_cfg_rainbow"    != "false" ]] && _cfg_rainbow="true"
 
-# Clock segment delegation
+# Clock segment delegation. Layout-gated like every other fork owner: the
+# delegation probe below forks `ps`, and the segment itself runs cc-insomnii,
+# a child that forks ~20 processes of its own. Both used to happen on every
+# render whether or not `clock` was in the layout — and it is not in the
+# default one.
 _use_insomnii=0
-[[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1 && _use_insomnii=1
+if _in_layout clock; then
+  [[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1 && _use_insomnii=1
+fi
 
 # Skip clock when wrapped by cc-insomnii (it already rendered its line).
 # The ps fork runs only when delegation is possible at all (_use_insomnii) —
@@ -1035,22 +1072,9 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
-rate-5h,rate-7d,burn-eta,lines-changed
-api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
-omlx,proxy,cost,context,compact-eta
-claude-status"
-
-_lines_raw="$_DEFAULT_LINES"
-[[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
-
-# Layout membership — the gate every fork-owning segment asks before doing its
-# work. Exact match on a comma-delimited copy of the layout, not a substring
-# test: `ci` must not fire on `compactions`, and the old `*git-sync*`-style
-# gates only avoided that collision by luck of the naming (`*git*` would have
-# matched the `github` segment — that near-miss is documented below).
-_lines_csv=",${_lines_raw//$'\n'/,},"
-_in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
+# Layout and _in_layout are resolved near the top of the file, right after the
+# config parse — they only need $_from_cfg, and the segments that fork before
+# this point (clock/cc-insomnii, tailscale, omlx) have to be able to ask.
 
 # Claude Code app/CLI version (top-level .version in the statusLine payload),
 # red + "+N releases behind" when a newer build exists. N is exact — the
@@ -1529,7 +1553,9 @@ fi
 # omlx local-agent indicator — gateii's active.json, 300s stale-guard.
 _seg_omlx=""
 _omlx_active_path="${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-$HOME/offline_coding/gateii/data/agents/active.json}}"
-if [[ -f "$_omlx_active_path" ]]; then
+# Layout-gated: the jq below is a fork, and mere existence of gateii's
+# active.json is not a reason to pay it on a layout that never shows omlx.
+if _in_layout omlx && [[ -f "$_omlx_active_path" ]]; then
   IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
     jq -r '[
       (.started_epoch // 0 | tostring),
@@ -1559,10 +1585,16 @@ fi
 # (shared with the zsh RPROMPT segment in lib/vpnii.zsh: $_cache_dir/vpnii-ts,
 # "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through to a re-probe via
 # the numeric guard.
+#
+# The 30s cache bounded how OFTEN the probe ran but not WHETHER it ran: a
+# layout without `tailscale` still paid the ifconfig fork every time the cache
+# expired. Layout-gated now, like every other fork owner.
 _seg_tailscale=""
 _ts_cache="${_cache_dir}/vpnii-ts"
 _ts_up=1; _ts_have=0
-if [[ -r "$_ts_cache" ]]; then
+if ! _in_layout tailscale; then
+  _ts_have=1; _ts_up=1   # not shown — skip the probe, claim nothing
+elif [[ -r "$_ts_cache" ]]; then
   _ts_line=""; { _ts_line=$(<"$_ts_cache"); } 2>/dev/null
   _ts_ep="${_ts_line%% *}"; _ts_val="${_ts_line##* }"
   if [[ "$_ts_ep" =~ ^[0-9]+$ ]] && (( _now - _ts_ep < 30 )); then

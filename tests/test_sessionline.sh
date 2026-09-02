@@ -337,7 +337,21 @@ output=$(echo "$_ts_json" | XDG_CONFIG_HOME="$_ts_cfg_dir" CLAUDII_CACHE_DIR="$_
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_not_contains "tailscale: fresh cache up=0 → ts hidden" "ts" "$strip"
 
-unset _ts_cfg_dir _ts_cache_dir _ts_json output strip
+# Layout gate: with no `tailscale` in the layout and no cache to read, the
+# ifconfig probe must not run at all. The 30s cache bounded how often it ran,
+# never whether — a layout without the segment still paid the fork on every
+# expiry. Proven by absence of the cache file the probe writes: if it had run,
+# vpnii-ts would exist.
+_ts_gate_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ts_gate_cfg")
+mkdir -p "$_ts_gate_cfg/claudii"
+printf '{"statusline":{"lines":[["model"]]}}\n' > "$_ts_gate_cfg/claudii/config.json"
+_ts_gate_cache="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ts_gate_cache")
+echo "$_ts_json" | XDG_CONFIG_HOME="$_ts_gate_cfg" CLAUDII_CACHE_DIR="$_ts_gate_cache" \
+  bash "$SL" >/dev/null 2>&1
+assert_eq "tailscale: gated out of layout → no ifconfig probe" "absent" \
+  "$([[ -f "$_ts_gate_cache/vpnii-ts" ]] && echo present || echo absent)"
+
+unset _ts_cfg_dir _ts_cache_dir _ts_json output strip _ts_gate_cfg _ts_gate_cache
 
 # ── vpn segment is WireGuard-only now — independent of tailscale ──
 _vpn_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cfg_dir")
@@ -1143,7 +1157,14 @@ printf 'shame=%s motivation=%s rainbow=%s\n' \
 EOF
 chmod +x "$_ins_dir/bin/cc-insomnii"
 
-printf '{"statusline":{"shame":false}}\n' > "$_ins_dir/cfg/claudii/config.json"
+# Every config here puts `clock` in the layout, because that is now what makes
+# the delegation happen at all: cc-insomnii is a ~20-fork child whose output is
+# only ever read by the clock segment, so it is layout-gated like every other
+# fork owner. No shipped layout or preset contains `clock` (the focused preset
+# says so explicitly — cc-insomnii prepends its own line via the --after
+# wrapper), which is exactly why the ungated version was pure waste for
+# everyone who had cc-insomnii on PATH.
+printf '{"statusline":{"shame":false,"lines":[["clock"]]}}\n' > "$_ins_dir/cfg/claudii/config.json"
 echo '{"model":{"display_name":"Opus"}}' \
   | CLAUDII_TEST_INSOMNII_OUT="$_ins_dir/env.out" PATH="$_ins_dir/bin:$PATH" \
     XDG_CONFIG_HOME="$_ins_dir/cfg" bash "$SL" >/dev/null 2>&1
@@ -1151,14 +1172,30 @@ _ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
 assert_contains "insomnii env: explicit shame=false forwarded" "shame=false" "$_ins_env"
 assert_contains "insomnii env: motivation defaults to true"    "motivation=true" "$_ins_env"
 
-printf 'NOT JSON\n' > "$_ins_dir/cfg/claudii/config.json"
+# Regression 2, reachable half: a valid layout that simply omits the three
+# keys must forward the pre-seeded "true" defaults, not empty strings.
+printf '{"statusline":{"lines":[["clock"]]}}\n' > "$_ins_dir/cfg/claudii/config.json"
 rm -f "$_ins_dir/env.out"
 echo '{"model":{"display_name":"Opus"}}' \
   | CLAUDII_TEST_INSOMNII_OUT="$_ins_dir/env.out" PATH="$_ins_dir/bin:$PATH" \
     XDG_CONFIG_HOME="$_ins_dir/cfg" bash "$SL" >/dev/null 2>&1
 _ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
-assert_contains "insomnii env: corrupt config falls back to shame=true" "shame=true" "$_ins_env"
-assert_contains "insomnii env: corrupt config falls back to rainbow=true" "rainbow=true" "$_ins_env"
+assert_contains "insomnii env: absent keys fall back to shame=true"   "shame=true" "$_ins_env"
+assert_contains "insomnii env: absent keys fall back to rainbow=true" "rainbow=true" "$_ins_env"
+
+# Regression 2, other half: a corrupt config no longer reaches cc-insomnii at
+# all. The failed jq leaves the layout at the shipped default, which has no
+# `clock`, so the gate skips the child rather than forwarding blanked defaults
+# to it. Asserting the absence keeps the coupling visible — if `clock` ever
+# joins the default layout, this goes red and the blanked-defaults regression
+# needs its old guard back.
+printf 'NOT JSON\n' > "$_ins_dir/cfg/claudii/config.json"
+rm -f "$_ins_dir/env.out"
+echo '{"model":{"display_name":"Opus"}}' \
+  | CLAUDII_TEST_INSOMNII_OUT="$_ins_dir/env.out" PATH="$_ins_dir/bin:$PATH" \
+    XDG_CONFIG_HOME="$_ins_dir/cfg" bash "$SL" >/dev/null 2>&1
+assert_eq "insomnii: corrupt config → default layout → no delegation" "absent" \
+  "$([[ -f "$_ins_dir/env.out" ]] && echo present || echo absent)"
 unset _ins_dir _ins_env
 
 # ── Auto-compact aware context bar (CLAUDE_CODE_AUTO_COMPACT_WINDOW) ─────────
