@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.27.0] — 2026-09-02
+
 ### Added
 - **`claudii week` + `cost --window`** — reports the rolling 7-day quota (tokens, dollars, sessions, reset countdown, pace), not the calendar week. (`lib/cmd/week.sh`, `lib/window.awk`, `lib/helpers.sh`, `lib/cmd/cost.sh`, `lib/cmd/insights.sh`, `bin/claudii-cc-statusline`, `bin/claudii`, `man/man1/claudii.1`, `completions/_claudii`)
 - **`cache-ttl` statusline segment + native `cache-hit`** — counts down to cache expiry (`♨4m`, yellow ≤2 min), shows recache cost when cold (`♨cold·312.0K`); `cache-hit` now uses native `hit_ratio`. (`bin/claudii-cc-statusline`, `config/defaults.json`, `man/man1/claudii.1`)
