@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+---
+
+## [v0.28.0] — 2026-09-02
+
 ### Added
 - **Claude Fable 5.1 is labelled and billed as itself** — `claude-fable-5-1` read as plain "Fable 5" (the `*fable-5*` arm matched the longer id first) and was priced at the usual 0.1×in cache read. It is the second price change *within* a tier after Sonnet 5: in/out stayed at $10/$50, the cache read is a flat **$0.25/MTok**. A `fable-legacy` branch keeps Fable 5 and Mythos 5 at the $1/MTok they were actually billed at. (`lib/cmd/insights.sh`, `lib/tier.jq`, `lib/cmd/skills-cost.sh`, `man/man1/claudii.1`, `docs/model-bump-checklist.md`)
 - **`skills-cost` speaks the window vocabulary the other insight commands do** — `today`, `30d`, `month`, `year` and any `<N>d` now work; it shares `_insights_window` instead of hand-rolling `--days`. The default stays 30 days. Two bugs went with the old parser: `--days` without a value silently became 30, and a bare `skills-cost 14` was reported as an unknown flag rather than the window typo it is. (`lib/cmd/skills-cost.sh`, `completions/_claudii`, `man/man1/claudii.1`)
