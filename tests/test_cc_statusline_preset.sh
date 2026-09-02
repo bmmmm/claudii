@@ -47,8 +47,11 @@ assert_contains "preset focused: third line has tailscale"     "tailscale"     "
 
 # Insomnii is NOT a segment in focused — it owns its own first line via the wrapper
 all_segs=$(jq -r '.statusline.lines | flatten | join(",")' "$CFG")
-[[ "$all_segs" != *clock* ]]
-assert_eq "preset focused: clock segment absent (wrapper handles it)" "0" "$?"
+# Inline, not `[[ … ]]` on its own line followed by "$?": that form silently
+# starts testing the wrong thing the moment any command is inserted between
+# the two lines.
+assert_eq "preset focused: clock segment absent (wrapper handles it)" "0" \
+  "$([[ "$all_segs" != *clock* ]] && echo 0 || echo 1)"
 
 # ── preset calm: writes minimal 2-line layout ──
 

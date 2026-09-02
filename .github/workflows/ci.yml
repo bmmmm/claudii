@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Matches the Forgejo pre-mirror gate: a new push to the same ref cancels the
+# in-flight run instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:

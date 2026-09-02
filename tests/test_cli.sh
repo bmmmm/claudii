@@ -48,6 +48,11 @@ assert_matches "doctor: mentions claude" "claude|Claude" "$doc_out"
 DOCTOR_TMP="$(mktemp -d)"
 mkdir -p "$DOCTOR_TMP/fake-home"
 # completions dir absent → doctor reports "fail" for completions → exit 1
+# The two CLAUDII_HOME values are meant to differ: the path expands to the real
+# repo (so the real binary runs), while the child sees the fake home (so doctor
+# reports a broken install). That is exactly the mismatch SC2097/SC2098 warn
+# about, and here it is the point of the test.
+# shellcheck disable=SC2097,SC2098
 doc_exit=$(CLAUDII_HOME="$DOCTOR_TMP/fake-home" bash "$CLAUDII_HOME/bin/claudii" doctor >/dev/null 2>&1; echo $?)
 assert_eq "doctor: exits non-zero when checks fail" "1" "$doc_exit"
 rm -rf "$DOCTOR_TMP"

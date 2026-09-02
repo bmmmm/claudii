@@ -2,7 +2,8 @@
 # test_config.sh — config system E2E tests
 
 # Setup: use project-local temp config dir
-export XDG_CONFIG_HOME=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_config.XXXXXX")
+XDG_CONFIG_HOME=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_config.XXXXXX")
+export XDG_CONFIG_HOME
 mkdir -p "$XDG_CONFIG_HOME/claudii"
 
 # config creates from defaults

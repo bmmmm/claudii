@@ -165,7 +165,7 @@ assert_eq "workspace.git_worktree fallback: no branch arrow" "0" "$(echo "$strip
 
 # ppid — written to session cache file so RPROMPT can detect dead sessions
 _test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
-echo '{"session_id":"testppid123456","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1 >/dev/null
+echo '{"session_id":"testppid123456","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
 _test_session_file="$_test_cache_dir/session-testppid"
 _cache_contents="$(cat "$_test_session_file" 2>/dev/null)"
 assert_contains "session cache has ppid=" "ppid=" "$_cache_contents"

@@ -48,7 +48,7 @@ _err() {
   printf '%s\n' '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":"'"$_NANO"'","body":{"stringValue":"claude_code.api_request"},"attributes":[{"key":"session.id","value":{"stringValue":"otelsess-a"}}]}]}]}]}'
 } > "$_OTEL_CACHE/otel/logs.jsonl"
 
-_build() { CLAUDII_CACHE_DIR="$_OTEL_CACHE" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
+_build() { CLAUDII_CACHE_DIR="$_OTEL_CACHE" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
 
 # ── build: shape + windowing ──
 _OB=$(_build build --days 7 2>&1)
@@ -84,7 +84,7 @@ assert_eq "otel build: api_request not counted as error" "0" \
 
 # ── empty / missing data → empty shape ──
 _EMPTY="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_EMPTY")
-_OE=$(CLAUDII_CACHE_DIR="$_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii-otel" build 2>&1)
+_OE=$(CLAUDII_CACHE_DIR="$_EMPTY" bash "$CLAUDII_HOME/bin/claudii-otel" build 2>&1)
 assert_eq "otel build (no data): empty latency" "0" "$(printf '%s' "$_OE" | jq -r '.latency | length')"
 assert_eq "otel build (no data): empty errors"  "0" "$(printf '%s' "$_OE" | jq -r '.errors | length')"
 
@@ -104,7 +104,7 @@ _OTEL_EPROJ="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_EPROJ")
 mkdir -p "$_OTEL_CFG/claudii"
 jq '.perf.otel.enabled = true' "$CLAUDII_HOME/config/defaults.json" > "$_OTEL_CFG/claudii/config.json"
 _PO=$(CLAUDII_CACHE_DIR="$_OTEL_CACHE" XDG_CONFIG_HOME="$_OTEL_CFG" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
-  CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" perf 7d 2>&1)
+  bash "$CLAUDII_HOME/bin/claudii" perf 7d 2>&1)
 assert_contains "perf (otel): source otel"        "source: otel" "$_PO"
 assert_contains "perf (otel): TTFT section"        "TTFT"         "$_PO"
 assert_contains "perf (otel): reliability line"    "success"      "$_PO"
@@ -114,7 +114,7 @@ assert_no_literal_ansi "perf (otel): no literal \\033" "$_PO"
 
 # ── perf --json carries the OTEL-only blocks ──
 _POJ=$(CLAUDII_CACHE_DIR="$_OTEL_CACHE" XDG_CONFIG_HOME="$_OTEL_CFG" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
-  CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" perf 7d --json 2>&1)
+  bash "$CLAUDII_HOME/bin/claudii" perf 7d --json 2>&1)
 assert_eq "perf --json (otel): source otel" "otel" "$(printf '%s' "$_POJ" | jq -r '.source')"
 assert_eq "perf --json (otel): ttft p50 present" "false" \
   "$(printf '%s' "$_POJ" | jq -r '.ttft == null')"
@@ -126,8 +126,8 @@ assert_eq "perf --json (otel): 2 error buckets" "2" \
 # ── setup / off toggle (config flag + fork-free env file + launchd plist) ──
 _OTEL_SCFG="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SCFG")
 _OTEL_SCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SCACHE")
-_otel() { CLAUDII_CACHE_DIR="$_OTEL_SCACHE" XDG_CONFIG_HOME="$_OTEL_SCFG" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
-_ocli() { XDG_CONFIG_HOME="$_OTEL_SCFG" CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" "$@"; }
+_otel() { CLAUDII_CACHE_DIR="$_OTEL_SCACHE" XDG_CONFIG_HOME="$_OTEL_SCFG" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
+_ocli() { XDG_CONFIG_HOME="$_OTEL_SCFG" bash "$CLAUDII_HOME/bin/claudii" "$@"; }
 
 _otel setup >/dev/null 2>&1
 assert_eq "otel setup: config flag enabled" "true" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
