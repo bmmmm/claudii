@@ -204,6 +204,17 @@ case "${1:-}" in
   vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;
 
+  restart)
+    # Shell-only by nature: reloading means re-sourcing ~/.zshrc in the CALLING
+    # shell, which a child process cannot do. The plugin's `claudii` wrapper
+    # (lib/functions.zsh) intercepts this before the binary is reached, so
+    # arriving here means the plugin is not loaded — say that instead of
+    # "Unknown command", which is what a documented command used to answer.
+    echo "claudii: 'restart' is a shell function — it re-sources your shell, which this binary cannot do." >&2
+    echo "  Load the plugin (source .../claudii.plugin.zsh) or run: exec zsh" >&2
+    exit 1
+    ;;
+
   # Help
   help|--help|-h)      usage                  ;;
 

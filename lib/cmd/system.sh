@@ -647,6 +647,21 @@ _cmd_doctor() {
     fi
   fi
 
+  # 7b. Repo commit guards — only meaningful in a source checkout, and only
+  # then because .git/hooks is per-clone and untracked: the repo shipped a
+  # .githooks/pre-commit for months that never ran once, because core.hooksPath
+  # points at .git/hooks and nothing looked at .githooks/. That is how a
+  # documented command (`restart`) kept a green docs test while having no
+  # dispatch arm. Reporting it here is what keeps the gate from dying quietly
+  # on the next clone.
+  if [[ -d "$CLAUDII_HOME/.githooks/pre-commit.d" && -d "$CLAUDII_HOME/.git" ]]; then
+    if bash "$CLAUDII_HOME/scripts/install-hooks.sh" --check >/dev/null 2>&1; then
+      _dc_add "hooks" "ok" "repo commit guards installed (.git/hooks/pre-commit.d)"
+    else
+      _dc_add "hooks" "warn" "repo commit guards not installed — run: bash scripts/install-hooks.sh"
+    fi
+  fi
+
   # 8. Version
   _dc_add "version" "ok" "claudii v$VERSION"
 

@@ -21,6 +21,18 @@ source "${HOME}/path/to/claudii/claudii.plugin.zsh" 2>/dev/null \
 
 The plugin detects conflicts automatically and warns if two installs are found.
 
+## Setup: commit guards
+
+```bash
+bash scripts/install-hooks.sh    # once per clone
+```
+
+`.git/hooks` is per-clone and untracked, so this is not automatic. The script
+copies the repo's guards into `.git/hooks/pre-commit.d/`, next to any
+machine-wide guards already there — it deliberately does **not** set
+`core.hooksPath`, which would replace that directory and disable them.
+`claudii doctor` reports when the guards are missing.
+
 ## Tests
 
 ```bash
@@ -65,7 +77,7 @@ man/man1/claudii.1       # man page (groff) — single source of truth for docs
 - **jq required** — config is JSON, no awk/sed parsing
 - **bash 3.2 compatible** — `bin/` runs under macOS `/bin/bash`: no `declare -A`, and `(( ++var ))` not `(( var++ ))`
 - **Tests for everything** — new commands need a matching `test_*.sh`
-- **Code comments in English**, UI text in German
+- **Everything in the code is English** — comments, names, strings, commit messages
 
 ## Adding a command
 

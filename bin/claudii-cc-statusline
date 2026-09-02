@@ -1605,7 +1605,17 @@ fi
 if (( ! _ts_have )); then
   _ts_up=1
   grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' <<< "$(ifconfig 2>/dev/null)" && _ts_up=0
-  printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_cache" 2>/dev/null || true
+  # Atomic, like every other cache this file writes: the zsh RPROMPT segment
+  # (lib/vpnii.zsh) writes the same path, so a truncating `>` lets a reader see
+  # a half-written line. The numeric guard above catches pure garbage but not a
+  # torn "<epoch> " — that parses as epoch-is-also-the-value.
+  _ts_tmp="${_ts_cache}.tmp.$$"
+  if printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_tmp" 2>/dev/null; then
+    mv -f "$_ts_tmp" "$_ts_cache" 2>/dev/null || rm -f "$_ts_tmp" 2>/dev/null
+  else
+    rm -f "$_ts_tmp" 2>/dev/null
+  fi
+  true
 fi
 (( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"
 

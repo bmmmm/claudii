@@ -10,19 +10,78 @@ CLI="$CLAUDII_HOME/bin/claudii"
 BIN_VERSION=$(grep '^VERSION=' "$CLI" | head -1 | tr -d '"' | cut -d= -f2)
 assert_contains "man page version matches bin/claudii" "$BIN_VERSION" "$(cat "$MAN")"
 
-# Top-level commands that must appear in both man page and autocomplete
-# (excludes backwards-compat shims like sessionline/components, and easter eggs like 42)
-# help is not documented separately — the man page itself is the help
-MAN_COMMANDS=(on off status cc-statusline insomnii sessions sessions-inactive session pin unpin cost week trends tokens perf tools repos limits skills-cost config search restart update explain layers version doctor agents changelog claudestatus session-dashboard dashboard vibemap omlx vpnii gc resume cache)
-ALL_COMMANDS=(on off status cc-statusline insomnii sessions sessions-inactive session pin unpin cost week trends tokens perf tools repos limits skills-cost config search restart update explain layers version doctor agents changelog claudestatus session-dashboard dashboard vibemap omlx vpnii gc resume cache help)
+# ── Command names, derived from the dispatcher ──────────────────────────────
+# This used to be two hand-typed arrays checked with a bare substring search
+# against the whole file. That is vacuous in both directions: `restart` was in
+# the array, in the man page and in the completions, and passed "bin/claudii
+# handles: restart" for years — because the word appears in usage() text, while
+# the dispatch case had no arm for it and `claudii restart` answered "Unknown
+# command". The segment list below was converted to derivation for the same
+# reason; this is the other half.
+#
+# Derived from the main dispatch case (the one after the alias-expansion case),
+# and matched on anchors: a `name)` arm, a `'name:` completion entry, a man-page
+# line that starts with the name.
+_DISPATCH_BLOCK=$(LC_ALL=C sed -n '/^  # System commands$/,/^esac$/p' "$CLI")
+DISPATCHED=$(LC_ALL=C printf '%s\n' "$_DISPATCH_BLOCK" \
+  | LC_ALL=C sed -n 's/^  \([a-z0-9|_-][a-z0-9|_-]*\)).*/\1/p' \
+  | tr '|' '\n' | LC_ALL=C sort -u)
+assert_eq "dispatch case is parseable (>= 30 commands)" "0" \
+  "$([ "$(LC_ALL=C printf '%s\n' "$DISPATCHED" | LC_ALL=C grep -c .)" -ge 30 ] && echo 0 || echo 1)"
 
-for cmd in "${MAN_COMMANDS[@]}"; do
-  assert_contains "man page documents: $cmd"     "$cmd"  "$(cat "$MAN")"
+# Shorthand aliases from the first case block — real entry points a user can
+# type, so completions may list them, but they are not dispatch targets.
+_ALIAS_BLOCK=$(LC_ALL=C sed -n '/^# Shorthand aliases/,/^esac$/p' "$CLI")
+ALIASES=$(LC_ALL=C printf '%s\n' "$_ALIAS_BLOCK" \
+  | LC_ALL=C sed -n 's/^  \([a-z0-9]*\)).*/\1/p' | LC_ALL=C sort -u)
+
+# Deliberate exemptions. Anything NOT listed here has to be documented — a new
+# command forces the choice instead of defaulting to undocumented.
+#   help/-h/--help : the man page is the help
+#   42             : easter egg
+#   sessionline, install-sessionline, components : backwards-compat shims
+_UNDOCUMENTED_OK=" help --help -h 42 sessionline install-sessionline components "
+
+# The man page marks commands up in several legitimate roff forms — `.B name`,
+# `.BR "name " [on|off]`, `.BI "pin " session-id`, `.SS VPN State (vpnii)`.
+# Chasing that with ever-longer regexes is how a gate ends up matching nothing
+# and reporting everything as fine (the first draft of this check used BRE
+# `\|`, which BSD grep does not support, and "documented" silently became
+# "never matched"). Normalise instead: take the macro lines, drop the macro
+# name and the roff punctuation, and look for the command as a whole word.
+# The trailing `s/$/ /` is load-bearing: ".B changelog" normalises to
+# " changelog" with nothing after it, and a " changelog " needle would miss the
+# very lines that document the command.
+_MAN_WORDS=$(LC_ALL=C grep -E '^\.[A-Z]+ ' "$MAN" | LC_ALL=C sed 's/^\.[A-Z]*//; s/[".,()]/ /g; s/$/ /')
+assert_eq "man page macro lines are parseable" "0" \
+  "$([ "$(LC_ALL=C printf '%s\n' "$_MAN_WORDS" | LC_ALL=C grep -c .)" -ge 100 ] && echo 0 || echo 1)"
+
+for cmd in $DISPATCHED; do
+  case "$_UNDOCUMENTED_OK" in *" $cmd "*) continue ;; esac
+  assert_contains "man page documents: $cmd" " $cmd " "$_MAN_WORDS"
+  assert_eq "autocomplete lists: $cmd" "0" \
+    "$(LC_ALL=C grep -q "'$cmd:" "$COMP" && echo 0 || echo 1)"
 done
-for cmd in "${ALL_COMMANDS[@]}"; do
-  assert_contains "autocomplete lists: $cmd"     "$cmd"  "$(cat "$COMP")"
-  assert_contains "bin/claudii handles: $cmd"    "$cmd"  "$(cat "$CLI")"
+
+# Reverse direction — the one that would have caught `restart`: every command
+# the completions advertise must actually be reachable, as a dispatch arm or as
+# a shorthand alias.
+_KNOWN=" $(LC_ALL=C printf '%s %s' "$DISPATCHED" "$ALIASES" | tr '\n' ' ') "
+# Only the top-level `commands=( … )` array — the file also completes flags and
+# per-command subcommands in the same 'name:description' form, and those are not
+# dispatch targets.
+_COMP_NAMES=$(LC_ALL=C sed -n '/^ *commands=(/,/^ *)/p' "$COMP" \
+  | LC_ALL=C sed -n "s/^ *'\([a-z0-9-]*\):.*/\1/p" | LC_ALL=C sort -u)
+assert_eq "completion command list is parseable (>= 30 entries)" "0" \
+  "$([ "$(LC_ALL=C printf '%s\n' "$_COMP_NAMES" | LC_ALL=C grep -c .)" -ge 30 ] && echo 0 || echo 1)"
+_unreachable=""
+for cmd in $_COMP_NAMES; do
+  case "$_KNOWN" in *" $cmd "*) ;; *) _unreachable="$_unreachable $cmd" ;; esac
 done
+assert_eq "every completion entry is reachable in bin/claudii" "" "$_unreachable"
+# _UNDOCUMENTED_OK and DISPATCHED stay in scope — the overview-list check below
+# uses both.
+unset _DISPATCH_BLOCK _ALIAS_BLOCK _KNOWN _COMP_NAMES _unreachable _MAN_WORDS
 
 # config subcommands
 CONFIG_SUBS=(get set reset export import theme)
@@ -88,7 +147,8 @@ _OV_ITEMS=$(printf '%s\n' "$_OV_FN" \
   | LC_ALL=C tr '·' '\n' | LC_ALL=C tr -d ' ')
 assert_eq "overview command list is extractable" "0" \
   "$([ "$(printf '%s\n' "$_OV_ITEMS" | grep -c .)" -ge 25 ] && echo 0 || echo 1)"
-for cmd in "${MAN_COMMANDS[@]}"; do
+for cmd in $DISPATCHED; do
+  case "$_UNDOCUMENTED_OK" in *" $cmd "*) continue ;; esac
   _skip=0
   for _x in "${OV_EXEMPT[@]}"; do [[ "$cmd" == "$_x" ]] && _skip=1; done
   (( _skip )) && continue

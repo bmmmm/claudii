@@ -36,7 +36,14 @@ function _vpnii_tailscale_up {
   fi
   local _up=1
   ifconfig 2>/dev/null | command grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' && _up=0
-  print -r -- "$_now $(( _up == 0 ? 1 : 0 ))" >| "$_VPNII_TS_CACHE" 2>/dev/null
+  # Atomic write — bin/claudii-cc-statusline writes this same path from another
+  # process, so a truncating redirect lets one side read a half-written line.
+  local _tmp="${_VPNII_TS_CACHE}.tmp.$$"
+  if print -r -- "$_now $(( _up == 0 ? 1 : 0 ))" >| "$_tmp" 2>/dev/null; then
+    command mv -f "$_tmp" "$_VPNII_TS_CACHE" 2>/dev/null || command rm -f "$_tmp" 2>/dev/null
+  else
+    command rm -f "$_tmp" 2>/dev/null
+  fi
   return $_up
 }
 

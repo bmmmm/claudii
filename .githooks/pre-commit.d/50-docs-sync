@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# 50-docs-sync — keep the man page, completions and dispatcher in sync.
+#
+# Runs tests/test_docs.sh, which derives the command list from bin/claudii's
+# dispatch case and checks every name against the man page and the completions
+# (both directions). Fast — under a second, no network, no fixtures.
+#
+# Installed into <repo>/.git/hooks/pre-commit.d/ by scripts/install-hooks.sh.
+# It lives in a .d/ directory rather than being the pre-commit hook itself
+# because .git/hooks/pre-commit is an ops-managed dispatcher that runs a chain
+# of guards (path-guard, secret-guard, filename-guard, mirror-leak-guard);
+# replacing it with a repo-local hook would silently disable all of them.
+#
+# This repo shipped .githooks/pre-commit for months saying "always runs". It
+# never ran once: core.hooksPath points at .git/hooks, so nothing looked at
+# .githooks/. `restart` reached the man page, the completions and the docs
+# test's own array while having no dispatch arm at all — `claudii restart`
+# answered "Unknown command" — and no gate noticed, because the gate was not
+# wired up.
+#
+# Bypass the whole chain: git commit --no-verify
+
+set -uo pipefail
+
+_repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+[[ -f "$_repo/tests/test_docs.sh" ]] || exit 0
+
+# Only when something that can cause doc drift is staged.
+_staged="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null)" || exit 0
+case "$_staged" in
+  *bin/claudii*|*man/man1/claudii.1*|*completions/_claudii*|*CHANGELOG.md*|*lib/cmd/*|*config/defaults.json*) ;;
+  *) exit 0 ;;
+esac
+
+_out="$(bash "$_repo/tests/run.sh" --summary "$_repo/tests/test_docs.sh" 2>&1)"
+_rc=$?
+[[ $_rc -eq 0 ]] && exit 0
+
+printf '\n\033[1;31m✗ docs-sync: man page, completions and dispatcher are out of step\033[0m\n' >&2
+printf '%s\n' "$_out" >&2
+cat >&2 <<'MSG'
+
+Fix — update whichever of these the change forgot:
+  man/man1/claudii.1     the single source of truth for docs
+  completions/_claudii   the top-level commands=( ) array
+  bin/claudii            the dispatch case
+  CHANGELOG.md           the [Unreleased] block
+
+Re-run on its own:  bash tests/run.sh tests/test_docs.sh
+One-off bypass (not recommended): git commit --no-verify
+MSG
+exit 1

@@ -262,6 +262,18 @@ fi
       grep -v '^CLAUDII_TEST_RESULT:' "$_out_file" | grep -v '^CLAUDII_TEST_ERROR:' || true
     fi
     _summary=$(grep '^CLAUDII_TEST_RESULT:' "$_out_file" || true)
+    # A test file that dies mid-run never prints its result marker. Without
+    # this, the aggregate silently loses every assertion in it and the suite
+    # still exits 0 — which is exactly what happened when test_docs.sh kept a
+    # reference to a deleted array: fatal under /bin/bash 3.2 (unbound variable
+    # in "${arr[@]}"), a no-op under bash 5.x, so the CI leg that mattered
+    # reported 143 fewer passing asserts and stayed green. A gate that can
+    # vanish is worse than no gate.
+    if [[ -z "$_summary" ]]; then
+      FAIL=$(( FAIL + 1 ))
+      ERRORS+=("$(basename "${_out_file%.out}"): died before reporting a result (no CLAUDII_TEST_RESULT marker)")
+      _FAIL_DETAILS+=("$(grep -vE '^CLAUDII_TEST_(RESULT|ERROR):' "$_out_file")")
+    fi
     if [[ -n "$_summary" ]]; then
       _p=$(echo "$_summary" | cut -d: -f2)
       _f=$(echo "$_summary" | cut -d: -f3)
