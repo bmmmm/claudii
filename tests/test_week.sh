@@ -378,7 +378,7 @@ assert_eq "week --history: a wider span shows more windows" "true" \
 assert_eq "week --history 1d: keeps the running window" "true" \
   "$(CLAUDII_CACHE_DIR="$_WK1" bash "$CLAUDII_HOME/bin/claudii" week --history 1d --json 2>&1 \
     | jq -r '(.windows|length) >= 1 and (.windows[-1].current)')"
-assert_exit_code "week --history: rejects a malformed span" 1 \
+assert_exit_code "week --history: rejects a malformed span" 2 \
   "CLAUDII_CACHE_DIR='$_WK1' bash '$CLAUDII_HOME/bin/claudii' week --history 30x"
 
 # ── week --history: a period drops observed windows that lie outside it ──────

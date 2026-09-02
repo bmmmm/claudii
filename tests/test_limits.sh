@@ -93,15 +93,15 @@ _LIM_90D=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACH
 assert_contains "limits 90d: named window shows the hits" "Rate limits" "$_LIM_90D"
 _LIM_BAD=$(CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" limits bogus 2>&1; echo "rc=$?")
-assert_contains "limits bogus: actionable unknown-arg error" "unknown limits argument: bogus" "$_LIM_BAD"
-assert_contains "limits bogus: exit 1" "rc=1" "$_LIM_BAD"
+assert_contains "limits bogus: actionable unknown-arg error" "claudii limits: unknown option: bogus" "$_LIM_BAD"
+assert_contains "limits bogus: exit 2" "rc=2" "$_LIM_BAD"
 unset _LIM_90D _LIM_BAD
 
 # ── --days validation + --help ──
 _LIM_DV=$(CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" limits --days foo 2>&1; echo "rc=$?")
 assert_contains "limits --days foo: actionable error" "positive integer" "$_LIM_DV"
-assert_contains "limits --days foo: exit 1" "rc=1" "$_LIM_DV"
+assert_contains "limits --days foo: exit 2" "rc=2" "$_LIM_DV"
 _LIM_HELP=$(bash "$CLAUDII_HOME/bin/claudii" limits --help 2>&1)
 assert_contains "limits --help: usage" "Usage: claudii limits" "$_LIM_HELP"
 

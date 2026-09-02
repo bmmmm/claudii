@@ -404,8 +404,21 @@ _week_json() {
 _cmd_week() {
   _cfg_init
 
+  # "$@" is this command's own arguments — bin/claudii dispatches "${@:2}", so
+  # no handler re-skips the command name any more.
+  #
+  # week deliberately does NOT route through _insights_window: it has no rolling
+  # window to cycle (the window is Anthropic's, not a --days span), and its SPAN
+  # is allowed to be a bare window COUNT — `--history 8` — which _insights_window
+  # rejects on purpose ("bare number is not a window"). It shares the contract,
+  # not the vocabulary: unknown option → _cli_unknown_opt → rc 2.
+  #
+  # There is no `--json` arm here: bin/claudii strips --json/--tsv into $_FORMAT
+  # before dispatch, so one could never be entered (the one that used to sit
+  # here was dead code — instrumenting it showed `claudii week --json` emitting
+  # JSON without ever reaching the arm).
   local _arg _history=0 _spec=30d
-  for _arg in "${@:2}"; do
+  for _arg in "$@"; do
     case "$_arg" in
       -h|--help)
         printf 'Usage: claudii week [--history [SPAN]] [--json]\n\n'
@@ -417,12 +430,15 @@ _cmd_week() {
         printf '                    so the oldest bar may start before the cutoff.\n'
         printf '  --json            machine-readable output (combines with --history)\n'
         return 0 ;;
-      --json) _FORMAT=json ;;
       --history) _history=1 ;;
-      [0-9]|[0-9][0-9]|[0-9][0-9][0-9]) (( _history )) && _spec="$_arg" ;;
+      # A SPAN without --history is ignored, as before. Spelled as an `if` and
+      # not `(( _history )) && _spec=…`: as the arm's last command that yields 1
+      # on the final loop pass, which `set -e` turns into a silent abort.
+      [0-9]|[0-9][0-9]|[0-9][0-9][0-9])
+        if (( _history )); then _spec="$_arg"; fi ;;
       [0-9]d|[0-9][0-9]d|[0-9][0-9][0-9]d|[0-9][0-9][0-9][0-9]d)
-        (( _history )) && _spec="$_arg" ;;
-      *) printf 'Unknown option: %s\n' "$_arg" >&2; return 1 ;;
+        if (( _history )); then _spec="$_arg"; fi ;;
+      *) _cli_unknown_opt week "$_arg" '[--history [SPAN]]' || return $? ;;
     esac
   done
 

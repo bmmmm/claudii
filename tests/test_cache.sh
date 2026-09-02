@@ -60,8 +60,8 @@ _CACHE_30D=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE
 assert_contains "cache 30d: named window resolves to 30-day header" "30d" "$_CACHE_30D"
 _CACHE_BAD=$(CLAUDE_PROJECTS_DIR="$_CACHE_PROJ" CLAUDII_CACHE_DIR="$_CACHE_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" cache bogus 2>&1; echo "rc=$?")
-assert_contains "cache bogus: actionable unknown-arg error" "unknown cache argument: bogus" "$_CACHE_BAD"
-assert_contains "cache bogus: exit 1" "rc=1" "$_CACHE_BAD"
+assert_contains "cache bogus: actionable unknown-arg error" "claudii cache: unknown option: bogus" "$_CACHE_BAD"
+assert_contains "cache bogus: exit 2" "rc=2" "$_CACHE_BAD"
 unset _CACHE_30D _CACHE_BAD
 
 # ── --json: structured output mirrors the rendered numbers ────────────────
@@ -142,7 +142,7 @@ _dv_out=$(CLAUDE_PROJECTS_DIR="$_dv_base/proj" CLAUDII_CACHE_DIR="$_dv_base/cach
   XDG_CONFIG_HOME="$_dv_base/xdg" \
   bash "$CLAUDII_HOME/bin/claudii" cache --days foo 2>&1; echo "rc=$?")
 assert_contains "cache --days foo: actionable error" "positive integer" "$_dv_out"
-assert_contains "cache --days foo: exit 1" "rc=1" "$_dv_out"
+assert_contains "cache --days foo: exit 2" "rc=2" "$_dv_out"
 assert_not_contains "cache --days foo: no misleading no-data message" "No insight data" "$_dv_out"
 rm -rf "$_dv_base"
 unset _dv_base _dv_out

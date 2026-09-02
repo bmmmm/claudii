@@ -16,14 +16,15 @@
 _skills_cost_compare() {
   local compare="$1" attr_kind="$2" attr_key="$3" section_label="$4" fmt="$5" _rates="$6"
 
+  # rc 2, like every other malformed argument value — see _cli_unknown_opt.
   if [[ ! "$compare" =~ ^[0-9]+:[0-9]+$ ]]; then
-    printf 'claudii: --compare wants BEFORE:AFTER in days, e.g. --compare 30:30 (got: %s)\n' "$compare" >&2
-    return 1
+    printf 'claudii skills-cost: --compare wants BEFORE:AFTER in days, e.g. --compare 30:30 (got: %s)\n' "$compare" >&2
+    return 2
   fi
   local _before="${compare%%:*}" _after="${compare##*:}"
   if [[ "$_before" -lt 1 || "$_after" -lt 1 ]]; then
-    printf 'claudii: --compare BEFORE and AFTER must both be >= 1 day (got: %s)\n' "$compare" >&2
-    return 1
+    printf 'claudii skills-cost: --compare BEFORE and AFTER must both be >= 1 day (got: %s)\n' "$compare" >&2
+    return 2
   fi
 
   # recent = last AFTER days; prior = the BEFORE days immediately before that.
@@ -113,35 +114,50 @@ _skills_cost_compare() {
 _cmd_skills_cost() {
   _cfg_init
 
-  local days=30 attr_kind="skill" fmt="${_FORMAT:-}" compare=""
-  # Parse flags
+  local attr_kind="skill" fmt="${_FORMAT:-}" compare=""
+  # Own flags are peeled here; every window token (--days/-d + value, today,
+  # 30d, month, …) is forwarded to _insights_window, which owns the window
+  # vocabulary, the "--days must be a positive integer" validation and the
+  # unknown-option contract. This used to be a sixth hand-rolled parser with its
+  # own message and its own exit code — and its own bugs: `--days` with no value
+  # silently became 30, and a bare number was reported as an "unknown flag"
+  # rather than as the window typo it always is.
+  #
+  # There is no `--json` arm: bin/claudii strips --json/--tsv into $_FORMAT
+  # before dispatch (fmt picks it up above), so one could never be entered — the
+  # arm that used to sit here was dead code.
+  local -a wargs=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --days|-d)   shift; days="${1:-30}" ;;
       --compare)   shift; compare="${1:-}"
-                   [[ -z "$compare" ]] && { printf 'claudii: --compare needs BEFORE:AFTER (e.g. --compare 30:30)\n' >&2; return 1; } ;;
+                   if [[ -z "$compare" ]]; then
+                     printf 'claudii skills-cost: --compare needs BEFORE:AFTER (e.g. --compare 30:30)\n' >&2
+                     return 2
+                   fi ;;
       --plugins)   attr_kind="plugin" ;;
       --mcp)       attr_kind="mcp" ;;
-      --json)      fmt="json" ;;
       -h|--help)
-        printf 'Usage: claudii skills-cost [--days N] [--compare BEFORE:AFTER] [--plugins] [--mcp] [--json]\n'
+        printf 'Usage: claudii skills-cost [WINDOW] [--days N] [--compare BEFORE:AFTER] [--plugins] [--mcp] [--json]\n\n'
+        printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d); default 30d.\n'
         return 0
         ;;
-      *)
-        printf 'claudii: unknown skills-cost flag: %s — run claudii skills-cost --help\n' "$1" >&2
-        return 1
+      --days|-d)
+        # forward the flag; append the value only when it is not itself a flag,
+        # so a value-less --days reaches _insights_window's "needs a value" error
+        wargs+=("$1")
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then wargs+=("$2"); shift; fi
         ;;
+      *)           wargs+=("$1") ;;
     esac
     shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
   done
-
-  # --days must be a positive integer. A non-numeric value previously slipped the
-  # `[[ "$days" -gt 0 ]] 2>/dev/null` guard and silently became "no cutoff" (all
-  # time), and also broke the downstream jq `($d|tonumber)` and `printf "%d"`.
-  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
-  fi
+  _insights_window skills-cost ${wargs[@]+"${wargs[@]}"} || return $?
+  # Cost history is a long view — a week is too short a default here, same
+  # reasoning as repos. _IW_WINDOW_GIVEN is the only way to tell "no window
+  # asked for" from "asked for 7d" now that _insights_window owns the default.
+  local days="$_IW_DAYS"
+  (( _IW_WINDOW_GIVEN )) || days=30   # `||`, not `&&`: an && that goes false is
+                                      # the arm's exit status and set -e aborts
 
   # Per-token pricing (USD), per model tier. These are the only hardcoded rates
   # in claudii (`claudii cost` reads costUSD from history instead). Per MTok:
@@ -176,6 +192,11 @@ _cmd_skills_cost() {
   # --compare BEFORE:AFTER → two-window trend comparison (own renderer + merge
   # windows), so session-close Phase 2.7 can ask "did the SKILL.md edit help?".
   if [[ -n "$compare" ]]; then
+    # Deliberately a bare call, not `|| _rc=$?`: putting the call on the left of
+    # a `||` disables set -e for the WHOLE function body and everything it
+    # invokes, which turns a failing `claudii-insights merge` inside it from a
+    # hard stop into a silent empty comparison. The exit status is the same
+    # either way (set -e re-raises the 2 here), so the safer shape wins.
     _skills_cost_compare "$compare" "$attr_kind" "$attr_key" "$section_label" "$fmt" "$_rates"
     return $?
   fi

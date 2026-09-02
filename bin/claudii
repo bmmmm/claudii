@@ -110,11 +110,16 @@ usage() {
 }
 
 _cmd_resume() {
-  local _id="${2:-}"
+  local _id="${1:-}"
+  case "$_id" in
+    # Caught before the exec: `claudii resume --bogus` used to hand the flag
+    # straight to `claude --resume --bogus` and answer 0.
+    -*) _cli_unknown_opt resume "$_id" '<session-id>' || return $? ;;
+  esac
   if [[ -z "$_id" ]]; then
     echo "Usage: claudii resume <session-id>" >&2
     echo "  Use 'claudii se' to list sessions with their IDs" >&2
-    exit 1
+    return 1
   fi
   exec claude --resume "$_id"
 }
@@ -190,6 +195,38 @@ esac
 
 _claudii_boot "${1:-}"
 
+# Commands that take no arguments at all — their dispatch arm below calls the
+# handler with none, so an extra token could never be seen and was silently
+# swallowed: `claudii doctor --bogus` just ran the doctor and answered 0, and
+# `claudii update --bogus` went ahead and updated. One gate here rather than a
+# guard bolted onto each of the fifteen handlers (several of which live in files
+# this dispatcher only sources).
+#
+# --json/--tsv are already stripped into $_FORMAT above, so `doctor --json`
+# still arrives here as a bare `doctor`. `layers`/`components` are absent on
+# purpose: they exec into `explain`, which is on the list, so they inherit it.
+#
+# Nothing derives this list, so it can rot — tests/test_arg_contract.sh walks
+# EVERY arm of the dispatch case below and fails on the first one that does not
+# answer rc 2, which is what keeps it honest.
+case "${1:-}" in
+  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|install-sessionline|help|--help|-h)
+    if [[ $# -gt 1 ]]; then _cli_unknown_opt "$1" "$2" || exit $?; fi
+    ;;
+esac
+
+# Calling convention: a handler receives its OWN arguments — "${@:2}" — never
+# the command name. Three conventions used to be in play here ("$@", "${@:2}",
+# and nothing at all), which is why every command carried its own way of
+# skipping the command name, and why `claudii cost --bogus` was unrejectable:
+# its parser looped over the full "$@" including the literal "cost", so it had
+# to tolerate every token it did not recognise.
+#
+# The arms still passing "$@" (status, config, omlx, session-dashboard, …) hand
+# their arguments to handlers in lib/cmd/{system,sessions,display,config,omlx,
+# vpnii,vibemap,perf}.sh, which index $2 themselves; converting them means
+# editing those files, which is outside this change's scope. They are the same
+# set tests/test_arg_contract.sh still lists as not yet under the contract.
 case "${1:-}" in
   # System commands
   on)                  _cmd_on                ;;
@@ -206,8 +243,8 @@ case "${1:-}" in
   doctor)              _cmd_doctor            ;;
 
   # Session commands
-  cost)                _cmd_cost "$@"         ;;
-  week)                _cmd_week "$@"         ;;
+  cost)                _cmd_cost "${@:2}"     ;;
+  week)                _cmd_week "${@:2}"     ;;
   skills-cost)         _cmd_skills_cost "${@:2}" ;;
   sessions)
     if [[ "${2:-}" == "--resume" && -n "${3:-}" ]]; then
@@ -219,17 +256,17 @@ case "${1:-}" in
   pin)                 _cmd_pin "$@"          ;;
   unpin)               _cmd_unpin "$@"        ;;
   gc)                  _cmd_gc "$@"           ;;
-  resume)              _cmd_resume "$@"       ;;
+  resume)              _cmd_resume "${@:2}"   ;;
   "")                  _cmd_default           ;;
 
   # Display commands
   trends)              _cmd_trends            ;;
-  cache)               _cmd_cache "$@"        ;;
-  tokens)              _cmd_tokens "$@"       ;;
-  tools)               _cmd_tools "$@"        ;;
+  cache)               _cmd_cache "${@:2}"    ;;
+  tokens)              _cmd_tokens "${@:2}"   ;;
+  tools)               _cmd_tools "${@:2}"    ;;
   repos)               _cmd_repos "${@:2}"    ;;
-  perf)                _cmd_perf "$@"         ;;
-  limits)              _cmd_limits "$@"       ;;
+  perf)                _cmd_perf "$@"         ;;  # still "$@": lib/cmd/perf.sh is outside this change's scope
+  limits)              _cmd_limits "${@:2}"   ;;
   session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;
   layers|components)   exec "$0" explain "${@:2}" ;;

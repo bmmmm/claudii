@@ -72,15 +72,15 @@ _TLS_TODAY=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
 assert_contains "tools today: 1-day window labelled 'today'" "today" "$_TLS_TODAY"
 _TLS_BAD=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tools bogus 2>&1; echo "rc=$?")
-assert_contains "tools bogus: actionable unknown-arg error" "unknown tools argument: bogus" "$_TLS_BAD"
-assert_contains "tools bogus: exit 1" "rc=1" "$_TLS_BAD"
+assert_contains "tools bogus: actionable unknown-arg error" "claudii tools: unknown option: bogus" "$_TLS_BAD"
+assert_contains "tools bogus: exit 2" "rc=2" "$_TLS_BAD"
 unset _TLS_TODAY _TLS_BAD
 
 # ── --days validation ──
 _TLS_DV=$(CLAUDE_PROJECTS_DIR="$_TLS_PROJ" CLAUDII_CACHE_DIR="$_TLS_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tools --days foo 2>&1; echo "rc=$?")
 assert_contains "tools --days foo: actionable error" "positive integer" "$_TLS_DV"
-assert_contains "tools --days foo: exit 1" "rc=1" "$_TLS_DV"
+assert_contains "tools --days foo: exit 2" "rc=2" "$_TLS_DV"
 
 # ── --help ──
 _TLS_HELP=$(bash "$CLAUDII_HOME/bin/claudii" tools --help 2>&1)

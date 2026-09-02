@@ -130,10 +130,35 @@ Available for:
 Output tab-separated values (header + data rows).
 Available for:
 .BR sessions ", " cost .
+.TP
+.BR \-h ", " \-\-help
+Print the command's own usage and exit 0. Accepted by every command that takes
+arguments.
 .PP
 When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
 .B version
 prints only the bare version number when piped.
+.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The command understood the request and then failed \(em no data yet, a session
+id that matches nothing, a view that has no
+.B \-\-tsv
+shape.
+.TP
+.B 2
+claudii could not accept the arguments and nothing ran: an unknown option, a
+value-less
+.BR \-\-days ,
+a malformed window or
+.B \-\-compare
+spec. An unknown option is always reported as
+.RB \(lq "claudii " cmd ": unknown option: " arg \(rq
+on standard error, never on standard output.
 .
 .SH DISPLAY LAYERS
 Three separate layers each serve a different scope:
@@ -573,6 +598,19 @@ and an outlier flag
 when a row's average is \[>=]2\[mu] the median with at least 10 calls.
 Subagent usage counts toward the skill that spawned the agent.
 .RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days). Same vocabulary as
+.BR tokens ", " tools ", " limits ", " cache " and " repos ,
+which all share one parser; unlike those, the default here is 30 days.
 .TP
 .BI "\-\-days " N
 Rolling window (default 30). Passed to

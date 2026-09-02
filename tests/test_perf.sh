@@ -127,8 +127,12 @@ assert_contains "perf --help: documents --repo" "--repo" "$_PERF_HELP"
 
 # ── bad window arg ──
 _PERF_BAD=$(_perf perf bogus 2>&1; echo "rc=$?")
-assert_contains "perf bogus: actionable error" "unknown perf argument: bogus" "$_PERF_BAD"
-assert_contains "perf bogus: exit 1" "rc=1" "$_PERF_BAD"
+assert_contains "perf bogus: actionable error" "claudii perf: unknown option: bogus" "$_PERF_BAD"
+# rc 1, not the contract's 2: perf gets the shared MESSAGE from _insights_window
+# but downgrades its status with `|| return 1` (lib/cmd/perf.sh) — that file was
+# outside the arg-contract change's scope, so perf is still listed as pending in
+# tests/test_arg_contract.sh. Fixing it is `|| return $?`, one line.
+assert_contains "perf bogus: exit 1 (still pending the rc-2 contract)" "rc=1" "$_PERF_BAD"
 
 # ── pf shorthand resolves to perf ──
 _PERF_PF=$(_perf pf --json 2>&1)

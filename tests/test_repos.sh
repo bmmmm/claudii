@@ -174,34 +174,34 @@ assert_contains "repos --daily: session count" "1×"       "$_RP_DAILY"
 
 # ── Window / arg validation ──
 _RP_BAD=$(_rp_run repos --frobnicate; echo "rc=$?")
-assert_contains "repos --frobnicate: names bad option" "unknown repos option" "$_RP_BAD"
-assert_contains "repos --frobnicate: exit 1" "rc=1" "$_RP_BAD"
+assert_contains "repos --frobnicate: names bad option" "claudii repos: unknown option: --frobnicate" "$_RP_BAD"
+assert_contains "repos --frobnicate: exit 2" "rc=2" "$_RP_BAD"
 
 # Bare number is a window typo, not a repo drilldown → actionable error
 _RP_NUM=$(_rp_run repos 14; echo "rc=$?")
 assert_contains "repos 14: suggests 14d"  "did you mean 14d" "$_RP_NUM"
-assert_contains "repos 14: exit 1"        "rc=1"             "$_RP_NUM"
+assert_contains "repos 14: exit 2"        "rc=2"             "$_RP_NUM"
 
 # Trailing value-less --days errors instead of silently becoming 7d
 _RP_ND=$(_rp_run repos --days; echo "rc=$?")
 assert_contains "repos --days (no value): actionable error" "needs a value" "$_RP_ND"
-assert_contains "repos --days (no value): exit 1"           "rc=1"          "$_RP_ND"
+assert_contains "repos --days (no value): exit 2"           "rc=2"          "$_RP_ND"
 
 # --daily must NOT be swallowed as the --days value (was: "got: --daily")
 _RP_NDF=$(_rp_run repos --days --daily; echo "rc=$?")
 assert_contains "repos --days --daily: needs a value (flag not consumed)" "needs a value" "$_RP_NDF"
-assert_contains "repos --days --daily: exit 1"                            "rc=1"          "$_RP_NDF"
+assert_contains "repos --days --daily: exit 2"                            "rc=2"          "$_RP_NDF"
 
 # ── Shared-parser coverage: the same guards now protect tokens/tools/etc. ──
 # value-less --days is an actionable error, not a silent 7d fallback.
 _RP_TND=$(_rp_run tokens --days; echo "rc=$?")
 assert_contains "tokens --days (no value): needs a value" "needs a value" "$_RP_TND"
-assert_contains "tokens --days (no value): exit 1"        "rc=1"          "$_RP_TND"
+assert_contains "tokens --days (no value): exit 2"        "rc=2"          "$_RP_TND"
 
 # a bare number is a window typo for tokens too, not a generic unknown-arg.
 _RP_T14=$(_rp_run tokens 14; echo "rc=$?")
 assert_contains "tokens 14: suggests 14d" "did you mean 14d" "$_RP_T14"
-assert_contains "tokens 14: exit 1"       "rc=1"             "$_RP_T14"
+assert_contains "tokens 14: exit 2"       "rc=2"             "$_RP_T14"
 
 # ── Drilldown escape hatch: window FIRST, then a repo name that looks like a
 # window — "year" is captured as the positional, so we drill into repo "year". ──

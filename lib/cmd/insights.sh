@@ -122,13 +122,49 @@ _insights_day_label() {
   fi
 }
 
-# Shared rolling-window argument parser for cache/tokens/tools/limits/repos.
+# ── The CLI argument contract ────────────────────────────────────────────────
+# One message and one exit code for a bad argument, for every command in the
+# dispatcher. Before this, `claudii <cmd> --bogus` answered 0, 1 or 2 depending
+# on which command you asked, under three different message prefixes — and
+# `cost --bogus` said nothing at all and exited 0.
+#
+#   rc 2  the CLI could not accept your arguments — unknown option, missing
+#         value, malformed value. Nothing ran.
+#   rc 1  the command understood you and then failed (no data, a view that has
+#         no --tsv shape, a session id that matches nothing).
+#   rc 0  it worked.
+#
+# rc 2 for a usage error is already the house convention one layer down
+# (lib/history_scrub.sh exits 2 on an unknown option, lib/history_rows.awk on an
+# unknown emit field); this is the same rule at the CLI surface.
+#
+# lib/cmd/*.sh are SOURCED into bin/claudii, so this RETURNS — it must never
+# exit, or a bad flag tears down the whole process (and skips _spinner_stop,
+# leaving a spinner on the terminal). Callers propagate with `|| return $?`.
+# The dispatch case is the last statement in bin/claudii, so a handler's return
+# value already becomes the process exit status.
+#
+# $3 is an optional usage hint, printed as a second line: it belongs in here
+# rather than at the call site, because a bare `_cli_unknown_opt …` followed by
+# more printfs would trip `set -e` on the non-zero return before reaching them.
+_cli_unknown_opt() {
+  printf 'claudii %s: unknown option: %s\n' "$1" "$2" >&2
+  if [[ -n "${3:-}" ]]; then printf '  try: claudii %s %s\n' "$1" "$3" >&2; fi
+  return 2
+}
+
+# THE argument parser: cache/tokens/tools/limits/repos/perf/skills-cost all run
+# their window vocabulary and their argument validation through here, so the
+# rules are stated once. Commands with no rolling window (cost, week) share only
+# the exit-code contract above, via _cli_unknown_opt.
+#
 # Lets the window be *cycled* without remembering --days: a named window
 # (today/day, week, month, quarter, year), a generic <N>d token (e.g. 14d), or
 # the explicit --days N / -d N. Sets _IW_DAYS (validated positive int), _IW_HELP
 # (1 when -h/--help was seen) and _IW_WINDOW_GIVEN (1 when any explicit window
-# was consumed — repos uses it to apply its 30d default). Prints an actionable
-# error and returns 1 on:
+# was consumed — repos and skills-cost use it to apply their 30d defaults).
+# Prints an actionable error and returns 2 (the usage-error code — see
+# _cli_unknown_opt) on:
 #   • --days/-d with no value or a following flag → "needs a value"
 #   • a bare integer (window typo, never a valid repo either) → "did you mean Nd"
 #   • an unknown token (unless positional mode captures it)
@@ -154,8 +190,8 @@ _insights_window() {
       --days|-d)
         local _nv="${2:-}"
         if [[ -z "$_nv" || "${_nv:0:1}" == "-" ]]; then
-          printf 'claudii: %s needs a value (e.g. --days 30)\n' "$1" >&2
-          return 1
+          printf 'claudii %s: %s needs a value (e.g. --days 30)\n' "$cmd" "$1" >&2
+          return 2
         fi
         days="$_nv"; _IW_WINDOW_GIVEN=1; shift ;;
       today|day)   _wv=1   ;;
@@ -167,19 +203,18 @@ _insights_window() {
       -h|--help)   _IW_HELP=1 ;;
       *)
         if [[ "$1" =~ ^[0-9]+$ ]]; then
-          printf 'claudii: bare number %s is not a window — did you mean %sd, or --days %s?\n' "$1" "$1" "$1" >&2
-          return 1
+          printf 'claudii %s: bare number %s is not a window — did you mean %sd, or --days %s?\n' \
+            "$cmd" "$1" "$1" "$1" >&2
+          return 2
         fi
         if (( _allow_pos )) && [[ "${1:0:1}" != "-" ]]; then
           if [[ -n "$_IW_POSITIONAL" ]]; then
-            printf 'claudii: unexpected %s argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
-            return 1
+            printf 'claudii %s: unexpected argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+            return 2
           fi
           _IW_POSITIONAL="$1"
         else
-          printf 'claudii: unknown %s argument: %s\n' "$cmd" "$1" >&2
-          printf '  try: claudii %s [today|7d|30d|year] [--days N]\n' "$cmd" >&2
-          return 1
+          _cli_unknown_opt "$cmd" "$1" '[today|7d|30d|year] [--days N]' || return $?
         fi
         ;;
     esac
@@ -188,8 +223,8 @@ _insights_window() {
     if [[ -n "$_wv" ]]; then
       if (( _allow_pos && _IW_WINDOW_GIVEN )); then
         if [[ -n "$_IW_POSITIONAL" ]]; then
-          printf 'claudii: unexpected %s argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
-          return 1
+          printf 'claudii %s: unexpected argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+          return 2
         fi
         _IW_POSITIONAL="$1"
       else
@@ -201,8 +236,8 @@ _insights_window() {
   _IW_DAYS="$days"
   (( _IW_HELP )) && return 0
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
-    printf 'claudii: --days must be a positive integer (got: %s)\n' "$days" >&2
-    return 1
+    printf 'claudii %s: --days must be a positive integer (got: %s)\n' "$cmd" "$days" >&2
+    return 2
   fi
   return 0
 }
@@ -361,7 +396,7 @@ _cmd_cache() {
   # Window parsing + validation is centralized in _insights_window (the merge
   # also validates, but _insights_merged_json swallows its stderr, so a bad
   # value used to surface as the misleading "No insight data yet").
-  _insights_window cache "${@:2}" || return 1
+  _insights_window cache "$@" || return $?
   if (( _IW_HELP )); then
     printf 'Usage: claudii cache [WINDOW] [--days N] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
@@ -511,7 +546,7 @@ _cmd_tokens() {
   _cfg_init
   _insights_refresh
 
-  _insights_window tokens "${@:2}" || return 1
+  _insights_window tokens "$@" || return $?
   if (( _IW_HELP )); then
     printf 'Usage: claudii tokens [WINDOW] [--days N] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
@@ -903,7 +938,7 @@ _cmd_tools() {
   _cfg_init
   _insights_refresh
 
-  _insights_window tools "${@:2}" || return 1
+  _insights_window tools "$@" || return $?
   if (( _IW_HELP )); then
     printf 'Usage: claudii tools [WINDOW] [--days N] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
@@ -1040,7 +1075,7 @@ _cmd_limits() {
   _cfg_init
   _insights_refresh
 
-  _insights_window limits "${@:2}" || return 1
+  _insights_window limits "$@" || return $?
   if (( _IW_HELP )); then
     printf 'Usage: claudii limits [WINDOW] [--days N] [--json]\n\n'
     printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
@@ -1241,9 +1276,7 @@ _cmd_repos() {
         return 0
         ;;
       -*)
-        printf 'claudii: unknown repos option: %s\n' "$1" >&2
-        printf '  try: claudii repos [REPO] [today|7d|30d|year] [--daily] [--all]\n' >&2
-        return 1
+        _cli_unknown_opt repos "$1" '[REPO] [today|7d|30d|year] [--daily] [--all]' || return $?
         ;;
       *)
         wargs+=("$1") ;;
@@ -1251,10 +1284,10 @@ _cmd_repos() {
     shift || break
   done
   _IW_ALLOW_POSITIONAL=1
-  if ! _insights_window repos ${wargs[@]+"${wargs[@]}"}; then
-    unset _IW_ALLOW_POSITIONAL; return 1
-  fi
+  local _iw_rc=0
+  _insights_window repos ${wargs[@]+"${wargs[@]}"} || _iw_rc=$?
   unset _IW_ALLOW_POSITIONAL
+  (( _iw_rc == 0 )) || return "$_iw_rc"
   local repo="$_IW_POSITIONAL"
   local days="$_IW_DAYS"
   (( _IW_WINDOW_GIVEN )) || days=30   # history view — a week is too short a default

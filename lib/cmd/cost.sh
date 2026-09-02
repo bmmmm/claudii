@@ -530,11 +530,29 @@ _cmd_cost_forecast() {
 
 _COST_WINDOW_START=0 _COST_WINDOW_LABEL=
 _cmd_cost() {
+  # "$@" is this command's own arguments — bin/claudii dispatches "${@:2}".
+  # The old loop ran over the full "$@" including the literal "cost", which is
+  # why it could not reject anything: every token it did not recognise had to be
+  # tolerated, so `claudii cost --bogus` printed nothing and exited 0.
+  #
+  # cost has no rolling window (its periods are Today/Week/Months/Years, fixed),
+  # so it shares the exit-code contract via _cli_unknown_opt rather than the
+  # window vocabulary of _insights_window.
   local _a _forecast=0 _window=0
   _COST_WINDOW_START=0 _COST_WINDOW_LABEL=
   for _a in "$@"; do
-    [[ "$_a" == "--forecast" || "$_a" == "forecast" ]] && _forecast=1
-    [[ "$_a" == "--window" ]] && _window=1
+    case "$_a" in
+      --forecast|forecast) _forecast=1 ;;
+      --window)            _window=1 ;;
+      -h|--help)
+        printf 'Usage: claudii cost [--forecast] [--window] [--json] [--tsv]\n\n'
+        printf 'Per-period spend with a per-tier breakdown, from the cost history.\n\n'
+        printf '  --forecast  5h-budget burn rate + this-month spend projection\n'
+        printf "  --window    replace the Week section with Anthropic's rolling\n"
+        printf '              7-day rate-limit window (see: claudii week)\n'
+        return 0 ;;
+      *) _cli_unknown_opt cost "$_a" '[--forecast] [--window]' || return $? ;;
+    esac
   done
 
   _cfg_init

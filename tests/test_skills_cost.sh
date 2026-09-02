@@ -207,10 +207,30 @@ assert_contains "skills-cost dispatch: usage shown" "skills-cost" "$_sc_dispatch
 _sc_bad_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --days abc 2>&1; echo "rc=$?")
 assert_contains "skills-cost --days abc: actionable error" "positive integer" "$_sc_bad_out"
-assert_contains "skills-cost --days abc: exit 1" "rc=1" "$_sc_bad_out"
+assert_contains "skills-cost --days abc: exit 2" "rc=2" "$_sc_bad_out"
 _sc_zero_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --days 0 2>&1; echo "rc=$?")
-assert_contains "skills-cost --days 0: rejected (exit 1)" "rc=1" "$_sc_zero_out"
+assert_contains "skills-cost --days 0: rejected (exit 2)" "rc=2" "$_sc_zero_out"
+
+# ── Window vocabulary: skills-cost shares _insights_window with tokens/tools ──
+# It used to hand-roll --days only; `skills-cost month` was an "unknown flag".
+_sc_win_out=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost month --json 2>&1)
+assert_eq "skills-cost month: named window resolves to 30 days" "30" \
+  "$(jq -r '.meta.days' <<< "$_sc_win_out" 2>/dev/null)"
+_sc_win90=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost 90d --json 2>&1)
+assert_eq "skills-cost 90d: <N>d window resolves to 90 days" "90" \
+  "$(jq -r '.meta.days' <<< "$_sc_win90" 2>/dev/null)"
+_sc_windef=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+assert_eq "skills-cost (no window): default stays 30, not the shared 7" "30" \
+  "$(jq -r '.meta.days' <<< "$_sc_windef" 2>/dev/null)"
+_sc_win14=$(CLAUDII_CACHE_DIR="$_SC_JSON_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" skills-cost 14 2>&1; echo "rc=$?")
+assert_contains "skills-cost 14: bare number is a window typo, not an unknown flag" \
+  "did you mean 14d" "$_sc_win14"
+unset _sc_win_out _sc_win90 _sc_windef _sc_win14
 
 # ── Test 9: --mcp flag renders attribution_mcp with stripped prefix ───────────
 _SC_MCP_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_MCP_CACHE")
@@ -351,9 +371,9 @@ assert_eq "skills-cost --compare --json: metric documents context-robustness" "0
 # Error paths
 _sc_cmp_bad=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare foo 2>&1; echo "rc=$?")
 assert_contains "skills-cost --compare foo: actionable error" "BEFORE:AFTER" "$_sc_cmp_bad"
-assert_contains "skills-cost --compare foo: exit 1" "rc=1" "$_sc_cmp_bad"
+assert_contains "skills-cost --compare foo: exit 2" "rc=2" "$_sc_cmp_bad"
 _sc_cmp_zero=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 0:30 2>&1; echo "rc=$?")
-assert_contains "skills-cost --compare 0:30: rejected (exit 1)" "rc=1" "$_sc_cmp_zero"
+assert_contains "skills-cost --compare 0:30: rejected (exit 2)" "rc=2" "$_sc_cmp_zero"
 
 # Regression: --compare --json on an empty cache must still be valid JSON with
 # rows:[] (session-close Phase 2.7 parses it) — an early text-only return here
@@ -372,19 +392,26 @@ assert_contains "skills-cost --compare empty: no-comparable-activity line" "No c
 # ── Flag robustness: a value-flag as the LAST arg must not silently exit ──────
 # `--compare` with no window consumed $@, then the loop's final `shift` tripped
 # exit 1 under set -e — a silent failure with no output. Now: actionable message
-# + exit 1. `--days` with no value falls back to its default instead of crashing.
+# + rc 2 (the usage-error code).
+#
+# `--days` with no value used to fall back to the 30-day default and exit 0 —
+# a silent lie, since the user clearly meant to narrow the window. Since the
+# migration onto _insights_window it is the same "needs a value" error every
+# other window command gives.
 _sc_cmp_noarg=$(bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 2>&1 || true)
 assert_contains "skills-cost --compare (no arg): actionable message" "needs BEFORE:AFTER" "$_sc_cmp_noarg"
 bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare >/dev/null 2>&1 && _sc_cmp_narc=0 || _sc_cmp_narc=$?
-assert_eq "skills-cost --compare (no arg): exits non-zero (not a silent crash)" "1" "$_sc_cmp_narc"
-CLAUDII_CACHE_DIR="$_SC_CMPE_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --days >/dev/null 2>&1 && _sc_d_narc=0 || _sc_d_narc=$?
-assert_eq "skills-cost --days (no value): falls back, no silent crash" "0" "$_sc_d_narc"
-unset _sc_cmp_noarg _sc_cmp_narc _sc_d_narc
+assert_eq "skills-cost --compare (no arg): exits 2 (not a silent crash)" "2" "$_sc_cmp_narc"
+_sc_d_nout=$(CLAUDII_CACHE_DIR="$_SC_CMPE_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --days 2>&1; echo "rc=$?")
+assert_contains "skills-cost --days (no value): actionable error, not a silent 30d fallback" \
+  "needs a value" "$_sc_d_nout"
+assert_contains "skills-cost --days (no value): exit 2" "rc=2" "$_sc_d_nout"
+unset _sc_cmp_noarg _sc_cmp_narc _sc_d_nout
 
 unset _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
 unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
-      _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc \
+      _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc _sc_d_narc \
       _sc_bad_out _sc_zero_out _sc_mcp_out _sc_mcp_rc _sc_mcp_prefix _sc_mcp_skills \
       _sc_model_out _sc_model_split _sc_model_json _sc_model_dom _sc_model_mix

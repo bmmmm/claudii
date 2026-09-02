@@ -100,9 +100,9 @@ assert_contains "tokens year: resolves to 365 days"  "last 365 days"  "$_TOK_YEA
 # ── Unknown window token → actionable error, not silent fall-through ──
 _TOK_BAD=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tokens lastweek 2>&1; echo "rc=$?")
-assert_contains "tokens lastweek: names the bad token"  "unknown tokens argument: lastweek"  "$_TOK_BAD"
+assert_contains "tokens lastweek: names the bad token"  "claudii tokens: unknown option: lastweek"  "$_TOK_BAD"
 assert_contains "tokens lastweek: suggests valid windows" "today|7d|30d|year"  "$_TOK_BAD"
-assert_contains "tokens lastweek: exit 1"  "rc=1"  "$_TOK_BAD"
+assert_contains "tokens lastweek: exit 2"  "rc=2"  "$_TOK_BAD"
 
 # ── Empty cache renders the empty-state line ──
 _TOK_EPROJ="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_EPROJ")
@@ -115,7 +115,7 @@ assert_contains "tokens (empty): empty-state message" "No insight data" "$_TOK_E
 _TOK_DV=$(CLAUDE_PROJECTS_DIR="$_TOK_PROJ" CLAUDII_CACHE_DIR="$_TOK_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" tokens --days foo 2>&1; echo "rc=$?")
 assert_contains "tokens --days foo: actionable error" "positive integer" "$_TOK_DV"
-assert_contains "tokens --days foo: exit 1" "rc=1" "$_TOK_DV"
+assert_contains "tokens --days foo: exit 2" "rc=2" "$_TOK_DV"
 assert_not_contains "tokens --days foo: no misleading no-data message" "No insight data" "$_TOK_DV"
 
 # ── --help short-circuits before any data access ──
