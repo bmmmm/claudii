@@ -96,6 +96,49 @@ _in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
 _rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
 
+# _spawn_refresher <pidfile> <ttl> <cmd...> — the one dedup path for every
+# background refresher this script forks (cc-update/ci/status/bumpii). Reads
+# <pidfile>; if it names a live, still-fresh (< ttl seconds old) PID, another
+# refresh is already in flight and this call is a no-op. Otherwise it forks
+# <cmd...> in the standard `( cmd & )` subshell (required so the child is
+# fully detached — see docs/gotchas.md #4 on the PID leak a bare `cmd &`
+# causes) and, crucially, writes to <pidfile> BEFORE that fork, not after.
+#
+# Two different things get written to the same <pidfile>, and both matter:
+#   - INTENT (written HERE, synchronously, pre-fork): this statusline
+#     process's own $$. It is not the child's PID — at this point the child
+#     doesn't exist yet, so its real PID is unknown — it only stakes a claim
+#     that a spawn is about to happen. This is what closes the original
+#     race: the child used to write the pidfile itself only after it had
+#     already started, leaving a window where two near-simultaneous renders
+#     both saw an empty/stale file and both spawned. Because the write here
+#     happens before the fork, a second render checking the file at ANY
+#     point afterwards — even microseconds later — finds a fresh, alive PID
+#     and stands down.
+#   - LIVENESS (written by the CHILD itself, after it actually starts — see
+#     the `--pid-file` handling in claudii-status / claudii-ci-refresh /
+#     claudii-cc-update-refresh / claudii-bumpii-refresh) overwrites the
+#     intent marker with the child's real PID, which is what later renders
+#     keep validating via `kill -0` for as long as the refresh runs.
+# Do not delete either write as "redundant" with the other: intent closes
+# the fork race, liveness tracks the worker once it exists.
+_spawn_refresher() {
+  local _sr_pidfile="$1" _sr_ttl="$2"
+  shift 2
+  local _sr_pid="" _sr_fresh=0
+  [[ -f "$_sr_pidfile" ]] && { _sr_pid=$(<"$_sr_pidfile"); } 2>/dev/null
+  if [[ "$_sr_pid" =~ ^[0-9]+$ ]] && kill -0 "$_sr_pid" 2>/dev/null; then
+    local _sr_mt
+    _sr_mt=$(stat -f%m "$_sr_pidfile" 2>/dev/null || stat -c%Y "$_sr_pidfile" 2>/dev/null || echo 0)
+    [[ "$_sr_mt" =~ ^[0-9]+$ ]] || _sr_mt=0
+    (( _now - _sr_mt < _sr_ttl )) && _sr_fresh=1
+  fi
+  if (( ! _sr_fresh )); then
+    printf '%s\n' "$$" > "$_sr_pidfile" 2>/dev/null
+    ( "$@" >/dev/null 2>&1 & )
+  fi
+}
+
 # ── Width discipline ─────────────────────────────────────────────────────────
 # Three independent mechanisms, applied in this order, because a statusline
 # that wraps is worse than one that says less:
@@ -1137,14 +1180,8 @@ if _in_layout cc-version; then
   _ccup_mtime=$(stat -f%m "$_ccup_cache" 2>/dev/null || stat -c%Y "$_ccup_cache" 2>/dev/null || echo 0)
   if (( _now - _ccup_mtime > _ccup_ttl )); then
     _ccuppid_file="$_cache_dir/cc-update-refresh.pid"
-    _ccuppid=""
-    [[ -f "$_ccuppid_file" ]] && { _ccuppid=$(<"$_ccuppid_file"); } 2>/dev/null
-    _ccup_fresh=0
-    if [[ "$_ccuppid" =~ ^[0-9]+$ ]] && kill -0 "$_ccuppid" 2>/dev/null; then
-      _ccup_mt=$(stat -f%m "$_ccuppid_file" 2>/dev/null || stat -c%Y "$_ccuppid_file" 2>/dev/null || echo 0)
-      (( _now - _ccup_mt < 30 )) && _ccup_fresh=1
-    fi
-    (( _ccup_fresh )) || ( "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file" >/dev/null 2>&1 & )
+    _spawn_refresher "$_ccuppid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file"
   fi
 fi
 
@@ -1359,16 +1396,10 @@ if _in_layout ci && [[ -n "$_ci_cache" ]]; then
   [[ "$_ci_mtime" =~ ^[0-9]+$ ]] || _ci_mtime=0
   if (( _now - _ci_mtime > _ci_ttl )); then
     _cipid_file="$_cache_dir/ci-refresh-${_HASH}.pid"
-    _cipid=""
-    [[ -f "$_cipid_file" ]] && { _cipid=$(<"$_cipid_file"); } 2>/dev/null
-    _ci_fresh=0
-    if [[ "$_cipid" =~ ^[0-9]+$ ]] && kill -0 "$_cipid" 2>/dev/null; then
-      _cip_mt=$(stat -f%m "$_cipid_file" 2>/dev/null || stat -c%Y "$_cipid_file" 2>/dev/null || echo 0)
-      (( _now - _cip_mt < 120 )) && _ci_fresh=1
-    fi
-    (( _ci_fresh )) || ( "$CLAUDII_HOME/bin/claudii-ci-refresh" --quiet \
-        --pid-file "$_cipid_file" --dir "$_ci_dir" --branch "$_git_head" \
-        --out "$_ci_cache" >/dev/null 2>&1 & )
+    _spawn_refresher "$_cipid_file" 120 \
+      "$CLAUDII_HOME/bin/claudii-ci-refresh" --quiet \
+      --pid-file "$_cipid_file" --dir "$_ci_dir" --branch "$_git_head" \
+      --out "$_ci_cache"
   fi
 fi
 
@@ -1537,16 +1568,10 @@ if _in_layout claude-status; then
   _sc_age=$(( _now - _sc_mtime ))
   if (( _sc_age > _sc_ttl )); then
     _spid_file="$_cache_dir/status.pid"
-    _spid=""
-    [[ -f "$_spid_file" ]] && { _spid=$(<"$_spid_file"); } 2>/dev/null
-    _sp_fresh=0
-    if [[ "$_spid" =~ ^[0-9]+$ ]] && kill -0 "$_spid" 2>/dev/null; then
-      # PID alive — trust it only while the PID file is recent (< 30s), same
-      # recycling guard as the zsh spawner.
-      _sp_mt=$(stat -f%m "$_spid_file" 2>/dev/null || stat -c%Y "$_spid_file" 2>/dev/null || echo 0)
-      (( _now - _sp_mt < 30 )) && _sp_fresh=1
-    fi
-    (( _sp_fresh )) || ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_spid_file" >/dev/null 2>&1 & )
+    # Same 30s recycling window as the zsh spawner (lib/statusline.zsh) that
+    # also refreshes this cache.
+    _spawn_refresher "$_spid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_spid_file"
   fi
 fi
 
@@ -1705,14 +1730,8 @@ if _in_layout bumpii; then
   fi
   if (( _bp_age > _bp_ttl || _bp_brew )); then
     _bpid_file="$_cache_dir/bumpii-refresh.pid"
-    _bpid=""
-    [[ -f "$_bpid_file" ]] && { _bpid=$(<"$_bpid_file"); } 2>/dev/null
-    _bp_fresh=0
-    if [[ "$_bpid" =~ ^[0-9]+$ ]] && kill -0 "$_bpid" 2>/dev/null; then
-      _bp_mt=$(stat -f%m "$_bpid_file" 2>/dev/null || stat -c%Y "$_bpid_file" 2>/dev/null || echo 0)
-      (( _now - _bp_mt < 30 )) && _bp_fresh=1
-    fi
-    (( _bp_fresh )) || ( "$CLAUDII_HOME/bin/claudii-bumpii-refresh" --quiet --pid-file "$_bpid_file" >/dev/null 2>&1 & )
+    _spawn_refresher "$_bpid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-bumpii-refresh" --quiet --pid-file "$_bpid_file"
   fi
 fi
 

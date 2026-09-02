@@ -60,6 +60,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# LIVENESS marker — our own real PID, so a later reader's `kill -0` reflects
+# this process actually running. Overwrites the INTENT marker the spawning
+# claudii-cc-statusline wrote (its own $$) into this same file before the
+# fork — that earlier write is what closed the pre-fork race; see
+# _spawn_refresher there for the full story. Both writes are load-bearing,
+# don't drop either as redundant with the other.
 [[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }

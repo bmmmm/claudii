@@ -68,6 +68,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# LIVENESS marker — our own real PID, so a later reader's `kill -0` reflects
+# this process actually running. This file is shared by two spawners:
+# bin/claudii-cc-statusline's _spawn_refresher writes an INTENT marker (its
+# own $$) into it before forking us — that write is what closes the
+# pre-fork dedup race, see _spawn_refresher there for the full story — and
+# we overwrite it here once we actually start. lib/statusline.zsh's own
+# _claudii_status_spawn also forks us against this same file but (still)
+# has no such pre-fork write; that gap is tracked separately, out of scope
+# here. Either way, don't drop this write as redundant with the intent one.
 [[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
 
 models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
