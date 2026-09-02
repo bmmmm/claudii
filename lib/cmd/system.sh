@@ -66,7 +66,7 @@ _cmd_claudestatus() {
       fi
       ;;
     *)
-      echo "Usage: claudii claudestatus [on|off] — run 'claudii claudestatus on' or 'claudii claudestatus off'" >&2; exit 1
+      echo "Usage: claudii claudestatus [on|off] — run 'claudii claudestatus on' or 'claudii claudestatus off'" >&2; return 1
       ;;
   esac
 }
@@ -127,7 +127,7 @@ _cmd_insomnii() {
       printf "    ${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET} clone + install the binary from %s\n" "${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
       ;;
     *)
-      echo "Usage: claudii insomnii [on|off|auto|status|install]" >&2; exit 1
+      echo "Usage: claudii insomnii [on|off|auto|status|install]" >&2; return 1
       ;;
   esac
 }
@@ -154,7 +154,7 @@ _cmd_session_dashboard() {
       fi
       ;;
     *)
-      echo "Unknown subcommand: ${2} — run 'claudii session-dashboard [on|off]'" >&2; exit 1
+      echo "Unknown subcommand: ${2} — run 'claudii session-dashboard [on|off]'" >&2; return 1
       ;;
   esac
 }
@@ -329,9 +329,9 @@ _status_history() {
   _days=""
   if [[ "${1:-}" == "--days" ]]; then
     _days="${2:-}"
-    [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${2:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; exit 1; }
+    [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${2:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; return 1; }
   elif [[ -n "${1:-}" ]]; then
-    echo "Unknown status --history option: ${1} — use: claudii status --history [--days N]" >&2; exit 1
+    echo "Unknown status --history option: ${1} — use: claudii status --history [--days N]" >&2; return 1
   fi
   _cutoff=0
   if [[ -n "$_days" ]]; then
@@ -380,9 +380,9 @@ _cmd_status() {
       interval="${2:-}"
       # Strip trailing 'm' for numeric validation (prevents injection in arithmetic).
       _int_num="${interval%m}"
-      [[ "$_int_num" =~ ^[0-9]+$ ]] || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1; }
+      [[ "$_int_num" =~ ^[0-9]+$ ]] || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; return 1; }
       [[ "$interval" == *m ]] && seconds=$(( _int_num * 60 )) || seconds="$_int_num"
-      (( seconds >= 30 )) || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; exit 1; }
+      (( seconds >= 30 )) || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; return 1; }
       _jq_update "$CONFIG" --argjson v "$seconds" '.status.cache_ttl = $v'
       echo "Refresh interval: ${interval} (${seconds}s)"
       ;;
@@ -395,7 +395,7 @@ _cmd_status() {
       _status_history "${3:-}" "${4:-}"
       ;;
     *)
-      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; exit 1
+      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; return 1
       ;;
   esac
 }
@@ -441,7 +441,7 @@ _cmd_cc_statusline() {
       _preset_lines=$(_cc_statusline_preset_json "$_preset_name") || {
         echo "Unknown preset: $_preset_name" >&2
         echo "  → claudii cc-statusline preset   (list available)" >&2
-        exit 1
+        return 1
       }
       _cfg_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
       if [[ ! -f "$_cfg_file" ]]; then
@@ -454,7 +454,7 @@ _cmd_cc_statusline() {
       ;;
     on)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; return 1
       fi
       # Pick the right statusLine command. When cc-insomnii is installed AND
       # delegation isn't explicitly off, use the wrapper so insomnii always
@@ -483,7 +483,7 @@ _cmd_cc_statusline() {
       ;;
     off)
       if [[ ! -f "$SETTINGS" ]]; then
-        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; exit 1
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; return 1
       fi
       if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
         _jq_update "$SETTINGS" 'del(.statusLine)'
@@ -519,7 +519,7 @@ _cmd_cc_statusline() {
       fi
       ;;
     *)
-      echo "Usage: claudii cc-statusline [on|off|preset <name>]" >&2; exit 1
+      echo "Usage: claudii cc-statusline [on|off|preset <name>]" >&2; return 1
       ;;
   esac
 }
@@ -535,13 +535,13 @@ _cmd_update() {
   fi
   if [[ -n "$_brew_prefix" && "$CLAUDII_HOME" == "$_brew_prefix"/* ]]; then
     echo "claudii: Homebrew install detected"
-    brew upgrade claudii || { printf "claudii: brew upgrade failed\n" >&2; exit 1; }
+    brew upgrade claudii || { printf "claudii: brew upgrade failed\n" >&2; return 1; }
   elif git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
     echo "claudii: Git install detected"
-    git -C "$CLAUDII_HOME" pull --ff-only || { printf "claudii: git pull failed\n" >&2; exit 1; }
+    git -C "$CLAUDII_HOME" pull --ff-only || { printf "claudii: git pull failed\n" >&2; return 1; }
   else
     echo "claudii: cannot determine install method — try: brew upgrade claudii  or  cd $CLAUDII_HOME && git pull" >&2
-    exit 1
+    return 1
   fi
   printf "${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
 }
@@ -684,7 +684,7 @@ _cmd_doctor() {
     done
     _json_arr+="]"
     echo "$_json_arr" | jq .
-    _doctor_failed && exit 1 || exit 0
+    _doctor_failed && return 1 || return 0
   fi
 
   ok="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}"

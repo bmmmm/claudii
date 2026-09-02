@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **Theme never reached nine commands** — `gc`, `pin`, `unpin`, `vibemap`, `vpnii`, `cc-statusline`, `update`, `version`, `changelog` never called `_cfg_init`, so they rendered in the hardcoded default palette regardless of `theme.name`. The dispatcher now loads config+theme once, centrally, via `_claudii_boot` before it dispatches — `version` is excluded on purpose, since it never emits color and the theme load costs a jq fork it had no use for. (`bin/claudii`)
+- **`exit` in sourced command handlers could take the whole process down mid-command** — `lib/cmd/config.sh` and `lib/cmd/system.sh` are `source`d into `bin/claudii` (and sourceable standalone), so an `exit 1` inside a `_cmd_*` handler terminated the caller outright instead of failing just that command — skipping any cleanup a caller further up the stack still owed (e.g. a running spinner). All 33 call sites now `return` instead. (`lib/cmd/config.sh`, `lib/cmd/system.sh`)
+
 ---
 
 ## [v0.27.0] — 2026-09-02
