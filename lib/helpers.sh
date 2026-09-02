@@ -608,3 +608,143 @@ _week_window() {
   _WW_START=$(( _WW_RESET - 604800 ))
   return 0
 }
+
+# ── status-models cache — the one bash parser ────────────────────────────────
+#
+# bin/claudii-status writes ~/.cache/claudii/status-models as flat key=value:
+#
+#   opus=ok | sonnet=degraded | haiku=down   one line per tracked model family
+#   _incident=investigating|identified|monitoring   current incident stage
+#   _incident_started=<epoch>                       when that incident opened
+#   _api=unreachable                                status.claude.com itself is down
+#
+# Every consumer used to re-derive the path and re-parse the file. One of them
+# (`claudii status`, lib/cmd/system.sh) forked a `grep` AND a `cut` per model
+# plus two more greps for the adaptive-TTL branch — 10 forks to read five lines.
+# These four functions replaced all of that. The two statusline hot paths
+# (bin/claudii-cc-statusline, lib/statusline.zsh) still carry their own inline
+# copies on purpose — see tests/test_status_cache_agreement.sh, which pins them
+# against this one instead of the "kept in sync" comments that used to.
+#
+# NO associative array: /bin/bash 3.2 (macOS, and the CI leg) silently degrades
+# `declare -A` to an indexed array, so the obvious key=value map would collapse
+# every key onto arr[0], last write wins. Parallel indexed arrays instead —
+# the shape _session_build_map already uses.
+#
+# NO grep: `producer | grep -q` returns 141 under `pipefail` even when it
+# matched (docs/gotchas.md #31), and model health is exactly where that bit —
+# a model kept reading `ok` while it was down. Bash pattern matching only: no
+# pipe, no fork, nothing to misreport.
+
+# _status_cache_file [path] — resolve the cache path into _SC_FILE.
+# A function rather than a `$(...)` helper: command substitution would fork a
+# subshell, which is the cost this whole block exists to remove.
+_status_cache_file() {
+  _SC_FILE="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models}"
+}
+
+# _status_cache_read [path] — read the cache once. Returns 1 when it is missing
+# or empty (a normal state before the first fetch), 0 otherwise. Sets:
+#   _SC_FILE              the path actually read
+#   _SC_RAW               full file content
+#   _SC_KEYS[] _SC_VALS[] model families in file order (internal _* keys excluded)
+#   _SC_COUNT             number of model entries
+#   _SC_INCIDENT          incident stage ("" when none)
+#   _SC_INCIDENT_STARTED  incident start epoch ("" when none)
+#   _SC_API               "unreachable" when the status API could not be reached
+#   _SC_ANY_ISSUE         1 when any model is down or degraded
+# The writer emits at most one _incident line; first-wins here matches what
+# lib/cmd/overview.sh did before and keeps a hand-edited cache deterministic.
+_status_cache_read() {
+  _status_cache_file "${1:-}"
+  _SC_RAW=""; _SC_KEYS=(); _SC_VALS=(); _SC_COUNT=0
+  _SC_INCIDENT=""; _SC_INCIDENT_STARTED=""; _SC_API=""; _SC_ANY_ISSUE=0
+  [[ -f "$_SC_FILE" ]] || return 1
+  # $(<file) is a bash builtin read, not a `cat` fork.
+  { _SC_RAW=$(<"$_SC_FILE"); } 2>/dev/null
+  [[ -n "$_SC_RAW" ]] || return 1
+  local _k _v
+  # Here-string, not a pipe: a piped `while read` runs in a subshell and every
+  # assignment below would die with it.
+  while IFS='=' read -r _k _v; do
+    [[ -z "$_k" ]] && continue
+    case "$_k" in
+      _incident)         [[ -n "$_SC_INCIDENT" ]] || _SC_INCIDENT="$_v"; continue ;;
+      _incident_started) [[ -n "$_SC_INCIDENT_STARTED" ]] || _SC_INCIDENT_STARTED="$_v"; continue ;;
+      _api)              [[ -n "$_SC_API" ]] || _SC_API="$_v"; continue ;;
+      _*)                continue ;;
+    esac
+    _SC_KEYS[_SC_COUNT]="$_k"
+    _SC_VALS[_SC_COUNT]="$_v"
+    _SC_COUNT=$(( _SC_COUNT + 1 ))
+    case "$_v" in down|degraded) _SC_ANY_ISSUE=1 ;; esac
+  done <<< "$_SC_RAW"
+  return 0
+}
+
+# _status_cache_state <model> — that model's state into _SC_STATE. Returns 1
+# (and empties _SC_STATE) when the cache does not list it; an unlisted model is
+# assumed working, so callers treat "" as healthy rather than as an error.
+_status_cache_state() {
+  local _i=0
+  _SC_STATE=""
+  while (( _i < _SC_COUNT )); do
+    if [[ "${_SC_KEYS[_i]}" == "$1" ]]; then
+      _SC_STATE="${_SC_VALS[_i]}"
+      return 0
+    fi
+    _i=$(( _i + 1 ))
+  done
+  return 1
+}
+
+# _status_cache_verdict [csv-model-list] — the collapsed-health decision every
+# ClaudeStatus renderer makes. Empty/absent list = every model in the cache
+# (what the overview does); a list = exactly those, healthy-if-unlisted (what
+# the two statuslines do, keyed on statusline.models). That difference is
+# deliberate and pinned in tests/test_status_cache_agreement.sh.
+# Requires _status_cache_read. Sets:
+#   _SCV_TOTAL _SCV_OK _SCV_DOWN _SCV_DEGR   counts
+#   _SCV_PROBLEMS[]   "<model>=<state>" for the down/degraded ones, in order
+#   _SCV_WORST        "down" | "degraded" | ""
+#   _SCV_COLLAPSE     none | ok | down | degraded | problems
+_status_cache_verdict() {
+  local _list="${1:-}" _m _i
+  local -a _mv=()
+  _SCV_TOTAL=0; _SCV_OK=0; _SCV_DOWN=0; _SCV_DEGR=0
+  _SCV_PROBLEMS=(); _SCV_WORST=""; _SCV_COLLAPSE="none"
+  if [[ -n "$_list" ]]; then
+    IFS=',' read -ra _mv <<< "$_list"
+  else
+    _i=0
+    while (( _i < _SC_COUNT )); do
+      _mv[_i]="${_SC_KEYS[_i]}"
+      _i=$(( _i + 1 ))
+    done
+  fi
+  for _m in ${_mv[@]+"${_mv[@]}"}; do
+    _m="${_m// /}"
+    [[ -z "$_m" ]] && continue
+    _SCV_TOTAL=$(( _SCV_TOTAL + 1 ))
+    _status_cache_state "$_m" || _SC_STATE=""
+    case "$_SC_STATE" in
+      down)
+        _SCV_DOWN=$(( _SCV_DOWN + 1 )); _SCV_WORST="down"
+        _SCV_PROBLEMS+=("${_m}=down") ;;
+      degraded)
+        _SCV_DEGR=$(( _SCV_DEGR + 1 ))
+        # `if`, not `[[ … ]] && …`: helpers.sh runs under bin/claudii's set -e.
+        if [[ "$_SCV_WORST" != "down" ]]; then _SCV_WORST="degraded"; fi
+        _SCV_PROBLEMS+=("${_m}=degraded") ;;
+      *)
+        _SCV_OK=$(( _SCV_OK + 1 )) ;;
+    esac
+  done
+  if   (( _SCV_TOTAL == 0 ));            then _SCV_COLLAPSE="none"
+  elif (( _SCV_OK   == _SCV_TOTAL ));    then _SCV_COLLAPSE="ok"
+  elif (( _SCV_DOWN == _SCV_TOTAL ));    then _SCV_COLLAPSE="down"
+  elif (( _SCV_DEGR == _SCV_TOTAL ));    then _SCV_COLLAPSE="degraded"
+  else                                        _SCV_COLLAPSE="problems"
+  fi
+  return 0
+}

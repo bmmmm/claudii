@@ -31,19 +31,21 @@ _fmt_ms() {
 # One-line API health from the ClaudeStatus cache (bin/claudii-status writes it).
 # key=value lines: opus=ok|degraded|down. Absent file -> hint.
 _perf_health_line() {
-  local cdir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local f="$cdir/status-models"
   local green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}" red="${CLAUDII_CLR_RED}"
   local dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}" accent="${CLAUDII_CLR_ACCENT}"
-  if [[ ! -s "$f" ]]; then
+  # Shared parser (lib/helpers.sh): resolves the path, reads the file once and
+  # drops the internal _* keys (_incident, _incident_started, _api). Returns 1
+  # when the cache is missing or empty — the same "no cache yet" state the
+  # `[[ ! -s ]]` guard used to check for itself.
+  if ! _status_cache_read; then
     printf '  %sAPI health%s   %s(no status cache — run: claudii status)%s\n' \
       "$accent" "$reset" "$dim" "$reset"
     return
   fi
-  local line m st col parts="" lbl
-  while IFS='=' read -r m st; do
-    [[ -z "$m" ]] && continue
-    [[ "$m" == _* ]] && continue   # skip internal keys (_incident, _incident_started, ...)
+  local i=0 m st col parts="" lbl
+  while (( i < _SC_COUNT )); do
+    m="${_SC_KEYS[i]}"; st="${_SC_VALS[i]}"
+    i=$(( i + 1 ))
     case "$st" in
       ok)        col="$green" ;;
       degraded)  col="$yellow" ;;
@@ -54,7 +56,7 @@ _perf_health_line() {
     # (lib/cmd/overview.sh, _ov_render_services) — one map, one string.
     lbl=$(_insights_model_label "$m")
     parts+="${col}●${reset} ${lbl} ${dim}${st}${reset}   "
-  done < "$f"
+  done
   parts="${parts%   }"
   printf '  %sAPI health%s   %s\n' "$accent" "$reset" "$parts"
 }

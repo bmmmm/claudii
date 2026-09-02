@@ -211,10 +211,15 @@ _status_render() {
   if [[ ! -f "$cache_file" ]]; then
     printf '  no cache — run: claudii status 5m\n'
   else
+    # One read for the whole render (_status_cache_read, lib/helpers.sh). This
+    # loop used to fork `grep`+`cut` PER MODEL and the TTL branch below two more
+    # greps — 10 forks on the 4-model default to read five lines of key=value.
+    _status_cache_read "$cache_file" || true
     _status_any_issue=false
     for _sm in "${_status_models[@]}"; do
       _sm="${_sm// /}"
-      _sm_state=$(grep "^${_sm}=" "$cache_file" 2>/dev/null | cut -d= -f2 || true)
+      _status_cache_state "$_sm" || _SC_STATE=""
+      _sm_state="$_SC_STATE"
       _sm_label="$(tr '[:lower:]' '[:upper:]' <<< "${_sm:0:1}")${_sm:1}"
       case "${_sm_state:-unknown}" in
         ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
@@ -241,8 +246,8 @@ _status_render() {
     # Display the effective interval — the bare config value promised
     # "every 15m" while the healthy-state refresh actually ran at 30m.
     _eff_ttl=$_ttl_val
-    if ! grep -q '^_api=unreachable$' "$cache_file" 2>/dev/null; then
-      if grep -q '=down\|=degraded' "$cache_file" 2>/dev/null; then
+    if [[ "$_SC_API" != "unreachable" ]]; then
+      if (( _SC_ANY_ISSUE )); then
         _eff_ttl=$(( _ttl_val / 5 ))
         (( _eff_ttl < 60 )) && _eff_ttl=60
       else
@@ -324,7 +329,7 @@ _status_render_incidents() {
 # shown by bare `claudii status`), newest-first. Args: the option words after
 # --history (i.e. "$3" "$4" from _cmd_status).
 _status_history() {
-  cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+  _status_cache_file; cache_file="$_SC_FILE"
   _hist_file="${cache_file%/*}/status-history.tsv"
   _days=""
   if [[ "${1:-}" == "--days" ]]; then
@@ -387,7 +392,7 @@ _cmd_status() {
       echo "Refresh interval: ${interval} (${seconds}s)"
       ;;
     "")
-      cache_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+      _status_cache_file; cache_file="$_SC_FILE"
       "$CLAUDII_HOME/bin/claudii-status" --quiet || true
       _status_render
       ;;

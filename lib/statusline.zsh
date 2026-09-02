@@ -132,8 +132,15 @@ function _claudii_statusline_render {
 
   # Collapsed health: all-healthy → a single "claude ✓" (an unlisted model is
   # assumed working); only down/degraded models get named; a uniform all-down /
-  # all-degraded row collapses to one "claude" glyph. Kept in sync with
-  # bin/claudii-cc-statusline and lib/cmd/overview.sh.
+  # all-degraded row collapses to one "claude" glyph.
+  #
+  # A DELIBERATE third copy of lib/helpers.sh's _status_cache_read /
+  # _status_cache_verdict. It cannot call them: this is zsh, helpers.sh is bash,
+  # and sourcing a bash library into precmd would cost a prompt. So the
+  # agreement is asserted rather than commented — tests/test_status_cache_agreement.sh
+  # renders one cache through this function, through bin/claudii-cc-statusline
+  # and through the helper, and compares. Change the classification here and it
+  # goes red.
   local -i _sl_total=0 _sl_ok=0 _sl_down=0 _sl_degr=0
   local _sl_problems=""
   for model in "${models[@]}"; do
@@ -170,8 +177,8 @@ function _claudii_statusline_render {
   # Incident indicator — when an incident exists but no tracked model is
   # actually affected (the per-model glyphs are all ✓), show a neutral note
   # glyph instead of the stage-colored alarm; otherwise the stage color
-  # reflects the incident stage. Kept in sync with bin/claudii-cc-statusline
-  # and lib/cmd/overview.sh.
+  # reflects the incident stage. Same two fields the helper exposes as
+  # _SC_INCIDENT / _SC_ANY_ISSUE; gated by tests/test_status_cache_agreement.sh.
   local incident_sym="" _models_affected=0 _incident_stage=""
   if [[ $'\n'"$cache_content" == *$'\n'*"=down"* || $'\n'"$cache_content" == *$'\n'*"=degraded"* ]]; then
     _models_affected=1

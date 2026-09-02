@@ -49,13 +49,18 @@ case "${UNRESOLVED_URL}" in
   *) printf "error: UNRESOLVED_URL must use https:// (got: %s)\n" "$UNRESOLVED_URL" >&2; exit 1 ;;
 esac
 
-_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 _tmp_status=$(mktemp "${CACHE_STATUS}.XXXXXX") || { printf 'claudii-status: mktemp failed\n' >&2; exit 1; }
 _tmp_incidents=$(mktemp "${CACHE_INCIDENTS}.XXXXXX") || { printf 'claudii-status: mktemp failed\n' >&2; exit 1; }
 trap 'rm -f "$_tmp_status" "$_tmp_incidents"' EXIT
 
 source "${CLAUDII_HOME}/lib/visual.sh"
 source "${CLAUDII_HOME}/lib/log.sh"
+# helpers.sh for _status_cache_read/_status_cache_state — the writer read its
+# own cache back with a `grep`+`cut` per model in two places. It also brings
+# _mtime (this script used to define its own identical copy) and, via
+# helpers.sh, lib/timefmt.sh. Cheap next to the curl this script exists to run.
+# shellcheck source=lib/helpers.sh
+source "${CLAUDII_HOME}/lib/helpers.sh"
 
 quiet=false
 _pid_file=""
@@ -89,7 +94,7 @@ _claudii_log debug "Unresolved: $UNRESOLVED_URL | RSS: $RSS_URL | TTL: ${CACHE_T
 
 # ── Cache check ───────────────────────────────────────────────────────────────
 
-if [[ -f "$CACHE_STATUS" ]]; then
+if _status_cache_read "$CACHE_STATUS"; then
   cache_age=$(( $(date +%s) - $(_mtime "$CACHE_STATUS") ))
   # Adaptive gate — mirror the refreshers' shortened cadence (lib/statusline.zsh
   # precmd + bin/claudii-cc-statusline): when the last result had a model
@@ -99,22 +104,24 @@ if [[ -f "$CACHE_STATUS" ]]; then
   # recovered model stayed "down" in the RPROMPT for up to base TTL. The
   # _api=unreachable marker keeps the base TTL (no point hammering a dead API).
   eff_ttl=$CACHE_TTL
-  if ! grep -qE '^_api=unreachable$' "$CACHE_STATUS" 2>/dev/null \
-     && grep -qE '=(down|degraded)$' "$CACHE_STATUS" 2>/dev/null; then
+  if [[ "$_SC_API" != "unreachable" ]] && (( _SC_ANY_ISSUE )); then
     eff_ttl=$(( CACHE_TTL / 5 ))
     (( eff_ttl < 60 )) && eff_ttl=60
   fi
   if (( cache_age < eff_ttl )); then
     _claudii_log debug "Cache hit (${cache_age}s < TTL ${eff_ttl}s, base ${CACHE_TTL}s)"
     if ! $quiet; then
-      while IFS='=' read -r model state; do
+      _i=0
+      while (( _i < _SC_COUNT )); do
+        model="${_SC_KEYS[_i]}"; state="${_SC_VALS[_i]}"
+        _i=$(( _i + 1 ))
         case "$state" in
           down)     echo -e "${CLAUDII_CLR_RED}✗ ${model} down${CLAUDII_CLR_RESET}" >&2 ;;
           degraded) echo -e "${CLAUDII_CLR_YELLOW}~ ${model} degraded${CLAUDII_CLR_RESET}" >&2 ;;
         esac
-      done < "$CACHE_STATUS"
+      done
     fi
-    grep -qE '=(down|degraded)$' "$CACHE_STATUS" 2>/dev/null && exit 1
+    (( _SC_ANY_ISSUE )) && exit 1
     exit 0
   fi
   _claudii_log debug "Cache stale (${cache_age}s > TTL ${eff_ttl}s, base ${CACHE_TTL}s)"
@@ -124,16 +131,20 @@ fi
 
 # _log_transitions <new-status-file> — append one TSV line per model whose
 # state changed vs. the current cache: epoch<TAB>model<TAB>old<TAB>new.
-# Skipped entirely on first run (no previous cache → no transition).
+# Skipped entirely on first run (no previous cache → no transition) — and, since
+# _status_cache_read reports missing and empty alike, on a truncated cache too:
+# an empty file knows nothing to have transitioned FROM.
 # Internal _* keys (_incident=, _api=) are not models and never logged.
 _log_transitions() {
   local _new="$1" _ts _m _new_state _old_state
-  [[ -f "$CACHE_STATUS" ]] || return 0
+  # Load the PREVIOUS cache once (_SC_* now holds the old states) instead of
+  # forking grep+cut per model below; first-line-wins is what `head -1` did.
+  _status_cache_read "$CACHE_STATUS" || return 0
   _ts=$(date +%s)
   while IFS='=' read -r _m _new_state; do
     [[ -z "$_m" || "$_m" == _* ]] && continue
-    _old_state=$(grep "^${_m}=" "$CACHE_STATUS" 2>/dev/null | head -1 | cut -d= -f2)
-    _old_state="${_old_state:-unknown}"
+    _status_cache_state "$_m" || _SC_STATE=""
+    _old_state="${_SC_STATE:-unknown}"
     if [[ "$_old_state" != "$_new_state" ]]; then
       printf '%s\t%s\t%s\t%s\n' "$_ts" "$_m" "$_old_state" "$_new_state" >> "$CACHE_HISTORY"
       _claudii_log info "Transition: ${_m} ${_old_state} → ${_new_state}"
@@ -180,8 +191,12 @@ _write_incidents() {
     && mv -f "$_tmp_status" "$CACHE_STATUS"
 
   local summary="" any_issue=false
+  # Re-read the cache we just wrote — once, not a grep+cut per model.
+  # _log_transitions above left _SC_* holding the PREVIOUS states.
+  _status_cache_read "$CACHE_STATUS" || true
   for m in "${MODELS[@]}"; do
-    ms=$(grep "^${m}=" "$CACHE_STATUS" | cut -d= -f2 || true)
+    _status_cache_state "$m" || _SC_STATE=""
+    ms="$_SC_STATE"
     summary+=" ${m}=${ms}"
     local label; label="$(tr '[:lower:]' '[:upper:]' <<< "${m:0:1}")${m:1}"
     case "$ms" in

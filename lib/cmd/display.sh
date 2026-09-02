@@ -155,7 +155,7 @@ _cmd_explain() {
   cs_enabled=$(_cfgget statusline.enabled)
   cs_models=$(_cfgget statusline.models)
   cs_ttl=$(_cfgget status.cache_ttl)
-  cs_cache="$local_cache/status-models"
+  _status_cache_file; cs_cache="$_SC_FILE"
   if [[ "$cs_enabled" == "true" ]]; then
     cs_state="${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
   else

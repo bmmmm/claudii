@@ -22,6 +22,12 @@
 # lib/visual.sh first: _perf_health_line interpolates the CLAUDII_CLR_* palette
 # unguarded, and run.sh runs test files under `set -u`.
 source "$CLAUDII_HOME/lib/visual.sh" 2>/dev/null
+# helpers.sh too: _perf_health_line reads the status cache through the shared
+# _status_cache_read (lib/helpers.sh). bin/claudii sources it for the real run;
+# a test that sources lib/cmd/*.sh directly has to bring it along, or the
+# health line silently takes its "no status cache" branch and the per-model
+# asserts below compare against an empty render.
+source "$CLAUDII_HOME/lib/helpers.sh" 2>/dev/null
 source "$CLAUDII_HOME/lib/cmd/insights.sh" 2>/dev/null
 source "$CLAUDII_HOME/lib/cmd/overview.sh" 2>/dev/null
 source "$CLAUDII_HOME/lib/cmd/perf.sh" 2>/dev/null

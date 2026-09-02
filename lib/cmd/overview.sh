@@ -519,52 +519,47 @@ _ov_render_services() {
   # one-row and stacked layouts below). Only meaningful when ClaudeStatus is on.
   _ov_model_health=""
   if (( _ov_cs_on )); then
-    _ov_status_cache="$cache_dir/status-models"
-    if [[ -f "$_ov_status_cache" ]]; then
-      # Collapsed health: all-healthy → a single green "claude ✓"; only the
-      # down/degraded models are named (an unlisted model is assumed working);
-      # a uniform all-down / all-degraded set collapses to one "claude" glyph.
-      # Kept in sync with bin/claudii-cc-statusline and lib/statusline.zsh.
-      _ov_total=0; _ov_ok=0; _ov_down=0; _ov_degr=0
-      _ov_problems=""
-      _ov_affected=0
-      _ov_inc=""
-      while IFS='=' read -r _om _os; do
-        # Capture the incident stage in the same pass (was a 2nd grep|head|cut read).
-        [[ "$_om" == "_incident" && -z "$_ov_inc" ]] && _ov_inc="$_os"
-        [[ -z "$_om" || "$_om" == _* ]] && continue
-        # _insights_model_label, NOT the tier collapse: this block and
-        # _perf_health_line (lib/cmd/perf.sh) render the same status-cache
-        # lines, so they call the same function on the same input and the two
-        # strings agree by construction — not just for today's family keys
-        # (opus/sonnet/haiku/fable) but for whatever `statusline.models` holds.
-        _om_cap=$(_insights_model_label "$_om")
-        case "$_os" in
-          ok)       (( ++_ov_total )); (( ++_ov_ok )) ;;
-          degraded) (( ++_ov_total )); (( ++_ov_degr )); _ov_affected=1
-                    _ov_problems+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
-          down)     (( ++_ov_total )); (( ++_ov_down )); _ov_affected=1
-                    _ov_problems+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} " ;;
-        esac
-      done < "$_ov_status_cache"
+    # Collapsed health: all-healthy → a single green "claude ✓"; only the
+    # down/degraded models are named (an unlisted model is assumed working);
+    # a uniform all-down / all-degraded set collapses to one "claude" glyph.
+    # Read and classified by the shared status-cache parser (lib/helpers.sh) —
+    # the two statusline copies compute the same collapse from their own inline
+    # readers, and tests/test_status_cache_agreement.sh holds the three together.
+    if _status_cache_read "$cache_dir/status-models"; then
+      # Empty list = every model the cache names. The two statuslines pass
+      # `statusline.models` instead and assume an unlisted model healthy; that
+      # divergence is deliberate and pinned in the agreement test.
+      _status_cache_verdict ""
       _ov_health_str=""
-      if (( _ov_total > 0 )); then
-        if   (( _ov_ok   == _ov_total )); then _ov_health_str="${CLAUDII_CLR_GREEN}claude ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} "
-        elif (( _ov_down == _ov_total )); then _ov_health_str="${CLAUDII_CLR_RED}claude ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} "
-        elif (( _ov_degr == _ov_total )); then _ov_health_str="${CLAUDII_CLR_YELLOW}claude ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} "
-        else                                   _ov_health_str="$_ov_problems"
-        fi
-      fi
+      case "$_SCV_COLLAPSE" in
+        ok)       _ov_health_str="${CLAUDII_CLR_GREEN}claude ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET} " ;;
+        down)     _ov_health_str="${CLAUDII_CLR_RED}claude ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} " ;;
+        degraded) _ov_health_str="${CLAUDII_CLR_YELLOW}claude ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} " ;;
+        problems)
+          # _insights_model_label, NOT the tier collapse: this block and
+          # _perf_health_line (lib/cmd/perf.sh) render the same status-cache
+          # lines, so they call the same function on the same input and the two
+          # strings agree by construction — not just for today's family keys
+          # (opus/sonnet/haiku/fable) but for whatever `statusline.models` holds.
+          for _ov_p in ${_SCV_PROBLEMS[@]+"${_SCV_PROBLEMS[@]}"}; do
+            _om_cap=$(_insights_model_label "${_ov_p%=*}")
+            if [[ "${_ov_p##*=}" == "down" ]]; then
+              _ov_health_str+="${CLAUDII_CLR_RED}${_om_cap} ${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET} "
+            else
+              _ov_health_str+="${CLAUDII_CLR_YELLOW}${_om_cap} ${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET} "
+            fi
+          done
+          ;;
+      esac
       if [[ -n "$_ov_health_str" ]]; then
         _ov_model_health="  ${CLAUDII_CLR_DIM}[${CLAUDII_CLR_RESET}${_ov_health_str% }${CLAUDII_CLR_DIM}]${CLAUDII_CLR_RESET}"
         # Incident indicator — neutral note glyph when an incident exists but
-        # no tracked model is affected; stage-colored otherwise. In sync with
-        # bin/claudii-cc-statusline and lib/statusline.zsh.
-        # _ov_inc was captured during the read loop above.
-        if [[ -n "$_ov_inc" && $_ov_affected -eq 0 ]]; then
+        # no tracked model is affected; stage-colored otherwise. Same decision
+        # the two statusline copies make, from the same two fields.
+        if [[ -n "$_SC_INCIDENT" && $_SC_ANY_ISSUE -eq 0 ]]; then
           _ov_model_health+=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_NOTE}${CLAUDII_CLR_RESET}"
         else
-          case "$_ov_inc" in
+          case "$_SC_INCIDENT" in
             investigating) _ov_model_health+=" ${CLAUDII_CLR_RED}${CLAUDII_SYM_INVESTIGATING}${CLAUDII_CLR_RESET}" ;;
             identified)    _ov_model_health+=" ${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_IDENTIFIED}${CLAUDII_CLR_RESET}" ;;
             monitoring)    _ov_model_health+=" ${CLAUDII_CLR_CYAN}${CLAUDII_SYM_MONITORING}${CLAUDII_CLR_RESET}" ;;

@@ -1491,7 +1491,15 @@ if [[ -f "$_status_cache" ]]; then
     # uniform all-down / all-degraded row collapses to one "claude" glyph.
     # No declare -A: bash 3.2 (macOS /bin/bash) maps every key to arr[0] and
     # last-write-wins, so a per-model map would render the same label thrice.
-    # Kept in sync with lib/statusline.zsh (RPROMPT) and lib/cmd/overview.sh.
+    #
+    # This is a DELIBERATE second copy of lib/helpers.sh's _status_cache_read /
+    # _status_cache_verdict, which every CLI consumer now shares. It stays
+    # inline because it must stay fork-free at render time — no `$(…)`, no
+    # subshell, nothing that would cost this hot path a process. Its agreement
+    # with the helper (and with lib/statusline.zsh's third copy) is no longer a
+    # comment you have to believe: tests/test_status_cache_agreement.sh feeds
+    # one cache to all three and compares what they render. Change the
+    # classification here and that test goes red.
     _sc_total=0; _sc_ok=0; _sc_down=0; _sc_degr=0; _sc_problems=""
     for _scm in "${_sc_models[@]}"; do
       _scm="${_scm// /}"
@@ -1535,7 +1543,8 @@ if [[ -f "$_status_cache" ]]; then
     # alarm — your models are fine, this is informational. When a tracked model
     # IS affected, the stage color (‼/⚐/◎) reflects the incident stage; absent
     # an incident marker, a bare model outage falls back to ⚠.
-    # Kept in sync with lib/statusline.zsh (RPROMPT) and lib/cmd/overview.sh.
+    # Same two fields (_incident, "any model affected") the helper exposes as
+    # _SC_INCIDENT / _SC_ANY_ISSUE; gated by tests/test_status_cache_agreement.sh.
     _sc_incident=""
     if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _sc_incident="investigating"
     elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]];    then _sc_incident="identified"
