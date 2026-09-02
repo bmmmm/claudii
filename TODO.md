@@ -40,6 +40,32 @@ wenn jemand einen konvertiert ohne ihn aus der Liste zu nehmen. Verifiziert
 2026-09-02, indem `perf` konvertiert und in der Liste gelassen wurde — genau
 eine Assertion fiel. Kein Freibrief, nur eine Reihenfolge.
 
+Dazu gehört `-h`/`--help`: die Man-Page sagt jetzt ehrlich, dass nur die
+konvertierten Commands eine Usage drucken und mit 0 enden. Die schlimmste
+Ausprägung ist `claudii config -h` — es fällt in den `*)`-Arm von
+`lib/cmd/config.sh` und **kippt die komplette User-Config nach stdout**,
+statt eine Usage zu zeigen. `pin -h` sucht eine Session namens `-h`;
+`sessions -h` ignoriert das Flag stillschweigend.
+
+### Die Assertion-Zahl der Suite hängt an der Umgebung
+
+**Type: Fix** · **Complexity: Small** · **Touches: tests/**
+
+Auf `3f03ae9` melden zwei unabhängige Messungen **2296** (die Commit-Message
+selbst und ein Audit-Agent), meine Umgebung stabil **2295** — dreimal
+wiederholt, unter Homebrew-bash 5.x und `/bin/bash` 3.2 gleich, mit und ohne
+gestashte Änderungen gleich, und pro Testdatei einzeln gibt es **keine**
+Differenz. Ein zusätzlicher Worktree ändert nichts (getestet).
+
+Eine Suite, deren Assertion-Zahl an der Umgebung hängt, entwertet genau das
+Signal, das hier schon zweimal Fehler gefangen hat: 143 verschluckte Asserts
+unter bash 3.2, und ein Agent, der einen grünen Lauf auf altem Zählerstand als
+Abdeckung meldete. Gesucht ist die eine bedingte Assertion — Kandidaten sind
+die `command -v`-Guards (`test_agents_adapter.sh:100`, `test_commands.sh:264`
+und `:439`), aber der erste überspringt vier Asserts, nicht eine. Weg dahin:
+beide Läufe ohne `--summary` aufzeichnen und die Assertion-**Namen** diffen,
+nicht die Zahlen.
+
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**

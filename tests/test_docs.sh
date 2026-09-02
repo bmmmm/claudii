@@ -139,9 +139,9 @@ unset _lint_postinc
 # The grouped list in _ov_render_commands is the first thing a bare `claudii`
 # shows, and nothing pinned it: `week` and `repos` both shipped complete in the
 # man page, the completions and the dispatch (all gated above) while never
-# appearing there. Gated against MAN_COMMANDS, which CLAUDE.md already makes
-# the single place a new command gets registered — so adding one now forces a
-# decision: put it in a group, or name it here as deliberately out.
+# appearing there. Gated against the man-page command list derived above, so
+# adding a dispatch arm now forces a decision: put it in a group, or name it
+# here as deliberately out.
 #
 # Matching is on the "·"-separated items, not a substring: "session" occurs
 # inside "session-dashboard", and a substring check would pass for a command

@@ -9,7 +9,7 @@ rules stay in `CLAUDE.md`.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI dispatcher (<300 lines; helpers live in lib/helpers.sh)
+bin/claudii             # CLI dispatcher (~304 lines; helpers live in lib/helpers.sh)
 bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)

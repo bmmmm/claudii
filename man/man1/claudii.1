@@ -1,5 +1,5 @@
 .\" claudii manual — auto-synced to wiki via GitHub Actions
-.TH CLAUDII 1 "June 15, 2026" "claudii 0.27.0" "claudii manual"
+.TH CLAUDII 1 "September 2, 2026" "claudii 0.27.0" "claudii manual"
 .
 .SH NAME
 claudii \- Fast Claude Code aliases with live model status and session insights
@@ -132,8 +132,14 @@ Available for:
 .BR sessions ", " cost .
 .TP
 .BR \-h ", " \-\-help
-Print the command's own usage and exit 0. Accepted by every command that takes
-arguments.
+Print the command's own usage and exit 0 \(em for the commands under the exit
+status contract below. The rest still answer their own older conventions:
+.BR config
+prints the config,
+.B sessions
+ignores the flag, and
+.BR claudestatus ", " gc ", " pin " and " status
+print a usage line but exit 1.
 .PP
 When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
 .B version
@@ -156,9 +162,19 @@ value-less
 .BR \-\-days ,
 a malformed window or
 .B \-\-compare
-spec. An unknown option is always reported as
+spec. Reported as
 .RB \(lq "claudii " cmd ": unknown option: " arg \(rq
 on standard error, never on standard output.
+.PP
+28 of the 45 dispatched commands are under this contract. The others
+.RB ( cc-statusline ", " claudestatus ", " config ", " dashboard ", " gc ,
+.BR insomnii ", " omlx ", " pin ", " search ", " session ,
+.BR session-dashboard ", " sessionline ", " sessions ", " status ,
+.BR unpin ", " vibemap ", " vpnii )
+still exit 0 or 1 on a bad argument. The list only shrinks:
+.I tests/test_arg_contract.sh
+holds it as a ratchet and turns red if one is converted without being removed
+from it.
 .
 .SH DISPLAY LAYERS
 Three separate layers each serve a different scope:
@@ -1663,7 +1679,7 @@ aliases.clq.model	sonnet	Model for \fBclq\fR / search
 aliases.clf.model	fable	Model for \fBclf\fR
 fallback.enabled	true	Auto-fallback on outage
 fallback.opus.model	sonnet	Fallback when opus is down
-status.cache_ttl	900	Status cache TTL in seconds
+status.cache_ttl	300	Status cache TTL in seconds
 ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
 cc_version.cache_ttl	3600	Claude Code release-check cache TTL in seconds (\fBcc-version\fR segment)
 bumpii.cache_ttl	21600	Update/release-news cache TTL in seconds (\fBbumpii\fR segment; adaptive \(em see above)
