@@ -373,6 +373,64 @@ assert_eq "auto colors: CLAUDII_FORCE_COLOR=1 restores ANSI" "1" "$_ac_has"
 rm -rf "$_AC_BASE"
 unset _AC_BASE _AC_XDG _AC_CACHE _ac_out _ac_has
 
+# -- theme reaches commands that never call _cfg_init --------------------------
+# _claudii_theme_load only ever ran from inside _cfg_init, and nine commands
+# (gc, pin, unpin, vibemap, vpnii, cc-statusline, update, version, changelog)
+# never reach _cfg_init -- so they painted in the hardcoded default palette no
+# matter what theme.name said. bin/claudii now boots the theme centrally
+# (_claudii_boot, before the dispatch case). `changelog` stands in for the nine:
+# it emits the accent colour and calls no _cfg_init of its own.
+#
+# Red-verified: delete the `_claudii_boot "${1:-}"` line from bin/claudii and
+# this flips to the default accent.
+
+_make_cfg_tmp _TH
+jq '.theme.name = "pastel"' "$CLAUDII_HOME/config/defaults.json" > "$_TH_XDG/claudii/config.json"
+
+_th_out=$(HOME="$_TH_BASE" XDG_CONFIG_HOME="$_TH_XDG" CLAUDII_CACHE_DIR="$_TH_CACHE" \
+  CLAUDII_FORCE_COLOR=1 bash "$CLAUDII_HOME/bin/claudii" changelog 2>&1)
+
+# Pastel's accent is 38;5;219, the hardcoded default is 38;5;213. Matching the
+# themed value alone would stay green if the theme silently stopped applying to
+# something else, so both directions are asserted.
+case "$_th_out" in *"[38;5;219m"*) _th_pastel=1 ;; *) _th_pastel=0 ;; esac
+case "$_th_out" in *"[38;5;213m"*) _th_default=1 ;; *) _th_default=0 ;; esac
+assert_eq "theme: changelog honours theme.name=pastel" "1" "$_th_pastel"
+assert_eq "theme: changelog no longer paints the default accent" "0" "$_th_default"
+
+rm -rf "$_TH_BASE"
+unset _TH_BASE _TH_XDG _TH_CACHE _th_out _th_pastel _th_default
+
+# -- a failing handler in a sourced file must not take the shell down ----------
+# lib/cmd/*.sh are SOURCED into bin/claudii, so a bare `exit 1` in a _cmd_*
+# handler killed the whole process -- skipping _spinner_stop and leaving a
+# spinner running on the terminal. Those 33 sites are `return 1` now.
+#
+# The proof is the line AFTER the failing call: under the old `exit`, the
+# subshell died and SURVIVED was never printed.
+
+_er_out=$(bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"
+  source "$CLAUDII_HOME/lib/spinner.sh"
+  source "$CLAUDII_HOME/lib/helpers.sh"
+  source "$CLAUDII_HOME/lib/render.sh"
+  source "$CLAUDII_HOME/lib/cmd/system.sh"
+  _cmd_claudestatus claudestatus bogus >/dev/null 2>&1
+  printf "SURVIVED rc=%s\\n" "$?"
+' 2>&1)
+assert_contains "sourced handler: a bad subcommand returns instead of killing the shell" \
+  "SURVIVED rc=1" "$_er_out"
+
+# ...and the failure still reaches the caller as a non-zero exit status: turning
+# `exit 1` into `return 1` is only correct while the dispatcher propagates it.
+_make_cfg_tmp _ER
+HOME="$_ER_BASE" XDG_CONFIG_HOME="$_ER_XDG" CLAUDII_CACHE_DIR="$_ER_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" claudestatus bogus >/dev/null 2>&1
+assert_eq "sourced handler: the dispatcher still exits non-zero on a bad subcommand" "1" "$?"
+
+rm -rf "$_ER_BASE"
+unset _ER_BASE _ER_XDG _ER_CACHE _er_out
+
 # ── explain: separator rules are valid UTF-8 under LC_ALL=C ───────────────────
 # `%.56s` truncated the multibyte ─ rule at byte 56 (mid-codepoint) under the C
 # locale CI runs the suite in; _rep '─' 56 builds it char-aware. A raw grep for
