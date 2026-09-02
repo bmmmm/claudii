@@ -9,12 +9,16 @@ _cmd_cost_from_history() {
   _date_init
   local _date_cmd="$_DATE_CMD" _tz_offset="$_TZ_OFFSET" _ws_dow="$_WS_DOW"
 
-  # Pure-awk date conversion — shared epoch_to_date from lib/epoch_to_date.awk
-  local _epoch_awk _attr_awk _tier_awk _fmt_awk
-  _epoch_awk=$(<"$CLAUDII_HOME/lib/epoch_to_date.awk")
+  local _attr_awk _fmt_awk _cols_awk
   _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
-  _tier_awk=$(<"$CLAUDII_HOME/lib/model_tier.awk")
   _fmt_awk=$(<"$CLAUDII_HOME/lib/fmt.awk")   # fmt_tok / rep / bar (shared)
+  _cols_awk=$(<"$CLAUDII_HOME/lib/history_cols.awk")   # HC[]/HR[] column names
+
+  # The stage-1 field list, declared once. Stage 1 (lib/history_rows.awk) prints
+  # these fields in this order; stage 2 is handed the SAME string via -v emit,
+  # so lib/history_cols.awk builds HR[] from it and the aggregation reads its
+  # input by name. Changing the list is a one-line edit, not a two-sided one.
+  local _emit="day model cost sid raw in out ts"
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -45,30 +49,25 @@ _cmd_cost_from_history() {
   # The empty-input case (no valid rows) is handled in stage 2's END block.
   #
   # Both awk stages run under LC_ALL=C, unconditionally. Stage 1 PARSES the
-  # history cost ($3, a dot-decimal); under a comma locale onetrueawk truncates
+  # history cost column (a dot-decimal); under a comma locale onetrueawk truncates
   # "12.34"+0 to 12 at the radix — corrupting pretty AND json totals (not just
   # the output separator), so a json-only guard misses it. Both stages emit
   # ASCII / UTF-8 box chars via octal escapes, and length() is byte-based on
   # onetrueawk+mawk, so forcing C does not shift the pretty alignment math.
-  LC_ALL=C awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
-${_epoch_awk}
-${_tier_awk}
-"'
-    { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
-    NF < 6 { next }     # guard against short/malformed rows (history schema has >= 6 cols)
-    $1 == "timestamp" || $1 == "" || $6 == "" { next }
-    {
-      ts = $1 + 0; if (ts == 0) next
-      day = epoch_to_date(ts)
-      model = $2; cost = $3 + 0; sid = $6; raw = $2
-      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
-      model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
-      # ts rides along so stage 2 can bucket on an arbitrary epoch boundary.
-      # Day strings have no sub-day resolution, and the Anthropic weekly
-      # window starts mid-day (--window).
-      print day "\t" model "\t" cost "\t" sid "\t" raw "\t" in_tok "\t" out_tok "\t" ts
-    }
-  ' "${_history_files[@]}" | LC_ALL=C awk -F'\t' \
+  #
+  # `raw` (the model column before the tier collapse) feeds the versioned
+  # legend; `ts` rides along so stage 2 can bucket on an arbitrary epoch
+  # boundary — day strings have no sub-day resolution, and the Anthropic
+  # weekly window starts mid-day (--window).
+  LC_ALL=C awk -F'\t' \
+    -v tz_offset="${_tz_offset:-0}" \
+    -v emit="$_emit" \
+    -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
+    -f "$CLAUDII_HOME/lib/model_tier.awk" \
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
+    -f "$CLAUDII_HOME/lib/history_rows.awk" \
+    "${_history_files[@]}" | LC_ALL=C awk -F'\t' \
+    -v emit="$_emit" \
     -v today="$today_str" \
     -v week_start="${week_start_str:-$today_str}" \
     -v window_start="${_COST_WINDOW_START:-0}" \
@@ -80,6 +79,7 @@ ${_tier_awk}
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
     "
+${_cols_awk}
 ${_attr_awk}
 ${_fmt_awk}
 "'
@@ -205,9 +205,12 @@ ${_fmt_awk}
       printf "\n"
     }
     {
-      day = $1; model = $2; cost = $3 + 0; sid = $4; raw = $5
-      in_tok = $6 + 0; out_tok = $7 + 0; total_tok = in_tok + out_tok
-      ts = $8 + 0
+      # Columns by name (HR[] from lib/history_cols.awk, built from the same
+      # -v emit string stage 1 was given) — never by position.
+      day = $(HR["day"]); model = $(HR["model"]); cost = $(HR["cost"]) + 0
+      sid = $(HR["sid"]); raw = $(HR["raw"])
+      in_tok = $(HR["in"]) + 0; out_tok = $(HR["out"]) + 0; total_tok = in_tok + out_tok
+      ts = $(HR["ts"]) + 0
       if (sid == "" || day == "" || model == "") next
 
       # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
@@ -516,6 +519,7 @@ _cmd_cost_forecast() {
     -v green="$CLAUDII_CLR_GREEN" \
     -v yellow="$CLAUDII_CLR_YELLOW" \
     -v red="$CLAUDII_CLR_RED" \
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
     -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
     -f "$CLAUDII_HOME/lib/attribution.awk" \
     -f "$CLAUDII_HOME/lib/fmt.awk" \

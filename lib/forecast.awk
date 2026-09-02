@@ -1,9 +1,11 @@
 # lib/forecast.awk — `claudii cost --forecast` renderer (burn-rate + projection).
 #
-# Loaded AFTER the function libs (epoch_to_date.awk, attribution.awk, fmt.awk)
-# via a chain of -f; this file carries the BEGIN/main/END blocks. Reads the raw
-# history TSV (one row per CC-Statusline render):
-#   $1=ts(epoch)  $3=cost(cumulative)  $5=rate_5h(%)  $6=session_id
+# Loaded AFTER the schema and the function libs (history_cols.awk,
+# epoch_to_date.awk, attribution.awk, fmt.awk) via a chain of -f; this file
+# carries the BEGIN/main/END blocks. Reads the raw history TSV (one row per
+# CC-Statusline render) through the named indices lib/history_cols.awk
+# declares — ts, cost (session-cumulative), rate5h, sid. It reads no other
+# column, so a new history column costs it nothing.
 #
 # Two blocks:
 #   1. 5h budget — live account-wide rate-limit burn. Current used%/reset come
@@ -16,6 +18,8 @@
 # Required -v: now tz_offset reset5h rate_now have5h today thismon lastmon
 #              monname dom ndays burnwin fmt
 #              cyan dim pink reset green yellow red
+# (no -v emit — this program reads RAW history rows, not the normalized stage-1
+# rows lib/history_rows.awk emits, so HR[] stays empty and unused here.)
 # NOTE: `dim` is the dim-ANSI color; days-in-month is `ndays`, day-of-month `dom`.
 
 # --- small formatters (BSD-awk safe: no strftime, no ^) ----------------------
@@ -88,6 +92,14 @@ function daily_sd(   d, v, mean, ss) {
 }
 
 BEGIN {
+  # Without HC[] every $HC_* below would degrade to $0 — a forecast that is
+  # quietly wrong rather than absent. (exit from BEGIN still runs END, hence
+  # the flag; END bails before it renders anything.)
+  if (!("ts" in HC)) {
+    print "forecast.awk: needs -f lib/history_cols.awk loaded first" > "/dev/stderr"
+    hc_missing = 1
+    exit 2
+  }
   LBL_W = 14
   BAR_W = 26
   HDR_W = 60
@@ -96,12 +108,12 @@ BEGIN {
 
 # --- ingest history rows -----------------------------------------------------
 { gsub(/\r/, "") }                                   # strip CR from synced files
-NF < 6 { next }
-$1 == "timestamp" || $1 == "" || $6 == "" { next }
+NF < HC_MINCOL { next }
+$HC_TS == "timestamp" || $HC_TS == "" || $HC_SID == "" { next }
 {
-  ts = $1 + 0; if (ts == 0) next
-  sid = $6
-  cost = ($3 == "" ? 0 : $3 + 0)
+  ts = $HC_TS + 0; if (ts == 0) next
+  sid = $HC_SID
+  cost = ($HC_COST == "" ? 0 : $HC_COST + 0)
   cinc = attr_delta(cbase, sid, cost)
   if (cinc > 0) {
     day = epoch_to_date(ts); mk = substr(day, 1, 7)
@@ -110,12 +122,13 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
   }
   # rate_5h samples inside the burn window AND the current 5h cycle.
   if (have5h == 1 && ts >= now - burnwin && ts <= now + 5 && ts >= reset5h - 18000) {
-    r = ($5 == "" ? -1 : $5 + 0)
+    r = ($HC_RATE_5H == "" ? -1 : $HC_RATE_5H + 0)
     if (r >= 0) { ns++; sx[ns] = ts; sy[ns] = r }
   }
 }
 
 END {
+  if (hc_missing) exit 2
   if (fmt == "json") { render_json(); exit }
   if (fmt == "tsv")  { render_tsv();  exit }
   printf "\n"

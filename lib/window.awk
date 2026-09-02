@@ -10,9 +10,16 @@
 # splits row-exactly; no proportional splitting logic is needed.
 #
 # Requires attr_delta() from lib/attribution.awk, prepended by the caller
-# (same idiom as lib/cmd/cost.sh and lib/trends.awk).
+# (lib/cmd/week.sh string-interpolates the two files into one program).
 #
-# Variables (-v): window_start — epoch of the window's first second.
+# Variables (-v): window_start — epoch of the window's first second. That is
+# the ONLY binding; everything else this program uses comes from the row.
+#
+# Columns: the schema is declared in lib/history_cols.awk (HC_SCHEMA) — ts,
+# cost, sid, in, out and rate7d. The positional reads below still spell the
+# indices out because this program's call site (lib/cmd/week.sh) does not load
+# history_cols.awk; tests/test_history_cols.sh pins them against the schema, so
+# a divergence goes red instead of silently summing the wrong column.
 #
 # Emits one TSV line:
 #   tok  cost  sessions  limit_lo  limit_med  limit_hi  pairs  cents

@@ -11,7 +11,11 @@
 #   tz_offset=<secs>     signed local UTC offset (date +%z). Default 0 (UTC).
 #   ndays=<n>            window length in days. Default 30.
 #
-# History TSV columns: ts=$1 model=$2 cost=$3 ctx=$4 rate=$5 sid=$6 in=$7 out=$8 ...
+# History TSV columns: declared in lib/history_cols.awk (HC_SCHEMA) — this
+# program reads ts, sid, in and out. They are spelled out positionally below
+# because the call site (lib/cmd/overview.sh) loads only attribution.awk and
+# this file; tests/test_history_cols.sh pins them against the schema, so a
+# divergence goes red rather than silently bucketing the wrong column.
 # Output (stdout):
 #   line 1: ndays space-separated integers (in+out tokens per day, oldest first)
 #   line 2: max<TAB>today<TAB>total<TAB>active_days<TAB>peak_idx<TAB>today_sessions

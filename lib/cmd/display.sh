@@ -59,38 +59,33 @@ ${_epoch_awk}
   # Show spinner for pretty output (not JSON/TSV — those are piped)
   _spinner_start "${_hist_dir/#$HOME/~}/history-*.tsv"
 
-  # Step 1: Convert timestamps to YYYY-MM-DD + normalize model names.
-  # Shared epoch_to_date from lib/epoch_to_date.awk (read above).
-  _trends_augmented=$(LC_ALL=C awk -F'\t' -v tz_offset="${_tz_offset:-0}" "
-${_epoch_awk}
-$(<"$CLAUDII_HOME/lib/model_tier.awk")
-"'
-    { gsub(/\r/, "") }  # strip CR for cross-platform TSV (CRLF from synced files)
-    NF < 6 { next }     # guard against short/malformed rows
-    $1 == "timestamp" || $1 == "" || $6 == "" { next }
-    {
-      ts = $1 + 0; if (ts == 0) next
-      day = epoch_to_date(ts)
-      model = $2; cost = $3 + 0; sid = $6
-      in_tok = ($7 == "" ? 0 : $7 + 0); out_tok = ($8 == "" ? 0 : $8 + 0)
-      api_dur = ($9 == "" ? 0 : $9 + 0)
-      model = tier_label(model)   # shared tier collapse (lib/model_tier.awk)
-      print day "\t" model "\t" cost "\t" sid "\t" in_tok "\t" out_tok "\t" api_dur
-    }
-  ' "${_HIST_FILES[@]}")
+  # Step 1: raw history rows -> normalized rows (epoch->day, tier collapse,
+  # the short/header/blank filter). One shared program, lib/history_rows.awk;
+  # the field list below is the whole difference to what `claudii cost` asks it
+  # for, and step 2 is handed the SAME string so it can index by name.
+  local _emit="day model cost sid in out api"
+  _trends_augmented=$(LC_ALL=C awk -F'\t' \
+    -v tz_offset="${_tz_offset:-0}" \
+    -v emit="$_emit" \
+    -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
+    -f "$CLAUDII_HOME/lib/model_tier.awk" \
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
+    -f "$CLAUDII_HOME/lib/history_rows.awk" \
+    "${_HIST_FILES[@]}")
 
   # Kill spinner before output
   _spinner_stop
 
   # Step 2: awk does dedup, aggregation, and ALL output formatting
-  # (daily API totals are folded into trends.awk's main pass — field 7 = api_dur_ms)
+  # (daily API totals are folded into trends.awk's main pass — the `api` field)
   #
   # Both awk stages run under LC_ALL=C, unconditionally. Step 1 already parses the
-  # history cost ($3) and step 2 re-parses it from the pipe; a comma locale
+  # history cost column and step 2 re-parses it from the pipe; a comma locale
   # truncates "12.34"+0 to 12 at the radix (onetrueawk), corrupting pretty AND
   # json totals. trends.awk emits ASCII / UTF-8 bars via octal escapes and
   # length() is byte-based, so C is safe in the pretty branch too.
   echo "$_trends_augmented" | LC_ALL=C awk -F'\t' \
+    -v emit="$_emit" \
     -v today="$today_str" \
     -v week_start="$week_start_str" \
     -v last_mon="$last_monday_str" \
@@ -102,6 +97,7 @@ $(<"$CLAUDII_HOME/lib/model_tier.awk")
     -v dim="$CLAUDII_CLR_DIM" \
     -v pink="$CLAUDII_CLR_ACCENT" \
     -v reset="$CLAUDII_CLR_RESET" \
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
     -f "$CLAUDII_HOME/lib/attribution.awk" \
     -f "$CLAUDII_HOME/lib/fmt.awk" \
     -f "$CLAUDII_HOME/lib/trends.awk"

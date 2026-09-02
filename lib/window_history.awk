@@ -10,7 +10,16 @@
 # As in lib/window.awk, every row feeds attr_delta() so the per-session
 # baseline is correct, while only in-range rows are summed.
 #
-# Requires attr_delta() from lib/attribution.awk (prepended by the caller).
+# Requires attr_delta() from lib/attribution.awk (prepended by the caller —
+# lib/cmd/week.sh string-interpolates both files into one program).
+#
+# Variables (-v): bounds — the comma-separated ascending epoch list above. The
+# only binding; everything else comes from the row.
+#
+# Columns: declared in lib/history_cols.awk (HC_SCHEMA) — ts, cost, sid, in,
+# out. Spelled out positionally here because that call site loads no
+# history_cols.awk; tests/test_history_cols.sh pins them against the schema.
+#
 # Emits one TSV line per window: start  end  tokens  cost  sessions
 
 BEGIN { nb = split(bounds, B, ",") }

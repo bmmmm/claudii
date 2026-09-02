@@ -1,16 +1,36 @@
 # trends.awk — claudii trends aggregation and formatting (token-primary)
 # Standalone awk program, called via -f from _cmd_trends().
-# Requires lib/attribution.awk AND lib/fmt.awk loaded first
-# (awk -f attribution.awk -f fmt.awk -f trends.awk): attribution.awk supplies
+# Requires lib/history_cols.awk, lib/attribution.awk AND lib/fmt.awk loaded
+# first (awk -f history_cols.awk -f attribution.awk -f fmt.awk -f trends.awk):
+# history_cols.awk builds HR[] from -v emit, attribution.awk supplies
 # attr_delta(), fmt.awk supplies fmt_tok()/fmt_usd()/rep()/bar()/bar_filled().
-# Input: tab-separated lines: day\tmodel\tcost\tsid\tin_tok\tout_tok\tapi_dur_ms
-# Variables (passed via -v): today, week_start, last_mon, last_sun, thirty,
-#   week_days, fmt, cyan, dim, pink, reset
+#
+# Input: the normalized stage-1 rows lib/history_rows.awk emits — NOT raw
+# history. Their layout is whatever _cmd_trends() passed as -v emit to stage 1;
+# this program is handed the same string and reads its fields by name through
+# HR[], so the two sides cannot drift apart.
+#
+# Variables (passed via -v): emit, today, week_start, last_mon, last_sun,
+#   thirty, week_days, fmt, cyan, dim, pink, reset
+# Fields it needs in `emit`: day model cost sid in out api
+
+BEGIN {
+  # Without HR[] every $(HR[...]) below would degrade to $0 — a report that is
+  # quietly wrong rather than absent. Fail loudly instead. (exit from BEGIN
+  # still runs END, hence the flag; END bails before it renders anything.)
+  if (!("day" in HR)) {
+    print "trends.awk: needs -f lib/history_cols.awk and" \
+          " -v emit=\"day model cost sid in out api\"" > "/dev/stderr"
+    hr_missing = 1
+    exit 2
+  }
+}
 
 {
-  day = $1; model = $2; cost = $3 + 0; sid = $4
-  in_tok = $5 + 0; out_tok = $6 + 0; total_tok = in_tok + out_tok
-  api_dur = $7 + 0
+  day = $(HR["day"]); model = $(HR["model"]); cost = $(HR["cost"]) + 0
+  sid = $(HR["sid"])
+  in_tok = $(HR["in"]) + 0; out_tok = $(HR["out"]) + 0; total_tok = in_tok + out_tok
+  api_dur = $(HR["api"]) + 0
   if (sid == "") next
 
   # Incremental cost/token/api deltas for this row — shared baseline-delta
@@ -29,7 +49,7 @@
     }
   }
 
-  # api_dur ($7) is the session-CUMULATIVE total_api_duration_ms (cc-statusline
+  # api_dur is the session-CUMULATIVE total_api_duration_ms (cc-statusline
   # writes .cost.total_api_duration_ms), so it must be delta'd per session like
   # cost/tokens. Summing the raw column folded every render's running total into
   # a ~6651h/day nonsense figure (Bug 1).
@@ -50,6 +70,8 @@
   }
 }
 END {
+  if (hr_missing) exit 2
+
   # ── Window aggregates ──
   tw_cost = 0; tw_sessions = 0; tw_tok = 0; tw_api_ms = 0
   lw_cost = 0; lw_sessions = 0; lw_tok = 0
