@@ -153,6 +153,13 @@ _docs_index="$CLAUDII_HOME/docs/index.html"
 _changelog="$CLAUDII_HOME/CHANGELOG.md"
 _today=$(date +%Y-%m-%d)
 
+# One list, two consumers: the rollback below restores these files, the commit
+# stages them. Whatever the bump writes belongs here — docs/index.html was
+# bumped and rolled back but never staged, and v0.27.0 got tagged with a 0.26.0
+# landing page against a 0.27.0 binary, which the version gate in
+# tests/test_docs.sh then failed on a fresh checkout of the tag.
+_bumped_files=("$_bin_file" "$_man_file" "$_docs_index" "$_changelog")
+
 if (( _dry_run )); then
   _ok "bin/claudii VERSION → $_rel_version (dry-run)"
   _ok "man/man1/claudii.1 → $_rel_version (dry-run)"
@@ -223,12 +230,7 @@ else
     _ok "Tests green post-bump (${_passed:-?}, $_scope)"
   else
     _fail "Tests failed after bump — rolled back, no commit/tag/push made"
-    # Every file the bump above touches has to be listed here. docs/index.html
-    # was added to the bump without being added to the rollback, and one failed
-    # release then left the tree with a 0.27.0 landing page on a 0.26.0
-    # checkout — which the version gate in test_docs.sh promptly failed on.
-    git -C "$CLAUDII_HOME" checkout -- \
-      "$_bin_file" "$_man_file" "$_docs_index" "$_changelog" 2>/dev/null || true
+    git -C "$CLAUDII_HOME" checkout -- "${_bumped_files[@]}" 2>/dev/null || true
     # tail -30, not -10: the summary line and the failing assertions come first
     # in --summary output, so a 10-line tail showed only trailing passes and
     # said nothing about what broke.
@@ -245,7 +247,7 @@ if (( _dry_run )); then
   _ok "Tag $_rel_tag — skipped (dry-run)"
   _ok "Push tag — skipped (dry-run)"
 else
-  git -C "$CLAUDII_HOME" add "$_bin_file" "$_man_file" "$_changelog"
+  git -C "$CLAUDII_HOME" add "${_bumped_files[@]}"
   git -C "$CLAUDII_HOME" commit -m "chore(release): bump version to $_rel_version" >/dev/null
   _ok "Committed"
 
