@@ -205,10 +205,11 @@ fi
 # only validate the exact state that gets tagged HERE — pass 1 ran against the
 # pre-bump tree and can stay green while this fails. CI would catch it, but only
 # after the tag is already public (a half-release). Since the bump touches only
-# VERSION / man-page version / CHANGELOG.md, pass 2 re-runs just the test files
-# that read those (grep-discovered, falls back to the full suite if none match).
-# On failure, roll the three bumped files back to HEAD (no commit exists yet)
-# and abort: no commit, no tag.
+# the four files in _bumped_files (VERSION, man-page version, docs/index.html,
+# CHANGELOG.md), pass 2 re-runs just the test files that read those
+# (grep-discovered, falls back to the full suite if none match).
+# On failure, roll all four back to HEAD (no commit exists yet) and abort:
+# no commit, no tag.
 _step "Tests (post-bump)"
 if (( _dry_run )); then
   _ok "Tests post-bump — skipped (dry-run)"
@@ -216,7 +217,15 @@ else
   _va_tests=()
   while IFS= read -r _t; do
     [[ -n "$_t" ]] && _va_tests+=("$_t")
-  done < <(grep -lE '\bVERSION=|CHANGELOG' "$CLAUDII_HOME"/tests/test_*.sh 2>/dev/null || true)
+  # The pattern names every bumped file's marker, not just two of them: a test
+  # that gates ONLY docs/index.html would otherwise be missed by pass 2, which
+  # is the exact half-release this pass exists to prevent. Today test_docs.sh
+  # covers index.html and also matches VERSION=, so this is defence, not a fix.
+  # Word boundary written out rather than as the escape: that one is a silent
+  # null match on BSD (see ~/ops/reference/bash-gotchas.md), and a discovery
+  # that finds nothing degrades to the full suite -- safe, but invisible.
+  done < <(grep -lE '(^|[^A-Za-z0-9_])VERSION=|CHANGELOG|index\.html' \
+             "$CLAUDII_HOME"/tests/test_*.sh 2>/dev/null || true)
   if (( ${#_va_tests[@]} == 0 )); then
     # No version-aware test found — discovery broke; run the full suite instead.
     _test_cmd=(bash "$CLAUDII_HOME/tests/run.sh" --summary)

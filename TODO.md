@@ -47,24 +47,29 @@ Ausprägung ist `claudii config -h` — es fällt in den `*)`-Arm von
 statt eine Usage zu zeigen. `pin -h` sucht eine Session namens `-h`;
 `sessions -h` ignoriert das Flag stillschweigend.
 
-### Die Assertion-Zahl der Suite hängt an der Umgebung
+### `tests/test_vibemap.sh` zählt je nach Uhrzeit 40 oder 41 Assertions
 
-**Type: Fix** · **Complexity: Small** · **Touches: tests/**
+**Type: Fix** · **Complexity: Small** · **Touches: tests/test_vibemap.sh**
 
-Auf `3f03ae9` melden zwei unabhängige Messungen **2296** (die Commit-Message
-selbst und ein Audit-Agent), meine Umgebung stabil **2295** — dreimal
-wiederholt, unter Homebrew-bash 5.x und `/bin/bash` 3.2 gleich, mit und ohne
-gestashte Änderungen gleich, und pro Testdatei einzeln gibt es **keine**
-Differenz. Ein zusätzlicher Worktree ändert nichts (getestet).
+Eingegrenzt 2026-09-03. Die Gesamtzahl der Suite schwankte zwischen 2295 und
+2296 — nicht zwischen Shells und nicht zwischen Commits, sondern über die
+Zeit: **derselbe Commit `3f03ae9` meldete um 23:0x noch 40, nach Mitternacht
+41.** Beide Werte je dreimal stabil, alle anderen 45 Testdateien unverändert.
 
-Eine Suite, deren Assertion-Zahl an der Umgebung hängt, entwertet genau das
-Signal, das hier schon zweimal Fehler gefangen hat: 143 verschluckte Asserts
-unter bash 3.2, und ein Agent, der einen grünen Lauf auf altem Zählerstand als
-Abdeckung meldete. Gesucht ist die eine bedingte Assertion — Kandidaten sind
-die `command -v`-Guards (`test_agents_adapter.sh:100`, `test_commands.sh:264`
-und `:439`), aber der erste überspringt vier Asserts, nicht eine. Weg dahin:
-beide Läufe ohne `--summary` aufzeichnen und die Assertion-**Namen** diffen,
-nicht die Zahlen.
+Der Weg dahin war der Datei-für-Datei-Diff (`run.sh --summary <datei>` über
+alle Dateien, zweimal, diffen) — nicht der Namens-Diff: der erste Versuch
+davon war vakuum, weil das grep-Muster nicht aufs Ausgabeformat passte und
+zwei leere Listen sich prächtig gleichen.
+
+Zu suchen ist die eine Assertion, die an einer Tagesgrenze hängt. Die
+awk-Blöcke der Datei sind sauber deterministisch (`-v now=` mit festen
+Epochen); verdächtig sind die Abschnitte, die eine echte Uhr benutzen
+(`_now2 - 86400` ab Zeile 190) und der Zweig auf eine existierende
+Live-`vibemap.tsv` (Zeile 136). **Warum das zählt:** die Assertion-Zahl ist
+in diesem Repo ein Prüfsignal — sie hat 143 verschluckte Asserts unter bash
+3.2 gefangen und einen Agenten überführt, der einen grünen Lauf auf altem
+Zählerstand als Abdeckung meldete. Ein Wert, der von der Uhrzeit abhängt,
+entwertet genau das.
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
