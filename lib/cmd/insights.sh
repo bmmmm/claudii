@@ -76,6 +76,7 @@ _insights_model_label() {
     *[[:upper:]]*) _m=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_m") ;;
   esac
   case "$_m" in
+    *fable-5-1*)  printf 'Fable 5.1'  ;;
     *fable-5*)    printf 'Fable 5'    ;;
     *fable*)      printf 'Fable'      ;;
     # Mythos is the Fable tier under a different access program (Project

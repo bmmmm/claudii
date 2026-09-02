@@ -118,10 +118,11 @@ assert_eq "cache (non-object lines): assistant message still aggregated" "1" "$_
 # _insights_model_label — keep them in lock-step. NOT a subshell: assert_eq
 # increments the run.sh PASS/FAIL counters in the current scope.
 source "$CLAUDII_HOME/lib/cmd/insights.sh" 2>/dev/null
-assert_eq "label: fable 5 (latest)"   "Fable 5"    "$(_insights_model_label claude-fable-5)"
+assert_eq "label: fable 5.1 (latest)" "Fable 5.1"  "$(_insights_model_label claude-fable-5-1)"
+assert_eq "label: fable 5 (older)"    "Fable 5"    "$(_insights_model_label claude-fable-5)"
 assert_eq "label: unknown fable->tier" "Fable"     "$(_insights_model_label claude-fable-9)"
 assert_eq "label: opus 5 (latest)"    "Opus 5"     "$(_insights_model_label claude-opus-5)"
-assert_eq "label: opus 4.8 (latest)"  "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
+assert_eq "label: opus 4.8 (older)"   "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
 assert_eq "label: opus 4.7 (older)"   "Opus 4.7"   "$(_insights_model_label claude-opus-4-7)"
 assert_eq "label: opus 4.6 (older)"   "Opus 4.6"   "$(_insights_model_label claude-opus-4-6)"
 assert_eq "label: sonnet 5 (latest)"  "Sonnet 5"   "$(_insights_model_label claude-sonnet-5)"

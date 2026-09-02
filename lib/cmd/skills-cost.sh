@@ -167,6 +167,9 @@ _cmd_skills_cost() {
   # update this table AND the tier mapping in lib/tier.jq (shared jq module).
   # Sonnet 5 is the first price change WITHIN a tier — "sonnet" is the current
   # rate, "sonnet-legacy" prices 4.x model ids so old data stays correct.
+  # Fable 5.1 is the second, and moves one column only: its cache read is a
+  # flat $0.25/MTok, not 0.1×in. "fable" and "fable-legacy" differ in "cr"
+  # alone — that is not a typo, don't "restore" the 0.1× rule.
   #
   # tot_usd uses real per-model token attribution (schema v5, attribution_models).
   # Pre-v5 / orphaned caches carry no per-model token split; their residual
@@ -178,7 +181,8 @@ _cmd_skills_cost() {
     "sonnet": {"in":0.000002, "out":0.00001,  "cr":0.0000002, "cc":0.0000025},
     "sonnet-legacy": {"in":0.000003, "out":0.000015, "cr":0.0000003, "cc":0.00000375},
     "haiku":  {"in":0.000001, "out":0.000005, "cr":0.0000001, "cc":0.00000125},
-    "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.000001,  "cc":0.0000125}
+    "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.00000025, "cc":0.0000125},
+    "fable-legacy":  {"in":0.00001, "out":0.00005, "cr":0.000001, "cc":0.0000125}
   }'
 
   # Resolve the attribution block key for the chosen kind.
@@ -305,7 +309,7 @@ _cmd_skills_cost() {
     local _meta
     _meta=$(jq -n --arg med "$_median_avg" --arg d "$days" --arg mc "$_outlier_min_calls" \
       '{median_avg_usd:($med|tonumber),days:($d|tonumber),outlier_rule:("avg >= 2x median, calls >= " + $mc),
-        pricing:"per-model rates from schema-v5 token attribution (Opus $5/$25/M, Sonnet $3/$15/M, Haiku $1/$5/M, Fable $10/$50/M; cache_read 0.1x, cache_create 1.25x input). Pre-v5 / orphaned caches lack the per-model token split; their residual tokens are priced at the flat Sonnet rate"}')
+        pricing:"per-model rates from schema-v5 token attribution (Opus $5/$25/M, Sonnet 5 $2/$10/M, Sonnet 4.x $3/$15/M, Haiku $1/$5/M, Fable $10/$50/M; cache_read 0.1x input, except Fable 5.1 at a flat $0.25/M; cache_create 1.25x input). Pre-v5 / orphaned caches lack the per-model token split; their residual tokens are priced at the flat Sonnet 4.x rate"}')
     printf '%s\n' "{\"rows\":${_json_rows},\"meta\":${_meta}}"
     return 0
   fi

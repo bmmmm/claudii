@@ -732,21 +732,18 @@ _flat_1m_model() {
 # used_percentage is pre-calculated against the
 # FULL context_window_size, but the useful window ends at the compact point, not
 # 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
-# point nears. The default scale is *model-aware*, mirroring the FLOOR rule in
-# ~/.claude/hooks/compact-nudge.sh: compact point = min(window * 80%, FLOOR), with
+# point nears. The default scale is *model-aware*:
+# compact point = min(window * 80%, FLOOR), with
 # FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the
 # real auto-compact point wins) and 195k on every other model (a habit
 # ceiling — so a 1M sonnet-4.6[1m] window fills near 195k, not 967k, instead of
 # reading "20%" while you're already past the compact point).
 # The auto-compact point itself is window − 33k: Claude Code reserves a 20k
-# output buffer and compacts 13k before that edge (measured in CC 2.1.198 —
-# see the threshold notes in ~/.claude/hooks/compact-nudge.sh; CC v2.1.247
-# confirms 967K on Sonnet 5's 1M window, aligning it with the other 1M
-# models). That resolves to ~96.7% of a 1M window and 83.5% of a 200k one —
-# the old flat 80% assumption under-sold a 1M session by ~167k tokens. On an
-# implausibly small window (< 66k) the formula degrades to the legacy 80%.
-# The nudge hook's 78% is NOT this number: it targets the summary-precompute
-# point (~80% of the effective window) to fire well before auto-compact.
+# output buffer and compacts 13k before that edge (measured in CC 2.1.198;
+# CC v2.1.247 confirms 967K on Sonnet 5's 1M window, aligning it with the
+# other 1M models). That resolves to ~96.7% of a 1M window and 83.5% of a
+# 200k one — the old flat 80% assumption under-sold a 1M session by ~167k
+# tokens. On an implausibly small window (< 66k) it degrades to the legacy 80%.
 # Window source: context_window_size, else inferred from the model id
 # (flat-1M models → 1M, else 200k).
 # CLAUDE_CODE_AUTO_COMPACT_WINDOW (inherited from Claude Code) overrides the

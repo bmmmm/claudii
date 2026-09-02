@@ -25,10 +25,8 @@ display + docs sweep, not a config rename. Older versions stay selectable via
    opt-in treatment). A model that changes this shape (like Sonnet 5 did vs.
    Sonnet 4.6 — 1M went from paid opt-in to default, no premium) needs a new
    pattern arm here, confirmed against the `claude-api` skill or the user —
-   don't assume from the family name alone. **The identical `case "$MODEL"`
-   membership test also lives in `~/.claude/hooks/compact-nudge.sh`** (global,
-   not version-controlled, no test suite) — sweep it in the same pass or it
-   silently drifts.
+   don't assume from the family name alone. `_flat_1m_model()` is the only
+   copy of this test.
 5. The tier mappings are version-agnostic (match bare `fable`/`opus`/`sonnet`/
    `haiku`) — usually no change for version bumps within a tier, BUT check
    whether the new version changes the price inside its tier (Sonnet 5 set the
@@ -60,11 +58,14 @@ If the new model also changes **pricing**, update the per-model `_rates` table i
 `lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc; cache_read = 0.1×
 input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
-in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`opus`/`haiku`/
-`sonnet-legacy` for sonnet-4* ids/`sonnet`, unknown → sonnet) — keep it in sync
-with the table. A price change WITHIN a tier gets a version-aware `tier()`
-branch and its own `_rates` key rather than overwriting the old rate (Sonnet 5
-precedent — old data must keep its old price). `claudii skills-cost` prices
+in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`fable-legacy`
+for fable-5 / mythos-5 ids/`opus`/`haiku`/`sonnet-legacy` for sonnet-4*
+ids/`sonnet`, unknown → sonnet) — keep it in sync with the table. A price
+change WITHIN a tier gets a version-aware `tier()` branch and its own `_rates`
+key rather than overwriting the old rate (Sonnet 5 precedent — old data must
+keep its old price). Compare all four rate columns, not just in/out: Fable 5.1
+moved the cache read alone, so pin an in-tier price change with a token bucket
+that actually differs. `claudii skills-cost` prices
 each per-model token bucket (schema-v5 `attribution_models`) at its tier;
 pre-v5 / orphaned caches have no per-model split, so their residual tokens fall
 back to the flat legacy-Sonnet rate (that data predates Sonnet 5). Verify

@@ -55,7 +55,9 @@ claude-opus-4-7|Opus 4.7|Opus|Opus|opus
 claude-sonnet-5|Sonnet 5|Sonnet|Sonnet|sonnet
 claude-sonnet-4-6|Sonnet 4.6|Sonnet|Sonnet|sonnet-legacy
 claude-haiku-4-5|Haiku 4.5|Haiku|Haiku|haiku
-claude-fable-5|Fable 5|Fable|Fable|fable
+claude-fable-5-1|Fable 5.1|Fable|Fable|fable
+claude-fable-5|Fable 5|Fable|Fable|fable-legacy
+claude-mythos-5|Fable|Fable|Fable|fable-legacy
 claude-mythos-5-1|Fable|Fable|Fable|fable
 opus|Opus|Opus|Opus|opus
 sonnet|Sonnet|Sonnet|Sonnet|sonnet

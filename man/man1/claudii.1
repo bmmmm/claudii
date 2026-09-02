@@ -655,8 +655,10 @@ from \(lqskill runs in fat sessions\(rq (cache_read-heavy).
 Costs are priced per model: each per-model token bucket
 .RB ( attribution_models ", "
 schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
-0.1\(mu, cache_create 1.25\(mu input). Pre-v5 / orphaned caches carry no
-per-model split \(em their residual tokens fall back to the flat Sonnet rate.
+0.1\(mu input \(em except Fable 5.1, a flat $0.25/M \(em and cache_create
+1.25\(mu input). Version-aware within a tier: Sonnet 4.x and Fable 5 keep
+their own older rates. Pre-v5 / orphaned caches carry no
+per-model split \(em their residual tokens fall back to the flat Sonnet 4.x rate.
 .B meta.pricing
 documents the rates and the residual fallback.
 .RE
