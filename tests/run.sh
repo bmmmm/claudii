@@ -247,6 +247,17 @@ fi
     fi
   done
 
+  # A --for filter that matches nothing used to print "0 passed" and exit 0,
+  # which reads exactly like "the tests for this file pass". 17 source files
+  # appear in no `# touches:` header at all, so that green was one typo — or one
+  # unlisted file — away at any time.
+  if [[ -n "$_for_file" && ${#_out_files[@]} -eq 0 ]]; then
+    echo -e "${RED}No test file declares '# touches: … ${_for_file} …'${NC}" >&2
+    echo "  Add it to the touches header of the tests that exercise it," >&2
+    echo "  or run the suite without --for." >&2
+    exit 1
+  fi
+
   # Wait for all parallel jobs
   if [[ "${CLAUDII_TEST_SEQUENTIAL:-0}" != "1" ]]; then
     for _pid in "${_pids[@]}"; do
