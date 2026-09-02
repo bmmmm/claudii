@@ -2,13 +2,13 @@
 # test_status.sh — status checker E2E tests
 
 # Setup: test config so models are well-known and controllable
-export XDG_CONFIG_HOME="$CLAUDII_HOME/tmp/test_status"
+export XDG_CONFIG_HOME="$CLAUDII_TEST_TMP/test_status"
 rm -rf "$XDG_CONFIG_HOME/claudii"
 mkdir -p "$XDG_CONFIG_HOME/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
 
 # Redirect cache to test-local dir (not user's ~/.cache)
-export CLAUDII_CACHE_DIR="$CLAUDII_HOME/tmp/test_status_cache"
+export CLAUDII_CACHE_DIR="$CLAUDII_TEST_TMP/test_status_cache"
 mkdir -p "$CLAUDII_CACHE_DIR"
 
 # Clean cache
@@ -19,31 +19,43 @@ rm -f "$CLAUDII_CACHE_DIR"/status-models
 models_raw=$(jq -r '.statusline.models' "$XDG_CONFIG_HOME/claudii/config.json")
 IFS=',' read -ra STATUS_MODELS <<< "$models_raw"
 
+# Offline curl shim for the smoke block below. These three invocations used to
+# hit https://status.claude.com for real, which made the opening of this file
+# depend on the network and on Anthropic's current incident list — the later
+# blocks all mock curl already (see the _tz_inc_dir shim). Exit 22 is curl's
+# HTTP-error code, i.e. exactly the offline path these asserts describe
+# ("even offline → all-ok fallback").
+_off_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_offline.XXXXXX")
+cat > "$_off_dir/curl" <<'EOF'
+#!/bin/bash
+exit 22
+EOF
+chmod +x "$_off_dir/curl"
+
 # status runs without crash — exit 0 (all ok) or 1 (degraded) are both valid
 exit_code=0
-bash "$CLAUDII_HOME/bin/claudii-status" >/dev/null 2>&1 || exit_code=$?
+PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" >/dev/null 2>&1 || exit_code=$?
 assert_eq "status: no crash (exit 0 or 1)" "true" "$([[ $exit_code -le 1 ]] && echo true || echo false)"
-output=$(bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 || true)
+output=$(PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 || true)
 
 # quiet mode suppresses output
-output=$(bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>&1 || true)
+output=$(PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>&1 || true)
 assert_eq "quiet mode produces no output" "" "$output"
 
 # model status cache always created (even offline → all-ok fallback)
 assert_file_exists "model status cache created" "$CLAUDII_CACHE_DIR/status-models"
 
-# unresolved.json cache always written after a successful status check
-if [[ -f "$CLAUDII_CACHE_DIR/status-unresolved.json" ]]; then
-  assert_eq "status-unresolved.json cache created" "true" "true"
-  if jq -e '.incidents | arrays' "$CLAUDII_CACHE_DIR/status-unresolved.json" >/dev/null 2>&1; then
-    assert_eq "status-unresolved.json has incidents array" "true" "true"
-  else
-    assert_eq "status-unresolved.json has incidents array" "valid json with incidents[]" "$(cat "$CLAUDII_CACHE_DIR/status-unresolved.json")"
-  fi
-else
-  # API unreachable → file absent, that's ok
-  assert_eq "status ran without crash" "true" "true"
-fi
+# Offline contract. curl is shimmed to exit 22 above, so `unresolved` stays
+# empty and bin/claudii-status:199 never reaches the write — the incidents
+# cache must be absent, while the model cache above still carries the
+# all-ok fallback.
+#
+# This replaces an if/else whose every branch asserted "true" == "true": with a
+# live network it took whichever path the internet happened to offer, and it
+# could not fail in either. The populated-incidents path is covered for real by
+# the mocked blocks further down (_tz_inc_dir, _github_inc_dir, _api_inc_dir).
+assert_eq "offline: no unresolved.json cache is written" "absent" \
+  "$([[ -f "$CLAUDII_CACHE_DIR/status-unresolved.json" ]] && echo present || echo absent)"
 
 # All configured models must appear in cache with valid state
 cached=$(cat "$CLAUDII_CACHE_DIR/status-models")
@@ -76,7 +88,7 @@ assert_contains "new model in config appears in cache" "testmodel=" "$cached"
 # ── Incident display: claudii status reads status-unresolved.json ────────────
 # _cmd_status calls $CLAUDII_HOME/bin/claudii-status directly, so we need a
 # temp CLAUDII_HOME with a stub binary that writes mock incident data.
-_stub_home="$CLAUDII_HOME/tmp/test_status_stub_home"
+_stub_home="$CLAUDII_TEST_TMP/test_status_stub_home"
 mkdir -p "$_stub_home/bin" "$_stub_home/lib/cmd" "$_stub_home/config"
 # Symlink all real files except claudii-status (which we stub)
 for _f in claudii claudii-cc-statusline; do
@@ -110,7 +122,7 @@ rm -rf "$_stub_home"
 # abbreviation. The render did `_ts="$_ABS_FMT"; _ts="${_ts/T/ }"` — the
 # T→space swap (meant only for the raw-ISO fallback) ate the T in the zone
 # name, so CEST printed as "CES ", CET as "CE ", GMT as "GM ".
-_tz_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_tz.XXXXXX")
+_tz_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_tz.XXXXXX")
 mkdir -p "$_tz_inc_dir/srv"
 cat > "$_tz_inc_dir/srv/unresolved.json" <<'JSON'
 {"incidents":[{
@@ -151,7 +163,7 @@ fi
 # for organizations restricting GitHub access by IP address" (May 2026)
 # — affected only orgs with GitHub IP allowlists, but the old heuristic
 # flagged Opus/Sonnet/Haiku as down because no model name was matched.
-_github_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_gh.XXXXXX")
+_github_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_gh.XXXXXX")
 mkdir -p "$_github_inc_dir/cache" "$_github_inc_dir/srv"
 cat > "$_github_inc_dir/srv/unresolved.json" <<'JSON'
 {"incidents":[{
@@ -191,7 +203,7 @@ rm -rf "$_github_inc_dir"
 # Regression: incident whose components list includes "API" (broad inference
 # outage) must still flag all models as degraded/down — this is the one case
 # where "no model named, but everything affected" is real.
-_api_inc_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_api.XXXXXX")
+_api_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_api.XXXXXX")
 mkdir -p "$_api_inc_dir/srv"
 cat > "$_api_inc_dir/srv/unresolved.json" <<'JSON'
 {"incidents":[{
@@ -230,7 +242,7 @@ rm -rf "$_api_inc_dir"
 # model access flows through it — but it must NOT cascade onto opus/sonnet/
 # haiku. The model-scope check suppresses the broad-API fallback; the
 # _incident marker is still persisted so consumers show the note indicator.
-_mythos_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_mythos.XXXXXX")
+_mythos_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_mythos.XXXXXX")
 mkdir -p "$_mythos_dir/srv"
 cat > "$_mythos_dir/srv/unresolved.json" <<'JSON'
 {"incidents":[{
@@ -286,7 +298,7 @@ else
 fi
 
 # ── Transition log: state changes land in status-history.tsv ─────────────────
-_tr_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_tr.XXXXXX")
+_tr_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_tr.XXXXXX")
 mkdir -p "$_tr_dir/srv"
 cat > "$_tr_dir/srv/unresolved.json" <<'JSON'
 {"incidents":[{
@@ -429,7 +441,7 @@ esac
 # interval while a model is down, but claudii-status itself used to gate the
 # real refetch on the full base TTL — so a recovered model stayed "down" in the
 # RPROMPT for up to base TTL. claudii-status must apply the same ÷5 (min 60s).
-_adt_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_adt.XXXXXX")
+_adt_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_adt.XXXXXX")
 mkdir -p "$_adt_dir/srv"
 cat > "$_adt_dir/curl" <<EOF
 #!/bin/bash
@@ -475,7 +487,7 @@ rm -rf "$_adt_dir"
 # incident names are newline-joined, and the (unbounded) update bodies are
 # appended after the LAST name. A model named in the FIRST incident is then
 # read as absent → the model stays "ok" while it is actually down.
-_sp_dir=$(mktemp -d "$CLAUDII_HOME/tmp/test_status_sigpipe.XXXXXX")
+_sp_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_sigpipe.XXXXXX")
 mkdir -p "$_sp_dir/srv"
 # ~190 KB of body text, well past the 64 KiB pipe buffer. Streamed straight
 # into the file rather than handed to jq as an argument: Linux caps a single

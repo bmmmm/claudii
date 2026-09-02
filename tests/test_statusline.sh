@@ -512,7 +512,7 @@ rm -rf "$COND_TMP"
 
 # ── Dashboard rate urgency colors ──
 
-RATE_TMP="$CLAUDII_HOME/tmp/test_statusline_rate"
+RATE_TMP="$CLAUDII_TEST_TMP/test_statusline_rate"
 rm -rf "$RATE_TMP"
 mkdir -p "$RATE_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$RATE_TMP/config/claudii/config.json"
@@ -554,7 +554,7 @@ rm -rf "$RATE_TMP"
 unset RATE_TMP _live_pid2 zsh_rate_red zsh_rate_green
 
 # ── PROMPT must not contain literal ESC[s (cursor save) ──
-ESC_TMP="$CLAUDII_HOME/tmp/test_statusline_esc"
+ESC_TMP="$CLAUDII_TEST_TMP/test_statusline_esc"
 rm -rf "$ESC_TMP"
 mkdir -p "$ESC_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$ESC_TMP/config/claudii/config.json"
@@ -581,7 +581,7 @@ fi
 rm -rf "$ESC_TMP"
 
 # ── Dashboard only after claudii commands ────────────────────────────────────
-CMDFILTER_TMP="$CLAUDII_HOME/tmp/test_statusline_cmdfilter"
+CMDFILTER_TMP="$CLAUDII_TEST_TMP/test_statusline_cmdfilter"
 rm -rf "$CMDFILTER_TMP"
 mkdir -p "$CMDFILTER_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$CMDFILTER_TMP/config/claudii/config.json"
@@ -643,7 +643,7 @@ rm -rf "$TEST_TMP"
 unset XDG_CONFIG_HOME
 
 # ── Reentrancy guard: second call while first is running → skipped ────────────
-REENT_TMP="$CLAUDII_HOME/tmp/test_statusline_reent"
+REENT_TMP="$CLAUDII_TEST_TMP/test_statusline_reent"
 rm -rf "$REENT_TMP"
 mkdir -p "$REENT_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$REENT_TMP/config/claudii/config.json"
@@ -692,7 +692,7 @@ rm -rf "$REENT_TMP"
 unset REENT_TMP reent_out reent_clear
 
 # ── Background PID guard: no second spawn while first is running ──────────────
-PID_TMP="$CLAUDII_HOME/tmp/test_statusline_pid"
+PID_TMP="$CLAUDII_TEST_TMP/test_statusline_pid"
 rm -rf "$PID_TMP"
 mkdir -p "$PID_TMP/config/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$PID_TMP/config/claudii/config.json"
@@ -738,10 +738,10 @@ _attl_setup() {
   cp "$CLAUDII_HOME/config/defaults.json" "$dir/config/claudii/config.json"
 }
 
-ATTL_OK_FRESH="$CLAUDII_HOME/tmp/test_statusline_attl_ok_fresh"
-ATTL_OK_STALE="$CLAUDII_HOME/tmp/test_statusline_attl_ok_stale"
-ATTL_DEG="$CLAUDII_HOME/tmp/test_statusline_attl_deg"
-ATTL_UNR="$CLAUDII_HOME/tmp/test_statusline_attl_unr"
+ATTL_OK_FRESH="$CLAUDII_TEST_TMP/test_statusline_attl_ok_fresh"
+ATTL_OK_STALE="$CLAUDII_TEST_TMP/test_statusline_attl_ok_stale"
+ATTL_DEG="$CLAUDII_TEST_TMP/test_statusline_attl_deg"
+ATTL_UNR="$CLAUDII_TEST_TMP/test_statusline_attl_unr"
 
 # Base TTL from defaults (300s). A fresh cache (age ~0) should never show ⟳.
 # For ok state (effective_ttl = 600): age 0 → no refresh indicator.
@@ -814,7 +814,7 @@ unset ATTL_OK_FRESH ATTL_OK_STALE ATTL_DEG ATTL_UNR attl_ok_out attl_ok_stale at
 
 # ── token-throughput display (from the session-* cache tok= field) ───────────
 
-HIST_TMP="$CLAUDII_HOME/tmp/test_statusline_hist"
+HIST_TMP="$CLAUDII_TEST_TMP/test_statusline_hist"
 rm -rf "$HIST_TMP"
 mkdir -p "$HIST_TMP/config/claudii"
 jq '."session-dashboard".enabled = "on"' "$CLAUDII_HOME/config/defaults.json" > "$HIST_TMP/config/claudii/config.json"

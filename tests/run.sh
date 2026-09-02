@@ -144,6 +144,10 @@ assert_matches() {
 # Export for test files (subprocess mode)
 export CLAUDII_HOME TESTS_DIR
 export GREEN RED YELLOW NC
+# The real home, captured before any sandboxing — tests/test_isolation.sh
+# asserts against it, and it is the only way a test can tell "sandboxed" from
+# "happens to be a temp dir".
+export _CLAUDII_TEST_REAL_HOME="$HOME"
 export -f assert_eq assert_contains assert_not_contains assert_exit_code assert_file_exists
 export -f assert_no_literal_ansi assert_matches hist_row
 
@@ -155,8 +159,35 @@ _run_single_test() {
   local test_file="$1" out_file="$2"
   (
     PASS=0; FAIL=0; ERRORS=()
+    # ── Sandbox ──────────────────────────────────────────────────────────────
+    # HOME and the XDG roots point into a private temp dir, so a test file that
+    # forgets its own cache override writes THERE and not into the user's live
+    # ~/.cache/claudii. It used to write into the live one: 96 of the 132
+    # statusline invocations in test_sessionline.sh carried no override, and
+    # every render appended a fixture row to the real cost history —
+    # 66,812 of 475,659 rows across all months, enough to overstate the 7-day
+    # session count by 12 and to pull avg API/session from 43m down to 39m.
+    #
+    # CLAUDII_CACHE_DIR is deliberately NOT set here. It outranks
+    # HOME/XDG_CACHE_HOME wherever it is read (lib/cmd/vpnii.sh:68 and the
+    # helpers), so a blanket value would defeat the tests that vary HOME per
+    # invocation on purpose — setting it turned 3 asserts in test_vpnii.sh red.
+    local _sandbox
+    _sandbox=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_home.XXXXXX")
+    export HOME="$_sandbox/home"
+    export XDG_CACHE_HOME="$_sandbox/cache"
+    export XDG_CONFIG_HOME="$_sandbox/config"
+    export XDG_DATA_HOME="$_sandbox/data"
     # Isolate zsh subprocesses — empty ZDOTDIR prevents sourcing user's .zshrc/.zshenv
-    export ZDOTDIR=$(mktemp -d "${TMPDIR:-/tmp}/claudii_zdotdir.XXXXXX")
+    export ZDOTDIR="$_sandbox/zdotdir"
+    # Scratch root for test files that want a named, inspectable directory.
+    # These used to be fixed paths under the repo's own tmp/ ("$CLAUDII_HOME/tmp/
+    # test_status"), which made the suite unsafe to run twice at once: two
+    # concurrent runs of test_status.sh alone produced 6 and 15 failures. The
+    # names stay readable; the uniqueness comes from the sandbox root.
+    export CLAUDII_TEST_TMP="$_sandbox/tmp"
+    mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
+             "$ZDOTDIR" "$CLAUDII_TEST_TMP"
     echo -e "${YELLOW}$(basename "$test_file")${NC}"
     source "$test_file"
     echo "CLAUDII_TEST_RESULT:${PASS}:${FAIL}"
@@ -165,7 +196,7 @@ _run_single_test() {
         echo "CLAUDII_TEST_ERROR:$err"
       done
     fi
-    rm -rf "$ZDOTDIR" 2>/dev/null || true
+    rm -rf "$_sandbox" 2>/dev/null || true
   ) > "$out_file" 2>&1
 }
 

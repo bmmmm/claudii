@@ -1,7 +1,7 @@
 # touches: bin/claudii lib/cmd/system.sh
 # test_cc_statusline_preset.sh — `claudii cc-statusline preset` E2E tests
 
-TEST_TMP="$CLAUDII_HOME/tmp/test_cc_statusline_preset"
+TEST_TMP="$CLAUDII_TEST_TMP/test_cc_statusline_preset"
 rm -rf "$TEST_TMP"
 mkdir -p "$TEST_TMP"
 export XDG_CONFIG_HOME="$TEST_TMP/config"

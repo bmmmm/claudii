@@ -44,7 +44,7 @@ output=$(echo '{"model":{"display_name":"Haiku"},"context_window":{"used_percent
 assert_contains "minimal data shows model" "Haiku" "$output"
 
 # duration segment — not in default layout; test via custom config
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["duration"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":732000}}' \
@@ -55,7 +55,7 @@ output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percen
 assert_contains "duration segment: 1h0m" "1h0m" "$output"
 
 # cost segment — not in default layout; test via custom config
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["cost"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.55}}' \
@@ -129,8 +129,8 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "thinking disabled: no ▲" "0" "$(echo "$strip" | grep -c '▲')"
 
 # Worktree/Agent — written to session cache file
-mkdir -p "$CLAUDII_HOME/tmp"
-_test_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cache_dir")
+mkdir -p "$CLAUDII_TEST_TMP"
+_test_cache_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cache_dir")
 output=$(echo '{"session_id":"testworktreeagent","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"worktree":{"name":"my-feature-branch","branch":"main"},"agent":{"name":"agent-42"}}' | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>&1)
 _test_session_file="$_test_cache_dir/session-testwork"
 assert_file_exists "worktree/agent: session cache file created" "$_test_session_file"
@@ -141,8 +141,8 @@ assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
 assert_contains "session cache has tok= (input+output)" "tok=1200" "$_cache_contents"
 
 # Worktree segment rendered: name + ⎇ branch in output (via custom config with worktree segment)
-mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+mkdir -p "$CLAUDII_TEST_TMP"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","worktree","agent"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"session_id":"testwt99","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05},"worktree":{"name":"feat-login","branch":"main"}}' \
@@ -153,8 +153,8 @@ assert_contains "worktree segment shows branch" "⎇" "$strip"
 assert_contains "worktree segment shows branch name" "main" "$strip"
 
 # workspace.git_worktree fallback — shown when worktree.name absent (plain git worktree)
-mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+mkdir -p "$CLAUDII_TEST_TMP"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","worktree"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"session_id":"testwsgwt1","model":{"display_name":"Sonnet"},"workspace":{"git_worktree":"feat-test"},"context_window":{"used_percentage":10,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.05}}' \
@@ -256,7 +256,7 @@ _nonempty_lines=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '[^ ]' ||
 assert_eq "default output has exactly 5 non-empty lines" "5" "$_nonempty_lines"
 
 # Single-line config (statusline.lines with 1 array) → 1 output line
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","context-bar","cost","rate-5h","rate-7d","tokens","lines-changed","duration"]]}}\n' \
   > "$_test_cfg_dir/claudii/config.json"
@@ -272,7 +272,7 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "worktree absent when not in JSON" "0" "$(echo "$strip" | grep -c '@' || true)"
 
 # agent segment: available via custom config — agent.name shown as @name
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["agent"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Opus"},"agent":{"name":"orchestrate"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}' \
@@ -319,10 +319,10 @@ assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 # Tailscale on different lines. Deterministic: pre-seed $cache/vpnii-ts with a
 # fresh epoch so the ifconfig probe is skipped entirely and the cached
 # up/down value drives the segment.
-_ts_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cfg_dir")
+_ts_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cfg_dir")
 mkdir -p "$_ts_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["tailscale"]]}}\n' > "$_ts_cfg_dir/claudii/config.json"
-_ts_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cache_dir")
+_ts_cache_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cache_dir")
 _ts_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01,"total_duration_ms":30000}}'
 
 # Fresh cache, up=1 → ts shown (cache hit, ifconfig not consulted)
@@ -340,10 +340,10 @@ assert_not_contains "tailscale: fresh cache up=0 → ts hidden" "ts" "$strip"
 unset _ts_cfg_dir _ts_cache_dir _ts_json output strip
 
 # ── vpn segment is WireGuard-only now — independent of tailscale ──
-_vpn_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cfg_dir")
+_vpn_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cfg_dir")
 mkdir -p "$_vpn_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["vpn"]]}}\n' > "$_vpn_cfg_dir/claudii/config.json"
-_vpn_cache_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cache_dir")
+_vpn_cache_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cache_dir")
 _vpn_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
 
 # Tailscale up, but `vpn` alone must not show "ts" — the segments are split now.
@@ -374,7 +374,7 @@ _test_cache_dir_b32="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir_b32")
 printf 'opus=down\nsonnet=down\nhaiku=degraded\n' > "$_test_cache_dir_b32/status-models"
 # Use a non-Opus/Sonnet/Haiku display name so the model segment doesn't
 # collide with the claude-status labels we are asserting on.
-_test_cfg_dir_b32="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir_b32")
+_test_cfg_dir_b32="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir_b32")
 mkdir -p "$_test_cfg_dir_b32/claudii"
 printf '{"statusline":{"lines":[["claude-status"]]}}\n' > "$_test_cfg_dir_b32/claudii/config.json"
 output=$(echo '{"model":{"display_name":"X"},"context_window":{"used_percentage":20,"total_input_tokens":1000,"total_output_tokens":200,"context_window_size":200000},"cost":{"total_cost_usd":0.10,"total_duration_ms":30000}}' \
@@ -409,8 +409,8 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "api-duration ratio guard: api > total → no ratio shown" "0" "$(echo "$strip" | grep -cE '\([0-9]+%\)' || true)"
 
 # cache-create segment: ✎N shown when cache_creation_input_tokens > 0
-mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+mkdir -p "$CLAUDII_TEST_TMP"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","cache-create"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":1200}},"cost":{"total_cost_usd":0.10}}' \
@@ -420,7 +420,7 @@ assert_contains "cache-create segment shows ✎" "✎" "$strip"
 assert_contains "cache-create segment shows formatted tokens" "1.2K" "$strip"
 
 # cache-create segment: NOT shown when cache_creation_input_tokens = 0
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","cache-create"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":20,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"cost":{"total_cost_usd":0.10}}' \
@@ -435,7 +435,7 @@ assert_eq "cache-create absent when zero" "0" "$(echo "$strip" | grep -c '✎' |
 # earlier) crossing 200k is a real signal: yellow on a native 1M window
 # (sonnet[1m], the paid pricing tier), red on a 200k-class window (genuine
 # overflow).
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 # Opus on its 1M window + exceeds_200k → no marker at all, NEVER >200k (the 28%
@@ -476,7 +476,7 @@ unset _wm
 # The compact segment replaces the 10-block bar with one ○◔◑◕● fill glyph, so
 # the level survives without colour (colour-blind eye, monochrome terminal,
 # ANSI-stripped copy-paste) at a tenth of the width.
-_cx_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_cx_cfg")
+_cx_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_cx_cfg")
 mkdir -p "$_cx_cfg/claudii"
 _cx_run() {  # $1 = segment name, $2 = raw used_percentage → stripped output
   printf '{"statusline":{"lines":[["%s"]]}}\n' "$1" > "$_cx_cfg/claudii/config.json"
@@ -572,7 +572,7 @@ unset _px
 # Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives
 # in the SYSTEM temp dir (a repo under $CLAUDII_HOME would let git's upward
 # .git discovery resolve to claudii's own tree) with an empty --template.
-_wt_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_wt_cfg")
+_wt_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_wt_cfg")
 mkdir -p "$_wt_cfg/claudii"
 printf '{"statusline":{"lines":[["worktrees"]]}}\n' > "$_wt_cfg/claudii/config.json"
 _wt_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_wt_tpl")
@@ -623,7 +623,7 @@ unset -f _wt_run _br_raw
 # ── compact-eta + response — both derive from deltas between two renders ────
 # One session id rendered twice against the same cache dir: the first render
 # only seeds the baseline (no rate yet, no api delta), the second produces both.
-_dl_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_dl_cfg")
+_dl_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_dl_cfg")
 mkdir -p "$_dl_cfg/claudii"
 printf '{"statusline":{"lines":[["context","compact-eta","response"]]}}\n' > "$_dl_cfg/claudii/config.json"
 _dl_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_dl_cache")
@@ -681,7 +681,7 @@ unset _aw_now _aw_cached
 # ── ci segment — reads the cache claudii-ci-refresh maintains ────────────────
 # Every seed below is written fresh, so its mtime is younger than the TTL and
 # the render never spawns the (network-touching) refresher.
-_ci_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ci_cfg")
+_ci_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ci_cfg")
 mkdir -p "$_ci_cfg/claudii"
 printf '{"statusline":{"lines":[["ci"]]}}\n' > "$_ci_cfg/claudii/config.json"
 _ci_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_ci_cache")
@@ -731,7 +731,7 @@ unset -f _ci_seed _ci_run
 # UTF-8 continuation bytes first counts characters in either locale, which is
 # the same thing the statusline itself does (_clen).
 _wd_len() { local _s=${1//[$'\x80'-$'\xbf']/}; printf '%s' "${#_s}"; }
-_wd_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_wd_cfg")
+_wd_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_wd_cfg")
 mkdir -p "$_wd_cfg/claudii"
 _wd_json='{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"session_id":"widthsess001","session_name":"a-rather-long-session-name","worktree":{"name":"toasty-petting-moler-cat","branch":"worktree-toasty-petting-moler-cat"},"context_window":{"used_percentage":12},"cost":{"total_cost_usd":0.1}}'
 _wd_run() {  # $1 = extra jq filter over the config → stripped output
@@ -809,7 +809,7 @@ assert_eq "max_label: never exceeds the cap in either locale" "1" \
 unset -f _wd_run _wd_len; unset _wd_out _wd_full _wd_line _wd_over _wd_capped _wd_tiny _wd_skip _wd_uml _wd_json
 
 # session-name segment: shown when session_name set
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","session-name"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01},"session_name":"my-feature"}' \
@@ -818,8 +818,8 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "session-name segment shows name" "my-feature" "$strip"
 
 # dir segment — workspace.project_dir basename shown in default layout
-mkdir -p "$CLAUDII_HOME/tmp"
-_test_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
+mkdir -p "$CLAUDII_TEST_TMP"
+_test_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_test_cfg_dir")
 mkdir -p "$_test_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["model","dir"]]}}\n' > "$_test_cfg_dir/claudii/config.json"
 output=$(echo '{"model":{"display_name":"Sonnet"},"workspace":{"project_dir":"/Users/alice/projects/my-app","current_dir":"/Users/alice/projects/my-app/src"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.01}}' \
@@ -840,7 +840,7 @@ assert_contains "dir segment uses worktree.original_cwd when set" "feat-branch" 
 # _tok path is exercised), and the health line is the deterministic "statusline still
 # rendered" sentinel — it's independent of the token math (a malformed tokens value
 # blanks the token-consuming segments) and, all-ok, collapses to "claude ✓".
-_inj_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_inj_cfg_dir")
+_inj_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_inj_cfg_dir")
 mkdir -p "$_inj_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["claude-status"],["tokens"]]}}\n' > "$_inj_cfg_dir/claudii/config.json"
 _inj_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_inj_cache_dir")
@@ -855,7 +855,7 @@ unset _inj_cfg_dir _inj_cache_dir
 # omlx segment — reads gateii's data/agents/active.json (or env override)
 # Empty when path missing or stale (>5 min old). Fresh entries render
 # ⚡ task model age. Bench-prefixed task names are passed through verbatim.
-_omlx_dir="$(mktemp -d "$CLAUDII_HOME/tmp/omlx-XXXXXX")"; _SL_TMPDIRS+=("$_omlx_dir")
+_omlx_dir="$(mktemp -d "$CLAUDII_TEST_TMP/omlx-XXXXXX")"; _SL_TMPDIRS+=("$_omlx_dir")
 _omlx_cfg="$_omlx_dir/cfg"; mkdir -p "$_omlx_cfg/claudii"
 printf '{"statusline":{"lines":[["model","omlx"]],"omlx_active_path":"%s/active.json"}}\n' "$_omlx_dir" > "$_omlx_cfg/claudii/config.json"
 _min_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
@@ -889,7 +889,7 @@ assert_contains "omlx: gemma-it-4bit suffix stripped" "gemma-4-e2b" "$strip"
 assert_not_contains "omlx: gemma -it-4bit removed"   "-it-4bit"     "$strip"
 
 # github segment — workspace.repo.{owner,name,pr_number} from CC 2.1.145+
-_gh_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/gh-XXXXXX")"; _SL_TMPDIRS+=("$_gh_cfg")
+_gh_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/gh-XXXXXX")"; _SL_TMPDIRS+=("$_gh_cfg")
 mkdir -p "$_gh_cfg/claudii"
 printf '{"statusline":{"lines":[["model","github"]]}}\n' > "$_gh_cfg/claudii/config.json"
 _gh_base='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
@@ -927,12 +927,12 @@ assert_not_contains "github: owner alone → no slash" "bmmmm/" "$strip"
 # (written by claudii-cc-update-refresh). Cache dir is isolated per case: this
 # segment now touches a real shared cache file, and the real machine's cache
 # (if any) must never leak into the assertions.
-_ccv_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cfg")
+_ccv_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cfg")
 mkdir -p "$_ccv_cfg/claudii"
 printf '{"statusline":{"lines":[["cc-version"]]}}\n' > "$_ccv_cfg/claudii/config.json"
 
 # No update-cache yet: plain, dim — never a false "behind" before there is data.
-_ccv_cache_none="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_none")
+_ccv_cache_none="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_none")
 _j=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.90","context_window":{"used_percentage":10,"context_window_size":200000}}')
 output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_none" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
@@ -945,7 +945,7 @@ output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percenta
 assert_eq "cc-version: empty when version absent" "" "$output"
 
 # Up to date (installed == latest): plain, dim, no red, no +N.
-_ccv_cache_uptodate="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_uptodate")
+_ccv_cache_uptodate="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_uptodate")
 printf 'latest=2.1.90\ntags=2.1.90,2.1.89,2.1.88\nchecked=9999999999\n' > "$_ccv_cache_uptodate/status-cc-version"
 output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_uptodate" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
@@ -953,7 +953,7 @@ assert_eq "cc-version: up to date → plain version" "v2.1.90" "$strip"
 assert_not_contains "cc-version: up to date → not red" $'\033[0;31m' "$output"
 
 # One release behind: red, "+1".
-_ccv_cache_1behind="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_1behind")
+_ccv_cache_1behind="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_1behind")
 printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=9999999999\n' > "$_ccv_cache_1behind/status-cc-version"
 output=$(echo "$_j" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_1behind" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
@@ -963,7 +963,7 @@ assert_contains "cc-version: 1 behind → red color code" $'\033[0;31m' "$output
 # Several releases behind, with a skipped tag in between: the count is the
 # number of ACTUAL releases, not a numeric version diff (91 - 88 = 3 would be
 # wrong here — 2.1.89 was skipped, so only 2 releases are newer than 2.1.88).
-_ccv_cache_2behind="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_2behind")
+_ccv_cache_2behind="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_2behind")
 printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.88\nchecked=9999999999\n' > "$_ccv_cache_2behind/status-cc-version"
 _j88=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.88","context_window":{"used_percentage":10,"context_window_size":200000}}')
 output=$(echo "$_j88" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_2behind" bash "$SL" 2>&1)
@@ -971,7 +971,7 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cc-version: skipped tag → correct release count, not a version diff" "v2.1.88 +2" "$strip"
 
 # Installed version fell off the cached window: red, "+?" — never a fabricated count.
-_ccv_cache_unknown="$(mktemp -d "$CLAUDII_HOME/tmp/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_unknown")
+_ccv_cache_unknown="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_unknown")
 printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=9999999999\n' > "$_ccv_cache_unknown/status-cc-version"
 _jold=$(jq -cn '{"model":{"display_name":"Opus"},"version":"1.0.0","context_window":{"used_percentage":10,"context_window_size":200000}}')
 output=$(echo "$_jold" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
@@ -979,7 +979,7 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cc-version: fell off cached window → red +?" "v1.0.0 +?" "$strip"
 
 # ── Pace tri-state segment tests ───────────────────────────────────────────────
-_pace_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
+_pace_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
 mkdir -p "$_pace_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["pace"]]}}\n' > "$_pace_cfg_dir/claudii/config.json"
 
@@ -1020,7 +1020,7 @@ assert_contains "pace=ahead written to session cache" "pace=ahead" "$_cache_pace
 # cron segment: renders ⏰ <relative> when next_cron_at is in the future
 # session_id "slcrontest1" → first 8 chars = "slcrontest"[:8] = "slcrontest"
 # Actually "slcrontest1"[0:8] = "slcronte" — cache file = session-slcronte
-_cron_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_cron_cfg_dir")
+_cron_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_cron_cfg_dir")
 mkdir -p "$_cron_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["cron"]]}}\n' > "$_cron_cfg_dir/claudii/config.json"
 _cron_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_cron_cache_dir")
@@ -1090,7 +1090,7 @@ assert_contains "cron: cc-statusline preserves bg_tasks on rewrite" "bg_tasks=1"
 
 # ── bg-tasks segment tests ────────────────────────────────────────────────────
 # bg-tasks segment: renders ⚙ Nbg when bg_tasks >= 1 in cache
-_bgt_cfg_dir="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_bgt_cfg_dir")
+_bgt_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_bgt_cfg_dir")
 mkdir -p "$_bgt_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["bg-tasks"]]}}\n' > "$_bgt_cfg_dir/claudii/config.json"
 _bgt_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_bgt_cache_dir")
@@ -1267,7 +1267,7 @@ unset -f _cp_json
 # inside claudii's own tree would let git's upward .git discovery resolve to
 # claudii's remotes (fj+gh) and mask every assertion. An empty --template dir
 # skips the sample-hook copy that the macOS sandbox denies (clonefile EPERM).
-_rm_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_rm_cfg")
+_rm_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_rm_cfg")
 mkdir -p "$_rm_cfg/claudii"
 printf '{"statusline":{"lines":[["remotes"]]}}\n' > "$_rm_cfg/claudii/config.json"
 _rm_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_rm_tpl")  # empty git template (no hooks)
@@ -1316,7 +1316,7 @@ unset -f _rm_init _rm_run; unset _rm_strip
 # resolve to claudii's own tree), with an empty --template to skip sample hooks.
 # Upstream tracking is faked with remote="." (the repo as its own remote) +
 # branch.main.merge → a local 'up' branch, so ahead/behind need no network/clone.
-_gs_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_gs_cfg")
+_gs_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_gs_cfg")
 mkdir -p "$_gs_cfg/claudii"
 printf '{"statusline":{"lines":[["git-sync"]]}}\n' > "$_gs_cfg/claudii/config.json"
 _gs_tpl="$(mktemp -d)"; _SL_TMPDIRS+=("$_gs_tpl")
@@ -1365,7 +1365,7 @@ unset -f _gs_ci _gs_mkrepo _gs_run; unset _gs_d_strip
 # pre-seeds a sibling session-* cache file (a live ppid = the test's own $$, a
 # matching ppid_lstart, a project_path) and asserts the ⚠ count. The current
 # render's own row is written under a distinct session id and skipped.
-_ss_cfg="$(mktemp -d "$CLAUDII_HOME/tmp/XXXXXX")"; _SL_TMPDIRS+=("$_ss_cfg")
+_ss_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ss_cfg")
 mkdir -p "$_ss_cfg/claudii"
 printf '{"statusline":{"lines":[["model","sessions"]]}}\n' > "$_ss_cfg/claudii/config.json"
 # Trimmed lstart of a live pid — mirrors the write-side trim in the statusline

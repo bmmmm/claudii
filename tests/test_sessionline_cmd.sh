@@ -1,7 +1,7 @@
 # touches: bin/claudii lib/cmd/system.sh
 # test_sessionline_cmd.sh — claudii sessionline on/off/status E2E tests
 
-TEST_TMP="$CLAUDII_HOME/tmp/test_sessionline_cmd"
+TEST_TMP="$CLAUDII_TEST_TMP/test_sessionline_cmd"
 rm -rf "$TEST_TMP"
 mkdir -p "$TEST_TMP"
 export XDG_CONFIG_HOME="$TEST_TMP/config"

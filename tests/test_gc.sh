@@ -2,7 +2,7 @@
 # test_gc.sh — session cache GC function tests
 
 # Setup: isolated cache dir in project tmp/
-_gc_cache="$CLAUDII_HOME/tmp/test_gc_cache"
+_gc_cache="$CLAUDII_TEST_TMP/test_gc_cache"
 rm -rf "$_gc_cache"
 mkdir -p "$_gc_cache"
 
@@ -68,7 +68,7 @@ assert_file_exists "gc: lockfile prevents re-run within 1h (fresh file still the
 
 # ── Gap 7 — GC: fresh file protection boundary ──────────────────────────────
 # 59-minute protection: dead PPID but mtime = 59 min ago → must NOT be deleted
-_gc_cache2="$CLAUDII_HOME/tmp/test_gc_boundary"
+_gc_cache2="$CLAUDII_TEST_TMP/test_gc_boundary"
 rm -rf "$_gc_cache2"
 mkdir -p "$_gc_cache2"
 CLAUDII_CACHE_DIR="$_gc_cache2"
@@ -119,7 +119,7 @@ rm -rf "$_gc_cache"
 unset CLAUDII_CACHE_DIR _gc_cache _gc_old _gc_fresh _gc_old_ts
 
 # ── insights gc: orphaned-cache pruning (bin/claudii-insights gc) ───────────
-_igc_base="$CLAUDII_HOME/tmp/test_gc_insights"
+_igc_base="$CLAUDII_TEST_TMP/test_gc_insights"
 rm -rf "$_igc_base"
 mkdir -p "$_igc_base/cache/insights" "$_igc_base/projects/-fake-proj"
 _igc_cache="$_igc_base/cache/insights"

@@ -8,7 +8,7 @@
 #   2. claudii-cc-statusline never refreshed the status-models cache, so the
 #      ClaudeStatus segment age grew unbounded inside long Claude Code sessions.
 
-TEST_TMP="$CLAUDII_HOME/tmp/test_statusline_connected"
+TEST_TMP="$CLAUDII_TEST_TMP/test_statusline_connected"
 rm -rf "$TEST_TMP"
 mkdir -p "$TEST_TMP/bin" "$TEST_TMP/.claude" "$TEST_TMP/cache"
 export XDG_CONFIG_HOME="$TEST_TMP/config"

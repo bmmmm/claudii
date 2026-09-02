@@ -2,7 +2,7 @@
 # test_tmp_filter.sh — atomic-write artifacts (session-*.tmp.PID) must never be
 # parsed as real sessions, and gc must sweep ones older than 60s.
 
-_tf_cache="$CLAUDII_HOME/tmp/test_tmp_filter_cache"
+_tf_cache="$CLAUDII_TEST_TMP/test_tmp_filter_cache"
 rm -rf "$_tf_cache"
 mkdir -p "$_tf_cache"
 

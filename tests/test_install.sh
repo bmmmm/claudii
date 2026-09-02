@@ -1,7 +1,7 @@
 # touches: install.sh uninstall.sh bin/claudii lib/cmd/system.sh
 # test_install.sh — install/uninstall E2E tests (uses isolated temp dirs)
 
-TEST_TMP="$CLAUDII_HOME/tmp/test_install"
+TEST_TMP="$CLAUDII_TEST_TMP/test_install"
 rm -rf "$TEST_TMP"
 mkdir -p "$TEST_TMP/bin" "$TEST_TMP/config/claudii"
 touch "$TEST_TMP/zshrc"
