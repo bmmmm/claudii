@@ -22,18 +22,27 @@ _vibemap_density_char() {
 }
 
 # Read vibemap.{enabled,path} from config. Returns enabled flag and path.
+# Sets _VIBEMAP_ENABLED / _VIBEMAP_PATH. Two forks became one (both values come
+# out of a single jq, US-separated), and the whole thing is memoised per
+# process: a bare `claudii` calls this twice — once from _ov_vibemap_kick and
+# again from _vibemap_render_strip — for a config that cannot change in between.
+_VIBEMAP_CFG_LOADED=0
 _vibemap_load_config() {
+  (( _VIBEMAP_CFG_LOADED )) && return 0
   local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
   _VIBEMAP_ENABLED="false"
   _VIBEMAP_PATH=""
   if [[ -f "$cfg" ]] && command -v jq >/dev/null 2>&1; then
     local enabled cfg_path
-    enabled=$(jq -r '.vibemap.enabled // false' "$cfg" 2>/dev/null)
-    cfg_path=$(jq -r '.vibemap.path // ""' "$cfg" 2>/dev/null)
+    IFS=$'\x1f' read -r enabled cfg_path < <(
+      jq -r '[(.vibemap.enabled // false | tostring), (.vibemap.path // "")] | join("\u001f")' \
+        "$cfg" 2>/dev/null
+    )
     [[ "$enabled" == "true" ]] && _VIBEMAP_ENABLED="true"
     _VIBEMAP_PATH="$cfg_path"
   fi
   _VIBEMAP_PATH=$(_vibemap_resolve_path "$_VIBEMAP_PATH")
+  _VIBEMAP_CFG_LOADED=1
 }
 
 _vibemap_print_path() {

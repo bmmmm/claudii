@@ -46,7 +46,27 @@ _cc_statusline_connected() {
 # File mtime (epoch seconds) — single fork: BSD `stat -f%m`, GNU `stat -c%Y` fallback,
 # 0 if both fail. Canonical home for the idiom that was inlined across lib/cmd/*.
 # (The zsh hot paths in statusline.zsh/functions.zsh prefer the zstat builtin instead.)
-_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+# File mtime, one fork per call.
+#
+# The old form ran the BSD call, let it fail, then ran the GNU one, so on Linux
+# every lookup cost two forks — and _parse_session_cache calls it once per
+# session cache file (77 stat calls in one `claudii limits`).
+#
+# The flavour is resolved HERE, at source time, and not lazily inside the
+# function: _mtime is called as `$(_mtime …)`, so a memo written inside it dies
+# with the subshell and the probe would run on every call. Measured when this
+# was lazy: 43 stat forks became 88. From $OSTYPE, which bash sets itself, so
+# the common platforms cost no fork at all.
+case "${OSTYPE:-}" in
+  darwin*|*bsd*)  _STAT_FLAVOUR=bsd ;;
+  linux*)         _STAT_FLAVOUR=gnu ;;
+  *) if stat -f%m . >/dev/null 2>&1; then _STAT_FLAVOUR=bsd; else _STAT_FLAVOUR=gnu; fi ;;
+esac
+if [[ "$_STAT_FLAVOUR" == "bsd" ]]; then
+  _mtime() { stat -f%m "$1" 2>/dev/null || echo 0; }
+else
+  _mtime() { stat -c%Y "$1" 2>/dev/null || echo 0; }
+fi
 
 # Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
 # Usage: _jq_update <file> <jq-filter> [jq-args...]
@@ -567,6 +587,11 @@ _week_window() {
   local _dir="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}}"
   local _f _best_mt=0
   _WW_START= _WW_RESET= _WW_PCT=
+  # _parse_session_cache forks `date` per file when _NOW is unset, and this loop
+  # runs over every session cache. The list-commands set it; week and limits
+  # reach the parser through here and did not, so each of them forked date once
+  # per session file. One assignment, one fork.
+  [[ -n "${_NOW:-}" ]] || _NOW=$(date +%s)
   _session_files "$_dir"
   (( ${#_SESSION_FILES[@]} )) || return 1
   for _f in "${_SESSION_FILES[@]}"; do
