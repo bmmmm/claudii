@@ -223,8 +223,16 @@ else
     _ok "Tests green post-bump (${_passed:-?}, $_scope)"
   else
     _fail "Tests failed after bump — rolled back, no commit/tag/push made"
-    git -C "$CLAUDII_HOME" checkout -- "$_bin_file" "$_man_file" "$_changelog" 2>/dev/null || true
-    echo "$_test_out" | tail -10 >&2
+    # Every file the bump above touches has to be listed here. docs/index.html
+    # was added to the bump without being added to the rollback, and one failed
+    # release then left the tree with a 0.27.0 landing page on a 0.26.0
+    # checkout — which the version gate in test_docs.sh promptly failed on.
+    git -C "$CLAUDII_HOME" checkout -- \
+      "$_bin_file" "$_man_file" "$_docs_index" "$_changelog" 2>/dev/null || true
+    # tail -30, not -10: the summary line and the failing assertions come first
+    # in --summary output, so a 10-line tail showed only trailing passes and
+    # said nothing about what broke.
+    echo "$_test_out" | tail -30 >&2
     exit 1
   fi
 fi

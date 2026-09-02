@@ -90,12 +90,18 @@ assert_matches "dash: removed or redirected" "Unknown command|dashboard|Dashboar
 rm -rf "$DASH_CLI_TMP"
 unset CLAUDII_CACHE_DIR XDG_CONFIG_HOME DASH_CLI_TMP out
 
-# about must NOT exist as standalone command — CHANGELOG says removed
-# If merged into version, piped output is bare version number (no "Unknown command")
-# If truly removed, it would return "Unknown command" + exit 1
+# about must NOT exist as standalone command — CHANGELOG says removed.
+# It is an alias for `changelog`, so its output IS the release notes.
+#
+# Anchored to the dispatcher's exact rejection line, not to the bare phrase:
+# `about` prints the notes verbatim, and a release whose notes describe a
+# command that used to answer "Unknown command" then contains that phrase
+# legitimately. That is not hypothetical — v0.27.0's notes say exactly that
+# about `restart`, and the unanchored check turned red on prose. Same trap the
+# comment below documents for the "No changelog entry" sentinel.
 about_out=$(bash "$CLAUDII_HOME/bin/claudii" about 2>&1 || true)
-about_unknown=$(echo "$about_out" | grep -c "Unknown command" || true)
-assert_eq "about: removed or merged (no 'Unknown command' in output)" "0" "$about_unknown"
+about_unknown=$(grep -c "^Unknown command: about" <<< "$about_out" || true)
+assert_eq "about: removed or merged (dispatcher does not reject it)" "0" "$about_unknown"
 # about must NOT show a separate standalone about-style block (the old clunky output)
 about_has_old_heading=$(echo "$about_out" | grep -c "Claude Interaction Intelligence" || true)
 assert_eq "about: old standalone about block is gone" "0" "$about_has_old_heading"
