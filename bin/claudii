@@ -134,6 +134,45 @@ source "$CLAUDII_HOME/lib/cmd/insights.sh"
 source "$CLAUDII_HOME/lib/cmd/perf.sh"
 source "$CLAUDII_HOME/lib/cmd/week.sh"
 
+# Centralized config+theme boot — every command needs CLAUDII_CLR_* painted
+# with the user's theme.name before it prints a single line, but nine
+# commands (gc, pin, unpin, vibemap, vpnii, cc-statusline, update, version,
+# changelog) never reached _cfg_init (the only place that called
+# _claudii_theme_load) because their handlers don't touch config at all —
+# they rendered in the hardcoded default palette regardless of theme.name.
+# Rather than sprinkle `_cfg_init` into each new colorless-until-now handler
+# (whack-a-mole — the next command added would just repeat the bug), the
+# dispatcher now loads it once, centrally, before the case below runs. Every
+# handler still gets CONFIG/CONFIG_DIR/DEFAULTS/theme exactly as if it had
+# called _cfg_init itself first.
+#
+# `version` is deliberately excluded: it never emits a color (plain `echo
+# "$VERSION"`, or an uncolored jq object under --json), so painting the
+# theme for it would be a jq fork bought for zero visible effect — the one
+# case explicitly cost-sensitive enough to matter (scripts/completions may
+# shell out to `claudii version` repeatedly). Every other command pays at
+# most one theme-load jq fork it didn't already pay elsewhere; commands that
+# already call `_cfg_init` in their own handler (se, cost, doctor, …) now
+# resolve the theme twice per invocation — accepted since `_claudii_theme_load`
+# and `_cfg_init` live in lib/helpers.sh/lib/visual.sh, outside this fix's
+# Touches, so no cross-process memoization was available to dedupe it.
+#
+# Deliberately NOT the full `_cfg_init`: that also mkdir -p's the config dir
+# and cp's config/defaults.json into place on a first run (real forks, only
+# useful when a handler is about to WRITE config) — dead weight for the
+# read-only, colored-output-only nine this exists to fix. Handlers that need
+# real config access (writes, _cfgget lookups, …) still call the full
+# `_cfg_init` themselves, unchanged.
+_claudii_boot() {
+  case "${1:-}" in
+    version) return 0 ;;
+  esac
+  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+}
+
 # Shorthand aliases — expand before main dispatcher.
 case "${1:-}" in
   s)     set -- status             "${@:2}" ;;
@@ -148,6 +187,8 @@ case "${1:-}" in
   d)     set -- doctor             "${@:2}" ;;
   g)     set -- gc                 "${@:2}" ;;
 esac
+
+_claudii_boot "${1:-}"
 
 case "${1:-}" in
   # System commands

@@ -21,8 +21,8 @@ _cmd_config() {
   case "${2:-}" in
     get)
       key="${3:-}"
-      [[ -z "$key" ]] && { echo "Usage: claudii config get <key>" >&2; exit 1; }
-      _validate_key "$key" || exit 1
+      [[ -z "$key" ]] && { echo "Usage: claudii config get <key>" >&2; return 1; }
+      _validate_key "$key" || return 1
       jq_path=$(_build_jq_path "$key")
       val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
       [[ -z "$val" ]] && val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
@@ -30,10 +30,10 @@ _cmd_config() {
       ;;
     set)
       key="${3:-}"
-      [[ -z "$key" ]] && { echo "Usage: claudii config set <key> <value>" >&2; exit 1; }
-      _validate_key "$key" || exit 1
+      [[ -z "$key" ]] && { echo "Usage: claudii config set <key> <value>" >&2; return 1; }
+      _validate_key "$key" || return 1
       value="${4:-}"
-      [[ -z "$value" ]] && { echo "Usage: claudii config set <key> <value>" >&2; exit 1; }
+      [[ -z "$value" ]] && { echo "Usage: claudii config set <key> <value>" >&2; return 1; }
       if [[ "$value" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
         _jq_update "$CONFIG" --arg k "$key" --argjson v "$value" \
           'setpath($k | split("."); $v)'
@@ -58,26 +58,26 @@ _cmd_config() {
       ;;
     import)
       file="${3:-}"
-      [[ -z "$file" ]] && { echo "Usage: claudii config import <file>" >&2; exit 1; }
-      [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; exit 1; }
-      jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; exit 1; }
-      jq -e 'type == "object"' "$file" >/dev/null 2>&1 || { echo "config import: $file is not a JSON object — aborting" >&2; exit 1; }
+      [[ -z "$file" ]] && { echo "Usage: claudii config import <file>" >&2; return 1; }
+      [[ -f "$file" ]] || { echo "File not found: $file — check the path" >&2; return 1; }
+      jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; return 1; }
+      jq -e 'type == "object"' "$file" >/dev/null 2>&1 || { echo "config import: $file is not a JSON object — aborting" >&2; return 1; }
       # Validate only known top-level keys (a non-object would make `keys` error → empty → vacuous pass).
       # Derive the known set from defaults.json so it never drifts when a new
       # config block ships (perf, …); fall back to a literal set if unreadable.
       _known=$(jq -c 'keys' "$DEFAULTS" 2>/dev/null) \
         || _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence","perf","bumpii","ci","cc_version"]'
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
-      [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; exit 1; }
+      [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; return 1; }
 
       # Validate agent names match allowed pattern
       if jq -e '.agents | type == "object"' "$file" >/dev/null 2>&1; then
         _bad_agents=$(jq -r '.agents | to_entries[] | select(.key | test("^[a-zA-Z_][a-zA-Z0-9_-]*$") | not) | .key' "$file")
-        [[ -z "$_bad_agents" ]] || { printf "config import: invalid agent name(s): %s\n" "$_bad_agents" >&2; exit 1; }
+        [[ -z "$_bad_agents" ]] || { printf "config import: invalid agent name(s): %s\n" "$_bad_agents" >&2; return 1; }
         # Block reserved names — an agent named claudii/claude/clh/clre would shadow
         # the zsh wrapper at registration time and silently break all subcommands.
         _reserved=$(jq -r '.agents | keys[] | select(. == "claudii" or . == "claude" or . == "clh" or . == "clre")' "$file")
-        [[ -z "$_reserved" ]] || { printf "config import: reserved agent name(s): %s — would shadow built-in commands\n" "$_reserved" >&2; exit 1; }
+        [[ -z "$_reserved" ]] || { printf "config import: reserved agent name(s): %s — would shadow built-in commands\n" "$_reserved" >&2; return 1; }
       fi
       cp "$CONFIG" "${CONFIG}.bak"
       cp "$file" "$CONFIG"
@@ -103,7 +103,7 @@ _cmd_config() {
         valid=$(jq -r --arg name "$theme_arg" '.theme_presets | has($name)' "$DEFAULTS" 2>/dev/null)
         if [[ "$valid" != "true" ]]; then
           echo "Unknown theme: $theme_arg — available: $(jq -r '.theme_presets | keys | join(", ")' "$DEFAULTS" 2>/dev/null)" >&2
-          exit 1
+          return 1
         fi
         # Set theme.name in user config
         _jq_update "$CONFIG" --arg name "$theme_arg" '.theme.name = $name'
@@ -133,7 +133,7 @@ _cmd_search() {
   [[ -z "$effort" ]] && effort=$(_cfgget aliases.clq.effort)
   [[ -z "$effort" ]] && effort="medium"
 
-  cd "$search_dir" || { echo "claudii: search directory not found: $search_dir" >&2; exit 1; }
+  cd "$search_dir" || { echo "claudii: search directory not found: $search_dir" >&2; return 1; }
   exec claude --model "$model" --effort "$effort" "${@:2}"
 }
 
@@ -147,7 +147,7 @@ _cmd_agents() {
     # No agents configured — show onboarding text
     if [[ "$_FORMAT" == "json" ]]; then
       echo "[]"
-      exit 0
+      return 0
     fi
 
     printf '\nNo agents configured.\n\n'
@@ -180,13 +180,13 @@ _cmd_agents() {
       done
     fi
     printf '\n'
-    exit 0
+    return 0
   fi
 
   # Agents are configured — show table
   if [[ "$_FORMAT" == "json" ]]; then
     echo "$agents_json" | jq 'to_entries | map({alias: .key} + .value)'
-    exit 0
+    return 0
   fi
 
   if _plain; then
