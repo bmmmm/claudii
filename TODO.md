@@ -6,7 +6,8 @@
 
 ## Pending
 
-> Die folgenden sechs stammen aus dem Audit vom 2026-09-02. Isolation, Hot-Path,
+> Die folgenden vier stammen aus dem Audit vom 2026-09-02 (PID-Race und
+> Theme sind erledigt, 84b2cd3 / f9b914f). Isolation, Hot-Path,
 > Gates und Docs-Drift sind erledigt und committet; das hier ist der Rest der
 > Entdopplung, datei-disjunkt geschnitten für `/orchestrate`.
 
@@ -36,17 +37,25 @@ dieselben Cache-Daten mit verschiedenen Labels. Die beiden bash-Kopien
 zusammenlegen; awk und jq bleiben sprachbedingt eigen, bekommen aber einen Test,
 der alle drei gegen eine feste Modell-Liste auf Gleichheit prüft.
 
-### Ein Parser für status-models statt sechs
+### Ein Parser für status-models statt acht
 
-**Type: Refactor** · **Complexity: Medium** · **Touches: lib/helpers.sh, lib/cmd/overview.sh, lib/cmd/perf.sh, lib/cmd/system.sh**
+**Type: Refactor** · **Complexity: Medium** · **Touches: lib/helpers.sh, lib/cmd/overview.sh,
+lib/cmd/perf.sh, lib/cmd/system.sh, lib/cmd/display.sh, bin/claudii-status,
+bin/claudii-cc-statusline, lib/statusline.zsh**
 
-Sechs Kopien (`overview.sh:517-528`, `perf.sh:44-55`, `system.sh:255`,
-`bin/claudii-status:101,124`, `lib/statusline.zsh:91`,
-`bin/claudii-cc-statusline:1425`); `system.sh:255` forkt dabei ein `grep` **pro
-Modell** statt einmal durchzulaufen. Die drei CLI-Kopien auf einen Helfer
-ziehen. Die zwei Hot-Path-Kopien bleiben fork-frei eigenständig — bekommen aber
-den Test, den die Kommentare (`cc-statusline:1439`, `:1483`, „kept in sync")
-bisher durch Handarbeit ersetzen: gleicher Cache-Inhalt, gleicher String bei
+Acht Kopien, nicht sechs — nachgemessen 2026-09-02, nachdem die alte Liste
+zwei davon nicht kannte: `display.sh:162` (`cs_cache`) fehlte ganz, und
+`system.sh` hat **zwei** Stellen (`:327`, `:390`), nicht eine. Dazu
+`overview.sh:507`, `perf.sh:35`, `claudii-status:23`, `cc-statusline:1480`,
+`statusline.zsh:91`. Zeilennummern driften — nach den Variablennamen suchen,
+nicht nach der Zahl.
+
+`system.sh` forkt ein `grep` **pro Modell** statt einmal durchzulaufen; das ist
+der konkrete Preis, nicht nur die Ästhetik. Die CLI-Kopien auf einen Helfer in
+`lib/helpers.sh` ziehen. Die zwei Hot-Path-Kopien (`cc-statusline`,
+`statusline.zsh`) bleiben absichtlich eigenständig und fork-frei — sie
+bekommen aber den Test, den die „kept in sync“-Kommentare bisher durch
+Handarbeit ersetzen: gleicher Cache-Inhalt rein, gleicher String raus, bei
 allen dreien.
 
 ### Ein Arg-Parser, ein Exit-Code-Vertrag
@@ -63,30 +72,6 @@ Command-Namen selbst überspringen muss. Auf `_insights_window`
 Vertrag: unbekannte Option → rc 2, `claudii <cmd>: unknown option: <arg>` auf
 stderr, plus ein Test über alle Commands. **Achtung:** rc 0 → 2 ist eine
 Verhaltensänderung und gehört unter `### Changed`.
-
-### Theme fehlt fünf Commands, exit/return gemischt
-
-**Type: Fix** · **Complexity: Small** · **Touches: bin/claudii, lib/cmd/config.sh, lib/cmd/system.sh**
-
-`_cfg_init` wird von gc, pin, unpin, vibemap, vpnii, cc-statusline, update,
-version, changelog übersprungen — damit läuft `_claudii_theme_load`
-(`helpers.sh:76`) nie und diese Commands rendern in der Default-Palette,
-unabhängig von `theme.name`. **Erst sichtbar machen** (unter einem
-nicht-default Theme rendern), dann beheben. Dazu: `config.sh` und `system.sh`
-nutzen `exit 1` (~25 Stellen) in gesourcten Dateien, andere `return 1`; `exit`
-aus einem `_cmd_*` überspringt `_spinner_stop`.
-
-### PID-Race der vier Background-Refresher
-
-**Type: Fix** · **Complexity: Small** · **Touches: bin/claudii-cc-statusline, bin/claudii-*-refresh**
-
-Der Dedup existiert viermal (`cc-statusline:1115`, `:1337`, `:1515`, `:1665`)
-mit uneinheitlicher TTL (30 s, ci 120 s), und das Elternteil legt die PID-Datei
-nie an — das Kind schreibt sie erst nach dem Fork (`claudii-ci-refresh:80`,
-`claudii-status:71`, `claudii-cc-update-refresh:63`,
-`claudii-bumpii-refresh:52`), also spawnen zwei Renders im Fenster beide.
-Ein `_spawn_refresher <pidfile> <ttl> <cmd…>` extrahieren, der die Absicht atomar
-vor dem Fork markiert.
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
