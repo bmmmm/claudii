@@ -47,29 +47,28 @@ Ausprägung ist `claudii config -h` — es fällt in den `*)`-Arm von
 statt eine Usage zu zeigen. `pin -h` sucht eine Session namens `-h`;
 `sessions -h` ignoriert das Flag stillschweigend.
 
-### `tests/test_vibemap.sh` zählt je nach Uhrzeit 40 oder 41 Assertions
+### `tests/test_vibemap.sh` überspringt zwischen 23:00 und Mitternacht eine Assertion
 
 **Type: Fix** · **Complexity: Small** · **Touches: tests/test_vibemap.sh**
 
-Eingegrenzt 2026-09-03. Die Gesamtzahl der Suite schwankte zwischen 2295 und
-2296 — nicht zwischen Shells und nicht zwischen Commits, sondern über die
-Zeit: **derselbe Commit `3f03ae9` meldete um 23:0x noch 40, nach Mitternacht
-41.** Beide Werte je dreimal stabil, alle anderen 45 Testdateien unverändert.
+Gefunden 2026-09-03. `tests/test_vibemap.sh:292` umschließt eine Assertion mit
+`if (( _cur_h < 23 ))`, wobei `_cur_h` die echte Uhrzeit ist (`date '+%H'`,
+Zeile 290) — die einzige Stelle der Datei, die eine laufende Uhr liest. In der
+letzten Stunde des Tages wird `strip today-row: future hours rendered as blank
+spaces` (Zeile 301) also **nicht rot, sondern gar nicht aufgerufen**. Daher
+meldet dieselbe Datei 40 statt 41, und die Suite 2295 statt 2296.
 
-Der Weg dahin war der Datei-für-Datei-Diff (`run.sh --summary <datei>` über
-alle Dateien, zweimal, diffen) — nicht der Namens-Diff: der erste Versuch
-davon war vakuum, weil das grep-Muster nicht aufs Ausgabeformat passte und
-zwei leere Listen sich prächtig gleichen.
+Reproduziert ohne die Systemuhr anzufassen, im selben Moment:
+`TZ=Europe/Berlin` — lokal 03:17 — 41 · `TZ=America/Noronha` — lokal 23:17 — 40.
 
-Zu suchen ist die eine Assertion, die an einer Tagesgrenze hängt. Die
-awk-Blöcke der Datei sind sauber deterministisch (`-v now=` mit festen
-Epochen); verdächtig sind die Abschnitte, die eine echte Uhr benutzen
-(`_now2 - 86400` ab Zeile 190) und der Zweig auf eine existierende
-Live-`vibemap.tsv` (Zeile 136). **Warum das zählt:** die Assertion-Zahl ist
-in diesem Repo ein Prüfsignal — sie hat 143 verschluckte Asserts unter bash
-3.2 gefangen und einen Agenten überführt, der einen grünen Lauf auf altem
-Zählerstand als Abdeckung meldete. Ein Wert, der von der Uhrzeit abhängt,
-entwertet genau das.
+**Fix:** `assert_eq` immer aufrufen und stattdessen den *Erwartungswert* aus
+`_cur_h` ableiten (0, wenn keine Zukunftsstunden mehr im Tag sind). Die
+Assertion prüft dann dieselbe Invariante und die Zahl steht zu jeder Stunde.
+
+**Warum das zählt:** die Assertion-Zahl ist in diesem Repo ein Prüfsignal — sie
+hat 143 verschluckte Asserts unter bash 3.2 gefangen und einen Agenten
+überführt, der einen grünen Lauf auf altem Zählerstand als Abdeckung meldete.
+Ein Wert, der an der Uhrzeit hängt, entwertet genau das.
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
