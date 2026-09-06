@@ -21,13 +21,18 @@ _JSONL="$_LIM_PROJ/-test-project/$_SID.jsonl"
 # 1× Haiku. A monthly-spend-limit hit is interspersed to confirm it's
 # excluded (different budget than the 5h session limit this command reports).
 #
-# Dates are computed relative to "now" (10/9 days back), not hardcoded — a
-# fixed calendar date eventually ages out of the --days 60 window the first
-# block below asserts against (was: 2026-06-10/11, broke once "now" passed
-# 60 days past it). Hours stay fixed since the hour-strip/cluster assertions
-# depend on them.
-_LIM_D1=$(date -u -v-10d +%Y-%m-%d 2>/dev/null || date -u -d "10 days ago" +%Y-%m-%d)
-_LIM_D2=$(date -u -v-9d  +%Y-%m-%d 2>/dev/null || date -u -d "9 days ago"  +%Y-%m-%d)
+# Fixture dates are fixed calendar dates, and "now" is pinned via CLAUDII_NOW
+# (the merge-cutoff seam bin/claudii-insights reads — claudii#5) instead of
+# read from the wall clock. A hard-coded fixture date against a LIVE "now" is
+# exactly what aged this suite out of its own --days 60 window once real "now"
+# passed 2026-08-09; a relative-to-live-clock fixture (the interim fix) traded
+# that for the day-boundary flakiness a fixed clock avoids. Hours stay fixed
+# since the hour-strip/cluster assertions depend on them.
+_LIM_D1="2026-06-10"
+_LIM_D2="2026-06-11"
+# 2026-06-25T12:00:00Z — inside every window this file exercises (--days 60,
+# --days 90, the `90d` token), independent of when the suite actually runs.
+_LIM_NOW=1782388800
 {
   printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:29:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":5,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
   printf '%s\n' '{"type":"assistant","timestamp":"'"$_LIM_D1"'T11:30:00Z","sessionId":"'"$_SID"'","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You'"'"'ve hit your session limit · resets 2am (Europe/Berlin)"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}'
@@ -47,9 +52,9 @@ _LIM_D2=$(date -u -v-9d  +%Y-%m-%d 2>/dev/null || date -u -d "9 days ago"  +%Y-%
 _LIM_D1_LBL=$(LC_ALL=C date -j -f '%Y-%m-%d' "$_LIM_D1" '+%d %b' 2>/dev/null \
   || LC_ALL=C date -d "$_LIM_D1" '+%d %b' 2>/dev/null)
 
-_LIM_OUT=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+_LIM_OUT=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" CLAUDII_NOW="$_LIM_NOW" \
   bash "$CLAUDII_HOME/bin/claudii" limits --days 60 2>&1)
-_LIM_RC=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+_LIM_RC=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" CLAUDII_NOW="$_LIM_NOW" \
   bash "$CLAUDII_HOME/bin/claudii" limits --days 60 >/dev/null 2>&1; echo $?)
 
 assert_eq "limits: exit 0"          "0" "$_LIM_RC"
@@ -88,7 +93,7 @@ _LIM_EOUT=$(CLAUDE_PROJECTS_DIR="$_LIM_EPROJ" CLAUDII_CACHE_DIR="$_LIM_ECACHE" \
 assert_contains "limits (empty): empty-state message" "No insight data" "$_LIM_EOUT"
 
 # ── Cycleable named window: `limits 90d` covers the same hits as --days 60 ──
-_LIM_90D=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+_LIM_90D=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" CLAUDII_NOW="$_LIM_NOW" \
   bash "$CLAUDII_HOME/bin/claudii" limits 90d 2>&1)
 assert_contains "limits 90d: named window shows the hits" "Rate limits" "$_LIM_90D"
 _LIM_BAD=$(CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
@@ -108,7 +113,7 @@ assert_contains "limits --help: usage" "Usage: claudii limits" "$_LIM_HELP"
 # ── --json: hits newest-first + per-model tally, well-formed ──
 # 3 hits: day2 20:00 (Haiku), day1 11:45 + 11:29 (Opus). Window 90d covers
 # them (same lifespan as the --days 60 run above).
-_LIM_JSON=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" \
+_LIM_JSON=$(TZ=UTC CLAUDE_PROJECTS_DIR="$_LIM_PROJ" CLAUDII_CACHE_DIR="$_LIM_CACHE" CLAUDII_NOW="$_LIM_NOW" \
   bash "$CLAUDII_HOME/bin/claudii" limits --json --days 90 2>&1)
 assert_eq "limits --json: well-formed JSON" "0" \
   "$(printf '%s' "$_LIM_JSON" | jq empty >/dev/null 2>&1; echo $?)"
@@ -128,4 +133,4 @@ assert_contains "limits --tsv: rejected, points to --json" "use --json" "$_LIM_T
 assert_contains "limits --tsv: exit 1" "rc=1" "$_LIM_TSV"
 
 unset _SID _JSONL _LIM_OUT _LIM_RC _LIM_NOUT _LIM_EOUT _LIM_DV _LIM_HELP
-unset _LIM_JSON _LIM_TSV _LIM_D1 _LIM_D2 _LIM_D1_LBL
+unset _LIM_JSON _LIM_TSV _LIM_D1 _LIM_D2 _LIM_D1_LBL _LIM_NOW

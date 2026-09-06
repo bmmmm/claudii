@@ -18,6 +18,10 @@
 #                                      # includes per-skill, per-plugin and per-MCP-tool attribution
 #   claudii-insights gc --older-than DAYS [--yes]
 #                                      # prune orphaned caches (dry-run without --yes)
+#
+# CLAUDII_NOW (epoch seconds, env) pins "now" for `merge`'s --days/--until-days
+# cutoffs — deterministic tests inject it; unset in production uses the live
+# clock. Same seam name as lib/cmd/cost.sh's forecast month projection.
 
 set -uo pipefail
 
@@ -206,17 +210,29 @@ _cmd_merge() {
     return 0
   fi
 
-  # ISO 8601 cutoffs in UTC (python-free date math). _bsd_date detects BSD vs GNU.
-  local _bsd_date=0
-  date -v -1d +%Y-%m-%d >/dev/null 2>&1 && _bsd_date=1
+  # ISO 8601 cutoffs in UTC (python-free date math), anchored on CLAUDII_NOW
+  # (epoch seconds) when set — same seam _cmd_cost_forecast (lib/cmd/cost.sh)
+  # uses for its month projection. Unset in production -> live clock. Needed
+  # because this script execs as a separate `#!/bin/bash` process (see the
+  # top-of-file usage comment) — the OTHER now-seam, _CLAUDII_NOW in
+  # lib/functions.zsh, is read in the same zsh process as its one caller and
+  # never crosses a fork, so it cannot reach here (claudii#5: `limits`
+  # fixtures with hard-coded dates aged out of their --days window on a live
+  # clock, and no test seam reached this merge step to pin it).
+  # Plain epoch arithmetic (UTC has no DST) replaces the old `-v -Nd` / "N days
+  # ago" relative parsing, so both branches share the one anchor. `date -r
+  # <epoch>` (BSD) / `date -d @<epoch>` (GNU) mirrors _fmt_abs's fallback
+  # (lib/timefmt.sh) — GNU's `-r` reads a FILE's mtime, so it fails fast on a
+  # bare epoch and falls through to `-d @`.
+  local _now_epoch="${CLAUDII_NOW:-$(date +%s)}"
   local cutoff_iso="" until_iso=""
   if [[ -n "$days" ]]; then
-    if (( _bsd_date )); then cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
-    else cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ); fi
+    cutoff_iso=$(date -u -r "$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d "@$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
   fi
   if [[ -n "$until_days" ]]; then
-    if (( _bsd_date )); then until_iso=$(date -u -v "-${until_days}d" +%Y-%m-%dT%H:%M:%SZ)
-    else until_iso=$(date -u -d "${until_days} days ago" +%Y-%m-%dT%H:%M:%SZ); fi
+    until_iso=$(date -u -r "$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d "@$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
   fi
 
   # Merge program lives in lib/insights-merge.jq (window filters + tolerant
