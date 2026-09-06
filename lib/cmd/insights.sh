@@ -185,6 +185,25 @@ _insights_window() {
   _IW_DAYS=7   # bind early so callers reading it after a non-zero return stay set-u-safe
   _IW_WINDOW_GIVEN=0
   _IW_POSITIONAL=""
+  # CLAUDII_NOW (epoch seconds, env), when set, is validated here too — the
+  # ONE place cache/tokens/tools/limits/repos/perf/skills-cost share, so a bad
+  # value is caught before any of them touch data. Two failure modes without
+  # this: (1) commands that call merge (cache/tokens/tools/limits) hit
+  # bin/claudii-insights's own CLAUDII_NOW guard, but that guard's `exit 1`
+  # happens inside `_insights_run`'s subprocess and _insights_merged_json
+  # redirects its stderr (2>/dev/null); under bin/claudii's `set -euo
+  # pipefail` the failing `merged=$(...)` assignment then kills the WHOLE
+  # process before any of THIS command's own output runs — stdout AND stderr
+  # both empty, rc 1, no actionable message at all (the same class of trap
+  # documented a few lines below for --days). (2) `repos` never calls merge at
+  # all, so it never even hits that guard — it fell through to
+  # _window_cutoffs's live-clock fallback and rendered silently wrong (rc 0).
+  # Validating here fixes both: it runs in THIS process (message reaches the
+  # user), before any data path, with the same rc-2 contract as --days below.
+  if [[ -n "${CLAUDII_NOW:-}" ]] && ! [[ "$CLAUDII_NOW" =~ ^[0-9]+$ ]]; then
+    printf 'claudii %s: CLAUDII_NOW must be a positive integer epoch (got: %s)\n' "$cmd" "$CLAUDII_NOW" >&2
+    return 2
+  fi
   while [[ $# -gt 0 ]]; do
     local _wv=""
     case "$1" in

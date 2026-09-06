@@ -148,6 +148,36 @@ assert_not_contains "cache --days foo: no misleading no-data message" "No insigh
 rm -rf "$_dv_base"
 unset _dv_base _dv_out
 
+# ── CLAUDII_NOW validation: bad value must error, not fail silently ──────────
+# Regression: bin/claudii-insights validates CLAUDII_NOW, but that guard's
+# `exit 1` fires inside _insights_run's subprocess and _insights_merged_json
+# redirects its stderr (2>/dev/null) — under bin/claudii's `set -euo
+# pipefail`, the failing `merged=$(...)` assignment then killed the WHOLE
+# process before this command's own code ran: empty stdout AND stderr, rc 1,
+# nothing actionable (measured). _insights_window now validates CLAUDII_NOW
+# up front, same rc-2 contract as --days above, so the message actually reaches
+# the user. Covers `repos` too, which never calls merge at all and previously
+# rendered silently off the live clock (rc 0) on a garbage CLAUDII_NOW.
+_cn_base=$(mktemp -d "${TMPDIR:-/tmp}/claudii_cache_now.XXXXXX")
+mkdir -p "$_cn_base/xdg/claudii" "$_cn_base/cache" "$_cn_base/proj"
+cp "$CLAUDII_HOME/config/defaults.json" "$_cn_base/xdg/claudii/config.json"
+_cn_out=$(CLAUDE_PROJECTS_DIR="$_cn_base/proj" CLAUDII_CACHE_DIR="$_cn_base/cache" \
+  XDG_CONFIG_HOME="$_cn_base/xdg" CLAUDII_NOW=junk \
+  bash "$CLAUDII_HOME/bin/claudii" cache --days 60 2>&1; echo "rc=$?")
+assert_contains "cache CLAUDII_NOW=junk: actionable error" "positive integer" "$_cn_out"
+assert_contains "cache CLAUDII_NOW=junk: exit 2"            "rc=2"             "$_cn_out"
+_cn_repos_out=$(CLAUDE_PROJECTS_DIR="$_cn_base/proj" CLAUDII_CACHE_DIR="$_cn_base/cache" \
+  XDG_CONFIG_HOME="$_cn_base/xdg" CLAUDII_NOW=junk \
+  bash "$CLAUDII_HOME/bin/claudii" repos --days 60 2>&1; echo "rc=$?")
+assert_contains "repos CLAUDII_NOW=junk: actionable error" "positive integer" "$_cn_repos_out"
+assert_contains "repos CLAUDII_NOW=junk: exit 2"            "rc=2"             "$_cn_repos_out"
+_cn_ok_rc=$(CLAUDE_PROJECTS_DIR="$_cn_base/proj" CLAUDII_CACHE_DIR="$_cn_base/cache" \
+  XDG_CONFIG_HOME="$_cn_base/xdg" CLAUDII_NOW=1782388800 \
+  bash "$CLAUDII_HOME/bin/claudii" cache --days 60 >/dev/null 2>&1; echo $?)
+assert_eq "cache CLAUDII_NOW=1782388800: accepted (exit 0)" "0" "$_cn_ok_rc"
+rm -rf "$_cn_base"
+unset _cn_base _cn_out _cn_repos_out _cn_ok_rc
+
 # ── Schema gate: orphaned old-schema caches must not force eternal rebuilds ──
 # Regression: the gate took the min schema_version across ALL cache files;
 # orphans (source JSONL deleted) could never be upgraded → every aggregate
