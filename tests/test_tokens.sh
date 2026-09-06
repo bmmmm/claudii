@@ -157,6 +157,27 @@ assert_eq "tokens --json (empty): still well-formed JSON" "0" \
 assert_eq "tokens --json (empty): by_model is []" "0" \
   "$(printf '%s' "$_TOK_JSON_E" | jq -r '.by_model | length')"
 
+# ── CLAUDII_NOW pins _window_cutoffs too, not just the merge cutoff
+# (claudii#5 follow-up) — tokens/repos/perf share _window_cutoffs (lib/timefmt.sh)
+# for their day-bucket floor, which stayed on the live clock after the original
+# fix only threaded the seam through bin/claudii-insights's merge step. A fixed
+# 2026-06-10 fixture is 88+ days before the real "today" this suite runs on, so
+# it would be excluded from ANY sane --days window on the live clock; pinning
+# CLAUDII_NOW to 2026-06-25T12:00:00Z (15 days later, same anchor test_limits.sh
+# uses) must bring it back into a --days 60 window.
+_TOK_NOW_PROJ="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_NOW_PROJ")
+_TOK_NOW_CACHE="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_NOW_CACHE")
+mkdir -p "$_TOK_NOW_PROJ/-test-project-now"
+_TOK_NOW_SID="55555555-6666-7777-8888-999999999999"
+printf '{"type":"assistant","timestamp":"2026-06-10T12:00:00Z","sessionId":"%s","message":{"role":"assistant","model":"claude-opus-4-8","stop_reason":"end_turn","usage":{"input_tokens":4200,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
+  "$_TOK_NOW_SID" > "$_TOK_NOW_PROJ/-test-project-now/$_TOK_NOW_SID.jsonl"
+_TOK_NOW=1782388800
+_TOK_NOW_JSON=$(CLAUDE_PROJECTS_DIR="$_TOK_NOW_PROJ" CLAUDII_CACHE_DIR="$_TOK_NOW_CACHE" CLAUDII_NOW="$_TOK_NOW" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens --json --days 60 2>&1)
+assert_eq "tokens (CLAUDII_NOW pinned): sees a fixture the live clock would exclude" "4200" \
+  "$(printf '%s' "$_TOK_NOW_JSON" | jq -r '.by_type.input')"
+unset _TOK_NOW_PROJ _TOK_NOW_CACHE _TOK_NOW_SID _TOK_NOW _TOK_NOW_JSON
+
 unset _SID _TS _JSONL _TOK_OUT _TOK_RC _TOK_OUT_30 _TOK_EOUT _TOK_DV _TOK_HELP
 unset _TOK_TODAY _TOK_30D _TOK_MONTH _TOK_YEAR _TOK_BAD
 unset _TOK_JSON _TOK_TSV _TOK_JSON_E

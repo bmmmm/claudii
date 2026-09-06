@@ -250,4 +250,21 @@ _mu_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" bash "$CLAUDII_HOME/bin/claudii-i
 assert_eq       "merge --days 60 --until-days 30: accepted (exit 0)" "0"      "$_mu_ok_rc"
 unset _mu_abc_out _mu_ok_rc
 
+# ── CLAUDII_NOW guard: garbage rejected instead of silently disabling the
+# window filter (claudii#5 follow-up). A non-numeric CLAUDII_NOW used to die
+# on an unbound-variable reference INSIDE the cutoff arithmetic (under set -u,
+# re-expanding "junk" as a variable name) — that failure happens inside the
+# `$(...)` computing cutoff_iso, so it only ever emptied cutoff_iso, never
+# propagated: lib/insights-merge.jq treats an empty cutoff as "no bound", so
+# every session (however old) came back with rc 0 and no visible error.
+_mn_junk_out=$(CLAUDII_CACHE_DIR="$_insights_tmp" CLAUDII_NOW=junk bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 60 2>&1)
+_mn_junk_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" CLAUDII_NOW=junk bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 60 >/dev/null 2>&1; echo $?)
+assert_eq       "merge CLAUDII_NOW=junk: rejected (exit 1)" "1"                "$_mn_junk_rc"
+assert_contains "merge CLAUDII_NOW=junk: actionable error"  "positive integer" "$_mn_junk_out"
+assert_eq       "merge CLAUDII_NOW=junk: no stdout on rejection" "" \
+  "$(CLAUDII_CACHE_DIR="$_insights_tmp" CLAUDII_NOW=junk bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 60 2>/dev/null)"
+_mn_ok_rc=$(CLAUDII_CACHE_DIR="$_insights_tmp" CLAUDII_NOW=1782388800 bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 60 >/dev/null 2>&1; echo $?)
+assert_eq       "merge CLAUDII_NOW=1782388800: accepted (exit 0)" "0"         "$_mn_ok_rc"
+unset _mn_junk_out _mn_junk_rc _mn_ok_rc
+
 unset _insights_tmp _insights_cache_dir _session1_cache _session2_cache _session3_cache merged_output explore_calls explore_in_tok explore_out_tok explore_cache_read explore_cache_create proxy_calls email_calls email_in_tok email_out_tok email_cache_read email_cache_create is_valid_json mcp_calls mcp_in_tok am_opus am_opus_in am_opus_cc am_sonnet am_mcp

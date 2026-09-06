@@ -201,6 +201,19 @@ _cmd_merge() {
     printf 'merge: --until-days must be a positive integer (got: %s)\n' "$until_days" >&2
     exit 1
   fi
+  # CLAUDII_NOW (epoch seconds, env), when set, is validated the same way: an
+  # unnumeric value used to die on an unbound-variable reference INSIDE the
+  # cutoff arithmetic below (under `set -u`, "junk - days*86400" re-expands
+  # "junk" as a variable name) — but that failure happens inside the `$(...)`
+  # command substitution, so it only empties cutoff_iso/until_iso, it does not
+  # propagate. An empty cutoff reads as "no bound" in lib/insights-merge.jq:29,
+  # so `CLAUDII_NOW=junk claudii limits --days 60` silently returned every
+  # session ever cached, rc 0, with only a swallowed stderr warning
+  # (_insights_merged_json redirects stderr). Reject it up front instead.
+  if [[ -n "${CLAUDII_NOW:-}" ]] && ! [[ "$CLAUDII_NOW" =~ ^[0-9]+$ ]]; then
+    printf 'merge: CLAUDII_NOW must be a positive integer epoch (got: %s)\n' "$CLAUDII_NOW" >&2
+    exit 1
+  fi
 
   shopt -s nullglob
   local files=("$CACHE_DIR"/*.json)
@@ -211,28 +224,34 @@ _cmd_merge() {
   fi
 
   # ISO 8601 cutoffs in UTC (python-free date math), anchored on CLAUDII_NOW
-  # (epoch seconds) when set — same seam _cmd_cost_forecast (lib/cmd/cost.sh)
-  # uses for its month projection. Unset in production -> live clock. Needed
-  # because this script execs as a separate `#!/bin/bash` process (see the
-  # top-of-file usage comment) — the OTHER now-seam, _CLAUDII_NOW in
-  # lib/functions.zsh, is read in the same zsh process as its one caller and
-  # never crosses a fork, so it cannot reach here (claudii#5: `limits`
-  # fixtures with hard-coded dates aged out of their --days window on a live
-  # clock, and no test seam reached this merge step to pin it).
+  # (epoch seconds) when set — same seam name _cmd_cost_forecast (lib/cmd/cost.sh)
+  # uses for its month projection; kept as the one name for this purpose rather
+  # than reusing lib/functions.zsh's _CLAUDII_NOW (a same-purpose but
+  # zsh-specific seam for the rl_warn countdown — it CAN cross a fork, as
+  # tests/test_rl_warn.sh and test_clre.sh already do, so that is not the
+  # reason a second name exists; cost.sh's precedent is). Unset in production
+  # -> live clock (claudii#5: `limits` fixtures with hard-coded dates aged out
+  # of their --days window, and no seam reached this merge step to pin it).
   # Plain epoch arithmetic (UTC has no DST) replaces the old `-v -Nd` / "N days
-  # ago" relative parsing, so both branches share the one anchor. `date -r
-  # <epoch>` (BSD) / `date -d @<epoch>` (GNU) mirrors _fmt_abs's fallback
-  # (lib/timefmt.sh) — GNU's `-r` reads a FILE's mtime, so it fails fast on a
-  # bare epoch and falls through to `-d @`.
+  # ago" relative parsing, so both branches share the one anchor. GNU's
+  # `-d @<epoch>` tried first: it never touches the filesystem, whereas BSD's
+  # `-r <epoch>` doubles as "read a FILE's mtime" on GNU, so trying `-r` first
+  # would silently return the wrong date on GNU if a file happened to be named
+  # like the epoch. `-d` is not a BSD option at all (fails fast, "illegal
+  # option"), so the fallback to `-r` is reached cleanly there. Both attempts
+  # are silenced: with CLAUDII_NOW validated above and $days/$until_days
+  # already digit-checked, the arithmetic can no longer produce a value either
+  # dialect would reject, so a further failure would only ever be the expected
+  # per-platform miss, never new information worth surfacing.
   local _now_epoch="${CLAUDII_NOW:-$(date +%s)}"
   local cutoff_iso="" until_iso=""
   if [[ -n "$days" ]]; then
-    cutoff_iso=$(date -u -r "$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-      || date -u -d "@$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
+    cutoff_iso=$(date -u -d "@$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -r "$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
   fi
   if [[ -n "$until_days" ]]; then
-    until_iso=$(date -u -r "$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-      || date -u -d "@$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
+    until_iso=$(date -u -d "@$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -r "$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
   fi
 
   # Merge program lives in lib/insights-merge.jq (window filters + tolerant

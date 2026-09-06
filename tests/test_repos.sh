@@ -227,6 +227,27 @@ assert_eq "repos --json (empty): well-formed, by_repo []" "0" \
 _RP_TSV=$(_rp_run repos --tsv; echo "rc=$?")
 assert_contains "repos --tsv: rejected, points to --json" "use --json" "$_RP_TSV"
 
+# ── CLAUDII_NOW pins _window_cutoffs too, not just the merge cutoff
+# (claudii#5 follow-up) — repos/tokens/perf share _window_cutoffs (lib/timefmt.sh)
+# for their cutoff/floor, which stayed on the live clock after the original fix
+# only threaded the seam through bin/claudii-insights's merge step. A fixed
+# 2026-06-10 fixture is 88+ days before the real "today" this suite runs on;
+# pinning CLAUDII_NOW to 2026-06-25T12:00:00Z (15 days later, same anchor
+# test_limits.sh uses) must bring the repo back into a --days 60 window.
+_RP_NOW_PROJ="$(mktemp -d)"; _RP_TMPDIRS+=("$_RP_NOW_PROJ")
+_RP_NOW_CACHE="$(mktemp -d)"; _RP_TMPDIRS+=("$_RP_NOW_CACHE")
+mkdir -p "$_RP_NOW_PROJ/-test-repos-now"
+_RP_NOW_SID="99999999-1111-2222-3333-444444444444"
+{
+  printf '{"type":"user","timestamp":"2026-06-10T12:00:00Z","cwd":"/opt/tester/pinned","sessionId":"%s","message":{"role":"user","content":"a"}}\n' "$_RP_NOW_SID"
+  printf '{"type":"user","timestamp":"2026-06-10T12:05:00Z","cwd":"/opt/tester/pinned","sessionId":"%s","message":{"role":"user","content":"b"}}\n' "$_RP_NOW_SID"
+} > "$_RP_NOW_PROJ/-test-repos-now/$_RP_NOW_SID.jsonl"
+_RP_NOW=1782388800
+_RP_NOW_OUT=$(CLAUDE_PROJECTS_DIR="$_RP_NOW_PROJ" CLAUDII_CACHE_DIR="$_RP_NOW_CACHE" CLAUDII_NOW="$_RP_NOW" \
+  bash "$CLAUDII_HOME/bin/claudii" repos --days 60 2>&1)
+assert_contains "repos (CLAUDII_NOW pinned): sees a repo the live clock would exclude" "pinned" "$_RP_NOW_OUT"
+unset _RP_NOW_PROJ _RP_NOW_CACHE _RP_NOW_SID _RP_NOW _RP_NOW_OUT
+
 unset _RP_PROJ _RP_CACHE _RP_BASE _RP_SID_A _RP_SID_B _RP_SID_C _RP_SID_D _RP_SID_E _RP_SID_F _RP_A_JSON _RP_E_JSON _RP_F_JSON
 unset _RP_OUT _RP_ALL _RP_JSON _RP_DRILL _RP_DAILY _RP_DAY_A _RP_LBL _RP_BAD _RP_NUM _RP_ND _RP_HELP
 unset _RP_NDF _RP_TND _RP_T14 _RP_ESC

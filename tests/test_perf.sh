@@ -142,6 +142,26 @@ _PERF_EOUT=$(CLAUDE_PROJECTS_DIR="$_PERF_EPROJ" CLAUDII_CACHE_DIR="$_PERF_ECACHE
   bash "$CLAUDII_HOME/bin/claudii" perf 2>&1)
 assert_contains "perf (empty): empty-state message" "No insight data" "$_PERF_EOUT"
 
+# ── CLAUDII_NOW pins _window_cutoffs too, not just the merge cutoff
+# (claudii#5 follow-up) — perf shares _window_cutoffs (lib/timefmt.sh) for its
+# day-bucket floor, which stayed on the live clock after the original fix only
+# threaded the seam through bin/claudii-insights's merge step. A fixed
+# 2026-06-10 fixture is 88+ days before the real "today" this suite runs on;
+# pinning CLAUDII_NOW to 2026-06-25T12:00:00Z (15 days later, same anchor
+# test_limits.sh uses) must bring repoOld back into a --days 60 window.
+_PERF_NOW_PROJ="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_NOW_PROJ")
+_PERF_NOW_CACHE="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_NOW_CACHE")
+mkdir -p "$_PERF_NOW_PROJ/-x-repoOld"
+{
+  printf '%s\n' '{"type":"user","uuid":"uo1","timestamp":"2026-06-10T12:00:00Z","cwd":"/x/repoOld","gitBranch":"main","sessionId":"perftest-old","message":{"role":"user","content":[]}}'
+  printf '%s\n' '{"type":"assistant","uuid":"ao1","parentUuid":"uo1","timestamp":"2026-06-10T12:00:05Z","cwd":"/x/repoOld","gitBranch":"main","sessionId":"perftest-old","message":{"role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}'
+} > "$_PERF_NOW_PROJ/-x-repoOld/perftest-old.jsonl"
+_PERF_NOW=1782388800
+_PERF_NOW_OUT=$(CLAUDE_PROJECTS_DIR="$_PERF_NOW_PROJ" CLAUDII_CACHE_DIR="$_PERF_NOW_CACHE" CLAUDII_NOW="$_PERF_NOW" \
+  bash "$CLAUDII_HOME/bin/claudii" perf --days 60 2>&1)
+assert_contains "perf (CLAUDII_NOW pinned): sees a repo the live clock would exclude" "repoOld" "$_PERF_NOW_OUT"
+unset _PERF_NOW_PROJ _PERF_NOW_CACHE _PERF_NOW _PERF_NOW_OUT
+
 # ── OTEL source fixture: exact duration_ms + ctx + ttft + errors ─────────────
 # Empty projects dir (no transcript samples) + perf.otel.enabled forces the OTEL
 # path. Each span is its own OTLP /v1/traces batch line; one /v1/logs batch

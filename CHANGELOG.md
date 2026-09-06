@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **`CLAUDII_NOW` (the `cost --forecast` clock pin) now covers every rolling `--days` window, and rejects garbage instead of silently ignoring it** — `limits`/`cache`/`tokens`/`tools`/`session`/`repos`/`perf` all read their cutoff through `bin/claudii-insights merge` or `_window_cutoffs`, neither of which consulted the seam before; a bad value (`CLAUDII_NOW=junk`) died on an unbound-variable reference inside the date arithmetic and silently returned every session ever cached instead of erroring. (`bin/claudii-insights`, `lib/timefmt.sh`, `man/man1/claudii.1`)
+
 ---
 
 ## [v0.28.0] — 2026-09-02

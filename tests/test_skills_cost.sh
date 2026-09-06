@@ -345,27 +345,31 @@ assert_eq "skills-cost residual: 600K opus + 400K sonnet residual == \$4.20" "4.
 # Δ must be -400 (less output after a hypothetical SKILL.md edit).
 _SC_CMP_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_CMP_CACHE")
 mkdir -p "$_SC_CMP_CACHE/insights"
-_sc_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-  _sc_prior_ts=$(date -u -v-45d +%Y-%m-%dT%H:%M:%SZ)
-else
-  _sc_prior_ts=$(date -u -d "45 days ago" +%Y-%m-%dT%H:%M:%SZ)
-fi
+# Pin "now" via CLAUDII_NOW (the merge-cutoff seam bin/claudii-insights and
+# _window_cutoffs both read — claudii#5 follow-up) instead of the live clock:
+# this is the same merge machinery test_limits.sh pins, and the prior/recent
+# fixtures below are windowed off "now" the identical way. Anchor value is
+# arbitrary (no assertion here cares about the actual calendar date).
+_sc_cmp_now=1782388800   # 2026-06-25T12:00:00Z
+_sc_now=$(date -u -d "@$_sc_cmp_now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -r "$_sc_cmp_now" +%Y-%m-%dT%H:%M:%SZ)
+_sc_prior_ts=$(date -u -d "@$(( _sc_cmp_now - 45 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -r "$(( _sc_cmp_now - 45 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
 _sc_cmp_common='schema_version:5,messages:1,assistant_messages:1,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_plugins:{},attribution_mcp:{}'
 jq -n --arg ls "$_sc_now" "{sessionId:\"r\",last_seen:\$ls,$_sc_cmp_common,attribution_skills:{explore:{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:0}},attribution_models:{\"skill|explore|claude-opus-4-8\":{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:0}}}" \
   > "$_SC_CMP_CACHE/insights/r.json"
 jq -n --arg ls "$_sc_prior_ts" "{sessionId:\"p\",last_seen:\$ls,$_sc_cmp_common,attribution_skills:{explore:{calls:10,in_tok:1000,out_tok:12000,cache_read:0,cache_create:0}},attribution_models:{\"skill|explore|claude-opus-4-8\":{calls:10,in_tok:1000,out_tok:12000,cache_read:0,cache_create:0}}}" \
   > "$_SC_CMP_CACHE/insights/p.json"
 
-_sc_cmp_out=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 2>&1)
-_sc_cmp_rc=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 >/dev/null 2>&1; echo $?)
+_sc_cmp_out=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" CLAUDII_NOW="$_sc_cmp_now" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 2>&1)
+_sc_cmp_rc=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" CLAUDII_NOW="$_sc_cmp_now" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 >/dev/null 2>&1; echo $?)
 assert_eq       "skills-cost --compare: exit 0"            "0"              "$_sc_cmp_rc"
 assert_contains "skills-cost --compare: header shown"      "prior 30d"      "$_sc_cmp_out"
 assert_contains "skills-cost --compare: explore row"       "explore"        "$_sc_cmp_out"
 assert_contains "skills-cost --compare: out/call prior→recent" "1200 → 800" "$_sc_cmp_out"
 assert_contains "skills-cost --compare: context-robust note" "context-robust" "$_sc_cmp_out"
 
-_sc_cmp_json=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 --json 2>&1)
+_sc_cmp_json=$(CLAUDII_CACHE_DIR="$_SC_CMP_CACHE" CLAUDII_NOW="$_sc_cmp_now" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 --json 2>&1)
 assert_eq "skills-cost --compare --json: valid JSON" "0" "$(jq -e . <<< "$_sc_cmp_json" >/dev/null 2>&1; echo $?)"
 assert_eq "skills-cost --compare --json: out_per_call_prior == 1200" "1200" \
   "$(jq -r '.rows[] | select(.name=="explore") | .out_per_call_prior' <<< "$_sc_cmp_json" 2>/dev/null)"
@@ -418,7 +422,7 @@ assert_contains "skills-cost --days (no value): actionable error, not a silent 3
 assert_contains "skills-cost --days (no value): exit 2" "rc=2" "$_sc_d_nout"
 unset _sc_cmp_noarg _sc_cmp_narc _sc_d_nout
 
-unset _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
+unset _sc_cmp_now _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
 unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \

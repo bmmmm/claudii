@@ -1758,6 +1758,14 @@ By default piped or redirected output is plain text.
 .B CLAUDII_LOG_LEVEL
 Override the debug log level (off, error, warn, info, debug).
 .TP
+.B CLAUDII_NOW
+Test-only: pin "now" (epoch seconds) for
+.BR cost " " --forecast \&'s
+month projection and for every rolling
+.B --days
+window (limits, cache, tokens, tools, session, repos, perf). Unset in normal
+use; the live clock always wins.
+.TP
 .B CLAUDII_SPINNER_MODE
 Override the spinner animation (takes precedence over
 .BR ui.spinner ).

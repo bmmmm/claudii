@@ -66,22 +66,36 @@ _iso_epoch() {
   return 0
 }
 
-# _window_cutoffs <days> — rolling-window boundaries via one BSD/GNU date probe.
-# Sets _WC_CUTOFF (ISO-Z timestamp of now-<days>, a last_seen threshold) and
-# _WC_FLOOR (date of now-(<days>-1), the inclusive calendar floor for "last N
-# days" day-bucket filters). Both empty on date failure (callers no-op on "").
-# The same inline probe lives in bin/claudii-otel and bin/claudii-insights —
-# standalone scripts that don't source this file; keep those markers in sync.
+# _window_cutoffs <days> — rolling-window boundaries, anchored on CLAUDII_NOW
+# (epoch seconds) when set, else the live clock — same seam as
+# bin/claudii-insights's merge cutoff (claudii#5 follow-up: tokens/repos/perf
+# all call this helper for their own "--days N" filtering, so pinning only the
+# merge step left `limits` deterministic while those three still read the live
+# clock under the same fixture). Sets _WC_CUTOFF (ISO-Z timestamp of now-<days>,
+# a last_seen threshold) and _WC_FLOOR (date of now-(<days>-1), the inclusive
+# calendar floor for "last N days" day-bucket filters). Both empty on date
+# failure (callers no-op on ""). A non-numeric CLAUDII_NOW degrades to the live
+# clock rather than failing this helper outright — unlike the merge entry point
+# (bin/claudii-insights), a render helper sourced into a dozen callers has no
+# CLI-flag boundary of its own to reject at, and this function's contract has
+# always been "best-effort, empty on any date trouble".
+# `date -d @<epoch>` tried before `-r <epoch>`: GNU's `-r` doubles as "read a
+# FILE's mtime", so trying it first could silently return the wrong date on
+# GNU if a file happened to be named like the epoch; BSD has no `-d` at all
+# (fails fast), so the fallback still reaches `-r` cleanly there.
+# The plain "N days ago" probe still lives, unchanged and CLAUDII_NOW-blind, in
+# bin/claudii-otel and bin/claudii-insights's `gc` — maintenance/standalone
+# paths this seam does not reach; their own comments still point at each other,
+# not at this function's new epoch math.
 _window_cutoffs() {
   local _days="${1:-7}"
   _WC_CUTOFF=""; _WC_FLOOR=""
-  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
-    _WC_CUTOFF=$(date -u -v "-${_days}d" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
-    _WC_FLOOR=$(date -u -v-"$(( _days - 1 ))"d +%Y-%m-%d 2>/dev/null)
-  else
-    _WC_CUTOFF=$(date -u -d "${_days} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
-    _WC_FLOOR=$(date -u -d "$(( _days - 1 )) days ago" +%Y-%m-%d 2>/dev/null)
-  fi
+  local _now_epoch="${CLAUDII_NOW:-$(date +%s)}"
+  [[ "$_now_epoch" =~ ^[0-9]+$ ]] || _now_epoch=$(date +%s)
+  _WC_CUTOFF=$(date -u -d "@$(( _now_epoch - _days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$(( _now_epoch - _days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  _WC_FLOOR=$(date -u -d "@$(( _now_epoch - (_days - 1) * 86400 ))" +%Y-%m-%d 2>/dev/null \
+    || date -u -r "$(( _now_epoch - (_days - 1) * 86400 ))" +%Y-%m-%d 2>/dev/null)
   return 0
 }
 
