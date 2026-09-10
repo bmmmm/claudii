@@ -36,3 +36,12 @@ the call site (`lib/cmd/*.sh`). Variable names lie: `trends.awk`'s
 start. A review finding "confirmed" from the awk side alone produced a
 false CONFIRMED once (2026-07-02) — the refutation only surfaced on the
 pre-fix re-read of the binding site.
+
+## A `lib/cmd/*.sh` function needs the colour vars stubbed in a test
+
+`bin/claudii` exports `CLAUDII_CLR_*` and `CLAUDII_SYM_SEP`; the lib files
+never define them. `tests/run.sh` runs with `set -u`, so a unit test that
+sources `lib/cmd/<x>.sh` to call one render function directly dies with
+`CLAUDII_CLR_DIM: unbound variable` — and the assert reads as an empty
+render, not as a setup error. Stub them (empty strings) in the subshell
+before the `source`, as `test_sessionline.sh` does for `_session_tok_seg`.
