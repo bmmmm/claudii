@@ -461,6 +461,28 @@ _session_resolve() {
   ' "$jsonl" 2>/dev/null || printf '\n\n\n\n'
 }
 
+# Shorten CC's prompt-cache miss-cause vocabulary (prompt_cache.last_miss_cause
+# .causes, CC 2.1.260+) for a status row. Input: causes joined by "+"
+# ("tools_changed+ttl_expired_5m"); output in _MCS, same joiner
+# ("tools+ttl"). Unknown names pass through clipped to 12 chars, so a cause CC
+# adds later still reads. No fork.
+_miss_cause_short() {
+  local _rest="$1" _one
+  _MCS=""
+  while [[ -n "$_rest" ]]; do
+    _one="${_rest%%+*}"
+    if [[ "$_rest" == *+* ]]; then _rest="${_rest#*+}"; else _rest=""; fi
+    case "$_one" in
+      tools_changed)          _one="tools" ;;
+      system_prompt_changed)  _one="sysprompt" ;;
+      ttl_expired*)           _one="ttl" ;;
+      likely_server_side)     _one="server" ;;
+      *)                      _one="${_one:0:12}" ;;
+    esac
+    _MCS="${_MCS:+$_MCS+}$_one"
+  done
+}
+
 # Parse session cache file (key=value lines) into _PSC_* variables.
 _parse_session_cache() {
   _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
@@ -468,6 +490,7 @@ _parse_session_cache() {
   _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
   _PSC_rate_5h_start= _PSC_project_path= _PSC_tok=
   _PSC_pinned= _PSC_kind= _PSC_pace= _PSC_cron= _PSC_bg_tasks=
+  _PSC_misses= _PSC_miss_causes=
   while IFS='=' read -r _k _v; do
     case "$_k" in
       model)          _PSC_model="$_v" ;;
@@ -491,6 +514,8 @@ _parse_session_cache() {
       pace)           _PSC_pace="$_v" ;;
       next_cron_at)   _PSC_cron="$_v" ;;
       bg_tasks)       _PSC_bg_tasks="$_v" ;;
+      misses)         _PSC_misses="$_v" ;;
+      miss_causes)    _PSC_miss_causes="$_v" ;;
     esac
   done < "$1"
   _PSC_mtime=$(_mtime "$1")

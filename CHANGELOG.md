@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **The `cache-ttl` segment names why the last request missed the prompt cache** — Claude Code 2.1.260 added `prompt_cache.last_miss_cause` to the statusline JSON, and the segment now carries it on the warm countdown: `♨4m·miss:tools` after a tool-set change, `sysprompt`, `ttl`, `server`, several joined with `+`. A miss at warm cache was invisible before (the segment only knew warm and cold). The cause shows exactly while the cached prefix is the one that miss produced — the misses counter rising stamps `expires_at` into the session cache (`miss_exp=`), and the next request, a hit, retires it. `misses=`/`miss_causes=` are persisted too, so the `se` detail line shows "3 miss·tools" (count + most frequent cause). (`bin/claudii-cc-statusline`, `lib/helpers.sh`, `lib/cmd/sessions.sh`, `man/man1/claudii.1`)
+
 ### Fixed
 - **`CLAUDII_NOW` (the `cost --forecast` clock pin) now covers every rolling `--days` window, and rejects garbage instead of silently ignoring it** — `limits`/`cache`/`tokens`/`tools`/`session`/`repos`/`perf` all read their cutoff through `bin/claudii-insights merge` or `_window_cutoffs`, neither of which consulted the seam before; a bad value (`CLAUDII_NOW=junk`) died on an unbound-variable reference inside the date arithmetic and silently returned every session ever cached instead of erroring. (`bin/claudii-insights`, `lib/timefmt.sh`, `man/man1/claudii.1`)
 

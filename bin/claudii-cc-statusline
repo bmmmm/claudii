@@ -261,7 +261,8 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   effort_level thinking_enabled workspace_git_worktree \
   workspace_project_dir worktree_original_cwd \
   repo_host repo_owner repo_name repo_pr cc_version \
-  pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache <<< "$(
+  pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache \
+  pc_misses pc_miss_cause pc_miss_causes pc_expires <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -301,8 +302,12 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.prompt_cache.warm             | if . == null then "" else tostring end),
     (.prompt_cache.caching_observed | if . == null then "" else tostring end),
     (.prompt_cache.expires_at // 0  | if . > 0 then ((. - now) | floor | tostring) else "" end),
-    (.prompt_cache.recache_tokens_if_cold // "" | tostring)
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.prompt_cache.recache_tokens_if_cold // "" | tostring),
+    (.prompt_cache.misses // "" | tostring),
+    (.prompt_cache.last_miss_cause | if type == "object" then (.causes // [] | map(tostring) | join("+")) else "" end),
+    (.prompt_cache.miss_causes | if type == "object" then (to_entries | map("\(.key):\(.value)") | join(",")) else "" end),
+    (.prompt_cache.expires_at // "" | tostring)
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -559,6 +564,23 @@ fi
 _cache_get pinned "";       _cached_pinned="$_CG"
 _cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
 _cache_get bg_tasks "";     _cached_bg_tasks="$_CG"
+# Prompt-cache miss attribution (CC 2.1.260+): last_miss_cause names why the
+# most recent miss happened, but the JSON carries no "which request was that"
+# marker. expires_at is one: every warm response stamps a new one, so the miss
+# belongs to the CURRENT cached prefix exactly while expires_at still equals
+# the value seen when the misses counter last rose. That stamp is persisted as
+# miss_exp= so a later render (same prefix, no new request) still shows the
+# cause, and the next request — a hit — silently retires it.
+_cache_get misses "";   _prev_misses="$_CG"
+_cache_get miss_exp ""; _miss_exp="$_CG"
+pc_expires="${pc_expires%%.*}"
+# No misses= in the cache (first render, resumed session, pruned cache) means
+# the counter's history is unknown: a non-zero count then is NOT evidence that
+# the current request missed, so nothing is stamped — the next rise is.
+if [[ "$_prev_misses" =~ ^[0-9]+$ && "$pc_misses" =~ ^[0-9]+$ && "$pc_expires" =~ ^[0-9]+$ ]] \
+   && (( pc_misses > _prev_misses )); then
+  _miss_exp="$pc_expires"
+fi
 # Test seam: lets the race test interleave a foreign write between the early
 # snapshot and the merge below. Unset outside tests; same privilege as the
 # caller's environment, so eval adds no new surface.
@@ -609,6 +631,9 @@ _tmp_session="${_session_file}.tmp.$$"
   "api_recent=$_api_recent" \
   "compactions=$_compactions" \
   "project_path=$cwd"
+  [[ "$pc_misses" =~ ^[0-9]+$ ]]    && printf 'misses=%s\n'        "$pc_misses"
+  [[ -n "$_miss_exp" ]]             && printf 'miss_exp=%s\n'      "$_miss_exp"
+  [[ -n "$pc_miss_causes" ]]        && printf 'miss_causes=%s\n'   "$pc_miss_causes"
   [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
   [[ -n "$_cached_next_cron_at" ]]  && printf 'next_cron_at=%s\n'  "$_cached_next_cron_at"
   [[ -n "$_cached_bg_tasks" ]]      && printf 'bg_tasks=%s\n'      "$_cached_bg_tasks"
@@ -893,6 +918,15 @@ if [[ "$pc_warm" == "true" && "$pc_ttl_left" =~ ^[0-9]+$ ]] && (( pc_ttl_left > 
     _ct_clr="$DIM"
     (( pc_ttl_left <= 120 )) && _ct_clr="$YELLOW"
     _seg_cache_ttl="${_ct_clr}♨${_REL_FMT}${RST}"
+    # The last request was a miss (see the miss_exp stamp above): name the
+    # cause CC diagnosed, yellow, so a tools/system-prompt change that just
+    # cost a re-cache is visible while it is still actionable. Multiple causes
+    # join with "+"; the cause vocabulary is CC's, shortened by
+    # _miss_cause_short (lib/helpers.sh — shared with `claudii se`).
+    if [[ -n "$pc_miss_cause" && -n "$_miss_exp" && "$_miss_exp" == "$pc_expires" ]]; then
+      _miss_cause_short "$pc_miss_cause"
+      _seg_cache_ttl="${YELLOW}♨${_REL_FMT}·miss:${_MCS}${RST}"
+    fi
   fi
 elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
   _seg_cache_ttl="${YELLOW}♨cold${RST}"

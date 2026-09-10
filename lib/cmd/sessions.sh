@@ -70,7 +70,7 @@ _cmd_sessions_inactive() {
         _is_detail+="${_CTX_BAR} ${_is_pct}%"
       fi
       # Token throughput + cache-hit (replaces the old $cost — see _session_tok_seg)
-      _is_detail+=$(_session_tok_seg "$_PSC_tok" "$_PSC_cache_pct")
+      _is_detail+=$(_session_tok_seg "$_PSC_tok" "$_PSC_cache_pct" "$_PSC_misses" "$_PSC_miss_causes")
       if [[ -n "$_PSC_rate_5h" && "$_PSC_rate_5h" != "0" ]]; then
         _is_detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${_rate_mark}${CLAUDII_CLR_RESET} $(_rate_pct_disp "$_PSC_rate_5h")%"
       fi
@@ -177,7 +177,8 @@ _rate_pct_disp() {
 # sessions degrade to no segment. Always exits 0 (callers capture it via $(…)
 # under set -e). The $ is intentionally gone from this default line.
 _session_tok_seg() {
-  local _tok="${1:-}" _cp="${2:-}" _out="" _tf _cc
+  local _tok="${1:-}" _cp="${2:-}" _miss="${3:-}" _mcauses="${4:-}" _out="" _tf _cc
+  local _mc_rest _mc_pair _mc_k _mc_n _mc_top="" _mc_top_n=0
   if [[ "$_tok" =~ ^[0-9]+$ && "$_tok" != "0" ]]; then
     _tf=$(_fmt_tok "$_tok")
     _out=" ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_CYAN}${_tf} tok${CLAUDII_CLR_RESET}"
@@ -187,6 +188,25 @@ _session_tok_seg() {
       else                       _cc="$CLAUDII_CLR_DIM"
       fi
       _out+=" ${_cc}⚡${_cp}%${CLAUDII_CLR_RESET}"
+    fi
+    # Prompt-cache misses this session (misses=/miss_causes= in the session
+    # cache, CC 2.1.260+): count plus the most frequent diagnosed cause,
+    # e.g. " 2 miss·tools". Omitted at 0/absent.
+    if [[ "$_miss" =~ ^[0-9]+$ ]] && (( _miss > 0 )); then
+      _mc_rest="$_mcauses"
+      while [[ -n "$_mc_rest" ]]; do
+        _mc_pair="${_mc_rest%%,*}"
+        if [[ "$_mc_rest" == *,* ]]; then _mc_rest="${_mc_rest#*,}"; else _mc_rest=""; fi
+        _mc_k="${_mc_pair%%:*}"; _mc_n="${_mc_pair#*:}"
+        [[ "$_mc_n" =~ ^[0-9]+$ ]] || continue
+        if (( _mc_n > _mc_top_n )); then _mc_top="$_mc_k"; _mc_top_n=$_mc_n; fi
+      done
+      _out+=" ${CLAUDII_CLR_YELLOW}${_miss} miss"
+      if [[ -n "$_mc_top" ]]; then
+        _miss_cause_short "$_mc_top"
+        _out+="·${_MCS}"
+      fi
+      _out+="${CLAUDII_CLR_RESET}"
     fi
   fi
   printf '%s' "$_out"
@@ -306,7 +326,8 @@ _cmd_sessions() {
   declare -a _sf_model _sf_ctx _sf_cost _sf_rate5h _sf_rate7d _sf_reset5h \
              _sf_ppid _sf_worktree _sf_agent _sf_cache _sf_tok _sf_sid \
              _sf_is_active _sf_age _sf_projpath _sf_sesname \
-             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron _sf_bgtasks
+             _sf_fingerprint _sf_last_msg _sf_kind _sf_pace _sf_cron _sf_bgtasks \
+             _sf_misses _sf_miss_causes
   _sf_count=0
 
   # Show spinner on stderr only for pretty output (not JSON/TSV — those are piped)
@@ -338,6 +359,8 @@ _cmd_sessions() {
     _sf_agent[$_sf_count]="$_PSC_agent"
     _sf_cache[$_sf_count]="$_PSC_cache_pct"
     _sf_tok[$_sf_count]="$_PSC_tok"
+    _sf_misses[$_sf_count]="$_PSC_misses"
+    _sf_miss_causes[$_sf_count]="$_PSC_miss_causes"
     _sf_age[$_sf_count]="$_PSC_age"
     _sf_is_active[$_sf_count]="$_PSC_is_active"
     _sf_kind[$_sf_count]="$_PSC_kind"
@@ -479,7 +502,7 @@ _cmd_sessions() {
       detail+="${_CTX_BAR} ${_ctx_display}%"
     fi
     # Token throughput + cache-hit (replaces the old $cost — see _session_tok_seg)
-    detail+=$(_session_tok_seg "${_sf_tok[$_i]}" "${_sf_cache[$_i]}")
+    detail+=$(_session_tok_seg "${_sf_tok[$_i]}" "${_sf_cache[$_i]}" "${_sf_misses[$_i]}" "${_sf_miss_causes[$_i]}")
     if [[ -n "${_sf_rate5h[$_i]}" && "${_sf_rate5h[$_i]}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       detail+="  ${CLAUDII_CLR_DIM}${CLAUDII_SYM_SEP}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_DIM}5h${_rate_mark}${CLAUDII_CLR_RESET} $(_rate_pct_disp "${_sf_rate5h[$_i]}")%"
       if [[ -n "${_sf_reset5h[$_i]}" && "${_sf_reset5h[$_i]}" =~ ^[0-9]+$ ]]; then

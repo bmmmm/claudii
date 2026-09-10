@@ -1207,7 +1207,7 @@ context	\[u25D1] 62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D
 context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
 compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
 cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Native \fIprompt_cache.hit_ratio\fR on Claude Code 2.1.251+, derived from the context window on older builds
-cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price. See below. Requires Claude Code 2.1.251+
+cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price; a miss on the last request names its cause (\[u2668]4m\[u00B7]miss:tools, CC 2.1.260+). See below. Requires Claude Code 2.1.251+
 response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
@@ -1435,8 +1435,27 @@ what continuing costs:
 the tokens the next request re-caches, e.g.
 .BR "\[u2668]cold\[u00B7]312.0K" .
 That is the number behind "if I pause now, what does resuming cost?".
+When the last request was a miss, the warm countdown carries the cause Claude
+Code diagnosed
+.RI ( prompt_cache.last_miss_cause ,
+2.1.260+), e.g.
+.BR "\[u2668]4m\[u00B7]miss:tools"
+after a tool set change,
+.B sysprompt
+for a system-prompt change,
+.B ttl
+for an expired prefix,
+.B server
+for a miss the API caused; several causes join with "+". The row shows it
+exactly while the cached prefix is the one that miss produced: the next
+request, a hit, retires it. Cumulative counts land in the session cache
+.RI ( misses= ", " miss_causes= )
+and on the
+.B se
+detail line as "3 miss\[u00B7]tools" (count and most frequent cause).
 Absent entirely on Claude Code builds before 2.1.251 and before the first API
-response. The statistics themselves (misses, expected rebuilds) stay in
+response. The statistics themselves (expected rebuilds, per-request detail)
+stay in
 .BR "/cost" .
 .PP
 .B compact-eta:

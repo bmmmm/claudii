@@ -555,6 +555,57 @@ _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed
 assert_eq "cache-ttl: caching_observed=false stays silent" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
 unset _pc _pc_json _pc_now
 
+# ── prompt_cache miss attribution (CC 2.1.260+): last_miss_cause on the row ──
+# The cause is shown exactly while the CURRENT cached prefix is the one the
+# miss produced: the misses counter rose → stamp expires_at (miss_exp= in the
+# session cache); a later render with the same expires_at still shows it; the
+# next request (new expires_at, misses unchanged) retires it. Each branch is
+# a separate render so a dead branch cannot hide behind a live one.
+_pm_cache="$(mktemp -d)"; _SL_TMPDIRS+=("$_pm_cache")
+_pm_now=$(date +%s)
+_pm_json() {  # expires_at misses last_miss_cause-json
+  printf '{"session_id":"pcmiss01-0000","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.2},"prompt_cache":{"warm":true,"caching_observed":true,"hit_ratio":0.91,"expires_at":%s,"misses":%s,"last_miss_cause":%s,"miss_causes":{"tools_changed":2,"ttl_expired_5m":1},"recache_tokens_if_cold":45000}}' "$1" "$2" "$3"
+}
+_pm_run() { XDG_CONFIG_HOME="$_cx_cfg" CLAUDII_CACHE_DIR="$_pm_cache" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
+# Offsets sit ~50s past a minute boundary so a slow runner cannot floor them.
+# First render with NO session cache: misses=1 is history, not evidence that
+# THIS request missed → no cause (a resumed session must not inherit a lie).
+_pm=$(_pm_json $(( _pm_now + 290 )) 1 '{"causes":["likely_server_side"]}' | _pm_run)
+assert_contains "cache-ttl: first render still counts down" "♨4m" "$_pm"
+assert_not_contains "cache-ttl: first render (no cache history) shows no cause" "miss:" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 290 )) 2 '{"causes":["tools_changed"],"tools_added":2}' | _pm_run)
+assert_contains "cache-ttl: fresh miss names the cause" "♨4m·miss:tools" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 290 )) 2 '{"causes":["tools_changed"],"tools_added":2}' | _pm_run)
+assert_contains "cache-ttl: same prefix keeps the cause" "♨4m·miss:tools" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 410 )) 2 '{"causes":["tools_changed"],"tools_added":2}' | _pm_run)
+assert_contains "cache-ttl: next request (hit) retires the cause" "♨6m" "$_pm"
+assert_not_contains "cache-ttl: retired cause is gone" "miss:" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 530 )) 3 '{"causes":["system_prompt_changed","ttl_expired_5m"]}' | _pm_run)
+assert_contains "cache-ttl: multi-cause miss joins with +" "♨8m·miss:sysprompt+ttl" "$_pm"
+_pm=$(_pm_json "$(( _pm_now + 650 )).5" 4 '{"causes":["likely_server_side","some_future_cause_name"]}' | _pm_run)
+assert_contains "cache-ttl: fractional expires_at still stamps; server + unknown clipped to 12" "♨10m·miss:server+some_future_" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 770 )) 5 'null' | _pm_run)
+assert_not_contains "cache-ttl: undiagnosed miss (null cause) shows no cause" "miss:" "$_pm"
+_pm=$(_pm_json $(( _pm_now + 890 )) 6 '"tools_changed"' | _pm_run)
+assert_contains "cache-ttl: non-object last_miss_cause does not blank the row" "♨14m" "$_pm"
+_pm_file=$(cat "$_pm_cache"/session-pcmiss01)
+assert_contains "session cache persists misses=" "misses=6" "$_pm_file"
+assert_contains "session cache persists miss_causes=" "miss_causes=tools_changed:2,ttl_expired_5m:1" "$_pm_file"
+assert_contains "session cache persists miss_exp= of the last miss" "miss_exp=$(( _pm_now + 890 ))" "$_pm_file"
+# `claudii se` detail segment: count + most frequent cause, silent at 0/absent.
+_pm_seg=$(
+  # run.sh is set -u; the colour vars are normally exported by bin/claudii.
+  CLAUDII_CLR_DIM="" CLAUDII_CLR_RESET="" CLAUDII_CLR_CYAN="" CLAUDII_CLR_GREEN="" CLAUDII_CLR_YELLOW="" CLAUDII_SYM_SEP="│"
+  source "$CLAUDII_HOME/lib/helpers.sh"; source "$CLAUDII_HOME/lib/render.sh"
+  source "$CLAUDII_HOME/lib/cmd/sessions.sh"
+  _session_tok_seg 1200 84 3 "ttl_expired_5m:1,tools_changed:2"; printf '\n'
+  _session_tok_seg 1200 84 0 "tools_changed:2"; printf '\n'
+  _session_tok_seg 1200 84 "" ""; printf '\n'
+)
+assert_contains "se: misses render count + top cause" "1K tok ⚡84% 3 miss·tools" "$_pm_seg"
+assert_eq "se: zero/absent misses stay silent" "1" "$(printf '%s\n' "$_pm_seg" | grep -c 'miss' || true)"
+unset -f _pm_json _pm_run; unset _pm _pm_cache _pm_now _pm_file _pm_seg
+
 # ── multi-line stdin payload (read -r used to take only the first line) ─────
 # A pretty-printed payload must parse like the compact one, not fall through
 # to the empty-field fallback (which renders no model and no context).
