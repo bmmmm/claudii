@@ -781,6 +781,10 @@ if [[ ! "$_ac_win" =~ ^[0-9]+$ ]] || (( _ac_win < 1 )); then
   if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi
 fi
 if _flat_1m_model "$_ac_mid"; then _ac_floor=$_ac_win; else _ac_floor=195000; fi
+# Re-verify after CC v2.1.273 fixed advisor-tool turns being double-counted
+# in the context meter, which had auto-compact firing at ~half the real
+# window in sessions that used them — the 967K figure above was measured at
+# v2.1.247, before this fix.
 _ac_thr=$(( _ac_win - 33000 ))                    # auto-compact = window − 33k (measured)
 (( _ac_thr < _ac_win / 2 )) && _ac_thr=$(( _ac_win * 80 / 100 ))
 (( _ac_floor < _ac_thr )) && _ac_thr=$_ac_floor

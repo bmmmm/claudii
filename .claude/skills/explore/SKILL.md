@@ -94,6 +94,8 @@ Atom 1.0, multi-release per week, full HTML content per entry, no rate limit (ra
 
 **The feed is a 20-release WINDOW, not an archive** (found 2026-08-31: v2.1.221–227 had already scrolled out after a 5-week gap). If the oldest entry in the feed is newer than the last-checked version in watchlist.md, close the gap from `https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md` (same repo, full history) before reporting.
 
+**Evaluated 2026-09-16: `code.claude.com/docs/en/changelog` + its RSS (`.../changelog/rss.xml`) — not adopted.** Same source (the RSS page states it's generated from this repo's `CHANGELOG.md`), same latest version, identical bullet content per entry — but only a 15-release window vs. this feed's 20, so switching would trigger the gap-fallback above more often, not less. Re-evaluate only if this feed.xml is ever discontinued.
+
 Parse strategy: fetch feed, filter `<entry>` where `<updated>` > last-checked-date in watchlist.md, extract `<title>` (version) + `<content>` (HTML bullet list). Hunt for: new statusLine JSON fields, new hook events / hook-output fields (`terminalSequence`, `hookSpecificOutput.*`, `reloadSkills`), new `claude` CLI flags, new settings.json keys, `/usage` / `/cost` / `/diff` enrichments, model/pricing changes.
 
 ### For Anthropic docs (secondary, only when feed mentions a new doc page)
