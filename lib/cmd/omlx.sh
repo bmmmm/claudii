@@ -4,8 +4,10 @@
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 # Requires: visual.sh sourced first (uses CLAUDII_CLR_*)
 
-# Well-known places to look for gateii's data/agents/active.json
+# Well-known places to look for the active.json written by ~/ops/scripts/agent
+# (formerly gateii's data/agents/active.json)
 _OMLX_DEFAULT_PATHS=(
+  "$HOME/ops/var/agent/active.json"
   "$HOME/offline_coding/gateii/data/agents/active.json"
   "$HOME/coding/gateii/data/agents/active.json"
   "$HOME/projects/gateii/data/agents/active.json"
@@ -97,7 +99,7 @@ Commands:
   disconnect    Remove the omlx segment from the statusline layout
   test          Render the statusline as if an omlx agent were running
 
-The omlx integration reads a JSON file written by gateii's scripts/agent
+The omlx integration reads a JSON file written by ~/ops/scripts/agent
 (or scripts/agent-bench) at run time. claudii does not depend on gateii;
 this command is a no-op if gateii isn't installed.
 
