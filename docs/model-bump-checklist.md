@@ -59,13 +59,29 @@ If the new model also changes **pricing**, update the per-model `_rates` table i
 input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
 in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`fable-legacy`
-for fable-5 / mythos-5 ids/`opus`/`haiku`/`sonnet-legacy` for sonnet-4*
-ids/`sonnet`, unknown → sonnet) — keep it in sync with the table. A price
+for fable-5 / mythos-5 ids/`opus`/`opus-5-5` for the newer, cheaper opus-5-5
+id/`haiku`/`sonnet-legacy` for sonnet-4* ids/`sonnet`, unknown → sonnet) —
+keep it in sync with the table. A price
 change WITHIN a tier gets a version-aware `tier()` branch and its own `_rates`
 key rather than overwriting the old rate (Sonnet 5 precedent — old data must
 keep its old price). Compare all four rate columns, not just in/out: Fable 5.1
 moved the cache read alone, so pin an in-tier price change with a token bucket
-that actually differs. `claudii skills-cost` prices
+that actually differs. **Direction isn't fixed — check which side is "new"
+before picking the bare key.** Sonnet 5 and Fable 5.1 both made the bare tier
+key (`sonnet`, `fable`) the CURRENT/cheaper price and pushed the OLD price to
+a `-legacy` suffix, because the newer id was the one that needed a new branch.
+Opus 5.5 inverted this: it shipped as the new *default* Opus at a new price,
+so the bare `opus` key was left alone (still pricing 5/4.8/4.7/4.6) and the
+new, cheaper, now-default id got the specific `opus-5-5` key instead — a
+future *unnamed* Opus id still falls through to the old $5/$25 rate until it
+gets its own branch, not the new one. Don't assume "bare key = current" or
+"specific suffix = legacy" — check Anthropic's docs for which id is actually
+the new default before naming the branch. Also update the two user-facing
+pricing summaries that restate this table in prose: the `meta.pricing` string
+in `lib/cmd/skills-cost.sh` and the `--json` section of `man/man1/claudii.1`
+(`claudii skills-cost --json`, `attribution_models` paragraph) — both bumps
+before Opus 5.5 updated these and it's easy to forget since nothing red
+catches a stale one. `claudii skills-cost` prices
 each per-model token bucket (schema-v5 `attribution_models`) at its tier;
 pre-v5 / orphaned caches have no per-model split, so their residual tokens fall
 back to the flat legacy-Sonnet rate (that data predates Sonnet 5). Verify

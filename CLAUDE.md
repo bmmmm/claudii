@@ -60,7 +60,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 
 ## When a new Claude model ships
 
-A model bump is a display + docs sweep, not a config rename (background: `docs/model-bump-checklist.md`). Checklist: label cases, `_flat_1m_model()` window/pricing-shape check (incl. its untracked mirror in `~/.claude/hooks/compact-nudge.sh`), new-tier wiring across awk/jq/rates, `_KNOWN_MODEL_FAMILIES`, and the pricing `_rates` table.
+A model bump is a display + docs sweep, not a config rename (background: `docs/model-bump-checklist.md`). Checklist: label cases, `_flat_1m_model()` window/pricing-shape check, new-tier wiring across awk/jq/rates, `_KNOWN_MODEL_FAMILIES`, and the pricing `_rates` table.
 
 ## Project skills
 

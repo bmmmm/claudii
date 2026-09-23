@@ -295,32 +295,52 @@ assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
 # Fable 5's $10/$50 in/out, so only a cache_read row tells the rates apart
 # ($0.25/M vs $1/M) — priced off in_tok both read $10.00 and a collapsed
 # lib/tier.jq branch would pass unnoticed.
+# opus55(cr)-skill pin the third in-tier split, Opus 5.5: it's the INVERSE of
+# the sonnet/fable pattern — the NEW price ($4/M in, 5% cache read) gets the
+# refined "opus-5-5" key while the bare "opus" key keeps pricing every older
+# opus id. Both an in_tok row ($4 vs $5/M) and a cache_read row (5% vs 10%,
+# i.e. $0.20 vs $0.50/M) are needed — in/out alone wouldn't catch a collapsed
+# cache-read column.
 _SC_PM_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_PM_CACHE")
 mkdir -p "$_SC_PM_CACHE/insights"
 _sc_write_fixture "$_SC_PM_CACHE/insights/sess-pm.json" \
-  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet5-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable51cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"fablecr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}' \
+  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opuscr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opus55out-skill":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"opus55cc-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet5-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable51cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"fablecr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}' \
   '{}' '{}' \
-  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet5-skill|claude-sonnet-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable51cr-skill|claude-fable-5-1":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|fablecr-skill|claude-fable-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}'
+  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55-skill|claude-opus-5-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55cr-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opuscr-skill|claude-opus-4-8":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opus55out-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"skill|opus55cc-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet5-skill|claude-sonnet-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable51cr-skill|claude-fable-5-1":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|fablecr-skill|claude-fable-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}'
 
 _sc_pm_json=$(CLAUDII_CACHE_DIR="$_SC_PM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
 _sc_pm_opus=$(jq -r '.rows[] | select(.name=="opus-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_opus55=$(jq -r '.rows[] | select(.name=="opus55-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_sonnet=$(jq -r '.rows[] | select(.name=="sonnet-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_sonnet5=$(jq -r '.rows[] | select(.name=="sonnet5-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_haiku=$(jq -r '.rows[] | select(.name=="haiku-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_fable=$(jq -r '.rows[] | select(.name=="fable-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 # 1M input tokens → exactly the per-MTok input price (compare rounded to cents)
 assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(LC_ALL=C awk -v v="$_sc_pm_opus"   'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: opus-5-5 priced at \$4/M"     "4.00"  "$(LC_ALL=C awk -v v="$_sc_pm_opus55" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: sonnet-4-6 priced at legacy \$3/M" "3.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: sonnet-5 priced at \$2/M" "2.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet5" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(LC_ALL=C awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(LC_ALL=C awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
 # 1M cache-read tokens → the tier's cache-read price, which is where Fable 5.1
-# and Fable 5 diverge. Rounded to cents: $0.25 vs $1.00.
+# and Fable 5 diverge (rounded to cents: $0.25 vs $1.00), and separately where
+# Opus 5.5 and older Opus diverge ($0.20 vs $0.50 — 5% vs the usual 10%).
 _sc_pm_f51cr=$(jq -r '.rows[] | select(.name=="fable51cr-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 _sc_pm_f5cr=$(jq -r '.rows[] | select(.name=="fablecr-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_o55cr=$(jq -r '.rows[] | select(.name=="opus55cr-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_ocr=$(jq -r '.rows[] | select(.name=="opuscr-skill")     | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 assert_eq "skills-cost per-model: fable-5-1 cache read at \$0.25/M" "0.25" "$(LC_ALL=C awk -v v="$_sc_pm_f51cr" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: fable-5 cache read at legacy \$1/M" "1.00" "$(LC_ALL=C awk -v v="$_sc_pm_f5cr"  'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: opus-5-5 cache read at \$0.20/M" "0.20" "$(LC_ALL=C awk -v v="$_sc_pm_o55cr" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: opus cache read at \$0.50/M"    "0.50" "$(LC_ALL=C awk -v v="$_sc_pm_ocr"   'BEGIN{printf "%.2f", v}')"
+# opus-5-5's "out" and "cc" (cache_create) columns aren't exercised by any row
+# above (all use in_tok or cache_read) — pin them directly so a typo in either
+# rate ("out":0.00002, "cc":0.000005) doesn't pass silently.
+_sc_pm_o55out=$(jq -r '.rows[] | select(.name=="opus55out-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_o55cc=$(jq -r '.rows[] | select(.name=="opus55cc-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+assert_eq "skills-cost per-model: opus-5-5 output at \$20/M" "20.00" "$(LC_ALL=C awk -v v="$_sc_pm_o55out" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: opus-5-5 cache create at \$5/M" "5.00" "$(LC_ALL=C awk -v v="$_sc_pm_o55cc" 'BEGIN{printf "%.2f", v}')"
 
 # ── Test 12: residual pricing — pre-v5 tokens (no per-model split) → Sonnet ───
 # Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
@@ -423,7 +443,7 @@ assert_contains "skills-cost --days (no value): exit 2" "rc=2" "$_sc_d_nout"
 unset _sc_cmp_noarg _sc_cmp_narc _sc_d_nout
 
 unset _sc_cmp_now _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
-unset _sc_pm_json _sc_pm_opus _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_res_json _sc_res_tot
+unset _sc_pm_json _sc_pm_opus _sc_pm_opus55 _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_pm_o55cr _sc_pm_ocr _sc_pm_o55out _sc_pm_o55cc _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc _sc_d_narc \

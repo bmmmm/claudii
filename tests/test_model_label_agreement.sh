@@ -49,6 +49,7 @@ _mla_jq() { jq -L "$CLAUDII_HOME/lib" -rn --arg m "$1" 'include "tier"; tier($m)
 # The jq column is lower-case by design (it keys the _rates table in
 # lib/cmd/skills-cost.sh); the agreement assert compares it case-folded.
 _MLA_ROWS='
+claude-opus-5-5|Opus 5.5|Opus|Opus|opus-5-5
 claude-opus-5|Opus 5|Opus|Opus|opus
 claude-opus-4-8|Opus 4.8|Opus|Opus|opus
 claude-opus-4-7|Opus 4.7|Opus|Opus|opus
@@ -83,13 +84,16 @@ while IFS='|' read -r _m _exp_label _exp_btier _exp_atier _exp_jtier; do
 
   # 3. jq keys the rate table, so it lower-cases the tier — and it may REFINE
   #    it: Sonnet 4.x billed $3/$15 where Sonnet 5 bills $2/$10, so the rate key
-  #    splits into "sonnet-legacy" where the label stays "Sonnet". That is a
-  #    refinement, not a disagreement, so the family part is what has to match.
-  #    Derived from jq's ACTUAL output, never from the expectation column — a
-  #    branch keyed on the fixture would assert nothing about jq at all.
+  #    splits into "sonnet-legacy" where the label stays "Sonnet"; Opus 5.5
+  #    inverts the direction (the NEW price gets the refined "opus-5-5" key,
+  #    old opus ids keep the bare "opus" rate) but is still a refinement, not
+  #    a disagreement, so the family part (everything before the first "-") is
+  #    what has to match. Derived from jq's ACTUAL output, never from the
+  #    expectation column — a branch keyed on the fixture would assert nothing
+  #    about jq at all.
   _mla_jq_out=$(_mla_jq "$_m")
   assert_eq "agree($_m): jq key family == lower(awk tier)" \
-    "$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_exp_atier")" "${_mla_jq_out%-legacy}"
+    "$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_exp_atier")" "${_mla_jq_out%%-*}"
 done <<< "$_MLA_ROWS"
 
 # ── Documented divergences — pinned so they stay deliberate ──────────────────

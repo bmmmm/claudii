@@ -89,6 +89,7 @@ _insights_model_label() {
     # siblings agree on. bin/claudii-status carries the family in
     # _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
     *mythos*)     printf 'Fable'      ;;
+    *opus-5-5*)   printf 'Opus 5.5'   ;;
     *opus-5*)     printf 'Opus 5'     ;;
     *opus-4-8*)   printf 'Opus 4.8'   ;;
     *opus-4-7*)   printf 'Opus 4.7'   ;;
