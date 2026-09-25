@@ -54,7 +54,7 @@
     ]
   },
   "search": {
-    "dir": "",
+    "dir": "~/search",
     "model": "sonnet",
     "effort": "medium"
   },

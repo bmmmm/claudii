@@ -259,6 +259,8 @@ _cmd_build() {
   _repomap "$days" > "$mapfile"
   # Raw lines go through otel-extract.jq with -R, so one half-written batch
   # (live-appended JSONL) skips itself via fromjson? instead of aborting.
+  # Output is compact (-c): at 90 days pretty-printing made it 46% larger, and
+  # every consumer parses it again.
   {
     if (( ${#rows[@]} )); then
       printf '%s\0' "${rows[@]}" | { xargs -0 cat 2>/dev/null || true; }
@@ -268,7 +270,7 @@ _cmd_build() {
         | { xargs -0 cat 2>/dev/null || true; } \
         | jq -cnR -f "$EXTRACT_PROGRAM"
     fi
-  } | jq -n --slurpfile repomap "$mapfile" --arg floor "$floor" -f "$JQ_PROGRAM"
+  } | jq -cn --slurpfile repomap "$mapfile" --arg floor "$floor" -f "$JQ_PROGRAM"
   local rc=$?
   rm -f "$mapfile"
   return "$rc"

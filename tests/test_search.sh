@@ -6,35 +6,31 @@
 
 _SD_TMP=$(mktemp -d "${TMPDIR:-/tmp}/claudii_search.XXXXXX")
 trap 'rm -rf "$_SD_TMP" 2>/dev/null' EXIT
-mkdir -p "$_SD_TMP/checkout/.git" "$_SD_TMP/brew" "$_SD_TMP/home" "$_SD_TMP/data"
+mkdir -p "$_SD_TMP/home"
 
 _SD_LIB="$CLAUDII_HOME/lib/search_dir.sh"
-_sd() {  # _sd <CLAUDII_HOME> [configured] → resolved dir
-  CLAUDII_HOME="$1" HOME="$_SD_TMP/home" XDG_DATA_HOME="$_SD_TMP/data" \
-    bash -c 'source "$0"; _claudii_search_dir "$1"' "$_SD_LIB" "${2:-}"
+_sd() {  # _sd [configured] → resolved dir, with HOME in the sandbox
+  HOME="$_SD_TMP/home" bash -c 'source "$0"; _claudii_search_dir "$1"' "$_SD_LIB" "${1:-}"
 }
 
-assert_eq "search dir: default is search/ in a git checkout" \
-  "$_SD_TMP/checkout/search" "$(_sd "$_SD_TMP/checkout")"
+assert_eq "search dir: default is ~/search" "$_SD_TMP/home/search" "$(_sd)"
 assert_eq "search dir: created on use" "0" \
-  "$([ -d "$_SD_TMP/checkout/search" ] && echo 0 || echo 1)"
-assert_eq "search dir: @search means the default" \
-  "$_SD_TMP/checkout/search" "$(_sd "$_SD_TMP/checkout" @search)"
-assert_eq "search dir: no checkout (Homebrew) → XDG data dir" \
-  "$_SD_TMP/data/claudii/search" "$(_sd "$_SD_TMP/brew")"
+  "$([ -d "$_SD_TMP/home/search" ] && echo 0 || echo 1)"
+assert_eq "search dir: @search means the default" "$_SD_TMP/home/search" "$(_sd @search)"
 # A literal ~, as stored in config — the resolver expands it, not the shell.
 # shellcheck disable=SC2088
 assert_eq "search dir: configured value wins, ~ expanded" \
-  "$_SD_TMP/home/ws" "$(_sd "$_SD_TMP/checkout" '~/ws')"
-assert_eq "search dir: .gitignore keeps the workspace out of git" "0" \
-  "$(grep -qx '/search/' "$CLAUDII_HOME/.gitignore" && echo 0 || echo 1)"
-assert_eq "search dir: defaults select the workspace for search and clq" '""|"@search"' \
+  "$_SD_TMP/home/ws" "$(_sd '~/ws')"
+assert_eq "search dir: an absolute path is used as is" "$_SD_TMP/abs" "$(_sd "$_SD_TMP/abs")"
+assert_eq "search dir: never inside the claudii checkout" "0" \
+  "$([[ "$(_sd)" == "$CLAUDII_HOME"/* ]] && echo 1 || echo 0)"  # no case…) in $(): bash 3.2 closes $( at the )
+assert_eq "search dir: defaults select the workspace for search and clq" '"~/search"|"@search"' \
   "$(jq -c '.search.dir' "$CLAUDII_HOME/config/defaults.json")|$(jq -c '.aliases.clq.dir' "$CLAUDII_HOME/config/defaults.json")"
 
 # zsh sources the same file for the clq alias.
 if command -v zsh >/dev/null 2>&1; then
-  assert_eq "search dir: zsh resolves the same way" "$_SD_TMP/checkout/search" \
-    "$(CLAUDII_HOME="$_SD_TMP/checkout" zsh -fc 'source "$0"; _claudii_search_dir @search' "$_SD_LIB")"
+  assert_eq "search dir: zsh resolves the same way" "$_SD_TMP/home/search" \
+    "$(HOME="$_SD_TMP/home" zsh -fc 'source "$0"; _claudii_search_dir @search' "$_SD_LIB")"
 fi
 
 # End to end: `claudii search` starts claude inside the configured directory,

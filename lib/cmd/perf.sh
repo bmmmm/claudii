@@ -63,14 +63,21 @@ _perf_health_line() {
 
 # ── --json builder ─────────────────────────────────────────────────────────────
 _perf_json() {
-  local merged="$1" days="$2" floor="$3" repo="$4" src="$5"
-  # merged carries the (large) latency list — pass it on stdin, not --argjson,
-  # or jq hits ARG_MAX ("Argument list too long"). Small scalars stay as args.
+  local file="$1" days="$2" floor="$3" repo="$4" src="$5"
+  # The merged data (tens of MB for a long window) is read from a FILE — never
+  # an argument (ARG_MAX) and never a bash variable (see _perf_render).
   jq --argjson days "$days" --arg floor "$floor" \
         --arg repo "$repo" --arg src "$src" '
-    def pctms($a;$p): ($a|sort) as $s | ($s|length) as $n
+    # pct takes an already SORTED list: each list is sorted once, not once per
+    # percentile (three percentiles of 200k samples sorted the same list 3×).
+    def pct($s;$p): ($s|length) as $n
       | if $n==0 then 0 else $s[ ([($n*$p|floor), ($n-1)]|min) ] end;
     def toks($o;$d): if $d>0 then ($o*1000/$d|floor) else 0 end;
+    # "[1m]" suffix off: endswith/slice instead of a regex per row.
+    def mname: if endswith("[1m]") then .[:-4] else . end;
+    def wkey: (.ctx // -1)
+      | if . < 0 then 9 elif . < 50000 then 1 elif . < 100000 then 2
+        elif . < 200000 then 3 elif . < 400000 then 4 else 5 end;
     [ (.latency // [])[]
       | select(.model != "<synthetic>" and (.model | startswith("claudii-") | not)
                and (.day >= $floor)
@@ -80,39 +87,39 @@ _perf_json() {
         source: $src,
         repo: (if $repo=="" then null else $repo end),
         total_samples: ($L|length),
-        summary: {
-          p50_ms: pctms([$L[].dt_ms];0.5),
-          p90_ms: pctms([$L[].dt_ms];0.9),
-          p99_ms: pctms([$L[].dt_ms];0.99),
+        summary: ( ([$L[].dt_ms]|sort) as $s | {
+          p50_ms: pct($s;0.5),
+          p90_ms: pct($s;0.9),
+          p99_ms: pct($s;0.99),
           tok_s:  toks(([$L[].out]|add // 0); ([$L[].dt_ms]|add // 0)),
           samples: ($L|length)
-        },
-        by_model: ( $L | group_by(.model | sub("\\[1m\\]$";""))
-          | map({ model:(.[0].model | sub("\\[1m\\]$";"")), p50_ms:pctms([.[].dt_ms];0.5),
-                  p90_ms:pctms([.[].dt_ms];0.9), p99_ms:pctms([.[].dt_ms];0.99),
-                  tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
+        } ),
+        by_model: ( $L | group_by(.model | mname)
+          | map(([.[].dt_ms]|sort) as $s
+                | { model:(.[0].model | mname), p50_ms:pct($s;0.5),
+                    p90_ms:pct($s;0.9), p99_ms:pct($s;0.99),
+                    tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
           | sort_by(-.samples) ),
         by_day: ( $L | group_by(.day)
-          | map({ day:.[0].day, p50_ms:pctms([.[].dt_ms];0.5), samples:length })
+          | map({ day:.[0].day, p50_ms:pct([.[].dt_ms]|sort;0.5), samples:length })
           | sort_by(.day) ),
         by_repo: ( $L | group_by(.repo)
-          | map({ repo:.[0].repo, p50_ms:pctms([.[].dt_ms];0.5),
-                  p90_ms:pctms([.[].dt_ms];0.9),
-                  tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
+          | map(([.[].dt_ms]|sort) as $s
+                | { repo:.[0].repo, p50_ms:pct($s;0.5),
+                    p90_ms:pct($s;0.9),
+                    tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length })
           | sort_by(-.samples) ),
         # ctx buckets — keep the boundaries (50k/100k/200k/400k) in sync with the
         # render W-rows in _cmd_perf below; test pins json/render label parity.
-        by_window: ( $L | map(. + {wk: ((.ctx // -1)
-              | if . < 0 then 9 elif . < 50000 then 1 elif . < 100000 then 2
-                elif . < 200000 then 3 elif . < 400000 then 4 else 5 end)})
-          | group_by(.wk)
-          | map({ bucket:({"1":"<50k","2":"50-100k","3":"100-200k","4":"200-400k","5":"400k+","9":"unknown"}[.[0].wk|tostring]),
-                  p50_ms:pctms([.[].dt_ms];0.5), p90_ms:pctms([.[].dt_ms];0.9),
-                  p99_ms:pctms([.[].dt_ms];0.99),
-                  tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length }) ),
-        ttft: ( ([$L[].ttft_ms] | map(select(. != null))) as $tt
+        by_window: ( $L | group_by(wkey)
+          | map(([.[].dt_ms]|sort) as $s
+                | { bucket:({"1":"<50k","2":"50-100k","3":"100-200k","4":"200-400k","5":"400k+","9":"unknown"}[.[0]|wkey|tostring]),
+                    p50_ms:pct($s;0.5), p90_ms:pct($s;0.9),
+                    p99_ms:pct($s;0.99),
+                    tok_s:toks(([.[].out]|add);([.[].dt_ms]|add)), samples:length }) ),
+        ttft: ( ([$L[].ttft_ms] | map(select(. != null)) | sort) as $tt
           | if ($tt|length) > 0
-            then { p50_ms:pctms($tt;0.5), p90_ms:pctms($tt;0.9), p99_ms:pctms($tt;0.99), samples:($tt|length) }
+            then { p50_ms:pct($tt;0.5), p90_ms:pct($tt;0.9), p99_ms:pct($tt;0.99), samples:($tt|length) }
             else null end ),
         reliability: ( [$L[] | select(.success != null)] as $sl
           | if ($sl|length) > 0
@@ -123,7 +130,7 @@ _perf_json() {
                     | select((.day >= $floor) and (($repo=="") or (.repo==$repo))) ]
           | group_by(.status_code)
           | map({ status_code:.[0].status_code, count:length }) )
-      }' <<< "$merged"
+      }' "$file"
 }
 
 # ── claudii perf ───────────────────────────────────────────────────────────────
@@ -184,33 +191,63 @@ _cmd_perf() {
   local fmt="${_FORMAT:-}"
   [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv perf; return 1; }
 
+  # The merged data lives in a FILE for the rest of the run, never in a bash
+  # variable: at 90 days it is ~40-60 MB, and /bin/bash 3.2 under a UTF-8
+  # locale spent 22 s on one `[[ "$merged" == "{}" ]]` (its multibyte pattern
+  # matcher) plus ~8 s copying the string through here-strings — 30 of perf
+  # 90d's 47 s. Bash 5 or LC_ALL=C hide it (≈1 s), so local runs never showed it.
+  local _pf; _pf=$(mktemp "${TMPDIR:-/tmp}/claudii-perf.XXXXXX") || return 1
+  # The file must not outlive the run: Ctrl-C is how `--watch` ends, and a
+  # failing command aborts bin/claudii under set -e. Global name, because the
+  # EXIT trap fires after this function's locals are gone.
+  _CLAUDII_PERF_TMP="$_pf"
+  trap 'rm -f "${_CLAUDII_PERF_TMP:-}"' EXIT
+  trap 'rm -f "${_CLAUDII_PERF_TMP:-}"; exit 130' INT TERM
+  _perf_render "$_pf"
+  local _rc=$?
+  rm -f "$_pf"; _CLAUDII_PERF_TMP=""
+  return "$_rc"
+}
+
+# Everything after argument parsing; reads days/fmt/repo_filter from _cmd_perf
+# (bash dynamic scope) and keeps the data in $1, a file _cmd_perf removes.
+_perf_render() {
+  local _pf="$1"
   # Source selection: OTEL when enabled AND it has samples in the window, else
   # the transcript estimate. claudii-otel build emits the same .latency shape
   # plus exact ttft_ms / success / api_error status codes. perf is the only
   # command that needs the (large) latency list — the transcript merge requests
   # it explicitly; cache/tokens/tools/limits use the latency-free merge.
-  local merged="" src="transcript"
+  local src="transcript"
   if [[ "$(_cfgget perf.otel.enabled 2>/dev/null)" == "true" ]]; then
-    local _om; _om=$("$CLAUDII_HOME/bin/claudii-otel" build --days "$days" 2>/dev/null)
-    if [[ -n "$_om" ]] && (( $(jq '.latency | length' <<< "$_om" 2>/dev/null || echo 0) > 0 )); then
-      merged="$_om"; src="otel"
+    "$CLAUDII_HOME/bin/claudii-otel" build --days "$days" > "$_pf" 2>/dev/null
+    # "Any sample?" without parsing the whole document: --stream emits the
+    # first latency element early (build writes .latency before .errors) and
+    # first() stops reading there.
+    if [[ "$(jq -n --stream 'first(inputs | select(.[0][0] == "latency" and (.[0] | length) > 1)) | "y"' \
+             "$_pf" 2>/dev/null)" == '"y"' ]]; then
+      src="otel"
     fi
   fi
-  [[ "$src" == "transcript" ]] && merged=$(_insights_run merge --days "$days" --with-latency 2>/dev/null)
+  [[ "$src" == "transcript" ]] && _insights_run merge --days "$days" --with-latency > "$_pf" 2>/dev/null
 
   # Calendar floor identical to `claudii tokens` (shared _window_cutoffs), so
   # "last N days" is exact.
   _window_cutoffs "$days"
   local floor="$_WC_FLOOR"
 
-  if [[ -z "$merged" || "$merged" == "{}" ]]; then
-    [[ "$fmt" == "json" ]] && { _perf_json "{}" "$days" "$floor" "$repo_filter" "$src"; return 0; }
+  # Empty = no output or a bare `{}` (merge with no caches) — decided from the
+  # first bytes, not by comparing the whole document in bash.
+  local _head; _head=$(head -c 4 "$_pf" 2>/dev/null)
+  if [[ -z "$_head" || "$_head" == "{}" ]]; then
+    printf '{}' > "$_pf"
+    [[ "$fmt" == "json" ]] && { _perf_json "$_pf" "$days" "$floor" "$repo_filter" "$src"; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
     return 0
   fi
 
   if [[ "$fmt" == "json" ]]; then
-    _perf_json "$merged" "$days" "$floor" "$repo_filter" "$src"
+    _perf_json "$_pf" "$days" "$floor" "$repo_filter" "$src"
     return 0
   fi
 
@@ -224,55 +261,58 @@ _cmd_perf() {
   # CLAUDE.md empty-field trap). dt_ms / tok_s computed in jq; bash only renders.
   local _rows
   _rows=$(jq -r --arg floor "$floor" --arg repo "$repo_filter" '
-    def pctms($a;$p): ($a|sort) as $s | ($s|length) as $n
+    # pct takes an already SORTED list — each list is sorted once (see _perf_json).
+    def pct($s;$p): ($s|length) as $n
       | if $n==0 then 0 else $s[ ([($n*$p|floor), ($n-1)]|min) ] end;
     def toks($o;$d): if $d>0 then ($o*1000/$d|floor) else 0 end;
+    def mname: if endswith("[1m]") then .[:-4] else . end;
+    def wkey: (.ctx // -1)
+      | if . < 0 then "9_unknown" elif . < 50000 then "1_<50k"
+        elif . < 100000 then "2_50-100k" elif . < 200000 then "3_100-200k"
+        elif . < 400000 then "4_200-400k" else "5_400k+" end;
     [ (.latency // [])[]
       | select(.model != "<synthetic>" and (.model | startswith("claudii-") | not)
                and (.day >= $floor)
                and (($repo=="") or (.repo==$repo))) ] as $L
     | [ (.errors // [])[]
         | select((.day >= $floor) and (($repo=="") or (.repo==$repo))) ] as $E
-    | ( $L | map(. + {mn:(.model | sub("\\[1m\\]$";""))}) | group_by(.mn)
-        | map({k:.[0].mn, d:[.[].dt_ms], o:([.[].out]|add), n:length})
+    | ( $L | group_by(.model | mname)
+        | map({k:(.[0].model | mname), d:([.[].dt_ms]|sort), o:([.[].out]|add), n:length})
         | sort_by(-.n)
-        | .[] | ["M", .k, (pctms(.d;0.5)|tostring), (pctms(.d;0.9)|tostring),
-                 (pctms(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
+        | .[] | ["M", .k, (pct(.d;0.5)|tostring), (pct(.d;0.9)|tostring),
+                 (pct(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
                  (.n|tostring)] | @tsv ),
       # ctx buckets — keep the boundaries (50k/100k/200k/400k) in sync with the
       # by_window block in _perf_json above; test pins json/render label parity.
-      ( $L | map(. + {wb: ((.ctx // -1)
-              | if . < 0 then "9_unknown" elif . < 50000 then "1_<50k"
-                elif . < 100000 then "2_50-100k" elif . < 200000 then "3_100-200k"
-                elif . < 400000 then "4_200-400k" else "5_400k+" end)})
-        | group_by(.wb)
-        | map({k:.[0].wb, d:[.[].dt_ms], o:([.[].out]|add), n:length})
+      ( $L | group_by(wkey)
+        | map({k:(.[0]|wkey), d:([.[].dt_ms]|sort), o:([.[].out]|add), n:length})
         | sort_by(.k)
-        | .[] | ["W", .k, (pctms(.d;0.5)|tostring), (pctms(.d;0.9)|tostring),
-                 (pctms(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
+        | .[] | ["W", .k, (pct(.d;0.5)|tostring), (pct(.d;0.9)|tostring),
+                 (pct(.d;0.99)|tostring), (toks(.o;([.d[]]|add))|tostring),
                  (.n|tostring)] | @tsv ),
       ( $L | group_by(.day)
-        | map({k:.[0].day, d:[.[].dt_ms], n:length})
+        | map({k:.[0].day, d:([.[].dt_ms]|sort), n:length})
         | sort_by(.k)
-        | .[] | ["D", .k, (pctms(.d;0.5)|tostring), (.n|tostring)] | @tsv ),
+        | .[] | ["D", .k, (pct(.d;0.5)|tostring), (.n|tostring)] | @tsv ),
       ( $L | group_by(.repo)
-        | map({k:.[0].repo, d:[.[].dt_ms], o:([.[].out]|add), n:length})
+        | map({k:.[0].repo, d:([.[].dt_ms]|sort), o:([.[].out]|add), n:length})
         | sort_by(-.n)
-        | .[] | ["R", .k, (pctms(.d;0.5)|tostring), (pctms(.d;0.9)|tostring),
+        | .[] | ["R", .k, (pct(.d;0.5)|tostring), (pct(.d;0.9)|tostring),
                  (toks(.o;([.d[]]|add))|tostring), (.n|tostring)] | @tsv ),
       ( $L | group_by(.sessionId)
-        | map({k:.[0].sessionId, rp:(.[0].repo // "?"), d:[.[].dt_ms], o:([.[].out]|add), n:length})
+        | map({k:.[0].sessionId, rp:(.[0].repo // "?"), d:([.[].dt_ms]|sort), o:([.[].out]|add), n:length})
         | sort_by(-.n) | .[:12]
-        | .[] | ["G", .k, .rp, (pctms(.d;0.5)|tostring),
+        | .[] | ["G", .k, .rp, (pct(.d;0.5)|tostring),
                  (toks(.o;([.d[]]|add))|tostring), (.n|tostring)] | @tsv ),
-      ( ["S", (pctms([$L[].dt_ms];0.5)|tostring), (pctms([$L[].dt_ms];0.9)|tostring),
-         (pctms([$L[].dt_ms];0.99)|tostring),
-         (toks(([$L[].out]|add // 0); ([$L[].dt_ms]|add // 0))|tostring),
-         (($L|length)|tostring)] | @tsv ),
-      ( ([$L[].ttft_ms] | map(select(. != null))) as $tt
+      ( ([$L[].dt_ms]|sort) as $s
+        | ["S", (pct($s;0.5)|tostring), (pct($s;0.9)|tostring),
+           (pct($s;0.99)|tostring),
+           (toks(([$L[].out]|add // 0); ([$L[].dt_ms]|add // 0))|tostring),
+           (($L|length)|tostring)] | @tsv ),
+      ( ([$L[].ttft_ms] | map(select(. != null)) | sort) as $tt
         | if ($tt|length) > 0 then
-            ["T", (pctms($tt;0.5)|tostring), (pctms($tt;0.9)|tostring),
-             (pctms($tt;0.99)|tostring), ($tt|length|tostring)] | @tsv
+            ["T", (pct($tt;0.5)|tostring), (pct($tt;0.9)|tostring),
+             (pct($tt;0.99)|tostring), ($tt|length|tostring)] | @tsv
           else empty end ),
       ( [$L[] | select(.success != null)] as $sl
         | if ($sl|length) > 0 then
@@ -282,7 +322,7 @@ _cmd_perf() {
           else empty end ),
       ( $E | group_by(.status_code) | .[]
         | ["E", (.[0].status_code|tostring), (length|tostring)] | @tsv )
-  ' <<< "$merged")
+  ' "$_pf")
 
   local -a _m_rows=() _w_rows=() _d_rows=() _r_rows=() _g_rows=() _e_rows=()
   local _s_row="" _t_row="" _x_row="" _ln _tag

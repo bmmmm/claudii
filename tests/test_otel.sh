@@ -309,6 +309,16 @@ printf '%s\n' "$_OL_DEAD" > "$_OTEL_LCACHE/otel/.lock/pid"
 assert_eq "otel lock: a dead holder's lock is taken over" "0" \
   "$(_olb compact >/dev/null 2>&1; echo $?)"
 
+# perf keeps its data in a temp file; it must not outlive a run that aborts
+# (set -e in bin/claudii) — here a rows file lib/otel.jq cannot process.
+_OTEL_PCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_PCACHE"); mkdir -p "$_OTEL_PCACHE/otel/rows" "$_OTEL_PCACHE/tmp"
+printf '{"kind":"lat","day":"%s","model":5,"dt_ms":1,"out":1,"ctx":1,"sessionId":"x","success":true,"attempt":1}\n' \
+  "$(_utc_day $(( _NOW - 2 * 86400 )))" > "$_OTEL_PCACHE/otel/rows/$(_utc_day $(( _NOW - 2 * 86400 ))).v1.ndjson"
+TMPDIR="$_OTEL_PCACHE/tmp" CLAUDII_CACHE_DIR="$_OTEL_PCACHE" XDG_CONFIG_HOME="$_OTEL_CFG" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
+  bash "$CLAUDII_HOME/bin/claudii" perf 7d >/dev/null 2>&1
+assert_eq "perf: an aborted run leaves no temp file behind" "0" \
+  "$(compgen -G "$_OTEL_PCACHE/tmp/claudii-perf.*" >/dev/null && echo 1 || echo 0)"
+
 # The receiver writes per signal and UTC day under raw/.
 _OR_DIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OR_DIR")
 _OR_FILE=$(CLAUDII_OTEL_DIR="$_OR_DIR" python3 -c '

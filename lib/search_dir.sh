@@ -4,22 +4,18 @@
 #
 # Usage: _claudii_search_dir [configured]
 #   configured — search.dir, or an alias's dir set to "@search". Empty or
-#                "@search" selects the default below; "~" is expanded.
+#                "@search" selects the default, ~/search; "~" is expanded.
 # Prints the directory and creates it: it is claudii's own scratch workspace.
 # The old default ~/claude-search was never created, so `search` died on `cd`
 # and `clq` silently started Claude in whatever directory the shell was in.
 #
-# Default: search/ inside the claudii checkout (gitignored) when CLAUDII_HOME
-# is a writable git checkout; otherwise (a Homebrew install, whose libexec is
-# replaced on every upgrade) ${XDG_DATA_HOME:-~/.local/share}/claudii/search.
+# The default sits OUTSIDE the claudii checkout on purpose: Claude Code loads
+# CLAUDE.md (and .claude/) from the start directory upwards, so a workspace
+# inside the repo put claudii's own project rules into every search session.
 _claudii_search_dir() {
   local d="${1:-}"
   if [ -z "$d" ] || [ "$d" = "@search" ]; then
-    if [ -e "$CLAUDII_HOME/.git" ] && [ -w "$CLAUDII_HOME" ]; then
-      d="$CLAUDII_HOME/search"
-    else
-      d="${XDG_DATA_HOME:-$HOME/.local/share}/claudii/search"
-    fi
+    d="$HOME/search"
   fi
   case "$d" in
     "~"|"~/"*) d="$HOME${d#\~}" ;;

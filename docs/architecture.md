@@ -53,7 +53,7 @@ lib/otel_split.awk      # awk: split the legacy single-file OTEL export by day (
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
 lib/insights_stream.sh  # _insights_stream: insights caches → stdout, window-bounded, never argv
-lib/search_dir.sh       # _claudii_search_dir: search/clq workspace (bash + zsh), created on use
+lib/search_dir.sh       # _claudii_search_dir: search/clq workspace, default ~/search (bash + zsh), created on use
 lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
 lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)
 lib/skills-cost-compare.jq # skills-cost --compare window-join program

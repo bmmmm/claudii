@@ -11,6 +11,14 @@ silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on
 change touches test fixtures or any shell-quoting/default-arg/expansion
 logic, run `/bin/bash tests/run.sh` before pushing.
 
+It also hides a **performance** cliff: 3.2's pattern matcher is multibyte-aware
+under a UTF-8 locale and crawls on big strings. `[[ "$big" == "{}" ]]` on a
+60 MB variable takes ~20 s on `/bin/bash` 3.2 + en_US.UTF-8, under 1 s with
+bash 5 or `LC_ALL=C` — `claudii perf 90d` spent 22 of its 47 s on exactly
+that line (2026-09-25). Keep data that grows with history in files and let jq
+decide; never hold it in a bash variable, compare it, or pass it through
+here-strings.
+
 ## No `declare -A` in `bin/`
 
 `/bin/bash` 3.2 silently degrades it to an indexed array (string keys
