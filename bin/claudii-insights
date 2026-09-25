@@ -39,6 +39,9 @@ mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 
+# shellcheck source=lib/insights_stream.sh
+source "$CLAUDII_HOME/lib/insights_stream.sh"
+
 # List a session's subagent transcripts (<proj>/<sid>/subagents/*.jsonl).
 # Prints nothing when the session has none.
 _subagent_files() {
@@ -255,13 +258,9 @@ _cmd_merge() {
   fi
 
   # Merge program lives in lib/insights-merge.jq (window filters + tolerant
-  # attribution_models summing). The cache files are streamed on stdin, never
-  # passed as jq arguments: the cache keeps orphans forever, and at ~12k files
-  # the path list outgrew ARG_MAX (macOS 1 MiB) — jq died with "Argument list
-  # too long" (rc 126) and every merge consumer (tokens, cache, limits, ...)
-  # went silently empty. jq reads several files as one concatenated stream, so
-  # `cat` is the same input; printf is a builtin and has no argv limit.
-  printf '%s\0' "${files[@]}" | xargs -0 cat | jq -n \
+  # attribution_models summing). The caches arrive on stdin, bounded by the
+  # window — never as jq arguments (see lib/insights_stream.sh).
+  _insights_stream "$CACHE_DIR" "$days" | jq -n \
     --arg cutoff "$cutoff_iso" \
     --arg until "$until_iso" \
     --argjson with_latency "$wl" \

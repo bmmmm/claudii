@@ -8,6 +8,9 @@
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+# shellcheck source=lib/insights_stream.sh
+source "$CLAUDII_HOME/lib/insights_stream.sh"
+
 _insights_run() {
   "$CLAUDII_HOME/bin/claudii-insights" "$@"
 }
@@ -1344,9 +1347,8 @@ _cmd_repos() {
 
   local all_json=false; (( all )) && all_json=true
   local data
-  # Streamed on stdin, not as jq args — the file list outgrows ARG_MAX
-  # (see _cmd_merge in bin/claudii-insights).
-  data=$(printf '%s\0' "${files[@]}" | xargs -0 cat \
+  # Streamed on stdin, bounded by the window (lib/insights_stream.sh).
+  data=$(_insights_stream "$idir" "$days" \
          | jq -n --arg cutoff "$cutoff" --arg floor "$floor" --arg repo "$repo" \
            --argjson all "$all_json" -f "$CLAUDII_HOME/lib/repos.jq" 2>/dev/null)
   if [[ -z "$data" ]]; then

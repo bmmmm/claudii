@@ -31,6 +31,9 @@ RECEIVER="$CLAUDII_HOME/bin/claudii-otel-receiver"
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
 
+# shellcheck source=lib/insights_stream.sh
+source "$CLAUDII_HOME/lib/insights_stream.sh"
+
 # floor = today - (days-1) in UTC; BSD date first, GNU fallback (matches perf).
 # window-cutoff probe — keep in sync with _window_cutoffs (lib/timefmt.sh)
 _floor_day() {
@@ -42,18 +45,17 @@ _floor_day() {
 
 # {sessionId: repo} from the insights caches — OTEL events carry session.id but
 # no cwd, so the repo is resolved here (same source perf's transcript path uses).
+# Arg: days — an event in the window belongs to a session whose last_seen is in
+# the window too, so the map only needs those caches (lib/insights_stream.sh).
+# Emits exactly one JSON object: `{}` replaces a failed run instead of being
+# appended to whatever jq had already printed.
 _repomap() {
-  shopt -s nullglob
-  local files=("$INSIGHTS_DIR"/*.json)
-  shopt -u nullglob
-  if (( ${#files[@]} == 0 )); then printf '{}'; return; fi
-  # Streamed on stdin, not as jq args — the file list outgrows ARG_MAX
-  # (see _cmd_merge in bin/claudii-insights).
-  printf '%s\0' "${files[@]}" | xargs -0 cat \
-    | jq -n 'reduce inputs as $s ({};
+  local days="${1:-}" map
+  map=$(_insights_stream "$INSIGHTS_DIR" "$days" \
+    | jq -cn 'reduce inputs as $s ({};
            if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
-           then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null \
-    || printf '{}'
+           then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null) || map=""
+  printf '%s' "${map:-"{}"}"
 }
 
 _cmd_build() {
@@ -78,11 +80,18 @@ _cmd_build() {
   fi
 
   local floor; floor=$(_floor_day "$days")
-  local repomap; repomap=$(_repomap)
+  # The repo map goes to jq as a FILE, never as one --argjson argument: with
+  # ~15k sessions it is ~0.8 MB — over Linux's 128 KiB per-argument cap already
+  # and close to macOS's 1 MiB total.
+  local mapfile; mapfile=$(mktemp "${TMPDIR:-/tmp}/claudii-otel-map.XXXXXX") || return 1
+  _repomap "$days" > "$mapfile"
   # -nR: read raw lines so one half-written batch (live-appended JSONL) skips
   # itself via fromjson? instead of aborting the whole stream.
-  jq -nR --argjson repomap "$repomap" --arg floor "$floor" \
+  jq -nR --slurpfile repomap "$mapfile" --arg floor "$floor" \
     -f "$JQ_PROGRAM" "${present[@]}"
+  local rc=$?
+  rm -f "$mapfile"
+  return "$rc"
 }
 
 _cmd_receiver() {

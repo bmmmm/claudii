@@ -50,6 +50,7 @@ lib/tier.jq             # jq module: tier() model→rate-tier mapping
 lib/otel.jq             # jq: Claude Code OTLP/JSON export → perf-cache shape (claudii-otel-receiver)
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
+lib/insights_stream.sh  # _insights_stream: insights caches → stdout, window-bounded, never argv
 lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
 lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)
 lib/skills-cost-compare.jq # skills-cost --compare window-join program

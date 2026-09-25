@@ -5,7 +5,8 @@
 #     /v1/traces batches: {"resourceSpans":[{... "spans":[{name,attributes,..}]}]}
 #     /v1/logs   batches: {"resourceLogs":[{... "logRecords":[{body,attributes}]}]}
 # Args:
-#   $repomap   {sessionId: repo}  built from the insights caches (claudii-otel)
+#   $repomap   [{sessionId: repo}] built from the insights caches (claudii-otel),
+#              via --slurpfile (hence the [0]) — too big for an argument
 #   $floor     "YYYY-MM-DD"        inclusive day cutoff (window lower bound)
 #
 # Output (same .latency shape lib/cmd/perf.sh already renders, plus exact fields
@@ -63,8 +64,8 @@ def day_of($nano): ((num($nano) / 1000000000) | floor | todate)[0:10];
     latency: [ $rows[] | select(.kind == "lat" and .day >= $floor
                                 and (.model | startswith("claudii-") | not))
                | { day, model, dt_ms, ttft_ms, out, ctx, sessionId, success, attempt,
-                   repo: ($repomap[.sessionId] // "?") } ],
+                   repo: ($repomap[0][.sessionId] // "?") } ],
     errors:  [ $rows[] | select(.kind == "err" and .day >= $floor
                                 and (.model | startswith("claudii-") | not))
                | { day, model, status_code, sessionId,
-                   repo: ($repomap[.sessionId] // "?") } ] }
+                   repo: ($repomap[0][.sessionId] // "?") } ] }
