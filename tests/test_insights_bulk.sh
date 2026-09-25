@@ -55,6 +55,15 @@ touch -t 200001010000 "$_BULK_DIR/cache/insights/stale.json"
 _BULK_GATED=$(_bulk_env bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 2>&1)
 assert_eq "bulk: merge skips caches older than the window" "$_BULK_N" \
   "$(jq -r '.sessions' <<< "$_BULK_GATED" 2>/dev/null)"
+# A zero-padded window is decimal, not octal ("08" was a bash arithmetic error).
+assert_eq "bulk: --days 08 reads the window" "$_BULK_N" \
+  "$(_bulk_env bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 08 2>/dev/null | jq -r '.sessions')"
+# A symlinked insights dir is followed, as the old glob did.
+mkdir -p "$_BULK_DIR/linked"
+ln -s "$_BULK_DIR/cache/insights" "$_BULK_DIR/linked/insights"
+assert_eq "bulk: a symlinked insights dir is read" "$_BULK_N" \
+  "$(CLAUDII_CACHE_DIR="$_BULK_DIR/linked" CLAUDE_PROJECTS_DIR="$_BULK_DIR/projects" \
+     bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 2>/dev/null | jq -r '.sessions')"
 # …and a pinned clock (CLAUDII_NOW) disables the gate: mtimes are real time.
 _BULK_PINNED=$(CLAUDII_NOW="$(date +%s)" _bulk_env bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 2>&1)
 assert_eq "bulk: pinned clock reads every cache" "$(( _BULK_N + 1 ))" \

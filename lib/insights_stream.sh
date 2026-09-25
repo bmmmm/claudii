@@ -28,9 +28,10 @@ _insights_stream() {
   [[ -d "$dir" ]] || return 0
   local -a age=()
   if [[ "$days" =~ ^[0-9]+$ && -z "${CLAUDII_NOW:-}" ]]; then
-    age=(-mmin "-$(( days * 1440 + 1440 ))")
+    age=(-mmin "-$(( 10#$days * 1440 + 1440 ))")   # 10#: "08" is not octal
   fi
-  find "$dir" -maxdepth 1 -type f -name '*.json' ${age[@]+"${age[@]}"} -print0 \
+  # -H: follow DIR itself if it is a symlink, as the old glob did.
+  find -H "$dir" -maxdepth 1 -type f -name '*.json' ${age[@]+"${age[@]}"} -print0 \
     | LC_ALL=C sort -z \
     | { xargs -0 cat 2>/dev/null || true; }
 }

@@ -113,8 +113,9 @@ function _claudii_launch {
   local effort=$(claudii_config_get "aliases.$alias_name.effort")
   local dir=$(claudii_config_get "aliases.$alias_name.dir")
 
-  # "@search" = the shared search workspace (lib/search_dir.sh), created on use.
-  [[ "$dir" == "@search" ]] && dir=$(_claudii_search_dir "$dir")
+  # "@search" = the search workspace `claudii search` uses (search.dir, else the
+  # default in lib/search_dir.sh), created on use.
+  [[ "$dir" == "@search" ]] && dir=$(_claudii_search_dir "$(claudii_config_get search.dir)")
 
   _claudii_log debug "launch: alias=$alias_name model=$model effort=$effort"
   [[ -n "$dir" ]] && cd "${dir/#\~/$HOME}"

@@ -66,13 +66,19 @@ _repomap() {
 
 # Storage layout under $OTEL_DIR (the receiver writes raw/, everything else is
 # derived here):
-#   raw/<signal>-YYYY-MM-DD.jsonl      today's (and not yet compacted) batches
-#   raw/<signal>-YYYY-MM-DD*.jsonl.gz  closed days, gzipped — the lossless history
-#   rows/YYYY-MM-DD.v<N>.ndjson        samples extracted from a closed day
-#                                      (lib/otel-extract.jq), a few % of raw
-#   traces.jsonl / logs.jsonl          pre-day-file layout, until `migrate`
+#   raw/<signal>-YYYY-MM-DD[.<tag>].jsonl      open (today's) or not yet gzipped
+#   raw/<signal>-YYYY-MM-DD[.<tag>].jsonl.gz   closed days — the lossless history
+#   rows/YYYY-MM-DD.v<N>.ndjson                samples of a closed day, extracted
+#                                              from its .gz files (otel-extract.jq)
+#   traces.jsonl / logs.jsonl                  pre-day-file layout, until `migrate`
 # build reads rows + raw of its window only, so its cost follows the window,
 # not the history (one 4 GB file made every `perf` parse all of it, 82 s).
+#
+# Two rules keep the history safe and every sample counted once:
+#   - raw data only ever moves INTO a .gz (plain → .gz → plain removed); no
+#     code path deletes a raw file whose content is not in a .gz already;
+#   - rows are derived from the .gz files alone, so a plain file that is still
+#     around (open day, quiet guard, failed gzip) is never also in rows.
 #
 # Bump when lib/otel-extract.jq's row shape or extraction changes: rows files of
 # another version are ignored, and compact rebuilds them from the gzipped days.
@@ -80,6 +86,10 @@ OTEL_ROWS_VERSION=1
 # A request that straddles UTC midnight can still append to yesterday's file;
 # compact leaves a raw file of yesterday alone until it has been quiet this long.
 COMPACT_QUIET_SECS=600
+# compact and migrate never run concurrently (a half-split day must not be
+# gzipped); build skips compaction while the lock is held.
+LOCK_DIR="$OTEL_DIR/.lock"
+STAGE_DIR="$OTEL_DIR/.migrate"
 
 _DAY_RE='([0-9]{4}-[0-9]{2}-[0-9]{2})'
 # Sets _DAY to the YYYY-MM-DD in a file name ("" if none) — no subshell, it
@@ -89,61 +99,99 @@ _file_day() {
   if [[ "${1##*/}" =~ $_DAY_RE ]]; then _DAY="${BASH_REMATCH[1]}"; fi
 }
 
-# Fold every closed day's raw batches into rows/ and gzip them. Idempotent: a
-# day is (re)extracted when it has plain raw files or no rows file of the
-# current version; its rows come from ALL of its raw parts, gzipped or not.
+# 0 = acquired. A lock whose holder is gone (killed perf, crash) is taken over;
+# a lock without a pid file yet is only taken over once it is a minute old.
+_otel_lock() {
+  mkdir -p "$OTEL_DIR" 2>/dev/null
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"; return 0
+  fi
+  local pid; pid=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+  if [[ -n "$pid" ]]; then
+    kill -0 "$pid" 2>/dev/null && return 1
+  elif (( $(date +%s) - $(_mtime "$LOCK_DIR") < 60 )); then
+    return 1
+  fi
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || return 1
+  printf '%s\n' "$$" > "$LOCK_DIR/pid"
+}
+_otel_unlock() { rm -rf "$LOCK_DIR"; }
+
 _cmd_compact() {
+  _otel_lock || { printf 'compact: another compact/migrate is running\n' >&2; return 1; }
+  _compact_locked; local rc=$?
+  _otel_unlock
+  return "$rc"
+}
+
+# Gzip every closed day's plain raw files, then (re)build its rows from the gz
+# files when rows are missing or older than one of them. Caller holds the lock.
+_compact_locked() {
   [[ -d "$RAW_DIR" ]] || return 0
   mkdir -p "$ROWS_DIR" || return 1
   local today yesterday now
   today=$(date -u +%Y-%m-%d)
   yesterday=$(_floor_day 2)
   now=$(date +%s)
-  local f day days=" "
+  local f nf day days=" " rows tmp old stale busy rc=0
+  local -a plain gz
   shopt -s nullglob
+  # Leftovers of an interrupted run — the lock rules out a live one.
+  rm -f "$ROWS_DIR"/*.ndjson.?????? "$RAW_DIR"/*.gz.tmp
   for f in "$RAW_DIR"/*.jsonl "$RAW_DIR"/*.jsonl.gz; do
     _file_day "$f"; day="$_DAY"
     [[ -n "$day" && "$day" < "$today" ]] || continue
     [[ "$days" == *" $day "* ]] || days+="$day "
   done
-  local rows plain gz busy tmp old rc=0
   for day in $days; do
-    rows="$ROWS_DIR/$day.v$OTEL_ROWS_VERSION.ndjson"
     plain=("$RAW_DIR"/*-"$day"*.jsonl)
-    gz=("$RAW_DIR"/*-"$day"*.jsonl.gz)
-    [[ -f "$rows" && ${#plain[@]} -eq 0 ]] && continue
     busy=0
     if [[ "$day" == "$yesterday" ]]; then
       for f in ${plain[@]+"${plain[@]}"}; do
-        [[ "$f" == *.legacy.jsonl ]] && continue
+        [[ "${f##*/}" == *-"$day".jsonl ]] || continue   # only the receiver's own file
         (( now - $(_mtime "$f") < COMPACT_QUIET_SECS )) && busy=1
       done
     fi
     (( busy )) && continue
-    tmp=$(mktemp "$rows.XXXXXX") || { rc=1; continue; }
-    if { for f in ${gz[@]+"${gz[@]}"}; do gzip -dc "$f"; done
-         for f in ${plain[@]+"${plain[@]}"}; do cat "$f"; done
-       } | jq -cnR -f "$EXTRACT_PROGRAM" > "$tmp"; then
-      mv -f "$tmp" "$rows"
-    else
-      rm -f "$tmp"; rc=1; continue
-    fi
-    for old in "$ROWS_DIR/$day".v*.ndjson; do
-      [[ "$old" == "$rows" ]] || rm -f "$old"
-    done
     for f in ${plain[@]+"${plain[@]}"}; do
       if [[ -e "$f.gz" ]]; then
-        # Only after an interrupted run: the gzip landed, the rm did not.
-        if gzip -dc "$f.gz" | cmp -s - "$f"; then
-          rm -f "$f"
-        else
-          { gzip -dc "$f.gz"; cat "$f"; } | gzip > "$f.gz.tmp" \
-            && mv -f "$f.gz.tmp" "$f.gz" && rm -f "$f"
-        fi
+        # An interrupted run: the gzip landed, the rm did not.
+        if gzip -dc "$f.gz" 2>/dev/null | cmp -s - "$f"; then rm -f "$f"; continue; fi
+        # Different data under a taken name: keep both, the new one renamed
+        # to a name that is free as plain AND as .gz (never overwrite raw data).
+        local n=0
+        nf="${f%.jsonl}.$now.jsonl"
+        while [[ -e "$nf" || -e "$nf.gz" ]]; do
+          nf="${f%.jsonl}.$now-$(( ++n )).jsonl"
+        done
+        mv "$f" "$nf" || { rc=1; continue; }
+        f="$nf"
+      fi
+      if gzip -c "$f" > "$f.gz.tmp" && mv -f "$f.gz.tmp" "$f.gz"; then
+        rm -f "$f"
       else
-        gzip -c "$f" > "$f.gz.tmp" && mv -f "$f.gz.tmp" "$f.gz" && rm -f "$f"
+        rm -f "$f.gz.tmp"; rc=1
       fi
     done
+    gz=("$RAW_DIR"/*-"$day"*.jsonl.gz)
+    (( ${#gz[@]} )) || continue
+    rows="$ROWS_DIR/$day.v$OTEL_ROWS_VERSION.ndjson"
+    stale=0
+    [[ -f "$rows" ]] || stale=1
+    for f in "${gz[@]}"; do [[ "$f" -nt "$rows" ]] && stale=1; done
+    (( stale )) || continue
+    tmp=$(mktemp "$rows.XXXXXX") || { rc=1; continue; }
+    # A .gz that does not decode fails the whole day: no rows from a prefix.
+    if ( for f in "${gz[@]}"; do gzip -dc "$f" || exit 1; done ) \
+         | jq -cnR -f "$EXTRACT_PROGRAM" > "$tmp"; then
+      mv -f "$tmp" "$rows"
+      for old in "$ROWS_DIR/$day".v*.ndjson; do
+        [[ "$old" == "$rows" ]] || rm -f "$old"
+      done
+    else
+      rm -f "$tmp"; rc=1
+    fi
   done
   shopt -u nullglob
   return "$rc"
@@ -162,7 +210,9 @@ _cmd_build() {
     printf 'build: --days must be a positive integer (got: %s)\n' "$days" >&2; exit 1
   fi
 
-  _cmd_compact
+  # Compaction is an optimisation for later runs: while a migrate holds the
+  # lock it is skipped, and build reads whatever is there.
+  if _otel_lock; then _compact_locked; _otel_unlock; fi
 
   # Files are picked by the day in their name. A rows/raw file is named after
   # the day a batch ARRIVED; a span that started before midnight arrives after
@@ -183,6 +233,15 @@ _cmd_build() {
   for f in "$OTEL_DIR/traces.jsonl" "$OTEL_DIR/logs.jsonl"; do
     [[ -s "$f" ]] && legacy+=("$f")
   done
+  # An interrupted migrate leaves its source renamed. Until the run is verified
+  # none of its parts are in raw/, so it is read like the legacy file it was.
+  # (A verified run's parts are moving into raw/; doctor flags the rest.)
+  shopt -s nullglob
+  for f in "$OTEL_DIR"/traces.jsonl.migrating-* "$OTEL_DIR"/logs.jsonl.migrating-*; do
+    local _sig="${f##*/}"; _sig="${_sig%%.*}"
+    [[ -e "$STAGE_DIR/$_sig-${f##*.migrating-}.verified" ]] || legacy+=("$f")
+  done
+  shopt -u nullglob
   if (( ${#rows[@]} + ${#fresh[@]} + ${#legacy[@]} == 0 )); then
     printf '{"source":"otel","latency":[],"errors":[]}\n'; return 0
   fi
@@ -211,59 +270,85 @@ _cmd_build() {
   return "$rc"
 }
 
-# One-time move from the single-file layout (traces.jsonl / logs.jsonl) to
-# day files: split by each batch's own timestamp (lib/otel_split.awk), check
-# that every line landed, remove the old file, compact. Nothing is dropped —
-# closed days end up gzipped under raw/.
+# One-time move from the single-file layout (traces.jsonl / logs.jsonl) to day
+# files, built so that no step can lose a line:
+#   1. rename <sig>.jsonl to <sig>.jsonl.migrating-<run> — an old receiver that
+#      is still running starts a fresh <sig>.jsonl, the next migrate takes it;
+#   2. split it into .migrate/ by each batch's own timestamp (otel_split.awk),
+#      every part tagged legacy-<run> so it can never collide with another run;
+#   3. check the parts hold every line read, mark the run verified;
+#   4. move the parts into raw/, then remove the renamed source.
+# An interrupted run resumes: unverified parts are split again, verified ones
+# are moved. Nothing is deleted before its content sits in raw/.
 _cmd_migrate() {
-  local sig f size mtime now parts read_n part_n
-  local found=0
-  now=$(date +%s)
-  mkdir -p "$RAW_DIR" || return 1
+  _otel_lock || { printf 'migrate: another compact/migrate is running\n' >&2; return 1; }
+  _migrate_locked; local rc=$?
+  _otel_unlock
+  return "$rc"
+}
+
+_migrate_locked() {
+  local sig src run tag read_n part_n moved f found=0 rc=0
+  local -a parts
+  mkdir -p "$RAW_DIR" "$STAGE_DIR" || return 1
+  shopt -s nullglob
   for sig in traces logs metrics other; do
-    f="$OTEL_DIR/$sig.jsonl"
-    [[ -s "$f" ]] || continue
-    found=1
-    mtime=$(_mtime "$f")
-    if (( now - mtime < 120 )); then
-      printf 'migrate: %s was written %ds ago — the receiver still uses the old layout.\n' "$f" "$(( now - mtime ))" >&2
-      printf '  Restart it first: launchctl kickstart -k gui/%s/com.claudii.otel-receiver\n' "$(id -u)" >&2
-      return 1
+    if [[ -s "$OTEL_DIR/$sig.jsonl" ]]; then
+      mv "$OTEL_DIR/$sig.jsonl" "$OTEL_DIR/$sig.jsonl.migrating-$(date +%s)$$" || { rc=1; continue; }
+      sleep 1   # let an append that was in flight during the rename land
     fi
-    size=$(wc -c < "$f" | tr -d ' ')
-    printf 'migrate: splitting %s (%d MB) by day…\n' "$f" "$(( size / 1048576 ))"
-    # Leftover parts of an interrupted run would be appended to, not replaced.
-    shopt -s nullglob
-    for parts in "$RAW_DIR/$sig"-*.legacy.jsonl; do rm -f "$parts"; done
-    shopt -u nullglob
-    read_n=$(head -c "$size" "$f" | LC_ALL=C awk -v tz_offset=0 -v dir="$RAW_DIR" -v sig="$sig" \
-      -f "$CLAUDII_HOME/lib/epoch_to_date.awk" -f "$CLAUDII_HOME/lib/otel_split.awk") || return 1
-    shopt -s nullglob
-    parts=("$RAW_DIR/$sig"-*.legacy.jsonl)
-    shopt -u nullglob
-    part_n=0
-    if (( ${#parts[@]} )); then
-      part_n=$(printf '%s\0' "${parts[@]}" | xargs -0 cat | wc -l | tr -d ' ')
-    fi
-    if [[ "$read_n" != "$part_n" ]]; then
-      printf 'migrate: %s: read %s lines but the day files hold %s — keeping the original\n' "$f" "$read_n" "$part_n" >&2
-      return 1
-    fi
-    if [[ "$(wc -c < "$f" | tr -d ' ')" != "$size" ]]; then
-      printf 'migrate: %s grew while it was split — the receiver still writes it. Restart it and run migrate again.\n' "$f" >&2
-      for parts in "${parts[@]}"; do rm -f "$parts"; done
-      return 1
-    fi
-    rm -f "$f"
-    printf 'migrate: %s → %d day file(s), %s lines\n' "$sig" "${#parts[@]}" "$part_n"
+    for src in "$OTEL_DIR/$sig.jsonl.migrating-"*; do
+      found=1
+      run="${src##*.migrating-}"
+      tag="legacy-$run"
+      if [[ ! -e "$STAGE_DIR/$sig-$run.verified" ]]; then
+        rm -f "$STAGE_DIR/$sig"-*".$tag.jsonl"
+        printf 'migrate: splitting %s (%d MB) by day…\n' "$src" "$(( $(wc -c < "$src") / 1048576 ))"
+        read_n=$(LC_ALL=C awk -v tz_offset=0 -v dir="$STAGE_DIR" -v sig="$sig" -v tag="$tag" \
+          -v fallback="$(date -u +%Y-%m-%d)" \
+          -f "$CLAUDII_HOME/lib/epoch_to_date.awk" -f "$CLAUDII_HOME/lib/otel_split.awk" "$src") \
+          || { rc=1; continue; }
+        parts=("$STAGE_DIR/$sig"-*".$tag.jsonl")
+        part_n=0
+        if (( ${#parts[@]} )); then
+          part_n=$(printf '%s\0' "${parts[@]}" | xargs -0 cat | wc -l | tr -d ' ')
+        fi
+        if [[ "$read_n" != "$part_n" ]]; then
+          printf 'migrate: %s: read %s lines but the day files hold %s — keeping it\n' "$src" "$read_n" "$part_n" >&2
+          rc=1; continue
+        fi
+        : > "$STAGE_DIR/$sig-$run.verified"
+      fi
+      parts=("$STAGE_DIR/$sig"-*".$tag.jsonl")
+      moved=0
+      for f in ${parts[@]+"${parts[@]}"}; do
+        mv "$f" "$RAW_DIR/" && (( ++moved ))
+      done
+      if [[ -n "$(printf '%s\n' "$STAGE_DIR/$sig"-*".$tag.jsonl")" ]]; then
+        printf 'migrate: could not move every part of %s — run migrate again\n' "$src" >&2
+        rc=1; continue
+      fi
+      rm -f "$src" "$STAGE_DIR/$sig-$run.verified"
+      printf 'migrate: %s → %d day file(s)\n' "$sig" "$moved"
+    done
   done
+  shopt -u nullglob
   if (( ! found )); then
     printf 'migrate: nothing to do — no single-file OTEL data in %s\n' "$OTEL_DIR"
-    return 0
+    return "$rc"
   fi
   printf 'migrate: compacting closed days…\n'
-  _cmd_compact || { printf 'migrate: compact reported errors — run: claudii-otel compact\n' >&2; return 1; }
-  printf 'migrate: done\n'
+  _compact_locked || { printf 'migrate: compact reported errors — run: claudii-otel compact\n' >&2; rc=1; }
+  local sig2
+  for sig2 in traces logs; do
+    if [[ -e "$OTEL_DIR/$sig2.jsonl" ]]; then
+      printf 'migrate: %s.jsonl is being written again — the receiver still runs the old code. Restart it (launchctl kickstart -k gui/%s/com.claudii.otel-receiver), then run migrate once more.\n' \
+        "$sig2" "$(id -u)" >&2
+      rc=1
+    fi
+  done
+  (( rc )) || printf 'migrate: done\n'
+  return "$rc"
 }
 
 _cmd_receiver() {
@@ -303,6 +388,11 @@ _cmd_doctor() {
     n=$(printf '%s\0' "${rows[@]}" | { xargs -0 cat 2>/dev/null || true; } | grep -c '"kind":"lat"')
   fi
   printf '  samples      %s response(s) in %d compacted day(s)\n' "$n" "${#rows[@]}"
+  shopt -s nullglob
+  for f in "$OTEL_DIR"/*.jsonl.migrating-*; do
+    printf '  migrate      interrupted (%s) — run: claudii-otel migrate to finish it\n' "${f##*/}"
+  done
+  shopt -u nullglob
   for f in traces logs; do
     [[ -s "$OTEL_DIR/$f.jsonl" ]] || continue
     printf '  legacy       %s.jsonl (%d MB, read in full on every build) — run: claudii-otel migrate\n' \

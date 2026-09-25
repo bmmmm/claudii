@@ -180,23 +180,17 @@ _onorm() { jq -S -c '.latency |= sort | .errors |= sort'; }
 _OM_PRE7=$(_build build --days 7 2>/dev/null | _onorm)
 _OM_PRE200=$(_build build --days 200 2>/dev/null | _onorm)
 
-# A legacy file written moments ago means the receiver still uses it: refuse.
-_OM_BUSY_RC=$(_mbuild migrate >/dev/null 2>&1; echo $?)
-assert_eq "otel migrate: refuses while the receiver still writes the old file" "1" "$_OM_BUSY_RC"
-assert_eq "otel migrate: refused run leaves the old file" "0" \
-  "$([ -s "$_OTEL_MCACHE/otel/traces.jsonl" ] && echo 0 || echo 1)"
-
-touch -t 200001010000 "$_OTEL_MCACHE/otel/traces.jsonl" "$_OTEL_MCACHE/otel/logs.jsonl"
+_has() { compgen -G "$1" >/dev/null; }   # any file matches the glob
 _OM_OUT=$(_mbuild migrate 2>&1)
 assert_contains "otel migrate: reports done" "migrate: done" "$_OM_OUT"
 assert_eq "otel migrate: old single files removed" "0" \
-  "$([ ! -e "$_OTEL_MCACHE/otel/traces.jsonl" ] && [ ! -e "$_OTEL_MCACHE/otel/logs.jsonl" ] && echo 0 || echo 1)"
+  "$([ ! -e "$_OTEL_MCACHE/otel/traces.jsonl" ] && [ ! -e "$_OTEL_MCACHE/otel/logs.jsonl" ] && ! _has "$_OTEL_MCACHE/otel/*.migrating-*" && echo 0 || echo 1)"
 assert_eq "otel migrate: closed day compacted into rows" "0" \
   "$([ -s "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v1.ndjson" ] && echo 0 || echo 1)"
 assert_eq "otel migrate: closed day's raw batches gzipped, not deleted" "0" \
-  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy.jsonl.gz" ] && [ ! -e "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy.jsonl" ] && echo 0 || echo 1)"
+  "$(_has "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy-*.jsonl.gz" && ! _has "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy-*.jsonl" && echo 0 || echo 1)"
 assert_eq "otel migrate: today stays a plain day file" "0" \
-  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_TODAY.legacy.jsonl" ] && echo 0 || echo 1)"
+  "$(_has "$_OTEL_MCACHE/otel/raw/traces-$_TODAY.legacy-*.jsonl" && echo 0 || echo 1)"
 assert_eq "otel migrate: build unchanged (7d, today's raw)" "$_OM_PRE7" \
   "$(_mbuild build --days 7 2>/dev/null | _onorm)"
 assert_eq "otel migrate: build unchanged (200d, compacted day)" "$_OM_PRE200" \
@@ -230,6 +224,82 @@ touch -t 200001010000 "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl"
 _mbuild compact >/dev/null 2>&1
 assert_eq "otel compact: a quiet file of yesterday is compacted" "0" \
   "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl.gz" ] && [ -s "$_OTEL_MCACHE/otel/rows/$_YDAY.v1.ndjson" ] && echo 0 || echo 1)"
+
+# An old receiver that was not restarted recreates traces.jsonl after migrate.
+# A second migrate the same day must add that data, and lose nothing from the
+# first run — whose part for today is still a plain file (reproduced loss once).
+_OM_N1=$(_mbuild build --days 7 2>/dev/null | jq '.latency | length')
+_span otelsess-a "$_NANO" 7000 3500 700 true 1 > "$_OTEL_MCACHE/otel/traces.jsonl"
+_mbuild migrate >/dev/null 2>&1
+assert_eq "otel migrate: a second run the same day keeps the first run's data" \
+  "$(( _OM_N1 + 1 ))" \
+  "$(_mbuild build --days 7 2>/dev/null | jq '.latency | length')"
+
+# Lines before the first timestamp (receiver markers) land in a dated file.
+_OTEL_UCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_UCACHE"); mkdir -p "$_OTEL_UCACHE/otel"
+{ printf '%s\n' '{"_unparsed": true, "bytes": 3}'; _span otelsess-a "$_OLDNANO" 1 1 1 true 1; } \
+  > "$_OTEL_UCACHE/otel/traces.jsonl"
+CLAUDII_CACHE_DIR="$_OTEL_UCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" migrate >/dev/null 2>&1
+assert_eq "otel migrate: lines before the first timestamp are kept, dated" "2" \
+  "$(gzip -dc "$_OTEL_UCACHE/otel/raw/traces-$_OLDDAY".legacy-*.jsonl.gz 2>/dev/null | wc -l | tr -d ' ')"
+
+# Interrupted compaction: the .gz landed, the plain file was not removed yet.
+# The day must count once, not twice (rows come from the .gz files only).
+_OTEL_ICACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_ICACHE"); mkdir -p "$_OTEL_ICACHE/otel/raw"
+_IDAY=$(_utc_day $(( _NOW - 3 * 86400 )))
+_span otelsess-a "$(( _NOW - 3 * 86400 ))000000000" 1000 500 100 true 1 > "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl"
+gzip -c "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl" > "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl.gz"
+assert_eq "otel compact: an interrupted gzip is not counted twice" "1" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_ICACHE" bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 2>/dev/null | jq '.latency | length')"
+assert_eq "otel compact: …and the leftover plain file is removed" "0" \
+  "$([ ! -e "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl" ] && echo 0 || echo 1)"
+
+# A .gz that does not decode yields no rows from its readable prefix, and stays.
+printf 'garbage' > "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
+touch "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
+cp "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson" "$_OTEL_ICACHE/rows.before"
+_OC_RC=$(CLAUDII_CACHE_DIR="$_OTEL_ICACHE" bash "$CLAUDII_HOME/bin/claudii-otel" compact >/dev/null 2>&1; echo $?)
+assert_eq "otel compact: a corrupt .gz fails the day (rc 1)" "1" "$_OC_RC"
+assert_eq "otel compact: …keeps the previous rows and the .gz" "0" \
+  "$(cmp -s "$_OTEL_ICACHE/rows.before" "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson" && [ -s "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz" ] && echo 0 || echo 1)"
+rm -f "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
+
+# A plain file under an already-gzipped name is renamed, never onto an existing
+# file: pre-fill every name the rename could pick this minute with data.
+_OTEL_KCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_KCACHE"); mkdir -p "$_OTEL_KCACHE/otel/raw"
+_KR="$_OTEL_KCACHE/otel/raw"
+printf '{"_unparsed": true}\n' | gzip -c > "$_KR/traces-$_IDAY.jsonl.gz"
+_kt=$(date +%s)
+for (( _k = _kt; _k < _kt + 60; _k++ )); do
+  printf '{"_unparsed": true}\n' | gzip -c > "$_KR/traces-$_IDAY.$_k.jsonl.gz"
+done
+printf '{"_unparsed": true, "bytes": 2}\n' > "$_KR/traces-$_IDAY.jsonl"   # differs from the .gz
+CLAUDII_CACHE_DIR="$_OTEL_KCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" compact >/dev/null 2>&1
+assert_eq "otel compact: a renamed part never overwrites raw data" "62" \
+  "$(cat "$_KR"/*.gz | gzip -dc | wc -l | tr -d ' ')"
+
+# An interrupted migrate (source renamed, run not verified) stays visible.
+_OTEL_XCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_XCACHE"); mkdir -p "$_OTEL_XCACHE/otel"
+_span otelsess-a "$_NANO" 1000 500 100 true 1 > "$_OTEL_XCACHE/otel/traces.jsonl.migrating-1"
+assert_eq "otel build: an interrupted migrate's source is still read" "1" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_XCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 2>/dev/null | jq '.latency | length')"
+assert_contains "otel doctor: flags an interrupted migrate" "run: claudii-otel migrate to finish it" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_XCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+
+# compact and migrate exclude each other; build still answers, uncompacted.
+_OTEL_LCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_LCACHE"); mkdir -p "$_OTEL_LCACHE/otel/raw" "$_OTEL_LCACHE/otel/.lock"
+printf '%s\n' "$$" > "$_OTEL_LCACHE/otel/.lock/pid"
+cp "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl.gz" "$_OTEL_LCACHE/otel/raw/"
+gzip -dc "$_OTEL_LCACHE/otel/raw/traces-$_IDAY.jsonl.gz" > "$_OTEL_LCACHE/otel/raw/logs-$_IDAY.jsonl"
+_olb() { CLAUDII_CACHE_DIR="$_OTEL_LCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
+assert_eq "otel lock: compact refuses while another run holds the lock" "1" \
+  "$(_olb compact >/dev/null 2>&1; echo $?)"
+assert_eq "otel lock: build skips compaction but still answers" "1|0" \
+  "$(_olb build --days 7 2>/dev/null | jq '.latency | length')|$([ -e "$_OTEL_LCACHE/otel/raw/logs-$_IDAY.jsonl" ] && echo 0 || echo 1)"
+sleep 0 & _OL_DEAD=$!; wait "$_OL_DEAD"
+printf '%s\n' "$_OL_DEAD" > "$_OTEL_LCACHE/otel/.lock/pid"
+assert_eq "otel lock: a dead holder's lock is taken over" "0" \
+  "$(_olb compact >/dev/null 2>&1; echo $?)"
 
 # The receiver writes per signal and UTC day under raw/.
 _OR_DIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OR_DIR")
