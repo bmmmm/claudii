@@ -78,7 +78,8 @@ _repomap() {
 #   - raw data only ever moves INTO a .gz (plain → .gz → plain removed); no
 #     code path deletes a raw file whose content is not in a .gz already;
 #   - rows are derived from the .gz files alone, so a plain file that is still
-#     around (open day, quiet guard, failed gzip) is never also in rows.
+#     around (open day, quiet guard, failed gzip) is never also in rows. Delete
+#     a rows file to have it rebuilt (e.g. after restoring .gz files by hand).
 #
 # Bump when lib/otel-extract.jq's row shape or extraction changes: rows files of
 # another version are ignored, and compact rebuilds them from the gzipped days.
@@ -125,8 +126,13 @@ _cmd_compact() {
   return "$rc"
 }
 
-# Gzip every closed day's plain raw files, then (re)build its rows from the gz
-# files when rows are missing or older than one of them. Caller holds the lock.
+# Gzip every closed day's plain raw files, then build its rows from the gz
+# files if the rows file is missing. One rule keeps rows current: whatever is
+# about to change a day's gz set deletes that day's rows FIRST — so a crash at
+# any later point leaves rows missing (rebuilt next pass), never stale. No
+# mtime comparison: under bash 3.2 it has whole-second resolution, and a gz
+# written in the same second as its rows looked "not newer". Caller holds the
+# lock.
 _compact_locked() {
   [[ -d "$RAW_DIR" ]] || return 0
   mkdir -p "$ROWS_DIR" || return 1
@@ -134,7 +140,7 @@ _compact_locked() {
   today=$(date -u +%Y-%m-%d)
   yesterday=$(_floor_day 2)
   now=$(date +%s)
-  local f nf day days=" " rows tmp old stale busy rc=0
+  local f nf day days=" " rows tmp old busy rc=0
   local -a plain gz
   shopt -s nullglob
   # Leftovers of an interrupted run — the lock rules out a live one.
@@ -154,6 +160,8 @@ _compact_locked() {
       done
     fi
     (( busy )) && continue
+    rows="$ROWS_DIR/$day.v$OTEL_ROWS_VERSION.ndjson"
+    (( ${#plain[@]} )) && rm -f "$rows"
     for f in ${plain[@]+"${plain[@]}"}; do
       if [[ -e "$f.gz" ]]; then
         # An interrupted run: the gzip landed, the rm did not.
@@ -176,11 +184,7 @@ _compact_locked() {
     done
     gz=("$RAW_DIR"/*-"$day"*.jsonl.gz)
     (( ${#gz[@]} )) || continue
-    rows="$ROWS_DIR/$day.v$OTEL_ROWS_VERSION.ndjson"
-    stale=0
-    [[ -f "$rows" ]] || stale=1
-    for f in "${gz[@]}"; do [[ "$f" -nt "$rows" ]] && stale=1; done
-    (( stale )) || continue
+    [[ -f "$rows" ]] && continue
     tmp=$(mktemp "$rows.XXXXXX") || { rc=1; continue; }
     # A .gz that does not decode fails the whole day: no rows from a prefix.
     if ( for f in "${gz[@]}"; do gzip -dc "$f" || exit 1; done ) \

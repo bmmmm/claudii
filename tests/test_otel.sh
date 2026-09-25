@@ -204,6 +204,15 @@ assert_eq "otel compact: rows rebuilt from the gzipped day" "$_OM_PRE200" \
 assert_eq "otel compact: rows of another version removed" "0" \
   "$([ ! -e "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v0.ndjson" ] && echo 0 || echo 1)"
 
+# A new part for a day that already has rows (a later migrate, a renamed
+# collision) must reach those rows — the stale rows file is replaced.
+_OM_N200=$(_mbuild build --days 200 2>/dev/null | jq '.latency | length')
+_span otelsess-a "$_OLDNANO" 1000 500 100 true 1 > "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.extra.jsonl"
+assert_eq "otel compact: a new part of a compacted day reaches its rows" "$(( _OM_N200 + 1 ))" \
+  "$(_mbuild build --days 200 2>/dev/null | jq '.latency | length')"
+rm -f "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.extra.jsonl.gz" "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v1.ndjson"
+_mbuild compact >/dev/null 2>&1
+
 # The window picks files by name: a rows file far before the floor is never
 # opened (it is not even JSON), so build cost follows the window.
 _FARDAY=$(_utc_day $(( _NOW - 300 * 86400 )))
@@ -256,12 +265,11 @@ assert_eq "otel compact: …and the leftover plain file is removed" "0" \
 
 # A .gz that does not decode yields no rows from its readable prefix, and stays.
 printf 'garbage' > "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
-touch "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
-cp "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson" "$_OTEL_ICACHE/rows.before"
+rm -f "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson"   # rows are rebuilt when missing
 _OC_RC=$(CLAUDII_CACHE_DIR="$_OTEL_ICACHE" bash "$CLAUDII_HOME/bin/claudii-otel" compact >/dev/null 2>&1; echo $?)
 assert_eq "otel compact: a corrupt .gz fails the day (rc 1)" "1" "$_OC_RC"
-assert_eq "otel compact: …keeps the previous rows and the .gz" "0" \
-  "$(cmp -s "$_OTEL_ICACHE/rows.before" "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson" && [ -s "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz" ] && echo 0 || echo 1)"
+assert_eq "otel compact: …writes no rows from a prefix and keeps the .gz" "0" \
+  "$([ ! -e "$_OTEL_ICACHE/otel/rows/$_IDAY.v1.ndjson" ] && [ -s "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz" ] && echo 0 || echo 1)"
 rm -f "$_OTEL_ICACHE/otel/raw/logs-$_IDAY.jsonl.gz"
 
 # A plain file under an already-gzipped name is renamed, never onto an existing
