@@ -1,4 +1,4 @@
-# touches: bin/claudii-insights lib/cmd/insights.sh lib/insights_stream.sh bin/claudii-otel lib/otel.jq
+# touches: bin/claudii-insights lib/cmd/insights.sh lib/insights_stream.sh bin/claudii-otel lib/otel.jq lib/otel_doc.jq
 
 # test_insights_bulk.sh — the insights cache must scale past ARG_MAX.
 # Regression: every consumer passed the whole cache dir to jq as arguments

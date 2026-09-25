@@ -32,6 +32,11 @@ PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 CACHE_DIR="$CACHE_BASE/insights"
 JQ_PROGRAM="$CLAUDII_HOME/lib/insights.jq"
+# sessionId<TAB>repo, one line per aggregated session, later lines win. Read by
+# claudii-otel (session.id → repo for OTEL samples) instead of parsing every
+# cache file (3 s for 15k caches). Lives OUTSIDE insights/ so no *.json glob
+# there picks it up.
+REPOMAP_LOG="$CACHE_BASE/insights-repomap.tsv"
 
 mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
 
@@ -68,6 +73,13 @@ _aggregate_one() {
   local tmp; tmp=$(mktemp "$out.XXXXXX") || return 1
   if jq -R -n --arg sid "$sid" -f "$JQ_PROGRAM" "${files[@]}" > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$out"
+    # Only extend a log a full run has built — a partial one would hide every
+    # session it lacks from its readers (they fall back to a full scan if it
+    # is missing, never if it is incomplete).
+    # A forced run rebuilds the log at its end anyway — skip the extra jq.
+    if [[ -f "$REPOMAP_LOG" && "${_AGG_FORCE:-0}" != "1" ]]; then
+      _repomap_lines < "$out" >> "$REPOMAP_LOG" 2>/dev/null
+    fi
     return 0
   else
     rm -f "$tmp"
@@ -107,6 +119,23 @@ _schema_ok() {
   [[ "$(cat "$CACHE_DIR/.schema" 2>/dev/null)" == "$SCHEMA_VERSION" ]]
 }
 
+# Cache JSON on stdin → "sessionId<TAB>repo" lines (sessions with both).
+_repomap_lines() {
+  jq -r 'select((.sessionId // "") != "" and (.project.repo // "") != "")
+         | [.sessionId, .project.repo] | @tsv' 2>/dev/null
+}
+
+# Rewrite the log from every cache, orphans included (their JSONL is gone, so
+# no aggregate run would ever append them again).
+_repomap_rebuild() {
+  local tmp; tmp=$(mktemp "$REPOMAP_LOG.XXXXXX") || return 1
+  if _insights_stream "$CACHE_DIR" | _repomap_lines > "$tmp"; then
+    mv -f "$tmp" "$REPOMAP_LOG"
+  else
+    rm -f "$tmp"; return 1
+  fi
+}
+
 _cmd_aggregate() {
   local force=0 target=""
   while [[ $# -gt 0 ]]; do
@@ -140,6 +169,7 @@ _cmd_aggregate() {
     find_args+=(-newer "$marker")
   fi
 
+  _AGG_FORCE="$force"
   # Touch marker BEFORE scan so any writes during scan get picked up next time.
   : > "$marker.next"
 
@@ -162,10 +192,19 @@ _cmd_aggregate() {
 
   mv -f "$marker.next" "$marker"
   printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
-
   shopt -s nullglob
   local cached_total=("$CACHE_DIR"/*.json)
   shopt -u nullglob
+  # Rebuild the session→repo log whole when it is missing, after a forced run
+  # (orphans must be in it too — no run would ever append them again), and
+  # when re-aggregations of active sessions have piled up duplicate lines past
+  # twice the number of caches (each one appends; readers keep the last).
+  local log_lines=0
+  [[ -f "$REPOMAP_LOG" ]] && log_lines=$(wc -l < "$REPOMAP_LOG" | tr -d ' ')
+  if (( force )) || [[ ! -f "$REPOMAP_LOG" ]] || (( log_lines > 2 * ${#cached_total[@]} + 100 )); then
+    _repomap_rebuild
+  fi
+
   printf 'insights: %d processed · %d cached · %d failed\n' "$processed" "$((${#cached_total[@]} - processed))" "$failed" >&2
 }
 

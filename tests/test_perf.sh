@@ -1,4 +1,4 @@
-# touches: lib/cmd/perf.sh lib/render.sh bin/claudii-insights lib/insights.jq lib/insights-merge.jq lib/otel.jq bin/claudii-otel
+# touches: lib/cmd/perf.sh lib/render.sh bin/claudii-insights lib/insights.jq lib/insights-merge.jq lib/otel.jq bin/claudii-otel lib/perf_common.jq lib/perf_rows.jq lib/perf_json.jq lib/otel_doc.jq
 
 # test_perf.sh — claudii perf (response-time & throughput dashboard)
 #
@@ -249,7 +249,7 @@ assert_contains "perf otel: 429 rendered"              "429"               "$_OT
 assert_not_contains "perf otel: selftest not rendered" "selftest"          "$_OTEL_OUT"
 
 # json/render boundary parity: the ctx-bucket set is encoded twice (numeric wk +
-# label map in _perf_json, string keys in the render W-rows), so pin that every
+# label map in perf_json, string keys in the render W-rows — both in lib/perf_common.jq), so pin that every
 # --json bucket label also appears in the rendered output for one fixture — a
 # boundary/label edit to only one block then trips this.
 # grep on a here-string, not `printf | grep -qF`: under run.sh's pipefail,

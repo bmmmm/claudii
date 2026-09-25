@@ -16,6 +16,8 @@
 #
 # Usage:
 #   claudii-otel build [--days N]   # emit {source,latency,errors} JSON on stdout
+#                  [--render rows|json --render-floor DAY [--repo NAME]]
+#                                   # …or what `claudii perf` shows, in one pass
 #   claudii-otel compact            # fold closed days into rows/ and gzip them
 #   claudii-otel migrate            # one-time: old single-file layout → day files
 #   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
@@ -29,6 +31,7 @@ command -v jq >/dev/null 2>&1 || { printf 'claudii-otel: jq not found — instal
 CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 OTEL_DIR="$CACHE_BASE/otel"
 INSIGHTS_DIR="$CACHE_BASE/insights"
+REPOMAP_LOG="$CACHE_BASE/insights-repomap.tsv"   # written by claudii-insights aggregate
 RAW_DIR="$OTEL_DIR/raw"
 ROWS_DIR="$OTEL_DIR/rows"
 JQ_PROGRAM="$CLAUDII_HOME/lib/otel.jq"
@@ -49,18 +52,27 @@ _floor_day() {
     || printf ''
 }
 
-# {sessionId: repo} from the insights caches — OTEL events carry session.id but
-# no cwd, so the repo is resolved here (same source perf's transcript path uses).
-# Arg: days — an event in the window belongs to a session whose last_seen is in
-# the window too, so the map only needs those caches (lib/insights_stream.sh).
-# Emits exactly one JSON object: `{}` replaces a failed run instead of being
-# appended to whatever jq had already printed.
+# {sessionId: repo} for OTEL samples — events carry session.id but no cwd.
+# Source: the sessionId<TAB>repo log claudii-insights aggregate maintains
+# (later lines win; one small file instead of parsing every insights cache —
+# 3 s for 15k caches). Without the log (before the first full aggregate run),
+# the caches themselves are read, bounded by the window: an event in the
+# window belongs to a session whose last_seen is in the window too
+# (lib/insights_stream.sh). The log is a superset of that and resolves the
+# same sessions. Emits exactly one JSON object: `{}` replaces a failed run
+# instead of being appended to whatever jq had already printed.
 _repomap() {
   local days="${1:-}" map
-  map=$(_insights_stream "$INSIGHTS_DIR" "$days" \
-    | jq -cn 'reduce inputs as $s ({};
-           if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
-           then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null) || map=""
+  if [[ -f "$REPOMAP_LOG" ]]; then
+    map=$(jq -cRn 'reduce (inputs | split("\t")) as $f ({};
+             if ($f | length) == 2 and $f[0] != "" and $f[1] != ""
+             then .[$f[0]] = $f[1] else . end)' "$REPOMAP_LOG" 2>/dev/null) || map=""
+  else
+    map=$(_insights_stream "$INSIGHTS_DIR" "$days" \
+      | jq -cn 'reduce inputs as $s ({};
+             if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
+             then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null) || map=""
+  fi
   printf '%s' "${map:-"{}"}"
 }
 
@@ -100,20 +112,36 @@ _file_day() {
   if [[ "${1##*/}" =~ $_DAY_RE ]]; then _DAY="${BASH_REMATCH[1]}"; fi
 }
 
-# 0 = acquired. A lock whose holder is gone (killed perf, crash) is taken over;
-# a lock without a pid file yet is only taken over once it is a minute old.
+# 0 = acquired. A lock is stale when its holder is gone (killed perf, crash),
+# when its pid now belongs to some other program (recycled after a reboot —
+# checked with ps where available; without ps the lock counts as held), or
+# when it has no pid file a minute after creation. No age limit: a migrate
+# that is merely suspended (laptop lid, Ctrl-Z) is alive and must keep it.
+# A stale lock is renamed away before a new one is made; that mv is atomic,
+# which narrows — but does not close — the window for two takeovers at once.
+_otel_lock_holder_alive() {
+  local pid="$1" cmd
+  kill -0 "$pid" 2>/dev/null || return 1
+  cmd=$(ps -p "$pid" -o command= 2>/dev/null) || return 0
+  [[ -z "$cmd" || "$cmd" == *claudii-otel* ]]
+}
 _otel_lock() {
   mkdir -p "$OTEL_DIR" 2>/dev/null
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_DIR/pid"; return 0
   fi
-  local pid; pid=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+  local pid
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null)
   if [[ -n "$pid" ]]; then
-    kill -0 "$pid" 2>/dev/null && return 1
-  elif (( $(date +%s) - $(_mtime "$LOCK_DIR") < 60 )); then
+    _otel_lock_holder_alive "$pid" && return 1
+  elif [[ -d "$LOCK_DIR" ]] && (( $(date +%s) - $(_mtime "$LOCK_DIR") < 60 )); then
     return 1
   fi
-  rm -rf "$LOCK_DIR"
+  # Released between our mkdir and now: just take it.
+  if [[ -d "$LOCK_DIR" ]]; then
+    mv "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null || return 1
+    rm -rf "$LOCK_DIR.stale.$$"
+  fi
   mkdir "$LOCK_DIR" 2>/dev/null || return 1
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
 }
@@ -201,11 +229,21 @@ _compact_locked() {
   return "$rc"
 }
 
+# build [--days N] [--render rows|json --render-floor DAY [--repo NAME]]
+# Without --render: the {source,latency,errors} document. With --render: what
+# `claudii perf` shows, computed in the same jq pass (lib/perf_rows.jq or
+# lib/perf_json.jq over lib/otel_doc.jq) — no 40-60 MB intermediate document
+# to write and parse again. --render-floor is perf's calendar floor, which can
+# differ from build's UTC day floor. A render prints NOTHING when the window
+# holds no latency sample, so perf falls back to the transcript estimate.
 _cmd_build() {
-  local days=30
+  local days=30 render="" rfloor="" repo=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --days) shift; days="${1:-30}" ;;
+      --days)         shift; days="${1:-30}" ;;
+      --render)       shift; render="${1:-}" ;;
+      --render-floor) shift; rfloor="${1:-}" ;;
+      --repo)         shift; repo="${1:-}" ;;
       *) printf 'build: unknown option: %s\n' "$1" >&2; exit 1 ;;
     esac
     shift
@@ -213,6 +251,11 @@ _cmd_build() {
   if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
     printf 'build: --days must be a positive integer (got: %s)\n' "$days" >&2; exit 1
   fi
+  case "$render" in
+    ""|rows|json) ;;
+    *) printf 'build: --render must be rows or json (got: %s)\n' "$render" >&2; exit 1 ;;
+  esac
+  [[ -n "$render" && -z "$rfloor" ]] && { printf 'build: --render needs --render-floor\n' >&2; exit 1; }
 
   # Compaction is an optimisation for later runs: while a migrate holds the
   # lock it is skipped, and build reads whatever is there.
@@ -221,7 +264,7 @@ _cmd_build() {
   # Files are picked by the day in their name. A rows/raw file is named after
   # the day a batch ARRIVED; a span that started before midnight arrives after
   # it, so files from one day before the floor are read too and the per-row
-  # .day filter in lib/otel.jq does the exact cut.
+  # .day filter in lib/otel_doc.jq does the exact cut.
   local floor from
   floor=$(_floor_day "$days")
   from=$(_floor_day "$(( days + 1 ))")
@@ -247,7 +290,8 @@ _cmd_build() {
   done
   shopt -u nullglob
   if (( ${#rows[@]} + ${#fresh[@]} + ${#legacy[@]} == 0 )); then
-    printf '{"source":"otel","latency":[],"errors":[]}\n'; return 0
+    [[ -z "$render" ]] && printf '{"source":"otel","latency":[],"errors":[]}\n'
+    return 0
   fi
   # Legacy files are still read (in full) until `migrate` ran; doctor says so.
   # No hint here: build's stdout is JSON and callers merge stderr into it.
@@ -270,7 +314,21 @@ _cmd_build() {
         | { xargs -0 cat 2>/dev/null || true; } \
         | jq -cnR -f "$EXTRACT_PROGRAM"
     fi
-  } | jq -cn --slurpfile repomap "$mapfile" --arg floor "$floor" -f "$JQ_PROGRAM"
+  } | case "$render" in
+        rows) jq -rn -L "$CLAUDII_HOME/lib" --slurpfile repomap "$mapfile" --arg floor "$floor" \
+                --arg rfloor "$rfloor" --arg repo "$repo" '
+                include "otel_doc"; include "perf_rows";
+                otel_doc($repomap[0]; $floor)
+                | if (.latency | length) == 0 then empty else perf_rows($rfloor; $repo) end' ;;
+        json) jq -n -L "$CLAUDII_HOME/lib" --slurpfile repomap "$mapfile" --arg floor "$floor" \
+                --arg rfloor "$rfloor" --arg repo "$repo" --argjson days "$days" '
+                include "otel_doc"; include "perf_json";
+                otel_doc($repomap[0]; $floor)
+                | if (.latency | length) == 0 then empty
+                  else perf_json($days; $rfloor; $repo; "otel") end' ;;
+        *)    jq -cn -L "$CLAUDII_HOME/lib" --slurpfile repomap "$mapfile" --arg floor "$floor" \
+                -f "$JQ_PROGRAM" ;;
+      esac
   local rc=$?
   rm -f "$mapfile"
   return "$rc"
@@ -294,7 +352,7 @@ _cmd_migrate() {
 }
 
 _migrate_locked() {
-  local sig src run tag read_n part_n moved f found=0 rc=0
+  local sig src run tag read_n part_n moved f size found=0 rc=0
   local -a parts
   mkdir -p "$RAW_DIR" "$STAGE_DIR" || return 1
   shopt -s nullglob
@@ -309,7 +367,8 @@ _migrate_locked() {
       tag="legacy-$run"
       if [[ ! -e "$STAGE_DIR/$sig-$run.verified" ]]; then
         rm -f "$STAGE_DIR/$sig"-*".$tag.jsonl"
-        printf 'migrate: splitting %s (%d MB) by day…\n' "$src" "$(( $(wc -c < "$src") / 1048576 ))"
+        size=$(wc -c < "$src" | tr -d ' ')
+        printf 'migrate: splitting %s (%d MB) by day…\n' "$src" "$(( size / 1048576 ))"
         read_n=$(LC_ALL=C awk -v tz_offset=0 -v dir="$STAGE_DIR" -v sig="$sig" -v tag="$tag" \
           -v fallback="$(date -u +%Y-%m-%d)" \
           -f "$CLAUDII_HOME/lib/epoch_to_date.awk" -f "$CLAUDII_HOME/lib/otel_split.awk" "$src") \
@@ -321,6 +380,13 @@ _migrate_locked() {
         fi
         if [[ "$read_n" != "$part_n" ]]; then
           printf 'migrate: %s: read %s lines but the day files hold %s — keeping it\n' "$src" "$read_n" "$part_n" >&2
+          rc=1; continue
+        fi
+        # A write that was in flight during the rename and landed after the
+        # split read the file would be lost with it: split again next run.
+        if [[ "$(wc -c < "$src" | tr -d ' ')" != "$size" ]]; then
+          printf 'migrate: %s changed while it was split — run migrate again\n' "$src" >&2
+          rm -f "$STAGE_DIR/$sig"-*".$tag.jsonl"
           rc=1; continue
         fi
         : > "$STAGE_DIR/$sig-$run.verified"
@@ -524,6 +590,8 @@ Usage:
   claudii-otel setup              enable the OTEL source (config + env + plist)
   claudii-otel off                disable it (perf reverts to transcript)
   claudii-otel build [--days N]   emit {source,latency,errors} JSON on stdout
+      [--render rows|json --render-floor DAY [--repo NAME]]
+                                  …or what `claudii perf` shows, in one pass
   claudii-otel compact            fold closed days into rows/ and gzip their raw
                                   batches (build does this on its own)
   claudii-otel migrate            one-time: split the old single-file

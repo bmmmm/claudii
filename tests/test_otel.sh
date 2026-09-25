@@ -1,4 +1,4 @@
-# touches: bin/claudii-otel lib/otel.jq lib/otel-extract.jq lib/otel_split.awk bin/claudii-otel-receiver lib/cmd/perf.sh
+# touches: bin/claudii-otel lib/otel.jq lib/otel_doc.jq lib/otel-extract.jq lib/otel_split.awk bin/claudii-otel-receiver lib/cmd/perf.sh lib/perf_rows.jq lib/perf_json.jq lib/perf_common.jq bin/claudii-insights
 
 # test_otel.sh — claudii-otel (OTLP/JSON → perf-cache shape) + perf OTEL source
 #
@@ -296,7 +296,12 @@ assert_contains "otel doctor: flags an interrupted migrate" "run: claudii-otel m
 
 # compact and migrate exclude each other; build still answers, uncompacted.
 _OTEL_LCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_LCACHE"); mkdir -p "$_OTEL_LCACHE/otel/raw" "$_OTEL_LCACHE/otel/.lock"
-printf '%s\n' "$$" > "$_OTEL_LCACHE/otel/.lock/pid"
+# A live holder that looks like claudii-otel to ps (its command line names it).
+# `; :` keeps bash itself running — a lone `sleep` would be exec'd in its place
+# and ps would show plain "sleep 120".
+bash -c 'sleep 120; :' claudii-otel-test-holder &
+_OL_HOLDER=$!
+printf '%s\n' "$_OL_HOLDER" > "$_OTEL_LCACHE/otel/.lock/pid"
 cp "$_OTEL_ICACHE/otel/raw/traces-$_IDAY.jsonl.gz" "$_OTEL_LCACHE/otel/raw/"
 gzip -dc "$_OTEL_LCACHE/otel/raw/traces-$_IDAY.jsonl.gz" > "$_OTEL_LCACHE/otel/raw/logs-$_IDAY.jsonl"
 _olb() { CLAUDII_CACHE_DIR="$_OTEL_LCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
@@ -304,20 +309,78 @@ assert_eq "otel lock: compact refuses while another run holds the lock" "1" \
   "$(_olb compact >/dev/null 2>&1; echo $?)"
 assert_eq "otel lock: build skips compaction but still answers" "1|0" \
   "$(_olb build --days 7 2>/dev/null | jq '.latency | length')|$([ -e "$_OTEL_LCACHE/otel/raw/logs-$_IDAY.jsonl" ] && echo 0 || echo 1)"
+kill "$_OL_HOLDER" 2>/dev/null; wait "$_OL_HOLDER" 2>/dev/null
 sleep 0 & _OL_DEAD=$!; wait "$_OL_DEAD"
 printf '%s\n' "$_OL_DEAD" > "$_OTEL_LCACHE/otel/.lock/pid"
 assert_eq "otel lock: a dead holder's lock is taken over" "0" \
   "$(_olb compact >/dev/null 2>&1; echo $?)"
+# A live pid that belongs to another program is a recycled pid, not a running
+# compact. Needs ps (CI has it; some sandboxes deny it — then the lock counts
+# as held, which is the conservative side).
+if ps -p "$$" -o command= >/dev/null 2>&1; then
+  mkdir -p "$_OTEL_LCACHE/otel/.lock"; printf '%s\n' "$$" > "$_OTEL_LCACHE/otel/.lock/pid"
+  assert_eq "otel lock: a recycled pid (another program) is taken over" "0" \
+    "$(_olb compact >/dev/null 2>&1; echo $?)"
+fi
 
-# perf keeps its data in a temp file; it must not outlive a run that aborts
-# (set -e in bin/claudii) — here a rows file lib/otel.jq cannot process.
-_OTEL_PCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_PCACHE"); mkdir -p "$_OTEL_PCACHE/otel/rows" "$_OTEL_PCACHE/tmp"
+# A failing OTEL build (here a rows file lib/otel_doc.jq cannot process) falls
+# back to the transcript estimate instead of aborting perf with no output.
+_OTEL_PCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_PCACHE"); mkdir -p "$_OTEL_PCACHE/otel/rows"
 printf '{"kind":"lat","day":"%s","model":5,"dt_ms":1,"out":1,"ctx":1,"sessionId":"x","success":true,"attempt":1}\n' \
   "$(_utc_day $(( _NOW - 2 * 86400 )))" > "$_OTEL_PCACHE/otel/rows/$(_utc_day $(( _NOW - 2 * 86400 ))).v1.ndjson"
-TMPDIR="$_OTEL_PCACHE/tmp" CLAUDII_CACHE_DIR="$_OTEL_PCACHE" XDG_CONFIG_HOME="$_OTEL_CFG" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
-  bash "$CLAUDII_HOME/bin/claudii" perf 7d >/dev/null 2>&1
-assert_eq "perf: an aborted run leaves no temp file behind" "0" \
-  "$(compgen -G "$_OTEL_PCACHE/tmp/claudii-perf.*" >/dev/null && echo 1 || echo 0)"
+_PF_OUT=$(CLAUDII_CACHE_DIR="$_OTEL_PCACHE" XDG_CONFIG_HOME="$_OTEL_CFG" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
+  bash "$CLAUDII_HOME/bin/claudii" perf 7d 2>&1; echo "rc=$?")
+assert_contains "perf: a failing OTEL build falls back (transcript, rc 0)" "No insight data yet" "$_PF_OUT"
+assert_contains "perf: …and exits 0" "rc=0" "$_PF_OUT"
+
+# The fused render (build --render) equals the two-step pipeline it replaces:
+# the full document, then lib/perf_rows.jq / lib/perf_json.jq over it.
+_FFLOOR=$(_utc_day $(( _NOW - 6 * 86400 )))
+_ofused() { CLAUDII_CACHE_DIR="$_OTEL_CACHE" bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 "$@" 2>/dev/null; }
+assert_eq "otel build --render rows: equals document + perf_rows" \
+  "$(_ofused | jq -r -L "$CLAUDII_HOME/lib" --arg f "$_FFLOOR" 'include "perf_rows"; perf_rows($f; "alpha")')" \
+  "$(_ofused --render rows --render-floor "$_FFLOOR" --repo alpha)"
+assert_eq "otel build --render json: equals document + perf_json" \
+  "$(_ofused | jq -L "$CLAUDII_HOME/lib" --arg f "$_FFLOOR" 'include "perf_json"; perf_json(7; $f; ""; "otel")')" \
+  "$(_ofused --render json --render-floor "$_FFLOOR")"
+assert_eq "otel build --render: rejects an unknown mode" "1" \
+  "$(_ofused --render tsv --render-floor "$_FFLOOR" >/dev/null 2>&1; echo $?)"
+
+# Errors but no latency in the window: a render prints nothing, so perf falls
+# back to the transcript estimate (as the old full-document check did).
+_OTEL_ECACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_ECACHE"); mkdir -p "$_OTEL_ECACHE/otel"
+_err otelsess-a "$_NANO" 429 > "$_OTEL_ECACHE/otel/logs.jsonl"
+assert_eq "otel build --render: no latency in the window → no output" "" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_ECACHE" bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 --render rows --render-floor "$_FFLOOR" 2>/dev/null)"
+
+# The session→repo log claudii-insights aggregate maintains is what build
+# reads when it exists (here it disagrees with the caches on purpose) …
+_OTEL_RCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_RCACHE")
+cp -R "$_OTEL_CACHE/otel" "$_OTEL_CACHE/insights" "$_OTEL_RCACHE/"
+printf 'otelsess-a\tfromlog\n' > "$_OTEL_RCACHE/insights-repomap.tsv"
+assert_contains "otel build: reads the session→repo log when present" '"repo":"fromlog"' \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_RCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 2>/dev/null)"
+# … a full aggregate run rebuilds it from every cache (orphans included) …
+rm -f "$_OTEL_RCACHE/insights-repomap.tsv"
+CLAUDII_CACHE_DIR="$_OTEL_RCACHE" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+assert_eq "insights aggregate: rebuilds a missing session→repo log" \
+  "$(printf 'otelsess-a\talpha\notelsess-b\tbeta')" "$(sort "$_OTEL_RCACHE/insights-repomap.tsv" 2>/dev/null)"
+# … and extends it with every session it aggregates afterwards.
+_OTEL_RPROJ="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_RPROJ"); mkdir -p "$_OTEL_RPROJ/-x-gamma"
+printf '{"type":"user","timestamp":"%s","sessionId":"otelsess-c","cwd":"/x/gamma","message":{"role":"user","content":"hi"}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_OTEL_RPROJ/-x-gamma/otelsess-c.jsonl"
+CLAUDII_CACHE_DIR="$_OTEL_RCACHE" CLAUDE_PROJECTS_DIR="$_OTEL_RPROJ" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+assert_contains "insights aggregate: appends newly aggregated sessions to the log" \
+  "$(printf 'otelsess-c\tgamma')" "$(cat "$_OTEL_RCACHE/insights-repomap.tsv" 2>/dev/null)"
+# Re-aggregating active sessions appends each time; once duplicates pass
+# twice the cache count (+100) the next run rewrites the log to one line each.
+for (( _i = 0; _i < 200; _i++ )); do printf 'otelsess-a\talpha\n'; done >> "$_OTEL_RCACHE/insights-repomap.tsv"
+CLAUDII_CACHE_DIR="$_OTEL_RCACHE" CLAUDE_PROJECTS_DIR="$_OTEL_EPROJ" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+assert_eq "insights aggregate: compacts a log bloated by duplicates" "3" \
+  "$(wc -l < "$_OTEL_RCACHE/insights-repomap.tsv" | tr -d ' ')"
 
 # The receiver writes per signal and UTC day under raw/.
 _OR_DIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OR_DIR")
