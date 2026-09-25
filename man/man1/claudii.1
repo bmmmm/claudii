@@ -930,6 +930,31 @@ the captured data is \(em the first stop when
 .B perf
 still shows
 .BR "source: transcript" .
+.PP
+The captured history is kept in full, one file per signal and UTC day:
+today's batches in
+.IR raw/<signal>\-YYYY\-MM\-DD.jsonl ,
+closed days gzipped next to them, and the samples of each closed day extracted
+into a small
+.I rows/
+file that
+.B perf
+reads. So
+.B perf
+parses only its window, however long the history grows.
+.B claudii\-otel
+compacts closed days on its own
+.RB ( "claudii\-otel compact"
+does it on demand). Data captured before the day-file layout sits in one
+.I traces.jsonl
+/
+.I logs.jsonl
+that is read in full on every run;
+.B claudii\-otel migrate
+splits it into day files once (restart the receiver first, so that it writes
+the new layout), and
+.B doctor
+says when that is still due.
 .RS
 .TP
 .B today | 7d | 30d | 90d | year

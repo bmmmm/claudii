@@ -4,8 +4,11 @@
 Claude Code exports OpenTelemetry over OTLP/HTTP-JSON when pointed at this
 receiver (CLAUDE_CODE_ENABLE_TELEMETRY=1 + OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 + OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318). Each POST body is a plain
-JSON OTLP batch; this appends it verbatim (one batch per line) to per-signal
-JSONL that `claudii-otel build` reads via jq. Stdlib only — no pip, no brew, no
+JSON OTLP batch; this appends it verbatim (one batch per line) to a per-signal,
+per-UTC-day JSONL under raw/ (raw/traces-2026-09-25.jsonl) that `claudii-otel
+build` reads via jq. Day files let build read only its window and let
+`claudii-otel compact` gzip closed days — one ever-growing file reached 4 GB in
+three months and made every `claudii perf` parse all of it. Stdlib only — no pip, no brew, no
 collector binary; the receiver IS the dependency.
 
 Optional fan-out (Phase 2b): if CLAUDII_OTEL_FORWARD is set, each batch is also
@@ -35,6 +38,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -53,18 +57,25 @@ FORWARD_TIMEOUT = float(os.environ.get("CLAUDII_OTEL_FORWARD_TIMEOUT", "5") or "
 # keeps the local path unaffected. One worker is plenty at Claude Code's batch rate.
 _FQ = queue.Queue(maxsize=512) if FORWARD else None
 
-SIGNAL_FILES = {
-    "/v1/logs": "logs.jsonl",
-    "/v1/traces": "traces.jsonl",
-    "/v1/metrics": "metrics.jsonl",
+RAW_DIR = os.path.join(OUT_DIR, "raw")
+
+SIGNALS = {
+    "/v1/logs": "logs",
+    "/v1/traces": "traces",
+    "/v1/metrics": "metrics",
 }
 
 
 def _signal_file(path):
-    for suffix, fname in SIGNAL_FILES.items():
+    # UTC write day, matching the UTC day floors claudii-otel build computes.
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    name = "other"
+    for suffix, signal in SIGNALS.items():
         if path.endswith(suffix):
-            return os.path.join(OUT_DIR, fname)
-    return os.path.join(OUT_DIR, "other.jsonl")
+            name = signal
+            break
+    os.makedirs(RAW_DIR, exist_ok=True)
+    return os.path.join(RAW_DIR, "%s-%s.jsonl" % (name, day))
 
 
 def _forward_worker():

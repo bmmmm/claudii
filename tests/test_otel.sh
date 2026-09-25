@@ -1,4 +1,4 @@
-# touches: bin/claudii-otel lib/otel.jq bin/claudii-otel-receiver lib/cmd/perf.sh
+# touches: bin/claudii-otel lib/otel.jq lib/otel-extract.jq lib/otel_split.awk bin/claudii-otel-receiver lib/cmd/perf.sh
 
 # test_otel.sh — claudii-otel (OTLP/JSON → perf-cache shape) + perf OTEL source
 #
@@ -97,6 +97,7 @@ assert_contains "otel build: exit 1" "rc=1" "$_OBAD"
 _ODOC=$(_build doctor 2>&1)
 assert_contains "otel doctor: reports otel dir" "otel dir" "$_ODOC"
 assert_contains "otel doctor: counts samples"  "response" "$_ODOC"
+assert_contains "otel doctor: flags the single-file layout" "run: claudii-otel migrate" "$_ODOC"
 
 # ── perf renders from the OTEL source when enabled ──
 _OTEL_CFG="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_CFG")
@@ -161,5 +162,82 @@ assert_contains "otel setup (forward): plist bakes forward into receiver env" \
   "$(<"$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist")"
 assert_contains "otel doctor (forward): reports the gateway" \
   "http://nutc.example:4318" "$(_otel doctor 2>&1)"
+
+# ── day-file layout: migrate / compact / window ──
+# The legacy fixture above (traces.jsonl + logs.jsonl, one span 100 days old)
+# is migrated in a copy; build must return the same JSON before and after, for
+# a window that only covers today's plain day file and for one that reaches the
+# compacted (rows + gzip) old day.
+_utc_day() { date -u -d "@$1" +%Y-%m-%d 2>/dev/null || date -u -r "$1" +%Y-%m-%d; }
+_TODAY=$(_utc_day "$_NOW")
+_OLDDAY=$(_utc_day "$_OLD")
+_OTEL_MCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_MCACHE")
+cp -R "$_OTEL_CACHE/otel" "$_OTEL_CACHE/insights" "$_OTEL_MCACHE/"
+_mbuild() { CLAUDII_CACHE_DIR="$_OTEL_MCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" "$@"; }
+# Row order follows the files (day order after migrate, line order before);
+# every consumer sorts or buckets, so compare order-insensitively.
+_onorm() { jq -S -c '.latency |= sort | .errors |= sort'; }
+_OM_PRE7=$(_build build --days 7 2>/dev/null | _onorm)
+_OM_PRE200=$(_build build --days 200 2>/dev/null | _onorm)
+
+# A legacy file written moments ago means the receiver still uses it: refuse.
+_OM_BUSY_RC=$(_mbuild migrate >/dev/null 2>&1; echo $?)
+assert_eq "otel migrate: refuses while the receiver still writes the old file" "1" "$_OM_BUSY_RC"
+assert_eq "otel migrate: refused run leaves the old file" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/traces.jsonl" ] && echo 0 || echo 1)"
+
+touch -t 200001010000 "$_OTEL_MCACHE/otel/traces.jsonl" "$_OTEL_MCACHE/otel/logs.jsonl"
+_OM_OUT=$(_mbuild migrate 2>&1)
+assert_contains "otel migrate: reports done" "migrate: done" "$_OM_OUT"
+assert_eq "otel migrate: old single files removed" "0" \
+  "$([ ! -e "$_OTEL_MCACHE/otel/traces.jsonl" ] && [ ! -e "$_OTEL_MCACHE/otel/logs.jsonl" ] && echo 0 || echo 1)"
+assert_eq "otel migrate: closed day compacted into rows" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v1.ndjson" ] && echo 0 || echo 1)"
+assert_eq "otel migrate: closed day's raw batches gzipped, not deleted" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy.jsonl.gz" ] && [ ! -e "$_OTEL_MCACHE/otel/raw/traces-$_OLDDAY.legacy.jsonl" ] && echo 0 || echo 1)"
+assert_eq "otel migrate: today stays a plain day file" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_TODAY.legacy.jsonl" ] && echo 0 || echo 1)"
+assert_eq "otel migrate: build unchanged (7d, today's raw)" "$_OM_PRE7" \
+  "$(_mbuild build --days 7 2>/dev/null | _onorm)"
+assert_eq "otel migrate: build unchanged (200d, compacted day)" "$_OM_PRE200" \
+  "$(_mbuild build --days 200 2>/dev/null | _onorm)"
+
+# rows are derived: lost (or of an old OTEL_ROWS_VERSION) → rebuilt from the gz.
+rm -f "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v1.ndjson"
+printf 'stale\n' > "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v0.ndjson"
+assert_eq "otel compact: rows rebuilt from the gzipped day" "$_OM_PRE200" \
+  "$(_mbuild build --days 200 2>/dev/null | _onorm)"
+assert_eq "otel compact: rows of another version removed" "0" \
+  "$([ ! -e "$_OTEL_MCACHE/otel/rows/$_OLDDAY.v0.ndjson" ] && echo 0 || echo 1)"
+
+# The window picks files by name: a rows file far before the floor is never
+# opened (it is not even JSON), so build cost follows the window.
+_FARDAY=$(_utc_day $(( _NOW - 300 * 86400 )))
+printf 'not json\n' > "$_OTEL_MCACHE/otel/rows/$_FARDAY.v1.ndjson"
+assert_eq "otel build: rows outside the window are not read" "$_OM_PRE7" \
+  "$(_mbuild build --days 7 2>/dev/null | _onorm)"
+rm -f "$_OTEL_MCACHE/otel/rows/$_FARDAY.v1.ndjson"
+
+# Yesterday's live file may still take a write that straddled midnight: left
+# alone while fresh, compacted once quiet.
+_YDAY=$(_utc_day $(( _NOW - 86400 )))
+_span otelsess-a "$(( _NOW - 86400 ))000000000" 1000 500 100 true 1 \
+  > "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl"
+_mbuild compact >/dev/null 2>&1
+assert_eq "otel compact: a fresh file of yesterday is left alone" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl" ] && echo 0 || echo 1)"
+touch -t 200001010000 "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl"
+_mbuild compact >/dev/null 2>&1
+assert_eq "otel compact: a quiet file of yesterday is compacted" "0" \
+  "$([ -s "$_OTEL_MCACHE/otel/raw/traces-$_YDAY.jsonl.gz" ] && [ -s "$_OTEL_MCACHE/otel/rows/$_YDAY.v1.ndjson" ] && echo 0 || echo 1)"
+
+# The receiver writes per signal and UTC day under raw/.
+_OR_DIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OR_DIR")
+_OR_FILE=$(CLAUDII_OTEL_DIR="$_OR_DIR" python3 -c '
+import importlib.machinery, sys
+m = importlib.machinery.SourceFileLoader("recv", sys.argv[1]).load_module()
+print(m._signal_file("/v1/traces"))' "$CLAUDII_HOME/bin/claudii-otel-receiver" 2>/dev/null)
+assert_eq "otel receiver: writes raw/<signal>-<UTC day>.jsonl" \
+  "$_OR_DIR/raw/traces-$(date -u +%Y-%m-%d).jsonl" "$_OR_FILE"
 
 unset _NOW _NANO _OLD _OLDNANO _OB _OE _OBAD _ODOC _PO _POJ

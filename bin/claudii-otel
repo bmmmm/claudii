@@ -2,7 +2,8 @@
 # claudii-otel — fold Claude Code's local OTLP/JSON export into the perf cache.
 #
 # The OTEL path is optional and local-only. bin/claudii-otel-receiver writes the
-# raw OTLP batches Claude Code emits to $CACHE/otel/{traces,logs}.jsonl, and
+# raw OTLP batches Claude Code emits to $CACHE/otel/raw/ (one file per signal
+# and UTC day), and
 # `claudii-otel build` folds them into the SAME .latency shape lib/cmd/perf.sh
 # already renders from transcripts — plus the exact fields the transcript
 # estimate can't provide (duration_ms, ttft_ms, api_error status codes). The
@@ -15,6 +16,8 @@
 #
 # Usage:
 #   claudii-otel build [--days N]   # emit {source,latency,errors} JSON on stdout
+#   claudii-otel compact            # fold closed days into rows/ and gzip them
+#   claudii-otel migrate            # one-time: old single-file layout → day files
 #   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
 #   claudii-otel doctor             # check receiver wiring + data freshness
 #   claudii-otel cache-dir          # print the OTEL data directory
@@ -26,7 +29,10 @@ command -v jq >/dev/null 2>&1 || { printf 'claudii-otel: jq not found — instal
 CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 OTEL_DIR="$CACHE_BASE/otel"
 INSIGHTS_DIR="$CACHE_BASE/insights"
+RAW_DIR="$OTEL_DIR/raw"
+ROWS_DIR="$OTEL_DIR/rows"
 JQ_PROGRAM="$CLAUDII_HOME/lib/otel.jq"
+EXTRACT_PROGRAM="$CLAUDII_HOME/lib/otel-extract.jq"
 RECEIVER="$CLAUDII_HOME/bin/claudii-otel-receiver"
 
 _mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
@@ -58,6 +64,91 @@ _repomap() {
   printf '%s' "${map:-"{}"}"
 }
 
+# Storage layout under $OTEL_DIR (the receiver writes raw/, everything else is
+# derived here):
+#   raw/<signal>-YYYY-MM-DD.jsonl      today's (and not yet compacted) batches
+#   raw/<signal>-YYYY-MM-DD*.jsonl.gz  closed days, gzipped — the lossless history
+#   rows/YYYY-MM-DD.v<N>.ndjson        samples extracted from a closed day
+#                                      (lib/otel-extract.jq), a few % of raw
+#   traces.jsonl / logs.jsonl          pre-day-file layout, until `migrate`
+# build reads rows + raw of its window only, so its cost follows the window,
+# not the history (one 4 GB file made every `perf` parse all of it, 82 s).
+#
+# Bump when lib/otel-extract.jq's row shape or extraction changes: rows files of
+# another version are ignored, and compact rebuilds them from the gzipped days.
+OTEL_ROWS_VERSION=1
+# A request that straddles UTC midnight can still append to yesterday's file;
+# compact leaves a raw file of yesterday alone until it has been quiet this long.
+COMPACT_QUIET_SECS=600
+
+_DAY_RE='([0-9]{4}-[0-9]{2}-[0-9]{2})'
+# Sets _DAY to the YYYY-MM-DD in a file name ("" if none) — no subshell, it
+# runs once per file.
+_file_day() {
+  _DAY=""
+  if [[ "${1##*/}" =~ $_DAY_RE ]]; then _DAY="${BASH_REMATCH[1]}"; fi
+}
+
+# Fold every closed day's raw batches into rows/ and gzip them. Idempotent: a
+# day is (re)extracted when it has plain raw files or no rows file of the
+# current version; its rows come from ALL of its raw parts, gzipped or not.
+_cmd_compact() {
+  [[ -d "$RAW_DIR" ]] || return 0
+  mkdir -p "$ROWS_DIR" || return 1
+  local today yesterday now
+  today=$(date -u +%Y-%m-%d)
+  yesterday=$(_floor_day 2)
+  now=$(date +%s)
+  local f day days=" "
+  shopt -s nullglob
+  for f in "$RAW_DIR"/*.jsonl "$RAW_DIR"/*.jsonl.gz; do
+    _file_day "$f"; day="$_DAY"
+    [[ -n "$day" && "$day" < "$today" ]] || continue
+    [[ "$days" == *" $day "* ]] || days+="$day "
+  done
+  local rows plain gz busy tmp old rc=0
+  for day in $days; do
+    rows="$ROWS_DIR/$day.v$OTEL_ROWS_VERSION.ndjson"
+    plain=("$RAW_DIR"/*-"$day"*.jsonl)
+    gz=("$RAW_DIR"/*-"$day"*.jsonl.gz)
+    [[ -f "$rows" && ${#plain[@]} -eq 0 ]] && continue
+    busy=0
+    if [[ "$day" == "$yesterday" ]]; then
+      for f in ${plain[@]+"${plain[@]}"}; do
+        [[ "$f" == *.legacy.jsonl ]] && continue
+        (( now - $(_mtime "$f") < COMPACT_QUIET_SECS )) && busy=1
+      done
+    fi
+    (( busy )) && continue
+    tmp=$(mktemp "$rows.XXXXXX") || { rc=1; continue; }
+    if { for f in ${gz[@]+"${gz[@]}"}; do gzip -dc "$f"; done
+         for f in ${plain[@]+"${plain[@]}"}; do cat "$f"; done
+       } | jq -cnR -f "$EXTRACT_PROGRAM" > "$tmp"; then
+      mv -f "$tmp" "$rows"
+    else
+      rm -f "$tmp"; rc=1; continue
+    fi
+    for old in "$ROWS_DIR/$day".v*.ndjson; do
+      [[ "$old" == "$rows" ]] || rm -f "$old"
+    done
+    for f in ${plain[@]+"${plain[@]}"}; do
+      if [[ -e "$f.gz" ]]; then
+        # Only after an interrupted run: the gzip landed, the rm did not.
+        if gzip -dc "$f.gz" | cmp -s - "$f"; then
+          rm -f "$f"
+        else
+          { gzip -dc "$f.gz"; cat "$f"; } | gzip > "$f.gz.tmp" \
+            && mv -f "$f.gz.tmp" "$f.gz" && rm -f "$f"
+        fi
+      else
+        gzip -c "$f" > "$f.gz.tmp" && mv -f "$f.gz.tmp" "$f.gz" && rm -f "$f"
+      fi
+    done
+  done
+  shopt -u nullglob
+  return "$rc"
+}
+
 _cmd_build() {
   local days=30
   while [[ $# -gt 0 ]]; do
@@ -71,27 +162,108 @@ _cmd_build() {
     printf 'build: --days must be a positive integer (got: %s)\n' "$days" >&2; exit 1
   fi
 
-  local present=() f
-  for f in "$OTEL_DIR/traces.jsonl" "$OTEL_DIR/logs.jsonl"; do
-    [[ -s "$f" ]] && present+=("$f")
+  _cmd_compact
+
+  # Files are picked by the day in their name. A rows/raw file is named after
+  # the day a batch ARRIVED; a span that started before midnight arrives after
+  # it, so files from one day before the floor are read too and the per-row
+  # .day filter in lib/otel.jq does the exact cut.
+  local floor from
+  floor=$(_floor_day "$days")
+  from=$(_floor_day "$(( days + 1 ))")
+  local rows=() fresh=() legacy=() f
+  shopt -s nullglob
+  for f in "$ROWS_DIR"/*.v"$OTEL_ROWS_VERSION".ndjson; do
+    _file_day "$f"; [[ -n "$_DAY" && ! "$_DAY" < "$from" ]] && rows+=("$f")
   done
-  if (( ${#present[@]} == 0 )); then
+  for f in "$RAW_DIR"/*.jsonl; do
+    _file_day "$f"; [[ -n "$_DAY" && ! "$_DAY" < "$from" ]] && fresh+=("$f")
+  done
+  shopt -u nullglob
+  for f in "$OTEL_DIR/traces.jsonl" "$OTEL_DIR/logs.jsonl"; do
+    [[ -s "$f" ]] && legacy+=("$f")
+  done
+  if (( ${#rows[@]} + ${#fresh[@]} + ${#legacy[@]} == 0 )); then
     printf '{"source":"otel","latency":[],"errors":[]}\n'; return 0
   fi
+  # Legacy files are still read (in full) until `migrate` ran; doctor says so.
+  # No hint here: build's stdout is JSON and callers merge stderr into it.
 
-  local floor; floor=$(_floor_day "$days")
   # The repo map goes to jq as a FILE, never as one --argjson argument: with
   # ~15k sessions it is ~0.8 MB — over Linux's 128 KiB per-argument cap already
   # and close to macOS's 1 MiB total.
   local mapfile; mapfile=$(mktemp "${TMPDIR:-/tmp}/claudii-otel-map.XXXXXX") || return 1
   _repomap "$days" > "$mapfile"
-  # -nR: read raw lines so one half-written batch (live-appended JSONL) skips
-  # itself via fromjson? instead of aborting the whole stream.
-  jq -nR --slurpfile repomap "$mapfile" --arg floor "$floor" \
-    -f "$JQ_PROGRAM" "${present[@]}"
+  # Raw lines go through otel-extract.jq with -R, so one half-written batch
+  # (live-appended JSONL) skips itself via fromjson? instead of aborting.
+  {
+    if (( ${#rows[@]} )); then
+      printf '%s\0' "${rows[@]}" | { xargs -0 cat 2>/dev/null || true; }
+    fi
+    if (( ${#fresh[@]} + ${#legacy[@]} )); then
+      printf '%s\0' ${fresh[@]+"${fresh[@]}"} ${legacy[@]+"${legacy[@]}"} \
+        | { xargs -0 cat 2>/dev/null || true; } \
+        | jq -cnR -f "$EXTRACT_PROGRAM"
+    fi
+  } | jq -n --slurpfile repomap "$mapfile" --arg floor "$floor" -f "$JQ_PROGRAM"
   local rc=$?
   rm -f "$mapfile"
   return "$rc"
+}
+
+# One-time move from the single-file layout (traces.jsonl / logs.jsonl) to
+# day files: split by each batch's own timestamp (lib/otel_split.awk), check
+# that every line landed, remove the old file, compact. Nothing is dropped —
+# closed days end up gzipped under raw/.
+_cmd_migrate() {
+  local sig f size mtime now parts read_n part_n
+  local found=0
+  now=$(date +%s)
+  mkdir -p "$RAW_DIR" || return 1
+  for sig in traces logs metrics other; do
+    f="$OTEL_DIR/$sig.jsonl"
+    [[ -s "$f" ]] || continue
+    found=1
+    mtime=$(_mtime "$f")
+    if (( now - mtime < 120 )); then
+      printf 'migrate: %s was written %ds ago — the receiver still uses the old layout.\n' "$f" "$(( now - mtime ))" >&2
+      printf '  Restart it first: launchctl kickstart -k gui/%s/com.claudii.otel-receiver\n' "$(id -u)" >&2
+      return 1
+    fi
+    size=$(wc -c < "$f" | tr -d ' ')
+    printf 'migrate: splitting %s (%d MB) by day…\n' "$f" "$(( size / 1048576 ))"
+    # Leftover parts of an interrupted run would be appended to, not replaced.
+    shopt -s nullglob
+    for parts in "$RAW_DIR/$sig"-*.legacy.jsonl; do rm -f "$parts"; done
+    shopt -u nullglob
+    read_n=$(head -c "$size" "$f" | LC_ALL=C awk -v tz_offset=0 -v dir="$RAW_DIR" -v sig="$sig" \
+      -f "$CLAUDII_HOME/lib/epoch_to_date.awk" -f "$CLAUDII_HOME/lib/otel_split.awk") || return 1
+    shopt -s nullglob
+    parts=("$RAW_DIR/$sig"-*.legacy.jsonl)
+    shopt -u nullglob
+    part_n=0
+    if (( ${#parts[@]} )); then
+      part_n=$(printf '%s\0' "${parts[@]}" | xargs -0 cat | wc -l | tr -d ' ')
+    fi
+    if [[ "$read_n" != "$part_n" ]]; then
+      printf 'migrate: %s: read %s lines but the day files hold %s — keeping the original\n' "$f" "$read_n" "$part_n" >&2
+      return 1
+    fi
+    if [[ "$(wc -c < "$f" | tr -d ' ')" != "$size" ]]; then
+      printf 'migrate: %s grew while it was split — the receiver still writes it. Restart it and run migrate again.\n' "$f" >&2
+      for parts in "${parts[@]}"; do rm -f "$parts"; done
+      return 1
+    fi
+    rm -f "$f"
+    printf 'migrate: %s → %d day file(s), %s lines\n' "$sig" "${#parts[@]}" "$part_n"
+  done
+  if (( ! found )); then
+    printf 'migrate: nothing to do — no single-file OTEL data in %s\n' "$OTEL_DIR"
+    return 0
+  fi
+  printf 'migrate: compacting closed days…\n'
+  _cmd_compact || { printf 'migrate: compact reported errors — run: claudii-otel compact\n' >&2; return 1; }
+  printf 'migrate: done\n'
 }
 
 _cmd_receiver() {
@@ -108,20 +280,34 @@ _cmd_doctor() {
     printf '  python3      MISSING — the receiver needs it\n'
   fi
   printf '  otel dir     %s\n' "$OTEL_DIR"
-  local now t l tc lc age
+  # Counts come from file names and the compacted rows — doctor used to run a
+  # full-history build (--days 36500) just to print one number.
+  local now f mt newest=0 n=0
   now=$(date +%s)
-  for f in traces logs; do
-    local path="$OTEL_DIR/$f.jsonl"
-    if [[ -s "$path" ]]; then
-      local lines; lines=$(wc -l < "$path" 2>/dev/null | tr -d ' ')
-      age=$(( now - $(_mtime "$path") ))
-      printf '  %-12s %s batches · last write %ds ago\n' "$f.jsonl" "$lines" "$age"
-    else
-      printf '  %-12s (none — receiver not running, or no session yet)\n' "$f.jsonl"
-    fi
+  shopt -s nullglob
+  local plain=("$RAW_DIR"/*.jsonl) gz=("$RAW_DIR"/*.jsonl.gz)
+  local rows=("$ROWS_DIR"/*.v"$OTEL_ROWS_VERSION".ndjson)
+  shopt -u nullglob
+  for f in ${plain[@]+"${plain[@]}"}; do
+    mt=$(_mtime "$f"); (( mt > newest )) && newest=$mt
   done
-  local n; n=$(_cmd_build --days 36500 2>/dev/null | jq '.latency | length' 2>/dev/null || echo '?')
-  printf '  samples      %s response(s) parsed\n' "$n"
+  if (( newest > 0 )); then
+    printf '  raw          %d open day file(s) · last write %ds ago\n' "${#plain[@]}" "$(( now - newest ))"
+  else
+    printf '  raw          (no open day file — receiver not running, or no session yet)\n'
+  fi
+  if (( ${#gz[@]} )); then
+    printf '  history      %d gzipped day file(s) · %s on disk\n' "${#gz[@]}" "$(du -sh "$OTEL_DIR" 2>/dev/null | cut -f1 | tr -d ' ')"
+  fi
+  if (( ${#rows[@]} )); then
+    n=$(printf '%s\0' "${rows[@]}" | { xargs -0 cat 2>/dev/null || true; } | grep -c '"kind":"lat"')
+  fi
+  printf '  samples      %s response(s) in %d compacted day(s)\n' "$n" "${#rows[@]}"
+  for f in traces logs; do
+    [[ -s "$OTEL_DIR/$f.jsonl" ]] || continue
+    printf '  legacy       %s.jsonl (%d MB, read in full on every build) — run: claudii-otel migrate\n' \
+      "$f" "$(( $(wc -c < "$OTEL_DIR/$f.jsonl") / 1048576 ))"
+  done
   if [[ -r "$CACHE_BASE/otel.env" ]]; then
     printf '  env wiring   %s (telemetry exported to the receiver)\n' "$CACHE_BASE/otel.env"
   else
@@ -227,6 +413,8 @@ _cmd_off() {
 cmd="${1:-build}"; shift || true
 case "$cmd" in
   build)     _cmd_build "$@" ;;
+  compact)   _cmd_compact ;;
+  migrate)   _cmd_migrate ;;
   receiver)  _cmd_receiver "$@" ;;
   setup)     _cmd_setup "$@" ;;
   off)       _cmd_off "$@" ;;
@@ -240,6 +428,10 @@ Usage:
   claudii-otel setup              enable the OTEL source (config + env + plist)
   claudii-otel off                disable it (perf reverts to transcript)
   claudii-otel build [--days N]   emit {source,latency,errors} JSON on stdout
+  claudii-otel compact            fold closed days into rows/ and gzip their raw
+                                  batches (build does this on its own)
+  claudii-otel migrate            one-time: split the old single-file
+                                  traces.jsonl/logs.jsonl into day files
   claudii-otel receiver [args]    exec the local OTLP receiver (foreground)
   claudii-otel doctor             check receiver wiring + data freshness
   claudii-otel cache-dir          print the OTEL data directory

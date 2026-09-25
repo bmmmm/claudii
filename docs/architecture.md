@@ -15,8 +15,8 @@ bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
 bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, session-cache keys
 bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
-bin/claudii-otel           # OTLP control (setup/off/receiver/doctor) — exact perf metrics vs transcript estimate
-bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → ~/.cache/claudii/otel/
+bin/claudii-otel           # OTLP control (setup/off/receiver/doctor/build/compact/migrate) — exact perf metrics vs transcript estimate
+bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → ~/.cache/claudii/otel/raw/<signal>-<UTC day>.jsonl
 bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pending updates + release inbox)
 bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
@@ -47,7 +47,9 @@ lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projecti
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline
 lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
 lib/tier.jq             # jq module: tier() model→rate-tier mapping
-lib/otel.jq             # jq: Claude Code OTLP/JSON export → perf-cache shape (claudii-otel-receiver)
+lib/otel-extract.jq     # jq: raw OTLP/JSON batches → one row per sample (compacted into otel/rows/)
+lib/otel.jq             # jq: sample rows + repo map + window → perf-cache shape (claudii-otel build)
+lib/otel_split.awk      # awk: split the legacy single-file OTEL export by day (claudii-otel migrate)
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
 lib/insights_stream.sh  # _insights_stream: insights caches → stdout, window-bounded, never argv
