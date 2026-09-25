@@ -88,10 +88,10 @@ Claude Opus, xhigh effort. Hardest problems, maximum reasoning.
 .TP
 .B clq
 Claude Sonnet, medium effort.
-Launches in
-.I search.dir
-(default:
-.IR ~/claude-search ).
+Launches in the search workspace
+.RI ( search.dir ;
+see
+.BR search ).
 Equivalent to
 .BR "claudii search" .
 .TP
@@ -1044,9 +1044,14 @@ claudii config set agents.clorch.description "Orchestrator"
 .TP
 .BI "search " "['query']"
 Launch Claude Code in the configured search directory
-.RI ( search.dir ,
-default:
-.IR ~/claude-search ).
+.RI ( search.dir ;
+empty or
+.B @search
+= default:
+.I search/
+inside the claudii checkout, gitignored, or
+.I ~/.local/share/claudii/search
+for a Homebrew install). The directory is created on first use.
 If a
 .I query
 is provided it is passed as the initial prompt.
@@ -1747,7 +1752,7 @@ notifications.burn_eta_threshold_min	30	Burn-ETA alert threshold (minutes)
 notifications.session_end	true	Desktop notification on session end
 notifications.osc	777	Notify flavor: \fB777\fR (Ghostty/urxvt/Warp) or \fB9\fR (iTerm2/WezTerm)
 presence.file	(empty)	Path touched by \fBoff\fR / removed by \fBon\fR (CLAUDE_CLIENT_PRESENCE_FILE); empty = disabled
-search.dir	~/claude-search	Directory for search mode
+search.dir	(empty)	Search workspace; empty or @search = search/ in the checkout (created on use)
 ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)
 debug.level	off	Log level: off/error/warn/info/debug
 vibemap.enabled	false	Opt-in activity tracking

@@ -120,8 +120,7 @@ _cmd_config() {
 
 _cmd_search() {
   _cfg_init
-  search_dir=$(_cfgget search.dir)
-  search_dir="${search_dir/#\~/$HOME}"
+  search_dir=$(_claudii_search_dir "$(_cfgget search.dir)")
 
   # Try search.model first, fall back to aliases.clq.model, then to default sonnet
   model=$(_cfgget search.model)
@@ -133,7 +132,7 @@ _cmd_search() {
   [[ -z "$effort" ]] && effort=$(_cfgget aliases.clq.effort)
   [[ -z "$effort" ]] && effort="medium"
 
-  cd "$search_dir" || { echo "claudii: search directory not found: $search_dir" >&2; return 1; }
+  cd "$search_dir" 2>/dev/null || { echo "claudii: cannot use search directory: $search_dir" >&2; return 1; }
   exec claude --model "$model" --effort "$effort" "${@:2}"
 }
 

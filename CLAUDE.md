@@ -29,6 +29,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 - **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array. Details + workarounds: `docs/gotchas.md`.
 - **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh) instead; literal matching has broken this twice. Details: `docs/gotchas.md`.
 - **The 5h rate limit is account-wide** — never attribute it to a single model in UI text, and read it from the *newest* fresh `session-*` cache file (glob order is by session id, not freshness). All rate displays follow `statusline.rate_display`; color/thresholds stay keyed on used%.
+- **Never pass a growing file list — or data built from one — as argv** (glob or one big `--argjson`): macOS 1 MiB total, Linux 128 KiB per argument; stream via stdin/`--slurpfile`, `_insights_stream` for the insights caches. Details: `docs/gotchas.md`.
 - **An awk file carries no semantics of its own** — verify any claim about a `lib/*.awk` program against its `-v` bindings at the call site (`lib/cmd/*.sh`); variable names lie. Incident + details: `docs/gotchas.md`.
 
 ## Token efficiency (for Claude-in-session)

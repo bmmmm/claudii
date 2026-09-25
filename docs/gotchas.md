@@ -45,3 +45,19 @@ sources `lib/cmd/<x>.sh` to call one render function directly dies with
 `CLAUDII_CLR_DIM: unbound variable` — and the assert reads as an empty
 render, not as a setup error. Stub them (empty strings) in the subshell
 before the `source`, as `test_sessionline.sh` does for `_session_tok_seg`.
+
+## Never pass a growing file list — or data built from one — as argv
+
+Anything that grows with history goes to the consumer on stdin or as a file,
+never as arguments: a cache-dir glob (`jq … "${files[@]}"`), and equally a
+single big `--arg`/`--argjson` value. Limits: macOS 1 MiB for the whole
+argument list, Linux 2 MiB total but **128 KiB per argument**. The failure
+is silent in practice: callers swallow stderr, so the command just prints
+nothing. 2026-09-25: ~15k insights caches (headless `claude -p` batch runs
+added 4k in a week) broke tokens/cache/limits/tools/skills-cost/repos with
+rc 126 (b64eaac); the OTEL session→repo map was a ~0.8 MB `--argjson`, over
+Linux's per-argument cap (c9d7ab9). Use `_insights_stream`
+(`lib/insights_stream.sh`) for the insights caches, `--slurpfile`/`--rawfile`
+for big jq inputs, and let `tests/test_insights_bulk.sh` (10k long-named
+files) prove a new consumer.
+

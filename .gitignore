@@ -1,4 +1,6 @@
 tmp/
+# claudii search / clq workspace (lib/search_dir.sh)
+/search/
 ROADMAP.md
 # NOT CLAUDE.md — it is tracked on purpose (project instructions ship with the
 # repo). The ignore rule that used to sit here was a no-op, since git ignores
