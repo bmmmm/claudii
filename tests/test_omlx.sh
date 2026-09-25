@@ -106,5 +106,30 @@ _om_berr=$(HOME="$_om_base" XDG_CONFIG_HOME="$_om_base/xdg" CLAUDII_CACHE_DIR="$
 assert_eq       "omlx bogus: exit 1" "1" "$_om_bexit"
 assert_contains "omlx bogus: actionable error" "Try: claudii omlx help" "$_om_berr"
 
-unset _om_base _om_base2 _om_base3 _om_base4 _om_out _om_bare _om_exit _om_envp \
-  _om_cout _om_cexit _om_cfgp _om_dexit _om_dout _om_lines _om_help _om_bexit _om_berr
+# ── omlx server URL/key resolution: env → $CLAUDII_HOME/.env → ~/.env ─────────
+# The functions are pure, so they are sourced with a throwaway CLAUDII_HOME and
+# HOME; the real repo .env (claudii's sub-key) is never read here.
+_om_base5=$(_omlx_mktmp); mkdir -p "$_om_base5/repo" "$_om_base5/home"
+printf 'OMLX_URL=http://127.0.0.1:2/v1\n' > "$_om_base5/home/.env"
+_om_url_env=$(OMLX_URL=http://127.0.0.1:1/v1 CLAUDII_HOME="$_om_base5/repo" HOME="$_om_base5/home" \
+  bash -c 'source "$0"; _omlx_server_url' "$CLAUDII_HOME/lib/cmd/omlx.sh")
+assert_eq "omlx url: environment wins, /v1 stripped" "http://127.0.0.1:1" "$_om_url_env"
+_om_url_home=$(CLAUDII_HOME="$_om_base5/repo" HOME="$_om_base5/home" \
+  bash -c 'unset OMLX_URL; source "$0"; _omlx_server_url' "$CLAUDII_HOME/lib/cmd/omlx.sh")
+assert_eq "omlx url: ~/.env when the repo has none" "http://127.0.0.1:2" "$_om_url_home"
+printf 'OMLX_URL="http://127.0.0.1:3/v1"\n' > "$_om_base5/repo/.env"
+_om_url_repo=$(CLAUDII_HOME="$_om_base5/repo" HOME="$_om_base5/home" \
+  bash -c 'unset OMLX_URL; source "$0"; _omlx_server_url' "$CLAUDII_HOME/lib/cmd/omlx.sh")
+assert_eq "omlx url: the repo .env beats ~/.env" "http://127.0.0.1:3" "$_om_url_repo"
+_om_url_none=$(CLAUDII_HOME="$_om_base5/repo2" HOME="$_om_base5/home2" \
+  bash -c 'unset OMLX_URL; source "$0"; _omlx_server_url' "$CLAUDII_HOME/lib/cmd/omlx.sh")
+assert_eq "omlx url: default is the 8010 server, not :8000" "http://127.0.0.1:8010" "$_om_url_none"
+# The status output names the resolved URL, not a hardcoded one.
+_om_sout=$(OMLX_URL=http://127.0.0.1:1 HOME="$_om_base" XDG_CONFIG_HOME="$_om_base/xdg" CLAUDII_CACHE_DIR="$_om_base/cache" \
+  bash "$CLAUDII_HOME/bin/claudii" omlx status 2>&1)
+assert_contains "omlx status: names the resolved server URL" "http://127.0.0.1:1" "$_om_sout"
+assert_not_contains "omlx status: no hardcoded :8000" "localhost:8000" "$_om_sout"
+
+unset _om_base _om_base2 _om_base3 _om_base4 _om_base5 _om_out _om_bare _om_exit _om_envp \
+  _om_cout _om_cexit _om_cfgp _om_dexit _om_dout _om_lines _om_help _om_bexit _om_berr \
+  _om_url_env _om_url_home _om_url_repo _om_url_none _om_sout

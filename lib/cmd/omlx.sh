@@ -39,13 +39,39 @@ _omlx_resolve_path() {
   printf '%s' "${_OMLX_DEFAULT_PATHS[0]}"
 }
 
+# OMLX_URL / OMLX_API_KEY: environment → $CLAUDII_HOME/.env (claudii's own
+# sub-key, written by ~/ops/scripts/omlx-keys) → ~/.env. The value never goes
+# on a command line — curl reads the header from a file.
+_omlx_env_value() {
+  local name="$1" f v
+  if [[ -n "${!name:-}" ]]; then printf '%s' "${!name}"; return; fi
+  for f in "${CLAUDII_HOME:-/nonexistent}/.env" "$HOME/.env"; do
+    [[ -r "$f" ]] || continue
+    v=$(sed -n "s/^${name}=//p" "$f" | head -1 | tr -d '"'"'" | tr -d '\r')
+    [[ -n "$v" ]] && { printf '%s' "$v"; return; }
+  done
+}
+
+# The server's base URL without the /v1 suffix (the status route sits under /v1).
+_omlx_server_url() {
+  local u; u=$(_omlx_env_value OMLX_URL); u="${u:-http://127.0.0.1:8010}"
+  u="${u%/}"; printf '%s' "${u%/v1}"
+}
+
 # Probe an omlx server via curl. Returns 0 + stdout = "<count> models, <gb>GB"
-# on success; non-zero with empty stdout on failure.
+# on success; non-zero with empty stdout on failure. /v1/models/status needs
+# the API key (oMLX 0.7: verify_api_key), so an unauthenticated probe read a
+# running server as "not reachable" until 2026-09-25.
 _omlx_probe_server() {
-  local url="${1:-http://localhost:8000}"
+  local url="${1:-$(_omlx_server_url)}"
   command -v curl >/dev/null || return 1
-  local resp
-  resp=$(curl -s -m 2 "$url/v1/models/status" 2>/dev/null) || return 1
+  local resp hdr key
+  hdr=$(mktemp) || return 1
+  key=$(_omlx_env_value OMLX_API_KEY)
+  printf 'Authorization: Bearer %s\n' "$key" > "$hdr"
+  resp=$(curl -s -m 2 -H @"$hdr" "$url/v1/models/status" 2>/dev/null); local rc=$?
+  rm -f "$hdr"
+  [[ $rc -eq 0 ]] || return 1
   [[ -z "$resp" ]] && return 1
   local n gb _omlx_jq
   _omlx_jq=$(jq -r '[.loaded_count // 0, ((.current_model_memory // 0) / 1073741824)] | join("\t")' <<< "$resp" 2>/dev/null) || return 1
@@ -138,11 +164,12 @@ _omlx_show_status() {
 
   # 3. omlx server reachability
   printf "  %-22s " "oMLX server"
-  local probe
+  local probe omlx_url
+  omlx_url=$(_omlx_server_url)
   if probe=$(_omlx_probe_server); then
-    echo -e "${CLAUDII_CLR_GREEN}✓ ${probe}${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(http://localhost:8000)${CLAUDII_CLR_RESET}"
+    echo -e "${CLAUDII_CLR_GREEN}✓ ${probe}${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(${omlx_url})${CLAUDII_CLR_RESET}"
   else
-    echo -e "${CLAUDII_CLR_DIM}not reachable on http://localhost:8000${CLAUDII_CLR_RESET}"
+    echo -e "${CLAUDII_CLR_DIM}not reachable on ${omlx_url} (or no OMLX_API_KEY)${CLAUDII_CLR_RESET}"
   fi
 
   # 4. omlx CLI
@@ -220,7 +247,7 @@ _omlx_connect() {
   if probe=$(_omlx_probe_server); then
     echo -e "  ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} oMLX server reachable: ${probe}"
   else
-    echo -e "  ${CLAUDII_CLR_YELLOW}!${CLAUDII_CLR_RESET} oMLX server not reachable on http://localhost:8000"
+    echo -e "  ${CLAUDII_CLR_YELLOW}!${CLAUDII_CLR_RESET} oMLX server not reachable on $(_omlx_server_url) (or no OMLX_API_KEY)"
     echo -e "    ${CLAUDII_CLR_DIM}(start it with: omlx serve  — or via the desktop app)${CLAUDII_CLR_RESET}"
     echo -e "    ${CLAUDII_CLR_DIM}claudii's omlx segment will stay empty until gateii's wrapper writes active.json${CLAUDII_CLR_RESET}"
   fi
