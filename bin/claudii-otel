@@ -47,9 +47,12 @@ _repomap() {
   local files=("$INSIGHTS_DIR"/*.json)
   shopt -u nullglob
   if (( ${#files[@]} == 0 )); then printf '{}'; return; fi
-  jq -n 'reduce inputs as $s ({};
+  # Streamed on stdin, not as jq args — the file list outgrows ARG_MAX
+  # (see _cmd_merge in bin/claudii-insights).
+  printf '%s\0' "${files[@]}" | xargs -0 cat \
+    | jq -n 'reduce inputs as $s ({};
            if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
-           then .[$s.sessionId] = $s.project.repo else . end)' "${files[@]}" 2>/dev/null \
+           then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null \
     || printf '{}'
 }
 

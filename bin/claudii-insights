@@ -255,12 +255,17 @@ _cmd_merge() {
   fi
 
   # Merge program lives in lib/insights-merge.jq (window filters + tolerant
-  # attribution_models summing).
-  jq -n \
+  # attribution_models summing). The cache files are streamed on stdin, never
+  # passed as jq arguments: the cache keeps orphans forever, and at ~12k files
+  # the path list outgrew ARG_MAX (macOS 1 MiB) — jq died with "Argument list
+  # too long" (rc 126) and every merge consumer (tokens, cache, limits, ...)
+  # went silently empty. jq reads several files as one concatenated stream, so
+  # `cat` is the same input; printf is a builtin and has no argv limit.
+  printf '%s\0' "${files[@]}" | xargs -0 cat | jq -n \
     --arg cutoff "$cutoff_iso" \
     --arg until "$until_iso" \
     --argjson with_latency "$wl" \
-    -f "$CLAUDII_HOME/lib/insights-merge.jq" "${files[@]}"
+    -f "$CLAUDII_HOME/lib/insights-merge.jq"
 }
 
 # Prune ORPHANED cache files (source JSONL deleted by Claude Code) older than
@@ -334,7 +339,8 @@ _cmd_gc() {
       printf 'would prune: %s  (last_seen: %s)\n' "$sid" "${last_seen:-none}"
       (( ++pruned ))
     fi
-  done < <(jq -r '[(input_filename | sub(".*/"; "") | sub("\\.json$"; "")), (.last_seen // "")] | @tsv' "${files[@]}" 2>/dev/null)
+  done < <(printf '%s\0' "${files[@]}" \
+             | xargs -0 jq -r '[(input_filename | sub(".*/"; "") | sub("\\.json$"; "")), (.last_seen // "")] | @tsv' 2>/dev/null)
 
   if (( yes )); then
     printf 'gc: pruned %d orphaned cache(s) older than %dd  (%d live, %d recent orphans kept)\n' \

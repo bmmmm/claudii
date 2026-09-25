@@ -1344,8 +1344,11 @@ _cmd_repos() {
 
   local all_json=false; (( all )) && all_json=true
   local data
-  data=$(jq -n --arg cutoff "$cutoff" --arg floor "$floor" --arg repo "$repo" \
-           --argjson all "$all_json" -f "$CLAUDII_HOME/lib/repos.jq" "${files[@]}" 2>/dev/null)
+  # Streamed on stdin, not as jq args — the file list outgrows ARG_MAX
+  # (see _cmd_merge in bin/claudii-insights).
+  data=$(printf '%s\0' "${files[@]}" | xargs -0 cat \
+         | jq -n --arg cutoff "$cutoff" --arg floor "$floor" --arg repo "$repo" \
+           --argjson all "$all_json" -f "$CLAUDII_HOME/lib/repos.jq" 2>/dev/null)
   if [[ -z "$data" ]]; then
     printf 'claudii: repos aggregation failed — rebuild the cache with: claudii-insights aggregate --force\n' >&2
     return 1
