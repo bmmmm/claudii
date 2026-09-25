@@ -75,7 +75,7 @@ plan-file cleanup reminder: **`docs/orchestration-notes.md`**.
 
 ## When committing
 
-Only check what the commit actually touches: code → `bash tests/run.sh` + the doc-sync steps above; a removed command → also delete its `tests/test_<command>.sh`; docs/config only → no checks.
+Only check what the commit actually touches: code → `bash tests/run.sh` + `bash scripts/lint.sh` (ShellCheck is its own CI workflow — a green test run does not cover it) + the doc-sync steps above; a removed command → also delete its `tests/test_<command>.sh`; docs/config only → no checks.
 
 ## When releasing
 
