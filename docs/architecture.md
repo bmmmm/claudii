@@ -15,8 +15,8 @@ bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
 bin/claudii-stop-hook        # Stop hook: terminalSequence notifications, session-cache keys
 bin/claudii-session-end-hook # SessionEnd hook: desktop notification with session cost
-bin/claudii-otel           # OTLP control (setup/off/receiver/doctor/build/compact/migrate) — exact perf metrics vs transcript estimate
-bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → ~/.cache/claudii/otel/raw/<signal>-<UTC day>.jsonl
+bin/claudii-otel           # OTLP control (setup/off/receiver/doctor/build/compact) — exact perf metrics vs transcript estimate
+bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → flat records in ~/.cache/claudii/otel/events/<kind>-<UTC day>.ndjson (+ receiver.status; --flatten converts old captures)
 bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pending updates + release inbox)
 bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
@@ -47,13 +47,11 @@ lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projecti
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline
 lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
 lib/tier.jq             # jq module: tier() model→rate-tier mapping
-lib/otel-extract.jq     # jq: raw OTLP/JSON batches → one row per sample (compacted into otel/rows/)
-lib/otel.jq             # jq: sample rows + repo map + window → perf-cache shape (claudii-otel build)
-lib/otel_doc.jq         # jq module: that shaping as `def otel_doc`, shared with build --render
+lib/otel_rows.jq        # jq: flat llm/err event records → one row per perf sample (compacted into otel/rows/)
+lib/otel_doc.jq         # jq module: sample rows + repo map + window → perf-cache shape (`def otel_doc`, every build mode)
 lib/perf_common.jq      # jq module: perf helpers (sort-once percentiles, window/repo filters)
 lib/perf_rows.jq        # jq module: merged shape → claudii perf's tagged TSV rows
 lib/perf_json.jq        # jq module: merged shape → claudii perf --json
-lib/otel_split.awk      # awk: split the legacy single-file OTEL export by day (claudii-otel migrate)
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
 lib/insights_stream.sh  # _insights_stream: insights caches → stdout, window-bounded, never argv

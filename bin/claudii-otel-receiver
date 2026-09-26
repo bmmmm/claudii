@@ -3,26 +3,64 @@
 
 Claude Code exports OpenTelemetry over OTLP/HTTP-JSON when pointed at this
 receiver (CLAUDE_CODE_ENABLE_TELEMETRY=1 + OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-+ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318). Each POST body is a plain
-JSON OTLP batch; this appends it verbatim (one batch per line) to a per-signal,
-per-UTC-day JSONL under raw/ (raw/traces-2026-09-25.jsonl) that `claudii-otel
-build` reads via jq. Day files let build read only its window and let
-`claudii-otel compact` gzip closed days — one ever-growing file reached 4 GB in
-three months and made every `claudii perf` parse all of it. Stdlib only — no pip, no brew, no
-collector binary; the receiver IS the dependency.
++ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318). Each POST body is one
+OTLP batch. The receiver flattens every log record and span in it to one JSON
+line and appends the lines to events/<kind>-<UTC day>.ndjson, split by kind so
+`claudii-otel build` reads only the two kinds `claudii perf` needs. Stdlib
+only — no pip, no brew, no collector binary; the receiver IS the dependency.
 
-Optional fan-out (Phase 2b): if CLAUDII_OTEL_FORWARD is set, each batch is also
-tee'd verbatim to that base endpoint (e.g. an internal collector gateway on
-nutc). The forward is best-effort and off the hot path — a single daemon worker
-drains a bounded queue, so a slow or unreachable gateway never blocks the local
-persist or the 200 returned to Claude Code; batches drop (queue-full) rather
-than back-pressure. The local JSONL is always the source of truth; the gateway
-is a copy.
+Flat record (one per log record / span; the OTLP envelope is gone):
+  reserved keys start with "_" — _sig log|span, _name (log body / span name),
+    _t (timeUnixNano / startTimeUnixNano, the string as received), _end (span
+    end), _trace, _span, _parent (when present), _status {code,message} only
+    when code != 0, _events / _links only when non-empty (their attributes
+    flattened the same way), _observed only when observedTimeUnixNano differs
+    from _t, _kind / _flags only when not the constant defaults (span kind 1,
+    span flags 257, log flags 1), _dropped_* only when non-zero;
+  the resource attributes (host.arch, os.type, os.version, service.name,
+    service.version) and every record attribute under its own key, with the
+    JSON type exactly as received (an intValue that arrives as a string stays a
+    string), arrayValue / kvlistValue as JSON arrays / objects;
+  dropped: the five identity constants (user.email, user.id, user.account_uuid,
+    user.account_id, organization.id — they are the same on every record and
+    the forward carries them to the collector anyway), the scope (constant per
+    signal; a log scope version that differs from service.version is kept as
+    _scope_version). An attribute key that itself starts with "_" is stored as
+    "attr" + key so it cannot collide with a reserved key.
+kind: llm (span claude_code.llm_request) · err (log claude_code.api_error) ·
+  api (other claude_code.api_*) · tool (span claude_code.tool*, log
+  claude_code.tool_*) · hook (log claude_code.hook_*) · other (everything else;
+  a metrics batch is one record of _sig metrics with the identity scrubbed).
+
+An empty body is forwarded and nothing is written. A body that is not JSON, or
+a batch the flattening cannot process, goes verbatim (base64 when not UTF-8)
+to events/unparsed-<day>.ndjson — nothing is lost, and nothing is written
+twice, since the batch is flattened in memory before the first append.
+
+Optional fan-out: if CLAUDII_OTEL_FORWARD is set, each batch is also tee'd
+verbatim (identity included) to that base endpoint (e.g. an internal collector
+gateway). Best-effort and off the hot path — a single daemon worker drains a
+bounded queue, so a slow or unreachable gateway never blocks the local persist
+or the 200 returned to Claude Code; batches drop (queue-full) rather than
+back-pressure.
+
+otel/receiver.status (JSON, rewritten atomically at most every 5 s) carries
+the sha256 of the receiver file that is running, start time, last batch time,
+batch/record counts and the forward counters (ok/failed/dropped, last error) —
+`claudii-otel doctor` reads it. Disk-full and a closed stderr never kill a
+handler thread: every write is guarded and the 200 is sent regardless.
+
+Conversion / tests:
+  claudii-otel-receiver --flatten <out-dir> [--tag TAG]
+    reads OTLP batch lines on stdin (a legacy traces.jsonl/logs.jsonl, or the
+    unreleased raw/ day files) and writes event files dated by each record's
+    OWN timestamp: <out-dir>/<kind>-<day>.<TAG>.ndjson (TAG default "conv" —
+    never the live file name), via .part files renamed at the end, and refuses
+    (exit 3) when files of that tag exist already. One flatten implementation
+    serves live ingest, the tests and the conversion.
 
 Security: binds 127.0.0.1 only, so nothing on the network can push events in.
-The batches carry user.email / account ids, so the files stay on-box (0700 dir).
-CLAUDII_OTEL_FORWARD is an explicit opt-in and should point at an internal-only
-host (no internet egress).
+Files stay on-box (0700 dir); the identity constants are not stored locally.
 
 Env:
   CLAUDII_OTEL_DIR              output dir (default ~/.cache/claudii/otel)
@@ -32,7 +70,9 @@ Env:
   CLAUDII_OTEL_FORWARD_TIMEOUT  per-batch forward timeout in seconds (default 5)
   CLAUDII_OTEL_VERBOSE          1 → log one diagnostic line per request to stderr
 """
+import base64
 import gzip
+import hashlib
 import json
 import os
 import queue
@@ -43,11 +83,9 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OUT_DIR = os.path.expanduser(os.environ.get("CLAUDII_OTEL_DIR", "~/.cache/claudii/otel"))
-os.makedirs(OUT_DIR, exist_ok=True)
-try:
-    os.chmod(OUT_DIR, 0o700)  # batches carry PII — keep them owner-only
-except OSError:
-    pass
+EVENTS_DIR = os.path.join(OUT_DIR, "events")
+STATUS_FILE = os.path.join(OUT_DIR, "receiver.status")
+STATUS_EVERY = 5.0
 
 VERBOSE = os.environ.get("CLAUDII_OTEL_VERBOSE", "") == "1"
 
@@ -57,40 +95,284 @@ FORWARD_TIMEOUT = float(os.environ.get("CLAUDII_OTEL_FORWARD_TIMEOUT", "5") or "
 # keeps the local path unaffected. One worker is plenty at Claude Code's batch rate.
 _FQ = queue.Queue(maxsize=512) if FORWARD else None
 
-RAW_DIR = os.path.join(OUT_DIR, "raw")
+IDENTITY = frozenset(("user.email", "user.id", "user.account_uuid",
+                      "user.account_id", "organization.id"))
+KINDS = ("llm", "err", "api", "tool", "hook", "other", "unparsed")
 
-SIGNALS = {
-    "/v1/logs": "logs",
-    "/v1/traces": "traces",
-    "/v1/metrics": "metrics",
+# One lock for every append and for the status file: ThreadingHTTPServer runs
+# handlers concurrently, and two threads appending to one file interleave.
+_WLOCK = threading.Lock()
+
+
+def _log(msg):
+    """stderr line with a UTC timestamp; a closed (sys.stderr is None under
+    `2>&-`) or full stderr is not an error."""
+    if sys.stderr is None:
+        return
+    try:
+        sys.stderr.write("[otel %s] %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), msg))
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001 — logging must never raise
+        pass
+
+
+# ── flatten ──────────────────────────────────────────────────────────────────
+
+def anyval(v):
+    """OTLP AnyValue → plain JSON value, type as received."""
+    if not isinstance(v, dict):
+        return v
+    for k in ("stringValue", "intValue", "doubleValue", "boolValue", "bytesValue"):
+        if k in v:
+            return v[k]
+    if "arrayValue" in v:
+        return [anyval(x) for x in ((v["arrayValue"] or {}).get("values") or [])]
+    if "kvlistValue" in v:
+        return attrs((v["kvlistValue"] or {}).get("values") or [], False)
+    return v
+
+
+def attrs(lst, drop_identity=True):
+    """OTLP attribute list → dict; identity constants dropped."""
+    out = {}
+    for a in lst or []:
+        if not isinstance(a, dict) or "key" not in a:
+            continue
+        k = a["key"]
+        if drop_identity and k in IDENTITY:
+            continue
+        if isinstance(k, str) and k.startswith("_"):
+            k = "attr" + k
+        out[k] = anyval(a.get("value"))
+    return out
+
+
+def _dropped(rec, obj):
+    for k in ("droppedAttributesCount", "droppedEventsCount", "droppedLinksCount"):
+        if obj.get(k):
+            rec["_dropped_" + k[7:8].lower() + k[8:-5]] = obj[k]
+
+
+def _flat_log(r, res):
+    body = r.get("body")
+    name = anyval(body) if body is not None else None
+    rec = {"_sig": "log", "_name": name, "_t": r.get("timeUnixNano")}
+    obs = r.get("observedTimeUnixNano")
+    if obs is not None and obs != rec["_t"]:
+        rec["_observed"] = obs
+    if r.get("traceId"):
+        rec["_trace"] = r["traceId"]
+    if r.get("spanId"):
+        rec["_span"] = r["spanId"]
+    for k in ("severityNumber", "severityText"):
+        if r.get(k) is not None:
+            rec["_" + k] = r[k]
+    if r.get("flags") not in (None, 1):
+        rec["_flags"] = r["flags"]
+    _dropped(rec, r)
+    rec.update(res)
+    rec.update(attrs(r.get("attributes")))
+    return rec
+
+
+def _flat_span(s, res):
+    rec = {"_sig": "span", "_name": s.get("name"), "_t": s.get("startTimeUnixNano"),
+           "_end": s.get("endTimeUnixNano")}
+    if s.get("traceId"):
+        rec["_trace"] = s["traceId"]
+    if s.get("spanId"):
+        rec["_span"] = s["spanId"]
+    if s.get("parentSpanId"):
+        rec["_parent"] = s["parentSpanId"]
+    if s.get("traceState"):
+        rec["_trace_state"] = s["traceState"]
+    if s.get("kind") not in (None, 1):
+        rec["_kind"] = s["kind"]
+    if s.get("flags") not in (None, 257):
+        rec["_flags"] = s["flags"]
+    st = s.get("status") or {}
+    if st.get("code"):
+        rec["_status"] = {"code": st["code"], "message": st.get("message", "")}
+    evs = []
+    for e in s.get("events") or []:
+        ev = {"_name": e.get("name"), "_t": e.get("timeUnixNano")}
+        _dropped(ev, e)
+        ev.update(attrs(e.get("attributes")))
+        evs.append(ev)
+    if evs:
+        rec["_events"] = evs
+    links = []
+    for l in s.get("links") or []:
+        ln = {"_trace": l.get("traceId"), "_span": l.get("spanId")}
+        if l.get("traceState"):
+            ln["_trace_state"] = l["traceState"]
+        if l.get("flags") is not None:
+            ln["_flags"] = l["flags"]
+        _dropped(ln, l)
+        ln.update(attrs(l.get("attributes")))
+        links.append(ln)
+    if links:
+        rec["_links"] = links
+    _dropped(rec, s)
+    rec.update(res)
+    rec.update(attrs(s.get("attributes")))
+    return rec
+
+
+def _scrub(obj):
+    """Recursively drop identity attributes from an arbitrary OTLP structure (metrics)."""
+    if isinstance(obj, list):
+        return [_scrub(x) for x in obj
+                if not (isinstance(x, dict) and x.get("key") in IDENTITY)]
+    if isinstance(obj, dict):
+        return {k: _scrub(v) for k, v in obj.items()}
+    return obj
+
+
+def kind_of(sig, name):
+    if not isinstance(name, str):
+        return "other"
+    if sig == "span":
+        if name == "claude_code.llm_request":
+            return "llm"
+        if name.startswith("claude_code.tool"):
+            return "tool"
+        return "other"
+    if name == "claude_code.api_error":
+        return "err"
+    if name.startswith("claude_code.api_"):
+        return "api"
+    if name.startswith("claude_code.tool_"):
+        return "tool"
+    if name.startswith("claude_code.hook_"):
+        return "hook"
+    return "other"
+
+
+def _dump(rec):
+    """Compact JSON line. A lone surrogate (a JS string cut mid-emoji arrives
+    as "\\udXXX") cannot be UTF-8 encoded — that record falls back to ASCII
+    escapes instead of failing the whole batch."""
+    s = json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        s = json.dumps(rec, ensure_ascii=True, separators=(",", ":"))
+    return s
+
+
+def flatten(batch, now_ns=None):
+    """OTLP batch (parsed JSON) → [(kind, t_ns_str_or_None, line)].
+
+    Raises on a shape it cannot walk (caller files the raw body as unparsed).
+    A metrics batch (or any other envelope) becomes one 'other' record.
+    """
+    out = []
+    if "resourceLogs" in batch:
+        for rs in batch.get("resourceLogs") or []:
+            res = attrs((rs.get("resource") or {}).get("attributes"))
+            for ss in rs.get("scopeLogs") or []:
+                sv = (ss.get("scope") or {}).get("version")
+                for r in ss.get("logRecords") or []:
+                    rec = _flat_log(r, res)
+                    if sv is not None and sv != res.get("service.version"):
+                        rec["_scope_version"] = sv
+                    out.append((kind_of("log", rec["_name"]), rec["_t"], _dump(rec)))
+    if "resourceSpans" in batch:
+        for rs in batch.get("resourceSpans") or []:
+            res = attrs((rs.get("resource") or {}).get("attributes"))
+            for ss in rs.get("scopeSpans") or []:
+                for s in ss.get("spans") or []:
+                    rec = _flat_span(s, res)
+                    out.append((kind_of("span", rec["_name"]), rec["_t"], _dump(rec)))
+    if not out and not ("resourceLogs" in batch or "resourceSpans" in batch):
+        sig = "metrics" if "resourceMetrics" in batch else "other"
+        rec = {"_sig": sig, "_t": str(now_ns if now_ns is not None else time.time_ns())}
+        rec["_raw"] = _scrub(batch)
+        out.append(("other", rec["_t"], _dump(rec)))
+    return out
+
+
+def unparsed_line(body, path="", ctype="", encoding="", now_ns=None):
+    """The raw body as one JSON line: UTF-8 text verbatim, else base64."""
+    rec = {"_sig": "unparsed", "_t": str(now_ns if now_ns is not None else time.time_ns()),
+           "path": path, "content_type": ctype, "encoding": encoding, "bytes": len(body)}
+    try:
+        rec["body"] = body.decode("utf-8")
+    except UnicodeDecodeError:
+        rec["body_b64"] = base64.b64encode(body).decode("ascii")
+    return _dump(rec)
+
+
+def day_of(t_ns):
+    """UTC day of a UnixNano string/int; None when it does not parse."""
+    try:
+        return time.strftime("%Y-%m-%d", time.gmtime(int(t_ns) // 1000000000))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+# ── status ───────────────────────────────────────────────────────────────────
+
+def _self_sha():
+    try:
+        with open(os.path.abspath(__file__), "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return ""
+
+
+_STATUS = {
+    "sha": _self_sha(), "pid": os.getpid(), "started": int(time.time()),
+    "last_batch": 0, "batches": 0, "records": 0, "unparsed": 0,
+    "write_failed": 0, "last_write_error": "",
+    "forward": {"enabled": bool(FORWARD), "target": FORWARD, "ok": 0, "failed": 0,
+                "dropped": 0, "last_error": "", "last_error_at": 0},
 }
+_STATUS_AT = [0.0]
 
 
-def _signal_file(path):
-    # UTC write day, matching the UTC day floors claudii-otel build computes.
-    day = time.strftime("%Y-%m-%d", time.gmtime())
-    name = "other"
-    for suffix, signal in SIGNALS.items():
-        if path.endswith(suffix):
-            name = signal
-            break
-    os.makedirs(RAW_DIR, exist_ok=True)
-    return os.path.join(RAW_DIR, "%s-%s.jsonl" % (name, day))
+def status_write(force=False):
+    """Atomic rewrite of receiver.status, at most every STATUS_EVERY seconds.
+    Caller holds _WLOCK (or is single-threaded)."""
+    now = time.time()
+    if not force and now - _STATUS_AT[0] < STATUS_EVERY:
+        return
+    _STATUS_AT[0] = now
+    tmp = STATUS_FILE + ".tmp"
+    try:
+        os.makedirs(OUT_DIR, exist_ok=True)
+        with open(tmp, "w") as fh:
+            json.dump(_STATUS, fh, separators=(",", ":"))
+        os.replace(tmp, STATUS_FILE)
+    except OSError as exc:
+        _log("status write failed: %s" % exc)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
+
+# ── forward ──────────────────────────────────────────────────────────────────
 
 def _forward_worker():
-    """Drain the forward queue serially; failures are swallowed (best-effort)."""
+    """Drain the forward queue serially; failures are counted, never raised."""
     while True:
         path, data, headers = _FQ.get()
         try:
-            req = urllib.request.Request(
-                FORWARD + path, data=data, headers=headers, method="POST")
+            req = urllib.request.Request(FORWARD + path, data=data, headers=headers, method="POST")
             urllib.request.urlopen(req, timeout=FORWARD_TIMEOUT).read()
+            with _WLOCK:
+                _STATUS["forward"]["ok"] += 1
+                status_write()
         except Exception as exc:  # noqa: BLE001 — gateway down must not crash the receiver
+            with _WLOCK:
+                _STATUS["forward"]["failed"] += 1
+                _STATUS["forward"]["last_error"] = str(exc)[:200]
+                _STATUS["forward"]["last_error_at"] = int(time.time())
+                status_write()
             if VERBOSE:
-                sys.stderr.write("[otel] forward -> %s%s failed: %s\n"
-                                 % (FORWARD, path, exc))
-                sys.stderr.flush()
+                _log("forward -> %s%s failed: %s" % (FORWARD, path, exc))
         finally:
             _FQ.task_done()
 
@@ -105,9 +387,87 @@ def _enqueue_forward(path, data, ctype, encoding):
     try:
         _FQ.put_nowait((path, data, headers))
     except queue.Full:
+        with _WLOCK:
+            _STATUS["forward"]["dropped"] += 1
+            status_write()
         if VERBOSE:
-            sys.stderr.write("[otel] forward queue full — dropped batch %s\n" % path)
-            sys.stderr.flush()
+            _log("forward queue full — dropped batch %s" % path)
+
+
+# ── persist ──────────────────────────────────────────────────────────────────
+
+def _append_all(groups):
+    """groups: {file path: [line, ...]} — one open per file, under the lock.
+    Returns the number of files that could not be written."""
+    failed = 0
+    with _WLOCK:
+        try:
+            os.makedirs(EVENTS_DIR, exist_ok=True)
+        except OSError as exc:
+            _STATUS["write_failed"] += len(groups)
+            _STATUS["last_write_error"] = str(exc)[:200]
+            status_write()
+            return len(groups)
+        for path, lines in groups.items():
+            try:
+                data = ("\n".join(lines) + "\n").encode("utf-8")
+                with open(path, "ab") as fh:
+                    fh.seek(0, 2)
+                    start = fh.tell()
+                    try:
+                        fh.write(data)
+                    except OSError:
+                        # A short write (ENOSPC) would leave half a line that
+                        # the next append glues onto; cut back to the last
+                        # complete record.
+                        try:
+                            fh.truncate(start)
+                        except OSError:
+                            pass
+                        raise
+            except Exception as exc:  # noqa: BLE001 — any failure is counted, never raised
+                failed += 1
+                _STATUS["write_failed"] += 1
+                _STATUS["last_write_error"] = str(exc)[:200]
+                _log("write %s failed: %s" % (path, exc))
+        status_write()
+    return failed
+
+
+def persist(raw_body, path, ctype, encoding):
+    """Flatten one wire body and append it under the UTC write day.
+    Returns (records written, unparsed lines written)."""
+    body = raw_body
+    stored_encoding = encoding
+    if "gzip" in encoding:
+        try:
+            body = gzip.decompress(raw_body)
+            stored_encoding = ""  # the unparsed record holds the decoded body
+        except (OSError, EOFError):
+            pass
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    lines = None
+    if body[:1] in (b"{", b"["):
+        try:
+            lines = flatten(json.loads(body))
+        except Exception:  # noqa: BLE001 — anything odd is filed raw, never dropped
+            lines = None
+    groups = {}
+    if lines is None:
+        groups[os.path.join(EVENTS_DIR, "unparsed-%s.ndjson" % day)] = [
+            unparsed_line(body, path, ctype, stored_encoding)]
+        n_rec, n_unp = 0, 1
+    else:
+        for kind, _t, line in lines:
+            groups.setdefault(os.path.join(EVENTS_DIR, "%s-%s.ndjson" % (kind, day)), []).append(line)
+        n_rec, n_unp = len(lines), 0
+    with _WLOCK:
+        _STATUS["batches"] += 1
+        _STATUS["last_batch"] = int(time.time())
+        _STATUS["records"] += n_rec
+        _STATUS["unparsed"] += n_unp
+    _append_all(groups)
+    return n_rec, n_unp
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -115,66 +475,187 @@ class Handler(BaseHTTPRequestHandler):
         pass  # silence stdlib's default per-request logging
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b""  # wire body (maybe gzipped)
-        wire_len = len(raw)
-        encoding = (self.headers.get("Content-Encoding") or "").lower()
-        ctype = (self.headers.get("Content-Type") or "").lower()
-        # Tee the raw body to the gateway before we touch it — byte-transparent,
-        # so the upstream collector sees exactly what Claude Code sent.
-        _enqueue_forward(self.path, raw, self.headers.get("Content-Type"),
-                         self.headers.get("Content-Encoding"))
-        body = raw
-        if "gzip" in encoding:
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            raw = self.rfile.read(length) if length else b""  # wire body (maybe gzipped)
+            encoding = (self.headers.get("Content-Encoding") or "").lower()
+            ctype = (self.headers.get("Content-Type") or "").lower()
+            # Tee the raw body to the gateway before we touch it — byte-transparent,
+            # so the upstream collector sees exactly what Claude Code sent.
+            _enqueue_forward(self.path, raw, self.headers.get("Content-Type"),
+                             self.headers.get("Content-Encoding"))
+            if raw:
+                n_rec, n_unp = persist(raw, self.path, ctype, encoding)
+            else:
+                n_rec, n_unp = 0, 0  # empty body: nothing to store
+            if VERBOSE:
+                _log("POST %s  ctype=%s  enc=%s  wire=%db  records=%d  unparsed=%d  fwd=%s"
+                     % (self.path, ctype or "-", encoding or "-", len(raw), n_rec, n_unp,
+                        "on" if _FQ is not None else "off"))
+        except Exception as exc:  # noqa: BLE001 — a handler must never die on ENOSPC & co.
+            _log("request failed: %s" % exc)
+        finally:
+            # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
             try:
-                body = gzip.decompress(raw)
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
             except OSError:
                 pass
-        is_json = body[:1] in (b"{", b"[")
-        target = _signal_file(self.path)
-        if is_json:
-            with open(target, "ab") as fh:
-                fh.write(body.rstrip() + b"\n")
-        else:
-            # Not expected (Claude Code sends JSON over http/json) — record a
-            # marker rather than corrupt the JSONL with binary protobuf.
-            with open(target, "ab") as fh:
-                rec = {"_unparsed": True, "content_type": ctype,
-                       "encoding": encoding, "bytes": len(body)}
-                fh.write((json.dumps(rec) + "\n").encode())
-        if VERBOSE:
-            sys.stderr.write(
-                "[otel] POST %s  ctype=%s  enc=%s  wire=%db  json=%s  fwd=%s\n"
-                % (self.path, ctype or "-", encoding or "-", wire_len, is_json,
-                   "on" if _FQ is not None else "off"))
-            sys.stderr.flush()
-        # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
-        self.send_response(200)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
 
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except OSError:
+            pass
 
 
-def main():
+# ── conversion CLI ───────────────────────────────────────────────────────────
+
+class TagExists(Exception):
+    """The out-dir already holds files of this tag (a previous or interrupted run)."""
+
+
+def flatten_stream(lines_in, out_dir, tag="conv", fallback_day=None):
+    """OTLP batch lines → <out-dir>/<kind>-<day>.<tag>.ndjson, dated by each
+    record's own timestamp. Returns a summary dict. Lines that are the old
+    receiver's empty `_unparsed` markers (bytes 0) are skipped; other
+    unparsable lines go to unparsed-<day>.<tag>.ndjson under the fallback day.
+
+    Safe next to a live `claudii-otel compact`: every file is written as
+    `<name>.part` (which neither compact nor build pick up) and renamed at the
+    end, so a compact that gzips-and-removes closed days mid-run cannot pull a
+    file from under an open handle. A rerun would append a second copy of
+    every record, so the run refuses when any file of the tag — final or
+    .part — already exists (TagExists)."""
+    fallback_day = fallback_day or time.strftime("%Y-%m-%d", time.gmtime())
+    os.makedirs(out_dir, exist_ok=True)
+    suffix = ".%s.ndjson" % tag
+    present = [n for n in os.listdir(out_dir)
+               if n.endswith(suffix) or n.endswith(suffix + ".gz") or n.endswith(suffix + ".part")]
+    if present:
+        raise TagExists("%d file(s) of tag %r already in %s (e.g. %s) — a rerun would double every record; "
+                        "remove them or use another --tag" % (len(present), tag, out_dir, sorted(present)[0]))
+    stats = {"lines": 0, "batches": 0, "records": 0, "skipped_empty": 0,
+             "unparsed": 0, "undated": 0, "by_kind": {}}
+    handles = {}
+
+    def emit(name, line):
+        fh = handles.get(name)
+        if fh is None:
+            fh = handles[name] = open(os.path.join(out_dir, name + ".part"), "ab")
+        fh.write((line + "\n").encode("utf-8"))
+
+    try:
+        for raw in lines_in:
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            raw = raw.rstrip(b"\r\n")
+            if not raw.strip():
+                continue
+            stats["lines"] += 1
+            batch = None
+            if raw[:1] in (b"{", b"["):
+                try:
+                    batch = json.loads(raw)
+                except ValueError:
+                    batch = None
+            if isinstance(batch, dict) and batch.get("_unparsed"):
+                if not batch.get("bytes"):
+                    stats["skipped_empty"] += 1
+                    continue
+                batch = None
+            if batch is None:
+                emit("unparsed-%s.%s.ndjson" % (fallback_day, tag), unparsed_line(raw))
+                stats["unparsed"] += 1
+                continue
+            try:
+                recs = flatten(batch)
+            except Exception:  # noqa: BLE001
+                emit("unparsed-%s.%s.ndjson" % (fallback_day, tag), unparsed_line(raw))
+                stats["unparsed"] += 1
+                continue
+            stats["batches"] += 1
+            for kind, t, line in recs:
+                day = day_of(t)
+                if day is None:
+                    day = fallback_day
+                    stats["undated"] += 1
+                emit("%s-%s.%s.ndjson" % (kind, day, tag), line)
+                stats["records"] += 1
+                stats["by_kind"][kind] = stats["by_kind"].get(kind, 0) + 1
+    finally:
+        for fh in handles.values():
+            fh.close()
+    for name in handles:
+        os.replace(os.path.join(out_dir, name + ".part"), os.path.join(out_dir, name))
+    return stats
+
+
+def _cli_flatten(argv):
+    out_dir, tag = None, "conv"
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--flatten":
+            i += 1
+            out_dir = argv[i] if i < len(argv) else None
+        elif a == "--tag":
+            i += 1
+            tag = argv[i] if i < len(argv) else ""
+        else:
+            _log("unknown argument: %s" % a)
+            return 2
+        i += 1
+    if not out_dir or not tag or "/" in tag:
+        _log("usage: claudii-otel-receiver --flatten <out-dir> [--tag TAG]  (OTLP batch lines on stdin)")
+        return 2
+    try:
+        stats = flatten_stream(sys.stdin.buffer, out_dir, tag)
+    except TagExists as exc:
+        _log("flatten refused: %s" % exc)
+        return 3
+    _log("flatten: %d lines → %d records (%s), %d empty markers skipped, %d unparsed, %d undated"
+         % (stats["lines"], stats["records"],
+            " ".join("%s=%d" % kv for kv in sorted(stats["by_kind"].items())) or "none",
+            stats["skipped_empty"], stats["unparsed"], stats["undated"]))
+    try:
+        sys.stdout.write(_dump(stats) + "\n")
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if "--flatten" in argv:
+        return _cli_flatten(argv)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    try:
+        os.chmod(OUT_DIR, 0o700)  # keep the capture owner-only
+    except OSError:
+        pass
     host = os.environ.get("CLAUDII_OTEL_HOST", "127.0.0.1")
     port = int(os.environ.get("CLAUDII_OTEL_PORT", "4318"))
     if _FQ is not None:
         threading.Thread(target=_forward_worker, daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
-    sys.stderr.write("[otel] listening on %s:%d  ->  %s\n" % (host, port, OUT_DIR))
+    with _WLOCK:
+        status_write(force=True)
+    _log("listening on %s:%d  ->  %s  (sha %s)" % (host, port, EVENTS_DIR, _STATUS["sha"][:12]))
     if FORWARD:
-        sys.stderr.write("[otel] forwarding batches -> %s (timeout %.0fs)\n"
-                         % (FORWARD, FORWARD_TIMEOUT))
-    sys.stderr.flush()
+        _log("forwarding batches -> %s (timeout %.0fs)" % (FORWARD, FORWARD_TIMEOUT))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        sys.stderr.write("\n[otel] stopped\n")
+        _log("stopped")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

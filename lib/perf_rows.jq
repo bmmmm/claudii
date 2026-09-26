@@ -3,6 +3,8 @@
 # G=session, S=summary, T=TTFT, X=reliability, E=API errors.
 # All numeric fields are tostring'd and non-empty so @tsv + IFS=$'\t' survive
 # (the CLAUDE.md empty-field trap). Used with `jq -r -L lib`.
+# perf renders R only without --repo and G only with it (lib/cmd/perf.sh), so
+# each is computed only then — a group_by over 200k samples is ~1 s.
 include "perf_common";
 
 def perf_rows($floor; $repo):
@@ -24,16 +26,20 @@ def perf_rows($floor; $repo):
       | map({k: .[0].day} + perf_group)
       | sort_by(.k)
       | .[] | ["D", .k, (pct(.d; 0.5) | tostring), (.n | tostring)] | @tsv ),
-    ( $L | group_by(.repo)
-      | map({k: .[0].repo} + perf_group)
-      | sort_by(-.n)
-      | .[] | ["R", .k, (pct(.d; 0.5) | tostring), (pct(.d; 0.9) | tostring),
-               (toks(.o; .t) | tostring), (.n | tostring)] | @tsv ),
-    ( $L | group_by(.sessionId)
-      | map({k: .[0].sessionId, rp: (.[0].repo // "?")} + perf_group)
-      | sort_by(-.n) | .[:12]
-      | .[] | ["G", .k, .rp, (pct(.d; 0.5) | tostring),
-               (toks(.o; .t) | tostring), (.n | tostring)] | @tsv ),
+    ( if $repo == "" then
+        $L | group_by(.repo)
+        | map({k: .[0].repo} + perf_group)
+        | sort_by(-.n)
+        | .[] | ["R", .k, (pct(.d; 0.5) | tostring), (pct(.d; 0.9) | tostring),
+                 (toks(.o; .t) | tostring), (.n | tostring)] | @tsv
+      else empty end ),
+    ( if $repo != "" then
+        $L | group_by(.sessionId)
+        | map({k: .[0].sessionId, rp: (.[0].repo // "?")} + perf_group)
+        | sort_by(-.n) | .[:12]
+        | .[] | ["G", .k, .rp, (pct(.d; 0.5) | tostring),
+                 (toks(.o; .t) | tostring), (.n | tostring)] | @tsv
+      else empty end ),
     ( ([$L[].dt_ms] | sort) as $s
       | ["S", (pct($s; 0.5) | tostring), (pct($s; 0.9) | tostring),
          (pct($s; 0.99) | tostring),

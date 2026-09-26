@@ -1,4 +1,4 @@
-# touches: bin/claudii-insights lib/cmd/insights.sh lib/insights_stream.sh bin/claudii-otel lib/otel.jq lib/otel_doc.jq
+# touches: bin/claudii-insights lib/cmd/insights.sh lib/insights_stream.sh bin/claudii-otel lib/otel_rows.jq lib/otel_doc.jq
 
 # test_insights_bulk.sh — the insights cache must scale past ARG_MAX.
 # Regression: every consumer passed the whole cache dir to jq as arguments
@@ -36,11 +36,13 @@ assert_contains "bulk: repos aggregates past ARG_MAX" "bulk" "$_BULK_REPOS"
 _BULK_GC=$(_bulk_env bash "$CLAUDII_HOME/bin/claudii-insights" gc --older-than 1 2>&1)
 assert_contains "bulk: gc sees every orphan past ARG_MAX" "$_BULK_N recent orphans kept" "$_BULK_GC"
 
-# OTEL repo map: one span of the last session must resolve to its repo.
-mkdir -p "$_BULK_DIR/cache/otel"
+# OTEL repo map: one flat llm_request record of the last session must
+# resolve to its repo (events/<kind>-<UTC day>.ndjson, the receiver's layout).
+mkdir -p "$_BULK_DIR/cache/otel/events"
 _BULK_NANO="$(date +%s)000000000"
-printf '%s\n' '{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"claude_code.llm_request","startTimeUnixNano":"'"$_BULK_NANO"'","attributes":[{"key":"model","value":{"stringValue":"claude-opus-4-8"}},{"key":"duration_ms","value":{"intValue":1000}},{"key":"session.id","value":{"stringValue":"'"${_BULK_PAD:0:100}-s$(( _BULK_N - 1 ))"'"}}]}]}]}]}' \
-  > "$_BULK_DIR/cache/otel/traces.jsonl"
+printf '{"_sig":"span","_name":"claude_code.llm_request","_t":"%s","model":"claude-opus-4-8","duration_ms":1000,"session.id":"%s"}\n' \
+  "$_BULK_NANO" "${_BULK_PAD:0:100}-s$(( _BULK_N - 1 ))" \
+  > "$_BULK_DIR/cache/otel/events/llm-$(date -u +%Y-%m-%d).ndjson"
 _BULK_OTEL=$(_bulk_env bash "$CLAUDII_HOME/bin/claudii-otel" build --days 7 2>&1)
 assert_eq "bulk: otel repo map resolves past ARG_MAX" "bulk" \
   "$(jq -r '.latency[0].repo' <<< "$_BULK_OTEL" 2>/dev/null)"

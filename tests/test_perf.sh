@@ -1,4 +1,4 @@
-# touches: lib/cmd/perf.sh lib/render.sh bin/claudii-insights lib/insights.jq lib/insights-merge.jq lib/otel.jq bin/claudii-otel lib/perf_common.jq lib/perf_rows.jq lib/perf_json.jq lib/otel_doc.jq
+# touches: lib/cmd/perf.sh lib/render.sh bin/claudii-insights lib/insights.jq lib/insights-merge.jq lib/otel_rows.jq bin/claudii-otel bin/claudii-otel-receiver lib/perf_common.jq lib/perf_rows.jq lib/perf_json.jq lib/otel_doc.jq
 
 # test_perf.sh — claudii perf (response-time & throughput dashboard)
 #
@@ -183,7 +183,8 @@ _NS="$(date -u +%s)000000000"   # today in ns (string-concat; 7d window covers i
 # Build the OTLP span via jq (not printf) — hand-rolled brace-balanced JSON is
 # error-prone (one missing `}` makes fromjson? skip the whole line and the OTEL
 # source silently falls back to the transcript estimate). intValue is a string
-# on the wire (proto3 JSON int64); success is a real bool.
+# on the wire (proto3 JSON int64); success is a real bool. The batches go
+# through the receiver's own flattening (`--flatten`), as live ingest does.
 _otel_span() {  # model dur in cread ccreate out ttft success attempt
   jq -cn --arg ns "$_NS" --arg model "$1" --argjson dur "$2" \
      --argjson in "$3" --argjson cr "$4" --argjson cc "$5" --argjson out "$6" \
@@ -197,10 +198,9 @@ _otel_span() {  # model dur in cread ccreate out ttft success attempt
   _otel_span "claude-opus-4-8"     30000 5000 250000 0 500 3000 true  1
   _otel_span "claude-opus-4-8[1m]" 20000 5000 255000 0 400 2500 true  1
   _otel_span "claudii-selftest"        0    0      0 0   0    0 true  1
-} > "$_OTEL_CACHE/otel/traces.jsonl"
-jq -cn --arg ns "$_NS" \
-  '{resourceLogs:[{scopeLogs:[{logRecords:[{body:{stringValue:"claude_code.api_error"},timeUnixNano:$ns,attributes:[{key:"model",value:{stringValue:"claude-opus-4-8"}},{key:"status_code",value:{intValue:"429"}},{key:"session.id",value:{stringValue:"otel-s1"}}]}]}]}]}' \
-  > "$_OTEL_CACHE/otel/logs.jsonl"
+  jq -cn --arg ns "$_NS" \
+    '{resourceLogs:[{scopeLogs:[{logRecords:[{body:{stringValue:"claude_code.api_error"},timeUnixNano:$ns,attributes:[{key:"model",value:{stringValue:"claude-opus-4-8"}},{key:"status_code",value:{intValue:"429"}},{key:"session.id",value:{stringValue:"otel-s1"}}]}]}]}]}'
+} | python3 "$CLAUDII_HOME/bin/claudii-otel-receiver" --flatten "$_OTEL_CACHE/otel/events" --tag t >/dev/null 2>&1
 
 _operf() { CLAUDE_PROJECTS_DIR="$_OTEL_PROJ" CLAUDII_CACHE_DIR="$_OTEL_CACHE" XDG_CONFIG_HOME="$_OTEL_XDG" \
   bash "$CLAUDII_HOME/bin/claudii" "$@"; }

@@ -931,30 +931,43 @@ the captured data is \(em the first stop when
 still shows
 .BR "source: transcript" .
 .PP
-The captured history is kept in full, one file per signal and UTC day:
-today's batches in
-.IR raw/<signal>\-YYYY\-MM\-DD.jsonl ,
-closed days gzipped next to them, and the samples of each closed day extracted
-into a small
+The receiver stores every log record and span as one flat JSON line under
+.IR events/<kind>\-YYYY\-MM\-DD.ndjson
+(kinds:
+.IR llm ", " err ", " api ", " tool ", " hook ", " other ;
+a body that is not OTLP is kept verbatim as
+.IR unparsed ),
+without the OTLP envelope and without the five identity constants Claude Code
+puts on every record (user e\-mail, user and account ids, organization id
+\(em they never change and are of no use locally; the optional forward still
+carries them to the collector). Closed days are gzipped next to the open one,
+and the perf samples of each closed day are extracted from its
+.I llm
+and
+.I err
+files into a small
 .I rows/
-file that
-.B perf
-reads. So
+file, so
 .B perf
 parses only its window, however long the history grows.
 .B claudii\-otel
 compacts closed days on its own
 .RB ( "claudii\-otel compact"
-does it on demand). Data captured before the day-file layout sits in one
-.I traces.jsonl
-/
-.I logs.jsonl
-that is read in full on every run;
-.B claudii\-otel migrate
-splits it into day files once (restart the receiver first, so that it writes
-the new layout), and
+does it on demand). The receiver also keeps
+.I receiver.status
+(sha of the file it runs, last batch, forward counters);
 .B doctor
-says when that is still due.
+compares that sha with the repo's receiver and reports
+.B DRIFT
+when a stale copy is running. A capture from claudii 0.28 or earlier
+.RI ( traces.jsonl / logs.jsonl )
+is not read any more;
+.B doctor
+prints the one\-off conversion
+.RB ( "claudii\-otel receiver \-\-flatten" ),
+which dates every record by its own timestamp and refuses to run twice for
+one tag \(em restart the receiver first, so that new batches land in the new
+layout.
 .RS
 .TP
 .B today | 7d | 30d | 90d | year
