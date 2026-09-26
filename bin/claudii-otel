@@ -360,7 +360,11 @@ _cmd_doctor() {
               .forward.failed, .forward.dropped, .forward.last_error_at, .forward.last_error]
              | map(if . == null or . == "" then "-" else . end) | @tsv' "$STATUS_FILE")
     r_sha=$(_sha256 "$RECEIVER")
-    if [[ "$s_pid" != "-" ]] && ! kill -0 "$s_pid" 2>/dev/null; then
+    # Dead only on "No such process": a sandbox that denies signalling other
+    # processes (EPERM) says nothing about the receiver.
+    local probe=""
+    [[ "$s_pid" != "-" ]] && probe=$(kill -0 "$s_pid" 2>&1) && probe=""
+    if [[ "$probe" == *"No such process"* ]]; then
       printf '  receiver     NOT RUNNING — receiver.status is from pid %s, which is gone' "$s_pid"
     elif [[ -n "$r_sha" && "$s_sha" == "$r_sha" ]]; then
       printf '  receiver     sha matches bin/claudii-otel-receiver'
