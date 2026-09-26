@@ -24,7 +24,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
 ## Rules
 
 - Settings via config.json only (nothing hardcoded); jq required; no network calls in precmd (cache only); compatible with oh-my-zsh/zinit/manual source
-- Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: gotchas memory #4)
+- Background jobs: always `( cmd & )` subshell pattern (PID leak otherwise — details: memory gotchas_shell #4)
 - Tests in tests/, `bash tests/run.sh` (`--summary` for single-line pass/fail count). **CI macos-latest runs `/bin/bash` 3.2**, local `bash` is Homebrew 5.x and masks 3.2-only breakage — a green local run is not a green CI run. Details + repro: `docs/gotchas.md`.
 - **No `declare -A` in `bin/`** — `/bin/bash` 3.2 silently degrades it to an indexed array. Details + workarounds: `docs/gotchas.md`.
 - **Never string-match `statusLine.command`** — use `_cc_statusline_connected` (lib/helpers.sh) instead; literal matching has broken this twice. Details: `docs/gotchas.md`.
