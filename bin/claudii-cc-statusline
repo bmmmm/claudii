@@ -1,0 +1,1897 @@
+#!/bin/bash
+# claudii-sessionline — Claude Code statusLine handler.
+# Reads session JSON from stdin, prints a configurable multi-line status.
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=lib/log.sh
+source "$CLAUDII_HOME/lib/log.sh"
+# shellcheck source=lib/vibemap.sh
+source "$CLAUDII_HOME/lib/vibemap.sh"
+# shellcheck source=lib/timefmt.sh
+source "$CLAUDII_HOME/lib/timefmt.sh"
+# shellcheck source=lib/helpers.sh
+source "$CLAUDII_HOME/lib/helpers.sh"
+
+command -v jq >/dev/null 2>&1 || { printf 'claudii-sessionline: jq not found — install jq\n' >&2; exit 1; }
+
+# Slurp ALL of stdin, not just the first line — `read -r` alone made a
+# pretty-printed/multi-line payload silently fall through to the empty-field
+# fallback. read -d '' captures up to EOF (returns non-zero there, content
+# already in place); no fork, bash 3.2-safe.
+IFS= read -r -d '' json || true
+
+_cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+[[ -d "$_cache_dir" ]] || { mkdir -p "$_cache_dir"; chmod 0700 "$_cache_dir"; }
+# Default-deny: every file this script creates (session-*, history-*, *.tmp.$$)
+# inherits 0600 instead of 0644 from umask 022. Cache dir is already 0700, so
+# this is defense-in-depth for the CLAUDII_CACHE_DIR override case.
+umask 077
+
+# Config (statusline.* + vibemap.*) — single jq call.
+# Separators: US (0x1F) between fields, RS (0x1E) between layout lines.
+_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+_from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
+_cfg_vibemap_enabled=""; _cfg_vibemap_path=""
+_cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
+_cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""; _cfg_cc_version_ttl=""
+_cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""; _cfg_debug_level=""
+if [[ -f "$_config_file" ]]; then
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
+    _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
+    _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label \
+    _cfg_separator _cfg_debug_level < <(
+    jq -r '[
+      (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
+      (.statusline.models // ""),
+      (.statusline.omlx_active_path // ""),
+      (.statusline.rate_display // ""),
+      (.statusline.bedtime // ""),
+      (.vibemap.enabled // false | tostring),
+      (.vibemap.path // ""),
+      (if .statusline.shame == false then "false" else "true" end),
+      (if .statusline.motivation == false then "false" else "true" end),
+      (if .statusline.rainbow == false then "false" else "true" end),
+      (.statusline.insomnii // "auto"),
+      (.status.cache_ttl // "" | tostring),
+      (.bumpii.cache_ttl // "" | tostring),
+      (.ci.cache_ttl // "" | tostring),
+      (.cc_version.cache_ttl // "" | tostring),
+      (.statusline.max_width // "" | tostring),
+      (.statusline.max_label // "" | tostring),
+      (.statusline.separator // ""),
+      (.debug.level // "")
+    ] | join("\u001f")' "$_config_file" 2>/dev/null
+  )
+  _from_cfg="${_from_cfg//$'\x1e'/$'\n'}"
+fi
+# Resolve the log level from the parse above instead of leaving it to
+# lib/log.sh. _claudii_log resolves lazily by forking jq on config.json AND on
+# defaults.json, and this file calls it on every render (twice, right after the
+# payload parse) purely to learn that logging is off — two forks per render for
+# a value already in hand. An empty result means what the defaults.json fallback
+# it replaces means: that file ships debug.level = "off".
+CLAUDII_LOG_LEVEL="${_cfg_debug_level:-off}"
+
+_DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
+rate-5h,rate-7d,burn-eta,lines-changed
+api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
+omlx,proxy,cost,context,compact-eta
+claude-status"
+
+_lines_raw="$_DEFAULT_LINES"
+[[ -n "$_from_cfg" ]] && _lines_raw="$_from_cfg"
+
+# Layout membership — the gate every fork-owning segment asks before doing its
+# work. Exact match on a comma-delimited copy of the layout, not a substring
+# test: `ci` must not fire on `compactions`, and the old `*git-sync*`-style
+# gates only avoided that collision by luck of the naming (`*git*` would have
+# matched the `github` segment — that near-miss is documented further down).
+#
+# Resolved here, immediately after the config parse, rather than in the middle
+# of the segment section where it used to live: the clock, tailscale and omlx
+# segments all fork BEFORE that point, so they could not ask the question and
+# paid their forks on every render regardless of the layout.
+_lines_csv=",${_lines_raw//$'\n'/,},"
+_in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
+[[ "$_rate_display" != "remaining" ]] && _rate_display="used"
+_rate_mark=""; [[ "$_rate_display" == "remaining" ]] && _rate_mark="↓"
+
+# _spawn_refresher <pidfile> <ttl> <cmd...> — the one dedup path for every
+# background refresher this script forks (cc-update/ci/status/bumpii). Reads
+# <pidfile>; if it names a live, still-fresh (< ttl seconds old) PID, another
+# refresh is already in flight and this call is a no-op. Otherwise it forks
+# <cmd...> in the standard `( cmd & )` subshell (required so the child is
+# fully detached — see docs/gotchas.md #4 on the PID leak a bare `cmd &`
+# causes) and, crucially, writes to <pidfile> BEFORE that fork, not after.
+#
+# Two different things get written to the same <pidfile>, and both matter:
+#   - INTENT (written HERE, synchronously, pre-fork): this statusline
+#     process's own $$. It is not the child's PID — at this point the child
+#     doesn't exist yet, so its real PID is unknown — it only stakes a claim
+#     that a spawn is about to happen. This is what closes the original
+#     race: the child used to write the pidfile itself only after it had
+#     already started, leaving a window where two near-simultaneous renders
+#     both saw an empty/stale file and both spawned. Because the write here
+#     happens before the fork, a second render checking the file at ANY
+#     point afterwards — even microseconds later — finds a fresh, alive PID
+#     and stands down.
+#   - LIVENESS (written by the CHILD itself, after it actually starts — see
+#     the `--pid-file` handling in claudii-status / claudii-ci-refresh /
+#     claudii-cc-update-refresh / claudii-bumpii-refresh) overwrites the
+#     intent marker with the child's real PID, which is what later renders
+#     keep validating via `kill -0` for as long as the refresh runs.
+# Do not delete either write as "redundant" with the other: intent closes
+# the fork race, liveness tracks the worker once it exists.
+_spawn_refresher() {
+  local _sr_pidfile="$1" _sr_ttl="$2"
+  shift 2
+  local _sr_pid="" _sr_fresh=0
+  [[ -f "$_sr_pidfile" ]] && { _sr_pid=$(<"$_sr_pidfile"); } 2>/dev/null
+  if [[ "$_sr_pid" =~ ^[0-9]+$ ]] && kill -0 "$_sr_pid" 2>/dev/null; then
+    local _sr_mt
+    _sr_mt=$(stat -f%m "$_sr_pidfile" 2>/dev/null || stat -c%Y "$_sr_pidfile" 2>/dev/null || echo 0)
+    [[ "$_sr_mt" =~ ^[0-9]+$ ]] || _sr_mt=0
+    (( _now - _sr_mt < _sr_ttl )) && _sr_fresh=1
+  fi
+  if (( ! _sr_fresh )); then
+    printf '%s\n' "$$" > "$_sr_pidfile" 2>/dev/null
+    ( "$@" >/dev/null 2>&1 & )
+  fi
+}
+
+# ── Width discipline ─────────────────────────────────────────────────────────
+# Three independent mechanisms, applied in this order, because a statusline
+# that wraps is worse than one that says less:
+#
+#   max_label   caps the only unbounded values in a line — branch, directory,
+#               worktree, session and agent names. Everything else is a number
+#               or a fixed glyph. 0 disables it.
+#   separator   "tight" (default, " │ ") or "wide" (the old "  │  "). Two
+#               columns per gap sounds like nothing until a dense line has
+#               eight of them.
+#   max_width   the backstop: a hard per-line column budget. Segments that no
+#               longer fit are dropped from the end and replaced by a dim "…",
+#               so a shortened line always says that it was shortened. 0 = off.
+#
+# max_width is deliberately NOT auto-detected. Nothing in the statusLine JSON
+# carries the terminal width (checked against the documented schema), and the
+# usual fallbacks lie in exactly this context: Claude Code hands the command a
+# COLUMNS of 0, and `tput cols` with a piped stdout answers with terminfo's
+# 80 regardless of how wide the window really is. Truncating a 140-column
+# terminal to 80 because a guess said so is worse than not truncating.
+[[ "$_cfg_max_width" =~ ^[0-9]+$ ]] || _cfg_max_width=0
+[[ "$_cfg_max_label" =~ ^[0-9]+$ ]] || _cfg_max_label=20
+(( _cfg_max_label > 0 && _cfg_max_label < 4 )) && _cfg_max_label=4   # room for "abc…"
+
+# Does ${#…} count characters here, or bytes? Under a UTF-8 locale bash counts
+# characters; under LC_ALL=C it counts bytes, and every glyph in this file is a
+# 3-byte sequence. Both matter: the CI matrix runs a C leg on purpose.
+_CHARLEN=0
+_charlen_probe="ä"
+(( ${#_charlen_probe} == 1 )) && _CHARLEN=1
+
+# _clen <string> → _CLEN, length in characters regardless of locale.
+# UTF-8 continuation bytes (0x80-0xBF) are exactly the bytes that do NOT start
+# a character, so dropping them and measuring what is left counts characters in
+# byte mode and changes nothing in character mode (no standalone continuation
+# byte is a valid character there). Verified on bash 3.2 and 5.x, C and UTF-8.
+_CLEN=0
+_clen() {
+  local _s=${1//[$'\x80'-$'\xbf']/}
+  _CLEN=${#_s}
+}
+
+# _trunc <value> → _TRUNC, capped at max_label with a trailing ellipsis.
+# Also drops the "worktree-" prefix Claude Code puts on worktree branch names
+# (documented convention, e.g. "worktree-my-feature") — the worktree/worktrees
+# segments next to it already say it is a worktree, so the prefix is 9 columns
+# of repetition on the longest value in the line.
+_TRUNC=""
+_trunc() {
+  local _v=$1 _cut
+  [[ "$_v" == worktree-?* ]] && _v="${_v#worktree-}"
+  _clen "$_v"
+  if (( _cfg_max_label > 0 )) && (( _CLEN > _cfg_max_label )); then
+    _cut="${_v:0:$(( _cfg_max_label - 1 ))}"
+    # In byte mode that substring counted bytes, so it can land inside a UTF-8
+    # sequence — a half character renders as garbage. Back off to the nearest
+    # boundary: while the byte just past the cut is a continuation byte, the
+    # cut is mid-character. Costs at most three steps and only ever shortens.
+    if (( ! _CHARLEN )); then
+      while [[ -n "$_cut" && "${_v:${#_cut}:1}" == [$'\x80'-$'\xbf'] ]]; do
+        _cut="${_cut%?}"
+      done
+    fi
+    _TRUNC="${_cut}…"
+  else
+    _TRUNC="$_v"
+  fi
+}
+
+# _visible_len <string> → _VLEN, display columns with SGR sequences removed.
+# Pure bash: the render loop would otherwise fork sed once per line. Params of
+# an SGR escape are digits and semicolons, so "up to the next m" is an exact
+# cut. Length goes through _clen, so a column budget means the same thing under
+# LC_ALL=C as it does under a UTF-8 locale.
+_VLEN=0
+_visible_len() {
+  local _s=$1 _out=""
+  while [[ "$_s" == *$'\033['* ]]; do
+    _out+="${_s%%$'\033['*}"
+    _s="${_s#*$'\033['}"
+    _s="${_s#*m}"
+  done
+  _out+="$_s"
+  _clen "$_out"
+  _VLEN=$_CLEN
+}
+[[ "$_cfg_insomnii" != "off" && "$_cfg_insomnii" != "on" ]] && _cfg_insomnii="auto"
+# Re-apply opt-out defaults AFTER the read: a failing jq (corrupt config.json)
+# leaves read with no input, which blanks every listed var — including the
+# pre-seeded "true" defaults. Only an explicit "false" opts out.
+[[ "$_cfg_shame"      != "false" ]] && _cfg_shame="true"
+[[ "$_cfg_motivation" != "false" ]] && _cfg_motivation="true"
+[[ "$_cfg_rainbow"    != "false" ]] && _cfg_rainbow="true"
+
+# Clock segment delegation. Layout-gated like every other fork owner: the
+# delegation probe below forks `ps`, and the segment itself runs cc-insomnii,
+# a child that forks ~20 processes of its own. Both used to happen on every
+# render whether or not `clock` was in the layout — and it is not in the
+# default one.
+_use_insomnii=0
+if _in_layout clock; then
+  [[ "$_cfg_insomnii" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1 && _use_insomnii=1
+fi
+
+# Skip clock when wrapped by cc-insomnii (it already rendered its line).
+# The ps fork runs only when delegation is possible at all (_use_insomnii) —
+# the flag's sole consumer is the clock segment, which is gated on it too.
+_wrapped_by_insomnii=0
+if (( _use_insomnii )); then
+  _parent_cmd=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d ' ')
+  [[ "$_parent_cmd" == *cc-insomnii* ]] && _wrapped_by_insomnii=1
+fi
+
+# Session JSON → variables. One jq call, US (0x1F) delimited.
+_D=$'\x1f'
+IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
+  duration_ms lines_add lines_rm ctx_size session_id reset_5h reset_7d \
+  cache_read cache_create worktree_name agent_name model_id cwd \
+  session_name worktree_branch api_duration_ms exceeds_200k \
+  effort_level thinking_enabled workspace_git_worktree \
+  workspace_project_dir worktree_original_cwd \
+  repo_host repo_owner repo_name repo_pr cc_version \
+  pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache \
+  pc_misses pc_miss_cause pc_miss_causes pc_expires <<< "$(
+  jq -r '[
+    (.model.display_name // ""),
+    (.context_window.used_percentage // "" | tostring),
+    (.cost.total_cost_usd // "" | tostring),
+    (.context_window.total_input_tokens // "" | tostring),
+    (.context_window.total_output_tokens // "" | tostring),
+    (.rate_limits.five_hour.used_percentage // "" | tostring),
+    (.rate_limits.seven_day.used_percentage // "" | tostring),
+    (.cost.total_duration_ms // "" | tostring),
+    (.cost.total_lines_added // "" | tostring),
+    (.cost.total_lines_removed // "" | tostring),
+    (.context_window.context_window_size // "" | tostring),
+    (.session_id // ""),
+    (.rate_limits.five_hour.resets_at // "" | tostring),
+    (.rate_limits.seven_day.resets_at // "" | tostring),
+    (.context_window.current_usage.cache_read_input_tokens // "" | tostring),
+    (.context_window.current_usage.cache_creation_input_tokens // "" | tostring),
+    (.worktree.name // ""),
+    (.agent.name // ""),
+    (.model.id // ""),
+    (.workspace.current_dir // .cwd // ""),
+    (.session_name // ""),
+    (.worktree.branch // ""),
+    (.cost.total_api_duration_ms // "" | tostring),
+    (.exceeds_200k_tokens // false | tostring),
+    (.effort.level // ""),
+    (.thinking.enabled // false | tostring),
+    (.workspace.git_worktree // ""),
+    (.workspace.project_dir // ""),
+    (.worktree.original_cwd // ""),
+    (.workspace.repo.host // ""),
+    (.workspace.repo.owner // ""),
+    (.workspace.repo.name // ""),
+    (.workspace.repo.pr_number // "" | tostring),
+    (.version // ""),
+    (.prompt_cache.hit_ratio  | if type == "number" then (. * 100 | round | tostring) else "" end),
+    (.prompt_cache.warm             | if . == null then "" else tostring end),
+    (.prompt_cache.caching_observed | if . == null then "" else tostring end),
+    (.prompt_cache.expires_at // 0  | if . > 0 then ((. - now) | floor | tostring) else "" end),
+    (.prompt_cache.recache_tokens_if_cold // "" | tostring),
+    (.prompt_cache.misses // "" | tostring),
+    (.prompt_cache.last_miss_cause | if type == "object" then (.causes // [] | map(tostring) | join("+")) else "" end),
+    (.prompt_cache.miss_causes | if type == "object" then (to_entries | map("\(.key):\(.value)") | join(",")) else "" end),
+    (.prompt_cache.expires_at // "" | tostring)
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+)"
+
+# Helper: non-empty, non-"null", non-"0".
+_isset() { [[ -n "$1" && "$1" != "null" && "$1" != "0" ]]; }
+
+_cache_pct=""
+if [[ "$pc_hit_pct" =~ ^[0-9]+$ ]]; then
+  # Native prompt_cache.hit_ratio (CC 2.1.251+): the official definition —
+  # cache reads over all input tokens, main conversation only (subagent
+  # requests excluded). Preferred over the context_window derivation below,
+  # which can't tell subagent traffic apart.
+  _cache_pct=$pc_hit_pct
+elif _isset "$cache_read"; then
+  # Numeric guards before any (( )): these fields are untrusted payload, and
+  # bash arithmetic over an attacker string can execute code via array
+  # subscripts — same discipline as the _tok/_dur formatters below.
+  _cr=${cache_read%.*}; [[ "$_cr" =~ ^[0-9]+$ ]] || _cr=0
+  _ci=${input_tok%.*};  [[ "$_ci" =~ ^[0-9]+$ ]] || _ci=0
+  if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
+fi
+
+# Session-cumulative in+out tokens — persisted so the token-first dashboard and
+# `claudii se` (which read this cache, not the live JSON) can show throughput.
+_tok_total=0
+[[ "${input_tok%.*}"  =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${input_tok%.*} ))
+[[ "${output_tok%.*}" =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${output_tok%.*} ))
+
+# Existing per-session cache → 7d/5h baselines + previous duration.
+_sid="${session_id:+${session_id:0:8}}"
+_session_file="$_cache_dir/session-${_sid:-unknown}"
+_existing_cache=""
+[[ -f "$_session_file" ]] && { _existing_cache=$(<"$_session_file"); } 2>/dev/null
+_ec_nl=$'\n'"$_existing_cache"
+
+# Read cached value or fall back to live current. Writes to _CG (no subshell —
+# the call sites used to wrap this in $(...), one fork() each on every render).
+_cache_get() {
+  local key=$1 fallback=$2 v
+  if [[ "$_ec_nl" == *$'\n'"$key"=* ]]; then
+    v="${_existing_cache#*$key=}"
+    v="${v%%$'\n'*}"
+    [[ -n "$v" ]] && { _CG="$v"; return; }
+  fi
+  _CG="$fallback"
+}
+_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && { _cache_get rate_7d_start "$rate_7d"; _rate_7d_start="$_CG"; }
+_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && { _cache_get rate_5h_start "$rate_5h"; _rate_5h_start="$_CG"; }
+_cache_get last_duration_ms ""; _last_duration_ms="$_CG"
+
+# Compaction counter — no compaction signal exists in the statusline JSON, so
+# detect the footprint: context usage collapsing between renders of the SAME
+# session (>= 30-point drop from >= 50%). Survives in the cache as compactions=.
+_cache_get compactions "0"; _compactions="$_CG"
+[[ "$_compactions" =~ ^[0-9]+$ ]] || _compactions=0
+_cache_get last_ctx_pct ""; _last_ctx_pct="$_CG"
+if [[ "$ctx_pct" != "null" && -n "$ctx_pct" && "$_last_ctx_pct" =~ ^[0-9]+$ ]]; then
+  _ctx_now=${ctx_pct%.*}
+  if [[ "$_ctx_now" =~ ^[0-9]+$ ]] && (( _last_ctx_pct >= 50 && _last_ctx_pct - _ctx_now >= 30 )); then
+    (( ++_compactions ))
+  fi
+fi
+_last_ctx_store=""
+[[ -n "$ctx_pct" && "$ctx_pct" != "null" ]] && _last_ctx_store=${ctx_pct%.*}
+
+# Context growth rate — an EWMA over renders, persisted as ctx_rate=, feeding
+# the compact-eta segment. The question a percentage can't answer is "does the
+# task I'm about to start still fit in this window?", and that needs a rate.
+# Unit: milli-percent of the RAW context window per minute (integer math, no
+# awk fork; the usable-scale conversion happens at render time, where the
+# model-aware scale is known). dp * 60000000 / dt_ms = dp‰/min — with dp <= 100
+# the numerator stays far inside int64.
+# Samples shorter than 15s are dropped as noise (several renders can fire
+# inside one turn), and a negative delta — the footprint of a compaction — is
+# skipped rather than fed in: the window shrank, your burn rate did not change.
+# A zero delta over a long gap IS fed in, so an idle session decays toward 0
+# instead of keeping a stale rate from an hour ago. Alpha 1/3.
+_cache_get ctx_rate ""; _ctx_rate="$_CG"
+[[ "$_ctx_rate" =~ ^[0-9]+$ ]] || _ctx_rate=""
+if [[ "$_last_ctx_pct" =~ ^[0-9]+$ && "$_last_ctx_store" =~ ^[0-9]+$ \
+      && "$_last_duration_ms" =~ ^[0-9]+$ && "${duration_ms%.*}" =~ ^[0-9]+$ ]]; then
+  _cr_dt=$(( ${duration_ms%.*} - _last_duration_ms ))
+  _cr_dp=$(( _last_ctx_store - _last_ctx_pct ))
+  if (( _cr_dt >= 15000 && _cr_dp >= 0 )); then
+    _cr_inst=$(( _cr_dp * 60000000 / _cr_dt ))
+    if [[ -n "$_ctx_rate" ]]; then _ctx_rate=$(( (_ctx_rate * 2 + _cr_inst) / 3 ))
+    else                           _ctx_rate=$_cr_inst
+    fi
+  fi
+fi
+
+# Last-response latency — the delta of the cumulative API duration between two
+# renders, i.e. how long the API took for the turn that just finished. Kept in
+# the cache as last_api_delta= and re-rendered until a new turn produces a new
+# one: a render that fires without an API call in between (a plain refresh)
+# would otherwise blank the segment, and "the last response took 4.1s" stays
+# true in the meantime. `claudii perf` has the aggregates; this is the live
+# signal that separates "the model is thinking" from "the API is slow today".
+read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
+_cache_get last_api_duration_ms ""; _prev_api_total="$_CG"
+_cache_get last_api_delta "";       _api_delta="$_CG"
+_ad=0
+if [[ "${api_duration_ms%.*}" =~ ^[0-9]+$ && "$_prev_api_total" =~ ^[0-9]+$ ]]; then
+  _ad=$(( ${api_duration_ms%.*} - _prev_api_total ))
+  (( _ad > 0 )) && _api_delta=$_ad
+fi
+[[ "$_api_delta" =~ ^[0-9]+$ ]] || _api_delta=""
+
+# The same deltas, kept as a short window, because one of them is the wrong
+# number for anything asking "how slow was the API while this work happened".
+# The calls run heavy-tailed — a normal day has a median near 6s and a mean
+# near 13s — so a single sample almost never sees the tail. Worse, a consumer
+# that reads this from inside a tool call (wallii writing a post, say) always
+# lands on the cheap stretch between two tool calls, which is smaller again:
+# 4s against the 15s the same session takes to answer a fresh prompt. The
+# window is what a mean can be taken over; the last delta stays for the
+# segment, which is about the call that just finished and nothing else.
+_API_WIN_S=${CLAUDII_API_WIN_S:-300}
+_API_WIN_MAX=48
+_cache_get api_recent ""; _api_recent="$_CG"
+[[ "$_api_recent" =~ ^[0-9:,]*$ ]] || _api_recent=""
+(( _ad > 0 )) && _api_recent="${_api_recent:+$_api_recent,}${_now}:${_ad}"
+# cap first, so a burst can never grow the file the statusline rewrites every
+# render; counting commas beats splitting the string for a length check
+_aw_c="${_api_recent//[^,]/}"
+while (( ${#_aw_c} + 1 > _API_WIN_MAX )) && [[ "$_api_recent" == *,* ]]; do
+  _api_recent="${_api_recent#*,}"; _aw_c="${_aw_c#,}"
+done
+_aw_sum=0; _aw_n=0; _aw_keep=""; _aw_rest="$_api_recent"
+while [[ -n "$_aw_rest" ]]; do
+  _aw_one="${_aw_rest%%,*}"
+  if [[ "$_aw_one" == "$_aw_rest" ]]; then _aw_rest=""; else _aw_rest="${_aw_rest#*,}"; fi
+  _aw_t="${_aw_one%%:*}"; _aw_d="${_aw_one#*:}"
+  [[ "$_aw_t" =~ ^[0-9]+$ && "$_aw_d" =~ ^[0-9]+$ ]] || continue
+  # an entry older than the window is not what things are like now
+  (( _now - _aw_t > _API_WIN_S )) && continue
+  _aw_keep="${_aw_keep:+$_aw_keep,}$_aw_one"
+  _aw_sum=$(( _aw_sum + _aw_d )); _aw_n=$(( _aw_n + 1 ))
+done
+_api_recent="$_aw_keep"
+_api_mean_ms=""
+(( _aw_n > 0 )) && _api_mean_ms=$(( (_aw_sum + _aw_n / 2) / _aw_n ))
+
+# Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
+# Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
+# instead of two forks. US is passed as a var — \u escapes are not portable in
+# BSD awk's printf (macOS CI), so build the byte in bash and hand it over.
+_burn_eta=""
+_pace_state=""
+if _isset "$duration_ms"; then
+  _rate_5h_int=${rate_5h%.*};   [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
+  _dur_ms_int=${duration_ms%.*}; [[ "$_dur_ms_int" =~ ^[0-9]+$ ]] || _dur_ms_int=0
+  _session_min_int=$(( _dur_ms_int / 60000 ))
+  if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
+    # Pace: actual rate_5h vs linear burn (session_min / 300 * 100, hits 100% at
+    # the 5h mark); ±15% tolerance band → ahead / on_pace / behind.
+    _bp=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
+      m = dur / 60000; r = rat + 0
+      eta = (r > 0) ? int((100 - r) / (r / m) + 0.5) : 0
+      linear = m / 300 * 100
+      pace = ""
+      if (linear > 0) {
+        if      (r < linear * 0.85) pace = "ahead"
+        else if (r > linear * 1.15) pace = "behind"
+        else                        pace = "on_pace"
+      }
+      printf "%d%s%s", eta, us, pace
+    }')
+    _burn_eta="${_bp%%$'\x1f'*}"
+    _pace_state="${_bp#*$'\x1f'}"
+  fi
+fi
+
+# Per-session cache (atomic write). Preserves pinned= flag and Stop-hook keys
+# (next_cron_at=, bg_tasks=) set by claudii-stop-hook so a statusLine update
+# does not erase them. Keys are read from the existing cache via _cache_get
+# and merged again from the live file right before the write (merge-on-write,
+# see the block above _tmp_session below) — the read-modify-write used to race
+# claudii-stop-hook: a hook write landing between the early snapshot and the
+# mv was clobbered with the stale early values (lost update; both writes are
+# mktemp→mv atomic, so never corruption). The re-read shrinks that window from
+# a whole render to a few statements.
+# Stable ppid resolution. $PPID is the immediate parent of THIS render — Claude
+# Code re-execs a fresh wrapper per statusLine invocation, so it is already
+# dead within seconds of being recorded (confirmed: 42834 then 16372 minutes
+# apart, both dead on check) and useless as a liveness signal for
+# _parse_session_cache's kill-0 fallback (_PSC_is_active — read by claudii
+# se/si/gc/dashboard). Fix: walk the process tree from $PPID up to the actual
+# `claude` binary ancestor (same technique as ~/ops/scripts/claude-sessions'
+# self_claude_pid()) — that PID persists for the session's whole lifetime.
+# Cost is only paid on first resolution per session: the previous render's
+# ppid is reused via _cache_get + kill -0 as long as it's still alive, so a
+# living session forks `ps` here at most once (right after the walk finds it),
+# not on every render. Re-resolves automatically if the cached ancestor ever
+# dies for real (Claude Code restart, session recycle).
+#
+# The walk matches `claude` two ways: argv[0] basename == "claude" (Homebrew /
+# native binary), OR argv[0] basename is node/bun AND argv[1] basename ==
+# "claude" (npm-installed Claude Code runs via a node shebang, so `comm` is
+# "node"). Exactly "claude" for argv[1] — not "claudii-*" — so wrapper scripts
+# in the chain don't get mistaken for the session process. Each walk level is a
+# single `ps -o ppid=,command=` call (was 3 forks/level: ps comm + ps ppid + tr).
+#
+# The resolved ancestor's start time (ppid_lstart) is captured once here and
+# persisted, so _parse_session_cache can detect PID recycling (a dead session
+# whose long-lived PID got reused) — kill -0 alone only proves the PID exists,
+# not that it's still THIS session. The cheap reuse path below stays kill-0-only
+# on purpose (a per-render `ps` fork is not acceptable there); the lstart
+# recycle-guard runs only in _parse_session_cache's consumers (se/si/gc/…).
+_cache_get ppid ""; _prev_ppid="$_CG"
+_cache_get ppid_lstart ""; _prev_ppid_lstart="$_CG"
+_ppid_lstart=""
+if [[ "$_prev_ppid" =~ ^[0-9]+$ ]] && kill -0 "$_prev_ppid" 2>/dev/null; then
+  _ppid="$_prev_ppid"
+  _ppid_lstart="$_prev_ppid_lstart"   # reuse path: kill-0 only, carry stored lstart
+else
+  _ppid=""
+  _anc_p="${PPID:-}"
+  _anc_n=0
+  while [[ "$_anc_p" =~ ^[0-9]+$ ]] && (( _anc_p > 1 )) && (( _anc_n < 10 )); do
+    # One ps call: field 1 = parent pid, rest = full command line. `read` strips
+    # the leading right-justified padding and splits argv[0] from the remainder.
+    _anc_line=$(ps -o ppid=,command= -p "$_anc_p" 2>/dev/null)
+    read -r _anc_pp _anc_cmd <<< "$_anc_line"
+    _anc_b0="${_anc_cmd%% *}"; _anc_b0="${_anc_b0##*/}"
+    if [[ "$_anc_b0" == "claude" ]]; then
+      _ppid="$_anc_p"
+      break
+    fi
+    if [[ "$_anc_b0" == "node" || "$_anc_b0" == "bun" ]]; then
+      _anc_rest="${_anc_cmd#* }"
+      if [[ "$_anc_rest" != "$_anc_cmd" ]]; then
+        _anc_b1="${_anc_rest%% *}"; _anc_b1="${_anc_b1##*/}"
+        if [[ "$_anc_b1" == "claude" ]]; then
+          _ppid="$_anc_p"
+          break
+        fi
+      fi
+    fi
+    _anc_p="$_anc_pp"
+    (( ++_anc_n ))
+  done
+  # No `claude` ancestor found (standalone/manual invocation, renamed binary,
+  # walk exhausted) — fall back to the raw PPID rather than storing empty.
+  [[ -z "$_ppid" ]] && _ppid="${PPID:-}"
+  # Capture the ancestor's start time (one fork, amortized — this path already
+  # forked ps in the walk). Leading whitespace trimmed; the value itself
+  # contains spaces (e.g. "Wed Jul 10 12:34:56 2026"), preserved by the
+  # first-'=' cache-line split on read-back.
+  if [[ "$_ppid" =~ ^[0-9]+$ ]]; then
+    _ppid_lstart=$(ps -o lstart= -p "$_ppid" 2>/dev/null)
+    _ppid_lstart="${_ppid_lstart#"${_ppid_lstart%%[![:space:]]*}"}"
+  fi
+fi
+_cache_get pinned "";       _cached_pinned="$_CG"
+_cache_get next_cron_at ""; _cached_next_cron_at="$_CG"
+_cache_get bg_tasks "";     _cached_bg_tasks="$_CG"
+# Prompt-cache miss attribution (CC 2.1.260+): last_miss_cause names why the
+# most recent miss happened, but the JSON carries no "which request was that"
+# marker. expires_at is one: every warm response stamps a new one, so the miss
+# belongs to the CURRENT cached prefix exactly while expires_at still equals
+# the value seen when the misses counter last rose. That stamp is persisted as
+# miss_exp= so a later render (same prefix, no new request) still shows the
+# cause, and the next request — a hit — silently retires it.
+_cache_get misses "";   _prev_misses="$_CG"
+_cache_get miss_exp ""; _miss_exp="$_CG"
+pc_expires="${pc_expires%%.*}"
+# No misses= in the cache (first render, resumed session, pruned cache) means
+# the counter's history is unknown: a non-zero count then is NOT evidence that
+# the current request missed, so nothing is stamped — the next rise is.
+if [[ "$_prev_misses" =~ ^[0-9]+$ && "$pc_misses" =~ ^[0-9]+$ && "$pc_expires" =~ ^[0-9]+$ ]] \
+   && (( pc_misses > _prev_misses )); then
+  _miss_exp="$pc_expires"
+fi
+# Test seam: lets the race test interleave a foreign write between the early
+# snapshot and the merge below. Unset outside tests; same privilege as the
+# caller's environment, so eval adds no new surface.
+[[ -n "${CLAUDII_TEST_MID_RENDER_CMD:-}" ]] && eval "$CLAUDII_TEST_MID_RENDER_CMD"
+# Merge-on-write for the externally-written keys (next_cron_at=/bg_tasks= from
+# claudii-stop-hook, pinned= from `claudii pin`): re-read them from the LIVE
+# file immediately before writing, so a foreign write since the early
+# _existing_cache snapshot survives instead of being clobbered with the stale
+# early values. Same no-fork $(<file) + substring extraction as the snapshot.
+if [[ -f "$_session_file" ]]; then
+  _mow=""; { _mow=$(<"$_session_file"); } 2>/dev/null
+  _mow_nl=$'\n'"$_mow"
+  for _mow_key in next_cron_at bg_tasks pinned; do
+    if [[ "$_mow_nl" == *$'\n'"$_mow_key"=* ]]; then
+      _mow_v="${_mow_nl#*$'\n'$_mow_key=}"; _mow_v="${_mow_v%%$'\n'*}"
+      case "$_mow_key" in
+        next_cron_at) _cached_next_cron_at="$_mow_v" ;;
+        bg_tasks)     _cached_bg_tasks="$_mow_v" ;;
+        pinned)       _cached_pinned="$_mow_v" ;;
+      esac
+    fi
+  done
+fi
+_tmp_session="${_session_file}.tmp.$$"
+{ printf '%s\n' \
+  "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
+  "rate_5h=$rate_5h" "rate_7d=$rate_7d" \
+  "reset_5h=$reset_5h" "reset_7d=$reset_7d" \
+  "session_id=$session_id" \
+  "worktree=$worktree_name" \
+  "agent=$agent_name" \
+  "model_id=$model_id" \
+  "burn_eta=$_burn_eta" \
+  "pace=$_pace_state" \
+  "cache_pct=$_cache_pct" \
+  "tok=$_tok_total" \
+  "ppid=$_ppid" \
+  "ppid_lstart=$_ppid_lstart" \
+  "rate_7d_start=$_rate_7d_start" \
+  "rate_5h_start=$_rate_5h_start" \
+  "last_duration_ms=$duration_ms" \
+  "last_ctx_pct=$_last_ctx_store" \
+  "ctx_rate=$_ctx_rate" \
+  "last_api_duration_ms=$api_duration_ms" \
+  "last_api_delta=$_api_delta" \
+  "api_mean_ms=$_api_mean_ms" \
+  "api_mean_n=$_aw_n" \
+  "api_recent=$_api_recent" \
+  "compactions=$_compactions" \
+  "project_path=$cwd"
+  [[ "$pc_misses" =~ ^[0-9]+$ ]]    && printf 'misses=%s\n'        "$pc_misses"
+  [[ -n "$_miss_exp" ]]             && printf 'miss_exp=%s\n'      "$_miss_exp"
+  [[ -n "$pc_miss_causes" ]]        && printf 'miss_causes=%s\n'   "$pc_miss_causes"
+  [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
+  [[ -n "$_cached_next_cron_at" ]]  && printf 'next_cron_at=%s\n'  "$_cached_next_cron_at"
+  [[ -n "$_cached_bg_tasks" ]]      && printf 'bg_tasks=%s\n'      "$_cached_bg_tasks"
+  true
+  } > "$_tmp_session" 2>/dev/null && mv -f "$_tmp_session" "$_session_file" 2>/dev/null || true
+
+# Flight Recorder — append one TSV row, monthly rotation. (_now/_date_ym are
+# read further up, where the api window needs the clock first.)
+_history_file="$_cache_dir/history-${_date_ym}.tsv"
+[[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
+  "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
+  "$rate_7d" "$reset_7d" \
+  >> "$_history_file" 2>/dev/null || true
+
+_claudii_log debug "input: ${json:0:200}"
+_claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name} model_id=${model_id}"
+
+# Formatters — write to _tok_result / _dur_result (no subshell).
+_tok_result=""
+_tok() {
+  local n=${1%.*}
+  # Numeric or nothing — (( )) on an untrusted string is an injection surface
+  # (array-subscript command substitution), and the old -z/null check let any
+  # other garbage straight into the arithmetic below.
+  [[ "$n" =~ ^[0-9]+$ ]] || { _tok_result=""; return; }
+  (( n == 0 )) && _tok_result="" && return
+  local _m _d
+  if (( n >= 1000000 )); then
+    _m=$(( n / 1000000 )); _d=$(( (n % 1000000 + 50000) / 100000 ))
+    (( _d == 10 )) && { (( ++_m )); _d=0; }
+    printf -v _tok_result '%d.%dM' "$_m" "$_d"
+  elif (( n >= 1000 )); then
+    _m=$(( n / 1000 )); _d=$(( (n % 1000 + 50) / 100 ))
+    (( _d == 10 )) && { (( ++_m )); _d=0; }
+    printf -v _tok_result '%d.%dK' "$_m" "$_d"
+  else
+    _tok_result="$n"
+  fi
+}
+
+_dur_result=""
+_dur() {
+  local ms=${1%.*}
+  [[ "$ms" =~ ^[0-9]+$ ]] || { _dur_result=""; return; }
+  local sec=$(( ms / 1000 ))
+  if   (( sec < 60 ));   then _dur_result="<1m"
+  elif (( sec < 3600 )); then printf -v _dur_result '%dm' $(( sec / 60 ))
+  else                        printf -v _dur_result '%dh%dm' $(( sec / 3600 )) $(( (sec % 3600) / 60 ))
+  fi
+}
+
+# Context threshold color: green <70, yellow 70-89, red 90+.
+_CLR=""
+_thr() {
+  local pct=${1%.*}; [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+  if   (( pct >= 90 )); then _CLR=$'\033[31m'
+  elif (( pct >= 70 )); then _CLR=$'\033[33m'
+  else                       _CLR=$'\033[32m'; fi
+}
+# Rate-limit color, keyed on *used* %: green <50, yellow 50-79, red 80+.
+_rlc() {
+  local pct=${1%.*}; [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
+  if   (( pct >= 80 )); then _CLR=$'\033[31m'
+  elif (( pct >= 50 )); then _CLR=$'\033[33m'
+  else                       _CLR=$'\033[32m'; fi
+}
+
+RST=$'\033[0m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+CYAN=$'\033[0;36m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+RED=$'\033[0;31m'
+WHITE=$'\033[0;97m'
+ACCENT=$'\033[38;5;213m'
+# Separator width is a real budget item, not decoration: a dense line has up to
+# eight gaps, and the old "  │  " spent 40 columns on them.
+if [[ "$_cfg_separator" == "wide" ]]; then
+  SEP="${DIM}  │  ${RST}"; _SEP_LEN=5
+else
+  SEP="${DIM} │ ${RST}";   _SEP_LEN=3
+fi
+
+# Model + effort + thinking indicator.
+_seg_model=""
+if [[ -n "$model" ]]; then
+  _seg_model="${BOLD}${model}${RST}"
+  if [[ -n "$effort_level" && "$effort_level" != "null" ]]; then
+    # ultracode = Claude Code's xhigh + standing workflow consent (menu mode,
+    # not an API effort level). Highlight the high-end modes; dim the rest.
+    case "$effort_level" in
+      ultracode|max|xhigh) _eff_clr="$ACCENT" ;;
+      high)                _eff_clr="$YELLOW" ;;
+      *)                   _eff_clr="$DIM"    ;;
+    esac
+    _seg_model+=" ${_eff_clr}${effort_level}${RST}"
+  fi
+  [[ "$thinking_enabled" == "true" ]] && _seg_model+=" ${ACCENT}▲${RST}"
+fi
+
+# Flat-1M-billing check: true for model families with a native 1M window and
+# no >200k long-context premium — opus (all versions), fable/mythos (all
+# versions — same pricing/window per Anthropic's docs), and sonnet-5+ (unlike
+# sonnet-4.6 and earlier, where 1M is a paid [1m] opt-in with its own long-
+# context pricing tier). Matches model id or display name; add new flat-
+# billing families/versions here (see "When a new Claude model ships" in
+# CLAUDE.md — same most-specific-first discipline as _insights_model_label()).
+_flat_1m_model() {
+  case "$1" in
+    *[Oo]pus*|*[Ff]able*|*[Mm]ythos*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Context display: usable % = raw scaled to the model's practical (pre-compact)
+# window. Two renderings share the computation — `context` (compact: one fill
+# glyph + the number) and `context-bar` (the legacy 10-block bar).
+# used_percentage is pre-calculated against the
+# FULL context_window_size, but the useful window ends at the compact point, not
+# 100% — the scale compensates so the bar fills (and _thr turns yellow/red) as that
+# point nears. The default scale is *model-aware*:
+# compact point = min(window * 80%, FLOOR), with
+# FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the
+# real auto-compact point wins) and 195k on every other model (a habit
+# ceiling — so a 1M sonnet-4.6[1m] window fills near 195k, not 967k, instead of
+# reading "20%" while you're already past the compact point).
+# The auto-compact point itself is window − 33k: Claude Code reserves a 20k
+# output buffer and compacts 13k before that edge (measured in CC 2.1.198;
+# CC v2.1.247 confirms 967K on Sonnet 5's 1M window, aligning it with the
+# other 1M models). That resolves to ~96.7% of a 1M window and 83.5% of a
+# 200k one — the old flat 80% assumption under-sold a 1M session by ~167k
+# tokens. On an implausibly small window (< 66k) it degrades to the legacy 80%.
+# Window source: context_window_size, else inferred from the model id
+# (flat-1M models → 1M, else 200k).
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW (inherited from Claude Code) overrides the
+# default: a value > 1 is a token count (fraction = value / window size), a
+# value in (0,1] is the fraction itself; clamped to [50,100]%, garbage → the
+# default.
+_ac_win="${ctx_size%.*}"
+_ac_mid="${model_id:-$model}"
+if [[ ! "$_ac_win" =~ ^[0-9]+$ ]] || (( _ac_win < 1 )); then
+  if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi
+fi
+if _flat_1m_model "$_ac_mid"; then _ac_floor=$_ac_win; else _ac_floor=195000; fi
+# Re-verify after CC v2.1.273 fixed advisor-tool turns being double-counted
+# in the context meter, which had auto-compact firing at ~half the real
+# window in sessions that used them — the 967K figure above was measured at
+# v2.1.247, before this fix.
+_ac_thr=$(( _ac_win - 33000 ))                    # auto-compact = window − 33k (measured)
+(( _ac_thr < _ac_win / 2 )) && _ac_thr=$(( _ac_win * 80 / 100 ))
+(( _ac_floor < _ac_thr )) && _ac_thr=$_ac_floor
+_ac_dflt=$(( _ac_thr * 100 / _ac_win ))
+(( _ac_dflt < 10 )) && _ac_dflt=10     # sanity floor — below this the bar is useless
+(( _ac_dflt > 100 )) && _ac_dflt=100
+_ac_scale_pct=$_ac_dflt
+_ac_env="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}"
+if [[ "$_ac_env" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  _ac_scale_pct=$(LC_ALL=C awk -v v="$_ac_env" -v w="${ctx_size:-0}" -v d="$_ac_dflt" 'BEGIN {
+    f = d / 100
+    if (v > 1)      { if (w + 0 >= 1) f = v / w }
+    else if (v > 0) { f = v }
+    if (f < 0.5) f = 0.5
+    if (f > 1.0) f = 1.0
+    printf "%d", f * 100 + 0.5
+  }')
+  [[ "$_ac_scale_pct" =~ ^[0-9]+$ ]] || _ac_scale_pct=$_ac_dflt
+fi
+_seg_context=""
+_seg_context_compact=""
+if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
+  local_pct=${ctx_pct%.*}
+  [[ "$local_pct" =~ ^[0-9]+$ ]] || local_pct=0
+  (( local_pct > 100 )) && local_pct=100
+  (( _usable_pct = local_pct * 100 / _ac_scale_pct ))
+  (( _usable_pct > 100 )) && _usable_pct=100
+  filled=$(( _usable_pct / 10 ))
+  empty=$(( 10 - filled ))
+  bar=""
+  (( filled > 0 )) && printf -v f "%${filled}s" "" && bar="${f// /█}"
+  (( empty > 0 )) && printf -v e "%${empty}s" "" && bar="${bar}${e// /░}"
+  # Fill glyph for the compact `context` segment — the ○◔◑◕● ramp carries the
+  # same fill level the threshold colour does, so the reading survives a
+  # colour-blind eye, a monochrome terminal, and a copy-paste that strips ANSI
+  # (a bare coloured number does not). One column instead of the bar's ten.
+  if   (( _usable_pct >= 88 )); then _ctx_glyph="●"
+  elif (( _usable_pct >= 63 )); then _ctx_glyph="◕"
+  elif (( _usable_pct >= 38 )); then _ctx_glyph="◑"
+  elif (( _usable_pct >= 13 )); then _ctx_glyph="◔"
+  else                               _ctx_glyph="○"
+  fi
+  # Window / pricing marker — model-aware (_flat_1m_model). Only the >200k
+  # warning is rendered; the dim "1M" window label was dropped as pure noise
+  # (it is a constant per model — it never tells you anything that changed).
+  # On Opus/Fable/Mythos/Sonnet-5+ the flat 1M rate makes Claude Code's
+  # exceeds_200k_tokens flag a non-event, so those models get no marker at all.
+  # For a legacy-sonnet model (4.6 and earlier) crossing 200k still means
+  # something — on a native 1M window (sonnet[1m], a paid opt-in) it is the
+  # long-context pricing tier → informational yellow; on a 200k-class window it
+  # is a genuine overflow of the standard window → red.
+  win=""
+  if [[ "$exceeds_200k" == "true" ]] && ! _flat_1m_model "${model_id:-$model}"; then
+    _win_1m=0
+    [[ -n "$ctx_size" && "$ctx_size" != "null" && "$ctx_size" -ge 1000000 ]] 2>/dev/null && _win_1m=1
+    if (( _win_1m )); then win=" ${YELLOW}>200k${RST}"
+    else                   win=" ${RED}>200k${RST}"; fi
+  fi
+  _thr "$_usable_pct"
+  _seg_context="${_CLR}${bar}${RST} ${DIM}${_usable_pct}%${RST}${win}"
+  _seg_context_compact="${_CLR}${_ctx_glyph} ${_usable_pct}%${RST}${win}"
+fi
+
+# Compact ETA — how long the remaining context lasts at the current burn rate.
+# The rate (ctx_rate, computed and smoothed above) is milli-percent of the RAW
+# window per minute; the usable scale stretches it, so a raw rate of 2%/min on
+# an 80% scale is 2.5 usable-%/min. Remaining usable % over that rate = minutes
+# to the compact point. Beyond 10h it is not a signal anyone acts on, so the
+# segment stays empty. No forks — pure arithmetic over values already in hand.
+_seg_compact_eta=""
+if [[ "$_ctx_rate" =~ ^[0-9]+$ ]] && (( _ctx_rate > 0 )) && [[ -n "${_usable_pct:-}" ]]; then
+  _ce_left=$(( 100 - _usable_pct ))
+  _ce_rate=$(( _ctx_rate * 100 / _ac_scale_pct ))
+  if (( _ce_left > 0 && _ce_rate > 0 )); then
+    _ce_min=$(( _ce_left * 1000 / _ce_rate ))
+    if (( _ce_min > 0 && _ce_min <= 600 )); then
+      if   (( _ce_min < 5 ));  then _ce_clr="$RED"
+      elif (( _ce_min < 15 )); then _ce_clr="$YELLOW"
+      elif (( _ce_min < 30 )); then _ce_clr="$WHITE"
+      else                          _ce_clr="$DIM"
+      fi
+      _fmt_rel $(( _ce_min * 60 ))
+      [[ -n "$_REL_FMT" ]] && _seg_compact_eta="${_ce_clr}⇲${_REL_FMT}${RST}"
+    fi
+  fi
+fi
+
+# Last-response latency (_api_delta, carried across renders above). Dim under
+# 15s, plain to 30s, yellow to 60s, red beyond — a minute of API time for one
+# turn is the point where "slow" stops being the model thinking.
+_seg_response=""
+if [[ "$_api_delta" =~ ^[0-9]+$ ]] && (( _api_delta > 0 )); then
+  if   (( _api_delta < 10000 )); then
+    _rs_s=$(( _api_delta / 1000 )); _rs_d=$(( (_api_delta % 1000 + 50) / 100 ))
+    (( _rs_d == 10 )) && { (( ++_rs_s )); _rs_d=0; }
+    printf -v _rs_fmt '%d.%ds' "$_rs_s" "$_rs_d"
+  elif (( _api_delta < 60000 )); then
+    printf -v _rs_fmt '%ds' $(( (_api_delta + 500) / 1000 ))
+  else
+    _rs_s=$(( _api_delta / 1000 ))
+    printf -v _rs_fmt '%dm%02ds' $(( _rs_s / 60 )) $(( _rs_s % 60 ))
+  fi
+  if   (( _api_delta >= 60000 )); then _rs_clr="$RED"
+  elif (( _api_delta >= 30000 )); then _rs_clr="$YELLOW"
+  elif (( _api_delta >= 15000 )); then _rs_clr="$WHITE"
+  else                                 _rs_clr="$DIM"
+  fi
+  _seg_response="${_rs_clr}↯${_rs_fmt}${RST}"
+fi
+
+# Cache hit ratio — was glued to the context bar, now its own opt-in segment so
+# a compact context display doesn't have to carry it. Green >= 60%, yellow < 30%.
+# _cache_pct is the native prompt_cache.hit_ratio when present (no cache_read
+# needed), else derived from context_window — so the gate is the value itself.
+_seg_cache_hit=""
+if _isset "$_cache_pct"; then
+  if   (( _cache_pct >= 60 )); then _cc="${GREEN}"
+  elif (( _cache_pct < 30 )); then _cc="${YELLOW}"
+  else                              _cc="${DIM}"
+  fi
+  _seg_cache_hit="${_cc}⚡${_cache_pct}%${RST}"
+fi
+
+# Prompt-cache TTL — the native prompt_cache object (CC 2.1.251+). Warm: a
+# countdown until the cached prefix goes cold (expires_at − now, computed in
+# the same jq pass — no extra fork), yellow once ≤2min remain. Cold while the
+# session HAS seen caching: yellow "cold", with recache_tokens_if_cold as the
+# price of continuing (what the next request re-caches) — the decision signal.
+# Absent object (older CC, before the first API response, or a provider that
+# never reported cache tokens) → empty, like the repo fields.
+_seg_cache_ttl=""
+if [[ "$pc_warm" == "true" && "$pc_ttl_left" =~ ^[0-9]+$ ]] && (( pc_ttl_left > 0 )); then
+  _fmt_rel "$pc_ttl_left"
+  if [[ -n "$_REL_FMT" ]]; then
+    _ct_clr="$DIM"
+    (( pc_ttl_left <= 120 )) && _ct_clr="$YELLOW"
+    _seg_cache_ttl="${_ct_clr}♨${_REL_FMT}${RST}"
+    # The last request was a miss (see the miss_exp stamp above): name the
+    # cause CC diagnosed, yellow, so a tools/system-prompt change that just
+    # cost a re-cache is visible while it is still actionable. Multiple causes
+    # join with "+"; the cause vocabulary is CC's, shortened by
+    # _miss_cause_short (lib/helpers.sh — shared with `claudii se`).
+    if [[ -n "$pc_miss_cause" && -n "$_miss_exp" && "$_miss_exp" == "$pc_expires" ]]; then
+      _miss_cause_short "$pc_miss_cause"
+      _seg_cache_ttl="${YELLOW}♨${_REL_FMT}·miss:${_MCS}${RST}"
+    fi
+  fi
+elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
+  _seg_cache_ttl="${YELLOW}♨cold${RST}"
+  if _isset "$pc_recache"; then
+    _tok "$pc_recache"
+    [[ -n "$_tok_result" ]] && _seg_cache_ttl="${YELLOW}♨cold·${_tok_result}${RST}"
+  fi
+fi
+
+_seg_cost=""
+if _isset "$cost"; then
+  # Cost demoted to a dim segment — token throughput is the primary signal now
+  # (full $ detail lives in `claudii cost`).
+  # env LC_ALL=C printf (external): a bare "LC_ALL=C printf" is inert on macOS
+  # /bin/bash 3.2 — the prefix does not re-setlocale the printf BUILTIN, so a
+  # comma locale still prints "$0,55" + an "invalid number" warning to stderr.
+  _seg_cost="${DIM}\$$(env LC_ALL=C printf '%.2f' "$cost")${RST}"
+fi
+
+# Reset countdown formatter — sets _reset_fmt + _reset_color.
+# < 60m → Xm, < 24h → XhYm (Yh suppressed if 0), ≥ 24h → XdYh (Yh suppressed if 0).
+_fmt_reset() {
+  local _secs="$1" _pct="$2" _m _h _d _rh
+  _reset_fmt=""; _reset_color=""
+  (( _secs <= 0 )) && return
+  # _m feeds the color ladder below and must be set on EVERY branch — the
+  # >=24h branch used to leave it unassigned, so `(( _m < 5 ))` saw 0 and
+  # painted multi-day resets green instead of dim. The <60m branch overwrites
+  # it with the rounded display value.
+  _m=$(( _secs / 60 ))
+  if (( _secs < 3600 )); then
+    _m=$(( (_secs + 30) / 60 ))
+    (( _m <= 0 )) && return
+    _reset_fmt="${_m}m"
+  elif (( _secs < 86400 )); then
+    _m=$(( _secs / 60 ))
+    _h=$(( _secs / 3600 ))
+    _rh=$(( (_secs % 3600) / 60 ))
+    if (( _rh > 0 )); then _reset_fmt="${_h}h${_rh}m"
+    else _reset_fmt="${_h}h"; fi
+  else
+    _d=$(( _secs / 86400 ))
+    _h=$(( (_secs % 86400) / 3600 ))
+    if (( _h > 0 )); then _reset_fmt="${_d}d${_h}h"
+    else _reset_fmt="${_d}d"; fi
+  fi
+  if   (( _pct < 50 ));  then _reset_color="${DIM}"
+  elif (( _m < 5 ));     then _reset_color="${GREEN}"
+  elif (( _m < 60 ));    then _reset_color="${WHITE}"
+  elif (( _m < 120 ));   then _reset_color=""
+  else                        _reset_color="${DIM}"
+  fi
+}
+
+# Rate segment builder. Args: label, rate, reset_at → writes to _seg_result.
+# Coloring keyed on used %; in remaining mode the displayed number flips.
+# Result-global (no subshell) — call sites used to wrap this in $(...), one
+# fork() each on every render (same reason as _cache_get/_tok/_dur above).
+_mk_rate_seg() {
+  _seg_result=""
+  local label=$1 rate=$2 reset_at=$3
+  [[ -z "$rate" || "$rate" == "null" ]] && return
+  local pct=${rate%.*}
+  local disp=$pct out
+  [[ "$_rate_display" == "remaining" ]] && disp=$(( 100 - pct ))
+  _rlc "$rate"; out="${_CLR}${label}${_rate_mark}:${disp}%${RST}"
+  if [[ -n "$reset_at" && "$reset_at" != "null" ]]; then
+    # resets_at is an epoch int in real CC payloads; guard the arithmetic so a
+    # non-numeric value (format drift / ISO) drops ↺ instead of leaking a
+    # "value too great for base" error to stderr (no set -e here, but noisy).
+    reset_at="${reset_at%.*}"
+    if [[ "$reset_at" =~ ^[0-9]+$ ]]; then
+      _fmt_reset $(( reset_at - _now )) "$pct"
+      [[ -n "$_reset_fmt" ]] && out+=" ${_reset_color}↺${_reset_fmt}${RST}"
+    fi
+  fi
+  _seg_result="$out"
+}
+_mk_rate_seg 5h "$rate_5h" "$reset_5h"; _seg_rate5h=$_seg_result
+_mk_rate_seg 7d "$rate_7d" "$reset_7d"; _seg_rate7d=$_seg_result
+
+_seg_tokens=""
+if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
+  # Tokens are the primary metric — rendered in the value colour (cyan), not dim.
+  _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${CYAN}${_tok_result}↑${RST}"
+  _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${CYAN}${_tok_result}↓${RST}"
+fi
+
+_seg_lines=""
+if _isset "$lines_add" || _isset "$lines_rm"; then
+  _isset "$lines_add" && _seg_lines+="${GREEN}+${lines_add}${RST}"
+  _isset "$lines_rm"  && _seg_lines+="${_seg_lines:+ }${RED}-${lines_rm}${RST}"
+fi
+
+_seg_dur=""
+if [[ -n "$duration_ms" && "$duration_ms" != "null" ]]; then
+  _dur "$duration_ms"; [[ -n "$_dur_result" ]] && _seg_dur="${DIM}⏱ ${_dur_result}${RST}"
+fi
+
+_seg_eta=""
+_isset "$_burn_eta" 2>/dev/null && _seg_eta="${DIM}ETA:${_burn_eta}m${RST}"
+
+_seg_pace=""
+case "${_pace_state:-}" in
+  ahead)   _seg_pace="${GREEN}↑${RST}" ;;
+  on_pace) _seg_pace="${DIM}=${RST}"   ;;
+  behind)  _seg_pace="${YELLOW}↓${RST}" ;;
+esac
+
+# Compactions segment — renders ♻N once the session survived a compaction.
+# Pairs with burn-ETA ("how many compactions did this session survive?").
+# Opt-in (not in default layout).
+_seg_compactions=""
+if [[ "$_compactions" =~ ^[0-9]+$ ]] && (( _compactions >= 1 )); then
+  _seg_compactions="${DIM}♻${_compactions}${RST}"
+fi
+
+# Bg-tasks segment — reads bg_tasks from per-session cache (written by claudii-stop-hook).
+# Renders ⚙ Nbg when bg_tasks >= 1; empty otherwise. Opt-in (not in default layout).
+# _cached_bg_tasks was already read above for the cache-write preserve step.
+_seg_bg=""
+if [[ "$_cached_bg_tasks" =~ ^[0-9]+$ && "$_cached_bg_tasks" -ge 1 ]]; then
+  _seg_bg="${DIM}⚙ ${_cached_bg_tasks}bg${RST}"
+fi
+
+# Cron segment — reads next_cron_at from per-session cache (written by claudii-stop-hook).
+# Renders ⏰ <relative> when the epoch is in the future; omitted when absent or past.
+# _cached_next_cron_at was already read above for the cache-write preserve step.
+_seg_cron=""
+if [[ "$_cached_next_cron_at" =~ ^[0-9]+$ && "$_cached_next_cron_at" != "0" ]]; then
+  _fmt_rel $(( _cached_next_cron_at - _now ))
+  [[ -n "$_REL_FMT" ]] && _seg_cron="${DIM}⏰ ${_REL_FMT}${RST}"
+fi
+
+# Clock — delegated to cc-insomnii(1) when present and not double-wrapped.
+_seg_clock=""
+if (( _use_insomnii && ! _wrapped_by_insomnii )); then
+  _seg_clock=$(
+    CC_INSOMNII_BEDTIME="${_cfg_bedtime:-23:00}" \
+    CC_INSOMNII_SHAME="$_cfg_shame" \
+    CC_INSOMNII_MOTIVATION="$_cfg_motivation" \
+    CC_INSOMNII_RAINBOW="$_cfg_rainbow" \
+    cc-insomnii <<< "$json" 2>/dev/null
+  )
+fi
+
+_seg_worktree=""
+_wt_name="${worktree_name:-$workspace_git_worktree}"
+if [[ -n "$_wt_name" ]]; then
+  _trunc "$_wt_name"; _seg_worktree="${DIM}${_TRUNC}${RST}"
+  if [[ -n "$worktree_name" && -n "$worktree_branch" ]]; then
+    _trunc "$worktree_branch"; _seg_worktree+=" ${DIM}⎇ ${_TRUNC}${RST}"
+  fi
+fi
+
+_seg_agent=""
+_agent_display="${agent_name:-$session_name}"
+if [[ -n "$_agent_display" ]]; then
+  _trunc "$_agent_display"; _seg_agent="${DIM}@${RST}${ACCENT}${_TRUNC}${RST}"
+fi
+
+_seg_session_name=""
+if [[ -n "$session_name" ]]; then
+  _trunc "$session_name"; _seg_session_name="${DIM}${_TRUNC}${RST}"
+fi
+
+_seg_api_dur=""
+if [[ -n "$api_duration_ms" && "$api_duration_ms" != "null" ]]; then
+  _dur "$api_duration_ms"; [[ -n "$_dur_result" ]] && _seg_api_dur="${DIM}api:${_dur_result}${RST}"
+fi
+
+# Delta segment builder. Args: label, current_rate, start_rate → writes _seg_result.
+# Sign flips in remaining mode (magnitude unchanged). Color keyed on usage delta.
+# Result-global (no subshell) — see _mk_rate_seg.
+_mk_delta_seg() {
+  _seg_result=""
+  local label=$1 cur=$2 start=$3
+  [[ -z "$start" || "$start" == "null" || -z "$cur" || "$cur" == "null" ]] && return
+  local d disp sign clr
+  d=$(( ${cur%.*} - ${start%.*} ))
+  disp=$d
+  [[ "$_rate_display" == "remaining" ]] && disp=$(( -d ))
+  if (( d > 0 )); then
+    _rlc "$cur"; clr=$_CLR
+  elif (( d < 0 )); then
+    clr=$GREEN
+  else
+    return
+  fi
+  sign=""; (( disp > 0 )) && sign="+"
+  _seg_result="${DIM}Δ${label}:${RST}${clr}${sign}${disp}%${RST}"
+}
+_mk_delta_seg 5h "$rate_5h" "$_rate_5h_start"; _seg_delta5h=$_seg_result
+_mk_delta_seg 7d "$rate_7d" "$_rate_7d_start"; _seg_delta7d=$_seg_result
+
+# Cache writes — distinct from ⚡ hit ratio.
+_seg_cache_create=""
+if _isset "$cache_create"; then
+  _tok "$cache_create"; [[ -n "$_tok_result" ]] && _seg_cache_create="${DIM}✎${_tok_result}${RST}"
+fi
+
+_seg_dir=""
+_dir_path="${worktree_original_cwd:-${workspace_project_dir:-$cwd}}"
+if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
+  _dir_name="${_dir_path##*/}"
+  if [[ -n "$_dir_name" ]]; then
+    _trunc "$_dir_name"; _seg_dir="${DIM}⌂${RST} ${YELLOW}${_TRUNC}${RST}"
+  fi
+fi
+
+# GitHub / repo segment (workspace.repo.*, Claude Code 2.1.145+).
+# Renders <owner>/<name> + #<pr_number> when an open PR is detected on the
+# current branch. Skipped when repo info absent (non-git project, no remote).
+_seg_github=""
+if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
+  _seg_github="${DIM}◆ ${repo_owner}/${repo_name}${RST}"
+  _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
+fi
+
+# Layout and _in_layout are resolved near the top of the file, right after the
+# config parse — they only need $_from_cfg, and the segments that fork before
+# this point (clock/cc-insomnii, tailscale, omlx) have to be able to ask.
+
+# Claude Code app/CLI version (top-level .version in the statusLine payload),
+# red + "+N releases behind" when a newer build exists. N is exact — the
+# position of the installed version inside the cached release-tag list, not a
+# version-number diff — because Claude Code's release numbers are not
+# sequential (yanked/skipped tags happen: 2.1.230 was skipped entirely on
+# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". "+?"
+# means "definitely outdated, but the installed version fell off the cached
+# window" rather than a fabricated number. A cache miss (first run, or the
+# background refresher never having succeeded yet) renders plain, same as
+# up to date, until there is an actual answer.
+#
+# Deliberately independent of bumpii (see claudii-cc-update-refresh): the
+# cache schema (latest=/tags=/checked=) is the only contract, so a future
+# bumpii-backed refresher could populate the same file without this reader
+# changing at all.
+_seg_cc_version=""
+_ccup_cache="${_cache_dir}/status-cc-version"
+if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
+  _cc_latest=""; _cc_tags=""
+  if [[ -f "$_ccup_cache" ]]; then
+    _ccup=""
+    { _ccup=$(<"$_ccup_cache"); } 2>/dev/null
+    _ccup_nl=$'\n'"$_ccup"
+    [[ "$_ccup_nl" == *$'\n'latest=* ]] && { _cc_latest="${_ccup#*latest=}"; _cc_latest="${_cc_latest%%$'\n'*}"; }
+    [[ "$_ccup_nl" == *$'\n'tags=* ]]   && { _cc_tags="${_ccup#*tags=}";     _cc_tags="${_cc_tags%%$'\n'*}"; }
+  fi
+  _cc_behind=""
+  if [[ -n "$_cc_latest" ]]; then
+    if [[ "$cc_version" == "$_cc_latest" ]]; then
+      _cc_behind=0
+    elif [[ -n "$_cc_tags" ]]; then
+      _cc_tags_csv=",${_cc_tags},"
+      if [[ "$_cc_tags_csv" == *",$cc_version,"* ]]; then
+        # Everything before the (exact, comma-bounded) match — its comma
+        # count is exactly the number of newer releases ahead of it.
+        _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
+        _cc_commas="${_cc_before//[^,]/}"
+        _cc_behind=${#_cc_commas}
+      else
+        _cc_behind="?"
+      fi
+    fi
+  fi
+  if [[ -z "$_cc_behind" || "$_cc_behind" == "0" ]]; then
+    _seg_cc_version="${DIM}v${cc_version}${RST}"
+  else
+    _seg_cc_version="${RED}v${cc_version} +${_cc_behind}${RST}"
+  fi
+fi
+
+# cc-version self-refresh — same mechanics as claude-status/bumpii/ci: fork
+# claudii-cc-update-refresh when the cache is older than the TTL or missing.
+# The refresher re-checks the TTL itself, and the PID-file guard prevents
+# stacking fetches across rapid renders and parallel sessions. Skipped
+# entirely when the segment is not in the active layout.
+if _in_layout cc-version; then
+  _ccup_ttl="$_cfg_cc_version_ttl"
+  [[ "$_ccup_ttl" =~ ^[0-9]+$ ]] || _ccup_ttl=3600
+  _ccup_mtime=$(stat -f%m "$_ccup_cache" 2>/dev/null || stat -c%Y "$_ccup_cache" 2>/dev/null || echo 0)
+  if (( _now - _ccup_mtime > _ccup_ttl )); then
+    _ccuppid_file="$_cache_dir/cc-update-refresh.pid"
+    _spawn_refresher "$_ccuppid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file"
+  fi
+fi
+
+# Terminal width for the ruler segment — computed only when ruler is in the
+# layout (off by default), else the `tput cols` fork ran on every render for a
+# value nothing reads. Gated like the remotes/git-sync segments below.
+_term_cols=0
+if _in_layout ruler; then
+  _term_cols=""
+  [[ -n "$COLUMNS" ]] && (( COLUMNS > 20 )) && _term_cols="$COLUMNS"
+  [[ -z "$_term_cols" ]] && _term_cols=$(tput cols 2>/dev/null)
+  (( _term_cols > 20 )) || _term_cols=0
+fi
+
+# Repo-remotes segment — where this working copy is published. Classifies the
+# cwd's git remotes by host: a github.com URL → GitHub (gh); any other remote
+# host → self-hosted forge (fj). Both present → fj·gh (source-of-truth first,
+# mirror second). No remote → local; a non-git directory omits the segment.
+# Gated on the segment being in the active layout so the one git fork only
+# happens when the segment is actually shown.
+_seg_remotes=""
+if _in_layout remotes; then
+  _rr_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_rr_dir" && "$_rr_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _rr_out=$(git -C "$_rr_dir" remote -v 2>/dev/null); _rr_rc=$?
+    if (( _rr_rc == 0 )); then
+      _rr_gh=0; _rr_fj=0
+      while IFS= read -r _rl; do
+        [[ -z "$_rl" ]] && continue
+        if   [[ "$_rl" == *github.com* ]];         then _rr_gh=1
+        elif [[ "$_rl" == *://* || "$_rl" == *@* ]]; then _rr_fj=1
+        fi
+      done <<< "$_rr_out"
+      if (( _rr_fj || _rr_gh )); then
+        (( _rr_fj )) && _seg_remotes="${CYAN}fj${RST}"
+        (( _rr_gh )) && _seg_remotes+="${_seg_remotes:+${DIM}·${RST}}${WHITE}gh${RST}"
+        _seg_remotes="${DIM}⇡${RST}${_seg_remotes}"
+      else
+        _seg_remotes="${DIM}local${RST}"
+      fi
+    fi
+  fi
+fi
+
+# Working-copy git state — one `git status --porcelain=v2 --branch` fork feeds
+# three segments, so a layout using all of them still pays for a single scan:
+#
+#   git-sync  ●N uncommitted (commit pending, yellow), ↑N ahead of upstream
+#             (push pending, yellow), ↓N behind upstream (pull pending, red —
+#             you're missing commits, the highest merge-conflict risk). Clean
+#             and in sync → a green ✓.
+#   branch    ⎇ <name> — the branch nothing else showed: the worktree segment
+#             only names one when the session actually runs inside a worktree,
+#             so a plain checkout rendered no branch at all. Dim, except when
+#             uncommitted work is sitting directly on the trunk (main/master/
+#             trunk + dirty) — that is WIP that wants a feature branch, and it
+#             turns yellow as a nudge, not an alarm.
+#   ci        needs the branch name to look up the right run (below).
+#
+# The working-tree scan is the most expensive segment fork, so it is gated on
+# at least one of those three being in the active layout.
+# No upstream / detached HEAD → no branch.ab line → only the dirty state shows;
+# branch.head then reads "(detached)" and the branch segment says so in yellow.
+# Outside a git repo (rc != 0) → all three empty.
+_seg_git_sync=""
+_seg_branch=""
+_git_head=""
+if _in_layout git-sync || _in_layout branch || _in_layout ci; then
+  _gs_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_gs_dir" && "$_gs_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _gs_out=$(git -C "$_gs_dir" status --porcelain=v2 --branch 2>/dev/null); _gs_rc=$?
+    if (( _gs_rc == 0 )); then
+      _gs_ahead=0; _gs_behind=0; _gs_dirty=0
+      while IFS= read -r _gl; do
+        case "$_gl" in
+          '# branch.head '*) _git_head="${_gl#\# branch.head }" ;;
+          '# branch.ab '*)
+            _gs_ab="${_gl#\# branch.ab }"        # "+A -B"
+            _gs_a="${_gs_ab%% *}"; _gs_b="${_gs_ab##* }"
+            _gs_a="${_gs_a#+}"; _gs_b="${_gs_b#-}"
+            [[ "$_gs_a" =~ ^[0-9]+$ ]] && _gs_ahead=$_gs_a
+            [[ "$_gs_b" =~ ^[0-9]+$ ]] && _gs_behind=$_gs_b
+            ;;
+          '#'*|'') : ;;                          # other header / blank line
+          *) (( ++_gs_dirty )) ;;                # 1/2/u/? line = one changed path
+        esac
+      done <<< "$_gs_out"
+      if _in_layout git-sync; then
+        (( _gs_dirty  > 0 )) && _seg_git_sync="${YELLOW}●${_gs_dirty}${RST}"
+        (( _gs_ahead  > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${YELLOW}↑${_gs_ahead}${RST}"
+        (( _gs_behind > 0 )) && _seg_git_sync+="${_seg_git_sync:+ }${RED}↓${_gs_behind}${RST}"
+        [[ -z "$_seg_git_sync" ]] && _seg_git_sync="${GREEN}✓${RST}"
+      fi
+      if _in_layout branch && [[ -n "$_git_head" ]]; then
+        if [[ "$_git_head" == "(detached)" ]]; then
+          _seg_branch="${YELLOW}⎇ detached${RST}"
+        else
+          case "$_git_head" in
+            main|master|trunk) if (( _gs_dirty > 0 )); then _bc="$YELLOW"; else _bc="$DIM"; fi ;;
+            *)                 _bc="$DIM" ;;
+          esac
+          # Truncated (and worktree- prefix stripped) — a branch name is the
+          # longest unbounded value a statusline line carries.
+          _trunc "$_git_head"
+          _seg_branch="${_bc}⎇ ${_TRUNC}${RST}"
+        fi
+      fi
+    fi
+  fi
+fi
+
+# Worktrees segment — how many linked worktrees this repo carries. Leftover
+# orchestration worktrees are the failure mode it exists for: from inside the
+# main checkout they are invisible, they keep branches and stale state alive,
+# and they accumulate silently across waves. N counts LINKED worktrees only —
+# the first `worktree ` record is the main working tree and is never counted —
+# so N is exactly what `git worktree remove` can act on. Prunable ones (gitdir
+# gone / stale admin data, git's own `prunable` marker) are called out
+# separately as ⌫P, since those are pure garbage rather than parallel work.
+# Rendered ⑂N; the current worktree keeps being named by the `worktree`
+# segment. Empty at zero worktrees and outside a git repo. One
+# `git worktree list --porcelain` fork, gated on the segment being in the
+# active layout (like remotes/git-sync/sessions).
+_seg_worktrees=""
+if _in_layout worktrees; then
+  _wl_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_wl_dir" && "$_wl_dir" != "null" ]] && command -v git >/dev/null 2>&1; then
+    _wl_out=$(git -C "$_wl_dir" worktree list --porcelain 2>/dev/null); _wl_rc=$?
+    if (( _wl_rc == 0 )); then
+      _wl_n=0; _wl_prune=0
+      while IFS= read -r _wl_line; do
+        case "$_wl_line" in
+          'worktree '*) (( ++_wl_n ))     ;;
+          prunable*)    (( ++_wl_prune )) ;;
+        esac
+      done <<< "$_wl_out"
+      _wl_n=$(( _wl_n - 1 ))              # first record = the main working tree
+      if (( _wl_n > 0 )); then
+        _seg_worktrees="${CYAN}⑂${_wl_n}${RST}"
+        (( _wl_prune > 0 )) && _seg_worktrees+=" ${YELLOW}⌫${_wl_prune}${RST}"
+      fi
+    fi
+  fi
+fi
+
+# CI segment — the state of the newest GitHub Actions run on the branch this
+# session is on, so "did the push go green?" stops being a manual `gh run list`
+# after every push. Same cache-plus-background-refresher shape as
+# claude-status/bumpii: this render only ever READS a cache file and spawns
+# bin/claudii-ci-refresh when it is older than the TTL — no network here.
+#
+# The cache is per repo AND branch (two sessions in different repos, or in two
+# worktrees of one repo, must not fight over one file). The key is _str_hash
+# (lib/helpers.sh) over "<dir>\n<branch>" — no fork, bounded filename length,
+# no collisions from truncating deep paths; the readable basename is kept as a
+# prefix so the cache dir stays greppable. The session's cwd (not the repo
+# root) is the key's dir part: resolving the root would cost another git fork,
+# and the only cost of not doing it is that a session started in a subdirectory
+# keeps its own cache entry.
+#
+# States and what they mean — see bin/claudii-ci-refresh for how they're
+# derived: success ✓ green · failure ✗ red · running ● cyan · queued ◌ dim ·
+# other (cancelled/skipped/neutral) ⊘ dim · error ? dim (the refresh itself
+# broke — never rendered as "green", same rule as bumpii's "?") · none and
+# unavailable render nothing at all (no runs yet / not a GitHub repo — a
+# permanent state, so a permanent glyph would be permanent noise).
+_seg_ci=""
+_ci_cache=""
+if _in_layout ci && [[ -n "$_git_head" ]]; then
+  _ci_dir="${cwd:-$workspace_project_dir}"
+  _str_hash "${_ci_dir}"$'\n'"${_git_head}"
+  _ci_base="${_ci_dir##*/}"; _ci_base="${_ci_base//[^A-Za-z0-9_.-]/_}"
+  _ci_cache="$_cache_dir/ci-${_ci_base}-${_HASH}"
+  _ci_state=""; _ci_checked=""
+  if [[ -f "$_ci_cache" ]]; then
+    _ci_raw=""
+    { _ci_raw=$(<"$_ci_cache"); } 2>/dev/null
+    _ci_nl=$'\n'"$_ci_raw"
+    if [[ "$_ci_nl" == *$'\n'state=* ]]; then _ci_state="${_ci_raw#*state=}"; _ci_state="${_ci_state%%$'\n'*}"; fi
+    if [[ "$_ci_nl" == *$'\n'checked=* ]]; then _ci_checked="${_ci_raw#*checked=}"; _ci_checked="${_ci_checked%%$'\n'*}"; fi
+  fi
+  # Stale beats every state but silence: an hour-old "✓" is a claim about a
+  # push that may since have been followed by three more.
+  if [[ "$_ci_checked" =~ ^[0-9]+$ ]] && (( _now - _ci_checked > 3600 )) \
+     && [[ -n "$_ci_state" && "$_ci_state" != "none" && "$_ci_state" != "unavailable" ]]; then
+    _seg_ci="${DIM}CI stale${RST}"
+  else
+    case "$_ci_state" in
+      success) _seg_ci="${DIM}CI${RST} ${GREEN}✓${RST}"  ;;
+      failure) _seg_ci="${DIM}CI${RST} ${RED}✗${RST}"    ;;
+      running) _seg_ci="${DIM}CI${RST} ${CYAN}●${RST}"   ;;
+      queued)  _seg_ci="${DIM}CI${RST} ${DIM}◌${RST}"    ;;
+      other)   _seg_ci="${DIM}CI${RST} ${DIM}⊘${RST}"    ;;
+      error)   _seg_ci="${DIM}CI ?${RST}"                ;;
+    esac
+  fi
+fi
+
+# CI self-refresh — same mechanics as claude-status/bumpii. Adaptive TTL: while
+# a run is in flight poll at TTL/10 (min 30s) so a green/red verdict lands while
+# you're still looking, and back off 6× when the branch has no runs at all
+# (nothing to watch — but keep polling, the first push to a new branch creates
+# one). Nothing to refresh without a branch, so the whole block needs _git_head.
+if _in_layout ci && [[ -n "$_ci_cache" ]]; then
+  _ci_ttl="$_cfg_ci_ttl"
+  [[ "$_ci_ttl" =~ ^[0-9]+$ ]] || _ci_ttl=300
+  case "$_ci_state" in
+    running|queued) _ci_ttl=$(( _ci_ttl / 10 )); (( _ci_ttl < 30 )) && _ci_ttl=30 ;;
+    none)           _ci_ttl=$(( _ci_ttl * 6 )) ;;
+  esac
+  _ci_mtime=$(stat -f%m "$_ci_cache" 2>/dev/null || stat -c%Y "$_ci_cache" 2>/dev/null || echo 0)
+  [[ "$_ci_mtime" =~ ^[0-9]+$ ]] || _ci_mtime=0
+  if (( _now - _ci_mtime > _ci_ttl )); then
+    _cipid_file="$_cache_dir/ci-refresh-${_HASH}.pid"
+    _spawn_refresher "$_cipid_file" 120 \
+      "$CLAUDII_HOME/bin/claudii-ci-refresh" --quiet \
+      --pid-file "$_cipid_file" --dir "$_ci_dir" --branch "$_git_head" \
+      --out "$_ci_cache"
+  fi
+fi
+
+# Other-sessions segment — surfaces OTHER live Claude Code sessions working in
+# this same project_path, so a long session doesn't silently drift out of sync
+# with a parallel one (the failure mode that motivated this: git state moved
+# under a session that had no idea another one was pushing to the same repo).
+# Reuses the per-render session cache (lib/helpers.sh: _session_files /
+# _parse_session_cache — the same file-based store `claudii se`/`si` read,
+# written by THIS script further up) instead of polling processes: no new
+# writer, just a read of state that already exists. _PSC_is_active is now
+# trustworthy (the ppid resolved above is the stable `claude` ancestor, not
+# the per-render wrapper it used to be) — no mtime-freshness workaround
+# needed. Gated like remotes/git-sync — the file scan only runs when the
+# segment is actually in the layout.
+#
+# Same-project match is normalized (_same_project), not exact string equality:
+# a sibling session running in a worktree (<repo>/.claude/worktrees/<x>, old
+# style <repo>/.claude-worktrees/<x>) or a subdirectory of the same repo is the
+# very case this segment exists to warn about, and those have a different raw
+# project_path. Both sides are collapsed to a repo root (worktree component and
+# everything after it stripped), then matched as equal or one being a
+# /-boundary path-prefix of the other (subdir).
+_norm_repo_root() {
+  local _p="$1"
+  case "$_p" in
+    */.claude/worktrees/*)  _p="${_p%%/.claude/worktrees/*}" ;;
+    */.claude-worktrees/*)  _p="${_p%%/.claude-worktrees/*}" ;;
+  esac
+  _NORM_ROOT="$_p"
+}
+_same_project() {
+  local _a _b
+  _norm_repo_root "$1"; _a="$_NORM_ROOT"
+  _norm_repo_root "$2"; _b="$_NORM_ROOT"
+  [[ -z "$_a" || -z "$_b" ]] && return 1
+  [[ "$_a" == "$_b" ]] && return 0
+  # subdir: require the boundary slash so /repo doesn't match /repo2
+  [[ "$_a" == "$_b"/* ]] && return 0
+  [[ "$_b" == "$_a"/* ]] && return 0
+  return 1
+}
+_seg_sessions=""
+if _in_layout sessions; then
+  _sess_dir="${cwd:-$workspace_project_dir}"
+  if [[ -n "$_sess_dir" && "$_sess_dir" != "null" ]]; then
+    _NOW="$_now"
+    _session_files "$_cache_dir"
+    _sess_other=0
+    # _parse_session_cache always initializes _PSC_project_path/_PSC_is_active
+    # itself (static reset + case-assign per field, not printf -v). This init
+    # exists ONLY to satisfy ShellCheck's SC2154: it can't see assignments in a
+    # sourced file, so without a local assignment here it flags the reads below
+    # as possibly-unset (it's what fixed the 2b292b0 CI failure).
+    _PSC_project_path="" _PSC_is_active=0
+    for _sf in "${_SESSION_FILES[@]}"; do
+      [[ "$_sf" == "$_session_file" ]] && continue   # skip this render's own row
+      # Cheap pre-filter: read ONLY the project_path line (pure bash, no _mtime
+      # fork) and drop non-matching projects BEFORE the full parse + stat +
+      # liveness work. Only same-project files pay for _parse_session_cache.
+      _sf_pp=""
+      while IFS= read -r _pp_line; do
+        case "$_pp_line" in
+          project_path=*) _sf_pp="${_pp_line#project_path=}"; break ;;
+        esac
+      done < "$_sf"
+      _same_project "$_sf_pp" "$_sess_dir" || continue
+      _parse_session_cache "$_sf"
+      (( _PSC_is_active )) || continue
+      (( ++_sess_other ))
+    done
+    (( _sess_other > 0 )) && _seg_sessions="${YELLOW}⚠${_sess_other}${RST}"
+  fi
+fi
+
+# ClaudeStatus — read status-models cache, render [Model glyph ...] + age + incident.
+_seg_claude_status=""
+_status_cache="${_cache_dir}/status-models"
+_sc_mtime=""   # set once below (render block); reused by the self-refresh TTL check
+if [[ -f "$_status_cache" ]]; then
+  _sc=""
+  { _sc=$(<"$_status_cache"); } 2>/dev/null
+  if [[ -n "$_sc" ]]; then
+    _sc_models=("opus" "sonnet" "haiku" "fable")
+    [[ -n "$_sc_models_cfg" ]] && IFS=',' read -ra _sc_models <<< "$_sc_models_cfg"
+    # Collapsed health: when every model is healthy the row is a single
+    # "claude ✓" — an unlisted model is assumed working. Only down/degraded
+    # models get named (Fable included, once its API presence surfaces); a
+    # uniform all-down / all-degraded row collapses to one "claude" glyph.
+    # No declare -A: bash 3.2 (macOS /bin/bash) maps every key to arr[0] and
+    # last-write-wins, so a per-model map would render the same label thrice.
+    #
+    # This is a DELIBERATE second copy of lib/helpers.sh's _status_cache_read /
+    # _status_cache_verdict, which every CLI consumer now shares. It stays
+    # inline because it must stay fork-free at render time — no `$(…)`, no
+    # subshell, nothing that would cost this hot path a process. Its agreement
+    # with the helper (and with lib/statusline.zsh's third copy) is no longer a
+    # comment you have to believe: tests/test_status_cache_agreement.sh feeds
+    # one cache to all three and compares what they render. Change the
+    # classification here and that test goes red.
+    _sc_total=0; _sc_ok=0; _sc_down=0; _sc_degr=0; _sc_problems=""
+    for _scm in "${_sc_models[@]}"; do
+      _scm="${_scm// /}"
+      [[ -z "$_scm" ]] && continue
+      (( ++_sc_total ))
+      case "$_scm" in
+        opus)   _scm_lbl="Opus"   ;;
+        sonnet) _scm_lbl="Sonnet" ;;
+        haiku)  _scm_lbl="Haiku"  ;;
+        fable)  _scm_lbl="Fable"  ;;
+        *)      _scm_lbl="$_scm"  ;;
+      esac
+      if [[ $'\n'"$_sc" == *$'\n'"${_scm}=down"* ]]; then
+        (( ++_sc_down )); _sc_worst="down"
+        _sc_problems+="${_sc_problems:+ }${DIM}${_scm_lbl}${RST} ${RED}↓${RST}"
+      elif [[ $'\n'"$_sc" == *$'\n'"${_scm}=degraded"* ]]; then
+        (( ++_sc_degr )); [[ "${_sc_worst:-}" != "down" ]] && _sc_worst="degraded"
+        _sc_problems+="${_sc_problems:+ }${DIM}${_scm_lbl}${RST} ${YELLOW}~${RST}"
+      else
+        (( ++_sc_ok ))
+      fi
+    done
+    if (( _sc_total > 0 )); then
+      if   (( _sc_ok   == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${GREEN}✓${RST}"
+      elif (( _sc_down == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${RED}↓${RST}"
+      elif (( _sc_degr == _sc_total )); then _seg_claude_status="${DIM}claude${RST} ${YELLOW}~${RST}"
+      else                                   _seg_claude_status="$_sc_problems"
+      fi
+      _seg_claude_status="${DIM}[${RST}${_seg_claude_status}${DIM}]${RST}"
+    fi
+
+    _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
+    if [[ "$_sc_mtime" =~ ^[0-9]+$ ]] && (( _sc_mtime > 0 )); then
+      _fmt_brief $(( _now - _sc_mtime ))
+      _seg_claude_status+=" ${DIM}${_BRIEF_FMT}${RST}"
+    fi
+
+    # Incident indicator. When a status incident exists but NONE of the tracked
+    # models are actually affected (e.g. a feature-access note naming only
+    # Mythos/Fable), show a neutral note glyph instead of the stage-colored
+    # alarm — your models are fine, this is informational. When a tracked model
+    # IS affected, the stage color (‼/⚐/◎) reflects the incident stage; absent
+    # an incident marker, a bare model outage falls back to ⚠.
+    # Same two fields (_incident, "any model affected") the helper exposes as
+    # _SC_INCIDENT / _SC_ANY_ISSUE; gated by tests/test_status_cache_agreement.sh.
+    _sc_incident=""
+    if   [[ $'\n'"$_sc" == *$'\n'"_incident=investigating"* ]]; then _sc_incident="investigating"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=identified"* ]];    then _sc_incident="identified"
+    elif [[ $'\n'"$_sc" == *$'\n'"_incident=monitoring"* ]];    then _sc_incident="monitoring"
+    fi
+    if   [[ -n "$_sc_incident" && -z "${_sc_worst:-}" ]];  then _seg_claude_status+=" ${DIM}ⓘ${RST}"
+    elif [[ "$_sc_incident" == "investigating" ]];        then _seg_claude_status+=" ${RED}‼${RST}"
+    elif [[ "$_sc_incident" == "identified" ]];           then _seg_claude_status+=" ${YELLOW}⚐${RST}"
+    elif [[ "$_sc_incident" == "monitoring" ]];           then _seg_claude_status+=" ${CYAN}◎${RST}"
+    elif [[ "${_sc_worst:-}" == "down" ]];                then _seg_claude_status+=" ${RED}⚠${RST}"
+    elif [[ "${_sc_worst:-}" == "degraded" ]];            then _seg_claude_status+=" ${YELLOW}⚠${RST}"
+    fi
+  fi
+fi
+
+# ClaudeStatus self-refresh — the zsh precmd is the primary cache refresher,
+# but inside a long Claude Code session no zsh prompt may ever fire, so the
+# segment age would grow unbounded (this script only reads the cache).
+# Spawn claudii-status in the background when the cache is older than the
+# configured TTL (or missing). claudii-status re-checks the TTL itself and
+# exits fast on a fresh cache; the PID-file liveness check prevents stacking
+# fetches across rapid renders and parallel sessions. Skipped entirely when
+# the layout doesn't render the claude-status segment.
+if _in_layout claude-status; then
+  _sc_ttl="$_cfg_status_ttl"
+  [[ "$_sc_ttl" =~ ^[0-9]+$ ]] || _sc_ttl=300
+  # Reuse the mtime already stat'd for the age display; only fork stat when the
+  # render block above did not run (cache absent / empty → _sc_mtime still "").
+  [[ "$_sc_mtime" =~ ^[0-9]+$ ]] || _sc_mtime=$(stat -f%m "$_status_cache" 2>/dev/null || stat -c%Y "$_status_cache" 2>/dev/null || echo 0)
+  _sc_age=$(( _now - _sc_mtime ))
+  if (( _sc_age > _sc_ttl )); then
+    _spid_file="$_cache_dir/status.pid"
+    # Same 30s recycling window as the zsh spawner (lib/statusline.zsh) that
+    # also refreshes this cache.
+    _spawn_refresher "$_spid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_spid_file"
+  fi
+fi
+
+# omlx local-agent indicator — gateii's active.json, 300s stale-guard.
+_seg_omlx=""
+_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-$HOME/offline_coding/gateii/data/agents/active.json}}"
+# Layout-gated: the jq below is a fork, and mere existence of gateii's
+# active.json is not a reason to pay it on a layout that never shows omlx.
+if _in_layout omlx && [[ -f "$_omlx_active_path" ]]; then
+  IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
+    jq -r '[
+      (.started_epoch // 0 | tostring),
+      (.task // "?"),
+      (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
+    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
+  )"
+  if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
+    _omlx_age=$(( _now - _omlx_started ))
+    if (( _omlx_age >= 0 && _omlx_age < 300 )); then
+      _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
+    fi
+  fi
+fi
+
+# VPN — WireGuard tunnel name from the state file.
+_seg_vpn=""
+_vpn_state="${_cache_dir}/vpnii"
+if [[ -f "$_vpn_state" ]]; then
+  _vpn_tunnel=$(<"$_vpn_state")
+  [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
+fi
+
+# Tailscale (CGNAT 100.64.0.0/10) — its own segment, not glued to `vpn`, so a
+# layout can place WireGuard and Tailscale on different lines. The ifconfig
+# probe is a fork + grep on every render, so cache the up/down result ~30s
+# (shared with the zsh RPROMPT segment in lib/vpnii.zsh: $_cache_dir/vpnii-ts,
+# "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through to a re-probe via
+# the numeric guard.
+#
+# The 30s cache bounded how OFTEN the probe ran but not WHETHER it ran: a
+# layout without `tailscale` still paid the ifconfig fork every time the cache
+# expired. Layout-gated now, like every other fork owner.
+_seg_tailscale=""
+_ts_cache="${_cache_dir}/vpnii-ts"
+_ts_up=1; _ts_have=0
+if ! _in_layout tailscale; then
+  _ts_have=1; _ts_up=1   # not shown — skip the probe, claim nothing
+elif [[ -r "$_ts_cache" ]]; then
+  _ts_line=""; { _ts_line=$(<"$_ts_cache"); } 2>/dev/null
+  _ts_ep="${_ts_line%% *}"; _ts_val="${_ts_line##* }"
+  if [[ "$_ts_ep" =~ ^[0-9]+$ ]] && (( _now - _ts_ep < 30 )); then
+    [[ "$_ts_val" == "1" ]] && _ts_up=0
+    _ts_have=1
+  fi
+fi
+if (( ! _ts_have )); then
+  _ts_up=1
+  grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' <<< "$(ifconfig 2>/dev/null)" && _ts_up=0
+  # Atomic, like every other cache this file writes: the zsh RPROMPT segment
+  # (lib/vpnii.zsh) writes the same path, so a truncating `>` lets a reader see
+  # a half-written line. The numeric guard above catches pure garbage but not a
+  # torn "<epoch> " — that parses as epoch-is-also-the-value.
+  _ts_tmp="${_ts_cache}.tmp.$$"
+  if printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_tmp" 2>/dev/null; then
+    mv -f "$_ts_tmp" "$_ts_cache" 2>/dev/null || rm -f "$_ts_tmp" 2>/dev/null
+  else
+    rm -f "$_ts_tmp" 2>/dev/null
+  fi
+  true
+fi
+(( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"
+
+# Proxy — non-empty only when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
+_seg_proxy=""
+for _p in \
+  "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
+  "${cwd:+${cwd}/.claude/settings.local.json}" \
+  ".claude/settings.local.json"; do
+  [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
+done
+# Gated on layout membership like the other fork-owning segments — this jq
+# used to run on every render whenever a settings.local.json existed.
+if _in_layout proxy && [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
+  _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
+  if [[ -n "$_proxy_url" ]]; then
+    if [[ "$_proxy_url" == "http://localhost:8888" ]]; then
+      _proxy_label="gateii"
+    else
+      _proxy_label="${_proxy_url#http://}"; _proxy_label="${_proxy_label#https://}"; _proxy_label="${_proxy_label%%/*}"
+    fi
+    _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
+  else
+    _seg_proxy="${DIM}→ api${RST}"
+  fi
+fi
+
+# bumpii — pending tool updates (⬆) and unread release news (✉), read from
+# the cache claudii-bumpii-refresh maintains. A "?" in the cache is a half
+# that could not be checked and renders as such — the one thing an update
+# indicator must not do is show a broken refresh as "nothing pending". The
+# same rule ages the whole segment: past 26h the numbers are yesterday's,
+# and "stale" is the honest render, not a clean nothing.
+_seg_bumpii=""
+_bumpii_cache="${_cache_dir}/status-bumpii"
+_bp_mtime=""
+if _in_layout bumpii && [[ -f "$_bumpii_cache" ]]; then
+  _bp=""
+  { _bp=$(<"$_bumpii_cache"); } 2>/dev/null
+  _bp_nl=$'\n'"$_bp"
+  _bp_pending=""; _bp_inbox=""
+  if [[ "$_bp_nl" == *$'\n'pending=* ]]; then _bp_pending="${_bp#*pending=}"; _bp_pending="${_bp_pending%%$'\n'*}"; fi
+  if [[ "$_bp_nl" == *$'\n'inbox=* ]]; then _bp_inbox="${_bp#*inbox=}"; _bp_inbox="${_bp_inbox%%$'\n'*}"; fi
+  _bp_mtime=$(stat -f%m "$_bumpii_cache" 2>/dev/null || stat -c%Y "$_bumpii_cache" 2>/dev/null || echo 0)
+  if [[ "$_bp_mtime" =~ ^[0-9]+$ ]] && (( _bp_mtime > 0 )) && (( _now - _bp_mtime > 93600 )); then
+    _seg_bumpii="${DIM}⬆ stale${RST}"
+  else
+    if [[ "$_bp_pending" == "?" ]]; then
+      _seg_bumpii="${DIM}⬆ ?${RST}"
+    elif [[ "$_bp_pending" =~ ^[0-9]+$ ]] && (( _bp_pending > 0 )); then
+      _seg_bumpii="${YELLOW}⬆ ${_bp_pending}${RST}"
+    fi
+    if [[ "$_bp_inbox" == "?" ]]; then
+      _seg_bumpii+="${_seg_bumpii:+ }${DIM}✉ ?${RST}"
+    elif [[ "$_bp_inbox" =~ ^[0-9]+$ ]] && (( _bp_inbox > 0 )); then
+      _seg_bumpii+="${_seg_bumpii:+ }${YELLOW}✉ ${_bp_inbox}${RST}"
+    fi
+  fi
+fi
+
+# bumpii self-refresh — same mechanics as claude-status above: fork the
+# refresher when the cache is older than the TTL or missing. The refresher
+# re-checks the TTL itself, and the PID-file guard prevents stacking fetches
+# across rapid renders and parallel sessions. Skipped entirely when the
+# layout does not render the segment.
+if _in_layout bumpii; then
+  _bp_ttl="$_cfg_bumpii_ttl"
+  [[ "$_bp_ttl" =~ ^[0-9]+$ ]] || _bp_ttl=21600
+  # Adaptive gate (same as claudii-status): while the segment shows anything —
+  # a count or a "?" half — poll at TTL/12 (min 5m) so "I just upgraded"
+  # clears within minutes; the quiet state keeps the full TTL.
+  if [[ -n "$_seg_bumpii" ]]; then
+    _bp_ttl=$(( _bp_ttl / 12 ))
+    (( _bp_ttl < 300 )) && _bp_ttl=300
+  fi
+  [[ "$_bp_mtime" =~ ^[0-9]+$ ]] || _bp_mtime=$(stat -f%m "$_bumpii_cache" 2>/dev/null || stat -c%Y "$_bumpii_cache" 2>/dev/null || echo 0)
+  _bp_age=$(( _now - _bp_mtime ))
+  # brew renews var/homebrew/locks on every write op — younger than the cache
+  # means the machine changed since the last look: refresh now, not at the
+  # TTL mark. One stat per render, only while the segment is in the layout.
+  _bp_brew=0
+  _bp_hb="${HOMEBREW_PREFIX:-/opt/homebrew}"
+  [[ -d "$_bp_hb" ]] || _bp_hb="/usr/local"
+  if [[ -d "$_bp_hb/var/homebrew/locks" ]]; then
+    _bp_lm=$(stat -f%m "$_bp_hb/var/homebrew/locks" 2>/dev/null || stat -c%Y "$_bp_hb/var/homebrew/locks" 2>/dev/null || echo 0)
+    [[ "$_bp_lm" =~ ^[0-9]+$ ]] && (( _bp_lm > _bp_mtime )) && _bp_brew=1
+  fi
+  if (( _bp_age > _bp_ttl || _bp_brew )); then
+    _bpid_file="$_cache_dir/bumpii-refresh.pid"
+    _spawn_refresher "$_bpid_file" 30 \
+      "$CLAUDII_HOME/bin/claudii-bumpii-refresh" --quiet --pid-file "$_bpid_file"
+  fi
+fi
+
+while IFS= read -r _line_segs; do
+  [[ -z "$_line_segs" ]] && continue
+  _line_out=""; _first=1; _line_len=0; _prev_out=""; _prev_len=0; _dropped=0
+  IFS=',' read -ra _segs <<< "$_line_segs"
+  for _seg in "${_segs[@]}"; do
+    case "$_seg" in
+      model)         _val="$_seg_model"    ;;
+      cc-version)    _val="$_seg_cc_version" ;;
+      context)       _val="$_seg_context_compact" ;;
+      context-bar)   _val="$_seg_context"  ;;
+      compact-eta)   _val="$_seg_compact_eta" ;;
+      cache-hit)     _val="$_seg_cache_hit" ;;
+      cache-ttl)     _val="$_seg_cache_ttl" ;;
+      response)      _val="$_seg_response" ;;
+      cost)          _val="$_seg_cost"     ;;
+      rate-5h)       _val="$_seg_rate5h"   ;;
+      rate-7d)       _val="$_seg_rate7d"   ;;
+      tokens)        _val="$_seg_tokens"   ;;
+      lines-changed) _val="$_seg_lines"    ;;
+      duration)      _val="$_seg_dur"      ;;
+      burn-eta)      _val="$_seg_eta"      ;;
+      pace)          _val="$_seg_pace"     ;;
+      cron)          _val="$_seg_cron"     ;;
+      bg-tasks)      _val="$_seg_bg"       ;;
+      compactions)   _val="$_seg_compactions" ;;
+      worktree)      _val="$_seg_worktree" ;;
+      worktrees)     _val="$_seg_worktrees" ;;
+      agent)         _val="$_seg_agent"    ;;
+      session-name)  _val="$_seg_session_name" ;;
+      api-duration)  _val="$_seg_api_dur"  ;;
+      delta-5h)      _val="$_seg_delta5h"  ;;
+      delta-7d)      _val="$_seg_delta7d"  ;;
+      cache-create)  _val="$_seg_cache_create" ;;
+      dir)           _val="$_seg_dir"      ;;
+      github)        _val="$_seg_github"   ;;
+      remotes)       _val="$_seg_remotes"  ;;
+      git-sync)      _val="$_seg_git_sync" ;;
+      branch)        _val="$_seg_branch"   ;;
+      ci)            _val="$_seg_ci"       ;;
+      sessions)      _val="$_seg_sessions" ;;
+      claude-status) _val="$_seg_claude_status" ;;
+      vpn)           _val="$_seg_vpn"      ;;
+      tailscale)     _val="$_seg_tailscale" ;;
+      omlx)          _val="$_seg_omlx"     ;;
+      bumpii)        _val="$_seg_bumpii"   ;;
+      proxy)         _val="$_seg_proxy"    ;;
+      clock)         _val="$_seg_clock"    ;;
+      ruler)
+        # Fill remaining terminal width with ─. Falls back to 60 cols.
+        _val=""
+        _ruler_cols=$(( _term_cols > 0 ? _term_cols : 60 ))
+        if (( _first )); then
+          _used=0
+        else
+          _visible_len "$_line_out"
+          _used=$(( _VLEN + _SEP_LEN ))
+        fi
+        _fill=$(( _ruler_cols - _used ))
+        if (( _fill > 1 )); then
+          printf -v _v "%${_fill}s" ""
+          _val="${DIM}${_v// /─}${RST}"
+        fi
+        ;;
+      *)             _val=""               ;;
+    esac
+    if [[ -n "$_val" ]]; then
+      if (( _first )); then
+        # The first segment always renders, however wide. A line reduced to
+        # nothing but an ellipsis carries no information at all — this is the
+        # one case where max_width can be exceeded, and it takes a layout whose
+        # very first segment is already wider than the whole budget.
+        _line_out="$_val"; _first=0
+        _visible_len "$_val"; _line_len=$_VLEN
+      else
+        _visible_len "$_val"
+        if (( _cfg_max_width > 0 )) \
+           && (( _line_len + _SEP_LEN + _VLEN > _cfg_max_width )); then
+          # Over budget: skip this one and keep going, rather than truncating
+          # the rest of the line with it. One wide segment (a long branch name)
+          # would otherwise take every cheap segment behind it down too — and
+          # ⇡fj·gh, ●3 and ⑂1 cost three columns each. The drop is recorded and
+          # marked once, at the end.
+          _dropped=1
+          continue
+        fi
+        _prev_out="$_line_out"; _prev_len=$_line_len
+        _line_out+="${SEP}${_val}"
+        _line_len=$(( _line_len + _SEP_LEN + _VLEN ))
+      fi
+    fi
+  done
+  # A shortened line has to show that it was shortened — otherwise it reads as
+  # "there was nothing else to show". The marker needs room too: if it has
+  # none, hand back the last segment, which always frees enough (that segment
+  # cost at least a separator plus one column, exactly what the marker needs).
+  if (( _dropped )); then
+    if (( _line_len + _SEP_LEN + 1 > _cfg_max_width )) && [[ -n "$_prev_out" ]]; then
+      _line_out="$_prev_out"; _line_len=$_prev_len
+    fi
+    _line_out+="${SEP}${DIM}…${RST}"
+  fi
+  [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
+done <<< "$_lines_raw"
+
+# Vibemap append — opt-in, fire-and-forget, errors silent.
+if [[ "$_cfg_vibemap_enabled" == "true" ]]; then
+  _vm_delta=0
+  if [[ "$_last_duration_ms" =~ ^[0-9]+$ && "$duration_ms" =~ ^[0-9]+$ ]]; then
+    _vm_delta=$(( duration_ms - _last_duration_ms ))
+    (( _vm_delta < 0 )) && _vm_delta=0
+  fi
+  _vm_path=$(_vibemap_resolve_path "$_cfg_vibemap_path")
+  _vibemap_append "$_vm_path" "$model" "$session_id" "$_vm_delta" 2>/dev/null || true
+fi
+
+true

@@ -1,0 +1,305 @@
+#!/bin/bash
+# claudii — Claude Interaction Intelligence CLI
+# Usage: claudii <command> [args]
+#
+# Thin dispatcher — command logic lives in lib/cmd/*.sh, helpers in lib/helpers.sh
+
+set -euo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+source "$CLAUDII_HOME/lib/visual.sh"
+source "$CLAUDII_HOME/lib/spinner.sh"
+source "$CLAUDII_HOME/lib/helpers.sh"
+source "$CLAUDII_HOME/lib/search_dir.sh"
+source "$CLAUDII_HOME/lib/render.sh"
+VERSION="0.28.0"
+
+# TTY detection — 1 if stdout is a terminal, 0 if piped
+_TTY=0
+[ -t 1 ] && _TTY=1
+
+# Explicit output format flag (--json / --tsv), parsed before alias expansion
+_FORMAT=""
+_args_filtered=()
+for _arg in "$@"; do
+  case "$_arg" in
+    --json) _FORMAT="json" ;;
+    --tsv)  _FORMAT="tsv"  ;;
+    *)      _args_filtered+=("$_arg") ;;
+  esac
+done
+set -- "${_args_filtered[@]+"${_args_filtered[@]}"}"
+unset _args_filtered _arg
+
+command -v jq >/dev/null 2>&1 || {
+  echo "claudii: jq not found. Install: brew install jq" >&2; exit 1
+}
+
+# Auto colors (git-style): blank all ANSI constants when stdout is not a
+# terminal, so piped/redirected pretty output is clean text. --json/--tsv are
+# already plain by construction. CLAUDII_FORCE_COLOR=1 opts back in (pagers
+# like `claudii se | less -R`). The theme loader respects the blanking via
+# its empty-RESET guard (lib/visual.sh).
+if (( ! _TTY )) && [[ "${CLAUDII_FORCE_COLOR:-0}" != "1" ]]; then
+  CLAUDII_CLR_GREEN="" CLAUDII_CLR_YELLOW="" CLAUDII_CLR_RED="" CLAUDII_CLR_CYAN=""
+  CLAUDII_CLR_DIM="" CLAUDII_CLR_BOLD="" CLAUDII_CLR_ACCENT="" CLAUDII_CLR_RESET=""
+  CLAUDII_FP_PALETTE=("" "" "" "" "" "")
+fi
+
+usage() {
+  local d="${CLAUDII_CLR_DIM}›${CLAUDII_CLR_RESET}"  # dim separator
+  printf '\n'
+  printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET} — Claude Interaction Intelligence\n" "$VERSION"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}aliases${CLAUDII_CLR_RESET}\n"
+  local _def="${CLAUDII_HOME}/config/defaults.json"
+  while IFS=$'\t' read -r _a _m _e _desc; do
+    [[ -z "$_a" ]] && continue
+    printf "    %-5s  %-7s  %-6s  $d %s\n" "$_a" "$_m" "$_e" "$_desc"
+  done < <(jq -r '.aliases // {} | to_entries[] | [.key, .value.model, .value.effort, .value.description] | @tsv' "$_def" 2>/dev/null)
+  printf "    %-5s  %-21s  $d %s\n"      "clh" ""                 "alias table + model status"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Display Layers${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "on | off"                        "enable/disable all layers"
+  printf "    %-33s $d %s\n" "claudestatus [on|off]"           "ClaudeStatus RPROMPT toggle"
+  printf "    %-33s $d %s\n" "session-dashboard [on|off]"      "Session Dashboard above-prompt toggle"
+  printf "    %-33s $d %s\n" "cc-statusline [on|off|preset]"   "CC-Statusline inside Claude (on/off, preset focused|calm|default)"
+  printf "    %-33s $d %s\n" "insomnii [on|off|auto|install]"  "bedtime statusline plugin (delegates clock segment)"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Sessions${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "sessions (se)"                   "list all active sessions"
+  printf "    %-33s $d %s\n" "sessions-inactive (si)"          "list all inactive sessions"
+  printf "    %-33s $d %s\n" "session <session-id>"            "per-session token / tool drilldown"
+  printf "    %-33s $d %s\n" "pin / unpin <session-id>"        "protect session from GC"
+  printf "    %-33s $d %s\n" "gc (g)"                          "clean up stale session caches"
+  printf "    %-33s $d %s\n" "resume <session-id>"             "resume a session by ID"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Cost${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "cost (c)"                        "aggregate session costs"
+  printf "    %-33s $d %s\n" "week (w)"                        "usage inside the weekly rate-limit window"
+  printf "    %-33s $d %s\n" "trends (t)"                      "weekly/daily cost history"
+  printf "    %-33s $d %s\n" "skills-cost"                     "per-skill / per-plugin / per-MCP-tool cost breakdown"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Activity & Insights${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "vibemap [grid|strip|status]"     "activity heatmap (opt-in)"
+  printf "    %-33s $d %s\n" "tokens [--days N]"               "token usage by type / model / day"
+  printf "    %-33s $d %s\n" "perf (pf) [--repo NAME]"         "response-time p50/p90/p99, tok/s, latency trend, health"
+  printf "    %-33s $d %s\n" "tools [--days N]"                "tool call counts, error rates, subagents"
+  printf "    %-33s $d %s\n" "repos [REPO] [--daily]"          "sessions per repo — count + real duration"
+  printf "    %-33s $d %s\n" "limits [--days N]"               "rate-limit hits — when + which model"
+  printf "    %-33s $d %s\n" "cache [--days N]"                "prompt-cache hit-rate insights"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}Config & Integrations${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
+  printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
+  printf "    %-33s $d %s\n" "omlx [status|connect|test|disconnect]" "local-LLM (gateii/oMLX) integration"
+  printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
+  printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
+  printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
+  printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
+  printf "    %-33s $d %s\n" "explain (layers)"               "components, symbols & data flow"
+  printf "    %-33s $d %s\n" "update"                          "update to latest version"
+  printf "    %-33s $d %s\n" "version"                         "show version number"
+  printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
+  printf "    %-33s $d %s\n" "restart"                         "reload plugin"
+  printf '\n'
+  printf '\n'
+  printf "  ${CLAUDII_CLR_ACCENT}man claudii${CLAUDII_CLR_RESET}  full reference\n"
+  printf '\n'
+}
+
+_cmd_resume() {
+  local _id="${1:-}"
+  case "$_id" in
+    # Caught before the exec: `claudii resume --bogus` used to hand the flag
+    # straight to `claude --resume --bogus` and answer 0.
+    -*) _cli_unknown_opt resume "$_id" '<session-id>' || return $? ;;
+  esac
+  if [[ -z "$_id" ]]; then
+    echo "Usage: claudii resume <session-id>" >&2
+    echo "  Use 'claudii se' to list sessions with their IDs" >&2
+    return 1
+  fi
+  exec claude --resume "$_id"
+}
+
+source "$CLAUDII_HOME/lib/cmd/system.sh"
+source "$CLAUDII_HOME/lib/cmd/sessions.sh"
+source "$CLAUDII_HOME/lib/cmd/cost.sh"
+source "$CLAUDII_HOME/lib/cmd/overview.sh"
+source "$CLAUDII_HOME/lib/cmd/skills-cost.sh"
+source "$CLAUDII_HOME/lib/cmd/display.sh"
+source "$CLAUDII_HOME/lib/cmd/config.sh"
+source "$CLAUDII_HOME/lib/cmd/omlx.sh"
+source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
+source "$CLAUDII_HOME/lib/vibemap.sh"
+source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
+source "$CLAUDII_HOME/lib/cmd/insights.sh"
+source "$CLAUDII_HOME/lib/cmd/perf.sh"
+source "$CLAUDII_HOME/lib/cmd/week.sh"
+
+# Centralized config+theme boot — every command needs CLAUDII_CLR_* painted
+# with the user's theme.name before it prints a single line, but nine
+# commands (gc, pin, unpin, vibemap, vpnii, cc-statusline, update, version,
+# changelog) never reached _cfg_init (the only place that called
+# _claudii_theme_load) because their handlers don't touch config at all —
+# they rendered in the hardcoded default palette regardless of theme.name.
+# Rather than sprinkle `_cfg_init` into each new colorless-until-now handler
+# (whack-a-mole — the next command added would just repeat the bug), the
+# dispatcher now loads it once, centrally, before the case below runs. Every
+# handler still gets CONFIG/CONFIG_DIR/DEFAULTS/theme exactly as if it had
+# called _cfg_init itself first.
+#
+# `version` is deliberately excluded: it never emits a color (plain `echo
+# "$VERSION"`, or an uncolored jq object under --json), so painting the
+# theme for it would be a jq fork bought for zero visible effect — the one
+# case explicitly cost-sensitive enough to matter (scripts/completions may
+# shell out to `claudii version` repeatedly). Every other command pays at
+# most one theme-load jq fork it didn't already pay elsewhere; commands that
+# already call `_cfg_init` in their own handler (se, cost, doctor, …) now
+# resolve the theme twice per invocation — accepted since `_claudii_theme_load`
+# and `_cfg_init` live in lib/helpers.sh/lib/visual.sh, outside this fix's
+# Touches, so no cross-process memoization was available to dedupe it.
+#
+# Deliberately NOT the full `_cfg_init`: that also mkdir -p's the config dir
+# and cp's config/defaults.json into place on a first run (real forks, only
+# useful when a handler is about to WRITE config) — dead weight for the
+# read-only, colored-output-only nine this exists to fix. Handlers that need
+# real config access (writes, _cfgget lookups, …) still call the full
+# `_cfg_init` themselves, unchanged.
+_claudii_boot() {
+  case "${1:-}" in
+    version) return 0 ;;
+  esac
+  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  _claudii_theme_load
+}
+
+# Shorthand aliases — expand before main dispatcher.
+case "${1:-}" in
+  s)     set -- status             "${@:2}" ;;
+  pf)    set -- perf               "${@:2}" ;;
+  se)    set -- sessions           "${@:2}" ;;
+  ss)    set -- sessions           "${@:2}" ;;
+  si)    set -- sessions-inactive  "${@:2}" ;;
+  about) set -- changelog          "${@:2}" ;;
+  c)     set -- cost               "${@:2}" ;;
+  w)     set -- week               "${@:2}" ;;
+  t)     set -- trends             "${@:2}" ;;
+  d)     set -- doctor             "${@:2}" ;;
+  g)     set -- gc                 "${@:2}" ;;
+esac
+
+_claudii_boot "${1:-}"
+
+# Commands that take no arguments at all — their dispatch arm below calls the
+# handler with none, so an extra token could never be seen and was silently
+# swallowed: `claudii doctor --bogus` just ran the doctor and answered 0, and
+# `claudii update --bogus` went ahead and updated. One gate here rather than a
+# guard bolted onto each of the fifteen handlers (several of which live in files
+# this dispatcher only sources).
+#
+# --json/--tsv are already stripped into $_FORMAT above, so `doctor --json`
+# still arrives here as a bare `doctor`. `layers`/`components` are absent on
+# purpose: they exec into `explain`, which is on the list, so they inherit it.
+#
+# Nothing derives this list, so it can rot — tests/test_arg_contract.sh walks
+# EVERY arm of the dispatch case below and fails on the first one that does not
+# answer rc 2, which is what keeps it honest.
+case "${1:-}" in
+  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|install-sessionline|help|--help|-h)
+    if [[ $# -gt 1 ]]; then _cli_unknown_opt "$1" "$2" || exit $?; fi
+    ;;
+esac
+
+# Calling convention: a handler receives its OWN arguments — "${@:2}" — never
+# the command name. Three conventions used to be in play here ("$@", "${@:2}",
+# and nothing at all), which is why every command carried its own way of
+# skipping the command name, and why `claudii cost --bogus` was unrejectable:
+# its parser looped over the full "$@" including the literal "cost", so it had
+# to tolerate every token it did not recognise.
+#
+# The arms still passing "$@" (status, config, omlx, session-dashboard, …) hand
+# their arguments to handlers in lib/cmd/{system,sessions,display,config,omlx,
+# vpnii,vibemap,perf}.sh, which index $2 themselves; converting them means
+# editing those files, which is outside this change's scope. They are the same
+# set tests/test_arg_contract.sh still lists as not yet under the contract.
+case "${1:-}" in
+  # System commands
+  on)                  _cmd_on                ;;
+  off)                 _cmd_off               ;;
+  claudestatus)        _cmd_claudestatus "$@"        ;;
+  session-dashboard)   _cmd_session_dashboard "$@"   ;;
+  dashboard)           _cmd_session_dashboard "$@"   ;; # deprecated alias
+  status)              _cmd_status "$@"       ;;
+  cc-statusline)       _cmd_cc_statusline "$@" ;;
+  insomnii)            _cmd_insomnii "$@"      ;;
+  sessionline)         exec "$0" cc-statusline "${@:2}" ;;
+  install-sessionline) exec "$0" cc-statusline on ;;
+  update)              _cmd_update            ;;
+  doctor)              _cmd_doctor            ;;
+
+  # Session commands
+  cost)                _cmd_cost "${@:2}"     ;;
+  week)                _cmd_week "${@:2}"     ;;
+  skills-cost)         _cmd_skills_cost "${@:2}" ;;
+  sessions)
+    if [[ "${2:-}" == "--resume" && -n "${3:-}" ]]; then
+      exec claude --resume "$3"
+    fi
+    _cmd_sessions "$@"
+    ;;
+  sessions-inactive)   _cmd_sessions_inactive ;;
+  pin)                 _cmd_pin "$@"          ;;
+  unpin)               _cmd_unpin "$@"        ;;
+  gc)                  _cmd_gc "$@"           ;;
+  resume)              _cmd_resume "${@:2}"   ;;
+  "")                  _cmd_default           ;;
+
+  # Display commands
+  trends)              _cmd_trends            ;;
+  cache)               _cmd_cache "${@:2}"    ;;
+  tokens)              _cmd_tokens "${@:2}"   ;;
+  tools)               _cmd_tools "${@:2}"    ;;
+  repos)               _cmd_repos "${@:2}"    ;;
+  perf)                _cmd_perf "$@"         ;;  # still "$@": lib/cmd/perf.sh is outside this change's scope
+  limits)              _cmd_limits "${@:2}"   ;;
+  session)             _cmd_session "${@:2}"  ;;
+  explain)             _cmd_explain           ;;
+  layers|components)   exec "$0" explain "${@:2}" ;;
+  version)             _cmd_version           ;;
+  changelog)           _cmd_changelog         ;;
+  42)                  _cmd_42                ;;
+
+  # Config commands
+  config)              _cmd_config "$@"       ;;
+  agents)              _cmd_agents            ;;
+  search)              _cmd_search "$@"       ;;
+  omlx)                _cmd_omlx "$@"         ;;
+  vpnii)               _cmd_vpnii "$@"        ;;
+  vibemap)             _cmd_vibemap "$@"      ;;
+
+  restart)
+    # Shell-only by nature: reloading means re-sourcing ~/.zshrc in the CALLING
+    # shell, which a child process cannot do. The plugin's `claudii` wrapper
+    # (lib/functions.zsh) intercepts this before the binary is reached, so
+    # arriving here means the plugin is not loaded — say that instead of
+    # "Unknown command", which is what a documented command used to answer.
+    echo "claudii: 'restart' is a shell function — it re-sources your shell, which this binary cannot do." >&2
+    echo "  Load the plugin (source .../claudii.plugin.zsh) or run: exec zsh" >&2
+    exit 1
+    ;;
+
+  # Help
+  help|--help|-h)      usage                  ;;
+
+  # Unknown
+  *)
+    echo "Unknown command: $1 — run 'claudii help' for available commands" >&2
+    usage; exit 1
+    ;;
+esac

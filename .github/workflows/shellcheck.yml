@@ -1,0 +1,34 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Rapid fix-up pushes to main should not queue behind their predecessor.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # scripts/lint.sh instead of a scan action, so the same command runs here
+      # and locally. It follows sourced files (-x) from the entry points, which
+      # is the only way lib/cmd/*.sh lint correctly: they are fragments whose
+      # _PSC_* globals are assigned in lib/helpers.sh, and standalone they
+      # produce 29 "referenced but not assigned" warnings that say nothing.
+      # It also picks shell files by shebang, so bin/'s Python receiver is not
+      # parsed as bash.
+      #
+      # This replaces ludeeus/action-shellcheck@master (a mutable ref) scanning
+      # ./bin only — with a paths filter that meant lib/, scripts/ and tests/
+      # never triggered the workflow at all.
+      - name: ShellCheck
+        run: bash scripts/lint.sh

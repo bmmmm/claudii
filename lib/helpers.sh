@@ -1,0 +1,775 @@
+# lib/helpers.sh — shared helper functions sourced by bin/claudii
+#
+# Pure bash (3.2 compatible). No top-level side effects — all logic in functions.
+# Callers must source visual.sh, spinner.sh first (for CLAUDII_CLR_*/CLAUDII_SYM_*
+# and _claudii_spinner) and must set CLAUDII_HOME.
+
+# Shared relative-time formatters (_fmt_rel / _fmt_brief)
+# shellcheck source=lib/timefmt.sh
+source "$CLAUDII_HOME/lib/timefmt.sh"
+
+# Returns 0 (true) when output should be plain (no ANSI colors):
+# either piped without an explicit format flag, or an explicit --json/--tsv flag is set.
+_plain() { [[ "${_TTY:-0}" -eq 0 ]] || [[ -n "${_FORMAT:-}" ]]; }
+
+# Validate config key — alphanumeric, dots, hyphens, underscores only (prevents jq injection)
+_validate_key() { [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]] || { echo "Invalid key: $1 (allowed: alphanumeric, dots, hyphens, underscores)" >&2; return 1; }; }
+
+# Returns 0 when the given Claude Code statusLine command is connected to
+# claudii-cc-statusline — either directly ("claudii-cc-statusline",
+# "cc-insomnii --after=claudii-cc-statusline") or through one level of wrapper
+# indirection (e.g. "cc-insomnii --after=my-wrap" where my-wrap is a script
+# that invokes claudii-cc-statusline). Every word of the command (a leading
+# --after= is stripped) that resolves to a readable file is grepped for the
+# literal string. Used by on/cc-statusline/doctor/overview so a custom wrapper
+# chain is recognized instead of being reported as "other" — or worse,
+# clobbered by `claudii on`.
+# Usage: _cc_statusline_connected "<statusLine command string>"
+_cc_statusline_connected() {
+  local _cmd="${1:-}" _w _p
+  [[ -z "$_cmd" ]] && return 1
+  [[ "$_cmd" == *claudii-cc-statusline* ]] && return 0
+  # read -ra instead of unquoted `for _w in $_cmd` — word-splitting is wanted,
+  # but an unquoted expansion would also glob (a command containing `*` or `?`
+  # would expand against the cwd).
+  local -a _words=()
+  IFS=' ' read -ra _words <<< "$_cmd"
+  for _w in "${_words[@]}"; do
+    _w="${_w#--after=}"
+    [[ -z "$_w" || "$_w" == -* ]] && continue
+    _p=$(command -v "$_w" 2>/dev/null) || continue
+    [[ -f "$_p" && -r "$_p" ]] && grep -q "claudii-cc-statusline" "$_p" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# File mtime (epoch seconds) — single fork: BSD `stat -f%m`, GNU `stat -c%Y` fallback,
+# 0 if both fail. Canonical home for the idiom that was inlined across lib/cmd/*.
+# (The zsh hot paths in statusline.zsh/functions.zsh prefer the zstat builtin instead.)
+# File mtime, one fork per call.
+#
+# The old form ran the BSD call, let it fail, then ran the GNU one, so on Linux
+# every lookup cost two forks — and _parse_session_cache calls it once per
+# session cache file (77 stat calls in one `claudii limits`).
+#
+# The flavour is resolved HERE, at source time, and not lazily inside the
+# function: _mtime is called as `$(_mtime …)`, so a memo written inside it dies
+# with the subshell and the probe would run on every call. Measured when this
+# was lazy: 43 stat forks became 88. From $OSTYPE, which bash sets itself, so
+# the common platforms cost no fork at all.
+case "${OSTYPE:-}" in
+  darwin*|*bsd*)  _STAT_FLAVOUR=bsd ;;
+  linux*)         _STAT_FLAVOUR=gnu ;;
+  *) if stat -f%m . >/dev/null 2>&1; then _STAT_FLAVOUR=bsd; else _STAT_FLAVOUR=gnu; fi ;;
+esac
+if [[ "$_STAT_FLAVOUR" == "bsd" ]]; then
+  _mtime() { stat -f%m "$1" 2>/dev/null || echo 0; }
+else
+  _mtime() { stat -c%Y "$1" 2>/dev/null || echo 0; }
+fi
+
+# Atomic jq update — writes to tmp then renames (prevents partial reads on jq error).
+# Usage: _jq_update <file> <jq-filter> [jq-args...]
+# Example: _jq_update "$CONFIG" '.debug.level = "info"'
+# Example: _jq_update "$CONFIG" --argjson v 900 '.status.cache_ttl = $v'
+_jq_update() {
+  local _file="$1"; shift
+  local _tmp; _tmp=$(mktemp) || return 1
+  if jq "$@" "$_file" > "$_tmp"; then
+    mv -f "$_tmp" "$_file"
+    # Config may have changed — drop the _cfgget per-process memo so a
+    # write-then-read in the same command never serves a stale value.
+    _cfgget_memo_clear
+  else
+    rm -f "$_tmp"
+    return 1
+  fi
+}
+
+# Config helper — sets CONFIG, CONFIG_DIR, DEFAULTS in calling scope
+_cfg_init() {
+  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claudii"
+  CONFIG="$CONFIG_DIR/config.json"
+  DEFAULTS="$CLAUDII_HOME/config/defaults.json"
+  [[ -d "$CONFIG_DIR" ]] || mkdir -p "$CONFIG_DIR"
+  [[ -f "$CONFIG" ]] || cp "$DEFAULTS" "$CONFIG"
+  _claudii_theme_load
+}
+
+# Config value lookup — user config first, falls back to defaults.json
+# Builds a properly quoted jq path so hyphenated keys (e.g. session-dashboard.enabled)
+# are accessed as ."session-dashboard"."enabled" rather than the invalid .session-dashboard.enabled
+# Type-check instead of `// empty`: jq treats boolean false as falsy, so
+# `false // empty` would swallow an explicit user `false` and fall through to
+# the default (claudestatus off reported "on"). Mirrors _cmd_config get.
+#
+# Perf: one jq fork per unique key (config + slurped defaults in a single
+# invocation, was two forks), and a per-process memo so repeated keys
+# (statusline.rate_display is read by se/si/overview alike) fork nothing.
+# Memo uses printf -v dynamic vars + a "__set" marker (bash 3.2 has no
+# associative arrays and no ${!var+x}); _jq_update clears it on config writes.
+_CFGMEMO_VARS=""
+_cfgget_memo_clear() {
+  local _v
+  for _v in $_CFGMEMO_VARS; do unset "$_v"; done
+  _CFGMEMO_VARS=""
+}
+_cfgget() {
+  local key="$1" val _jp="" _seg
+  local -a _cfgget_segs=()   # local: was leaking into the caller's scope
+  _validate_key "$key" || return 1
+  local _ck="_CFGMEMO_${key//[^a-zA-Z0-9_]/_}"
+  local _cks="${_ck}__set"
+  if [[ "${!_cks:-}" == "1" ]]; then
+    printf '%s\n' "${!_ck}"
+    return 0
+  fi
+  # Split on '.' and quote each segment: "a.b-c.d" → ."a"."b-c"."d"
+  local _IFS_OLD="$IFS"
+  IFS='.' read -ra _cfgget_segs <<< "$key"
+  IFS="$_IFS_OLD"
+  for _seg in "${_cfgget_segs[@]}"; do
+    _jp+='."'"$_seg"'"'
+  done
+  # CONFIG is guaranteed by _cfg_init; if a caller skipped init, query the
+  # defaults file twice rather than erroring on a missing input.
+  local _cfg_in="$CONFIG"
+  [[ -r "$_cfg_in" ]] || _cfg_in="$DEFAULTS"
+  val=$(jq -r --slurpfile _d "$DEFAULTS" \
+    "if (${_jp} | type) != \"null\" then (${_jp} | tostring) elif (\$_d[0]${_jp} | type) != \"null\" then (\$_d[0]${_jp} | tostring) else empty end" \
+    "$_cfg_in" 2>/dev/null)
+  printf -v "$_ck" '%s' "$val"
+  printf -v "$_cks" '%s' "1"
+  _CFGMEMO_VARS+=" $_ck $_cks"
+  echo "$val"
+}
+
+# Collect history TSV files into _HIST_FILES (history.tsv + monthly history-*.tsv).
+# Order matters: the per-session cost-delta math in trends.awk and
+# _cmd_cost_from_history assumes rows arrive in chronological order per session.
+# That holds because cc-statusline appends in real time (in-file order) and the
+# monthly history-*.tsv glob is lexical == chronological (legacy history.tsv,
+# pre-rotation, sorts first). A future change to how these files are merged or
+# collected must preserve that ordering or add an explicit sort.
+_HIST_FILES=()
+_collect_history_files() {
+  local _dir="$1" _since="${2:-0}"
+  _HIST_FILES=()
+  local _f _mt
+  # Optional mtime gate ($2): history files are append-only, so a file's mtime
+  # equals the timestamp of its newest row. When the caller passes a window
+  # start (_since, epoch), any file whose mtime predates it holds only rows
+  # older than the window — awk would parse every line of it just to discard
+  # them all (the per-row window guard), and it cannot carry an in-window
+  # session's attribution baseline (that baseline lives inside the window by
+  # definition). Skipping such a file is a pure parse-cost saving with no data
+  # impact. _since=0 (default) keeps every file — preserves cost/trends behaviour.
+  if [[ -f "$_dir/history.tsv" && -s "$_dir/history.tsv" ]]; then
+    _mt=$(_mtime "$_dir/history.tsv")
+    [[ "$_since" -eq 0 || "${_mt:-0}" -ge "$_since" ]] && _HIST_FILES+=("$_dir/history.tsv")
+  fi
+  for _f in "$_dir"/history-*.tsv; do
+    [[ -f "$_f" && -s "$_f" ]] || continue
+    _mt=$(_mtime "$_f")
+    [[ "$_since" -eq 0 || "${_mt:-0}" -ge "$_since" ]] && _HIST_FILES+=("$_f")
+  done
+  return 0
+}
+
+# Epoch seconds of local calendar midnight (today 00:00:00), echoed to stdout.
+# BSD `date -j -f '%Y-%m-%d'` without a time component keeps the current
+# time-of-day (cutoff would equal `now`), so 00:00:00 is passed explicitly;
+# GNU date fallback for Linux. Echoes 0 if both fail.
+_midnight_epoch() {
+  date -j -f '%Y-%m-%d %H:%M:%S' "$(date '+%Y-%m-%d') 00:00:00" '+%s' 2>/dev/null \
+    || date -d "$(date '+%Y-%m-%d')" '+%s' 2>/dev/null \
+    || echo 0
+}
+
+# Rate-display mode init — sets _RATE_DISP ("used"|"remaining") and _rate_mark
+# ("" | "↓") from config. One _cfgget, shared by se/si/overview.
+_rate_disp_init() {
+  _RATE_DISP=$(_cfgget statusline.rate_display 2>/dev/null)
+  [[ "$_RATE_DISP" != "remaining" ]] && _RATE_DISP="used"
+  _rate_mark=""
+  [[ "$_RATE_DISP" == "remaining" ]] && _rate_mark="↓"
+  return 0
+}
+
+# Collect session cache files into _SESSION_FILES, dropping atomic-write
+# artifacts (session-*.tmp.PID left behind by crashed writers). gc keeps its
+# own glob — it needs the .tmp files for the orphan sweep.
+_SESSION_FILES=()
+_session_files() {
+  local _dir="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}}" _f
+  _SESSION_FILES=()
+  shopt -s nullglob
+  for _f in "$_dir"/session-*; do
+    [[ -f "$_f" ]] || continue
+    [[ "$_f" == *.tmp.* ]] && continue
+    _SESSION_FILES+=("$_f")
+  done
+  shopt -u nullglob
+  return 0
+}
+
+# Local UTC offset in seconds (signed), parsed from `date +%z` ("+HHMM"/"-HHMM").
+# Echoes nothing if date +%z yields no output; callers coerce empty → 0.
+_tz_offset_secs() {
+  date +%z 2>/dev/null | awk '{
+    s = (substr($0,1,1) == "-") ? -1 : 1
+    print s * (substr($0,2,2)*3600 + substr($0,4,2)*60)
+  }'
+}
+
+# Date init — sets _DATE_CMD ("macos"|"gnu"), _TZ_OFFSET (seconds), _WS_DOW (1=Mon..7=Sun).
+_DATE_CMD="" _TZ_OFFSET="" _WS_DOW=""
+_date_init() {
+  if date -j -f '%s' "$(date +%s)" '+%Y-%m-%d' >/dev/null 2>&1; then _DATE_CMD="macos"; else _DATE_CMD="gnu"; fi
+
+  _TZ_OFFSET=$(_tz_offset_secs)
+
+  # Read configurable week_start (default: monday).
+  local _ws_name
+  _ws_name=$(_cfgget cost.week_start)
+  case "${_ws_name:-monday}" in
+    monday)    _WS_DOW=1 ;; tuesday)   _WS_DOW=2 ;;
+    wednesday) _WS_DOW=3 ;; thursday)  _WS_DOW=4 ;;
+    friday)    _WS_DOW=5 ;; saturday)  _WS_DOW=6 ;;
+    sunday)    _WS_DOW=7 ;; *)         _WS_DOW=1 ;;
+  esac
+}
+
+# Spinner — wraps _claudii_spinner BG job with label-file management.
+# Callers can update the live label by writing to $CLAUDII_SPINNER_LABEL_FILE.
+_SPINNER_PID=""
+_spinner_start() {
+  local _label="${1:-}"
+  _SPINNER_PID=""
+  _plain && return
+  local _lf
+  _lf=$(mktemp "${TMPDIR:-/tmp}/claudii-spinner.XXXXXX") || return
+  chmod 0600 "$_lf"
+  export CLAUDII_SPINNER_LABEL_FILE="$_lf"
+  [[ -n "$_label" ]] && printf '%s' "$_label" > "$_lf"
+  if [[ -z "${CLAUDII_SPINNER_MODE:-}" ]]; then
+    local _m; _m=$(_cfgget ui.spinner 2>/dev/null)
+    [[ -z "$_m" || "$_m" == "null" ]] && _m="random"
+    export CLAUDII_SPINNER_MODE="$_m"
+  fi
+  _claudii_spinner &
+  _SPINNER_PID=$!
+}
+
+_spinner_stop() {
+  if [[ -n "${_SPINNER_PID:-}" ]]; then
+    kill "$_SPINNER_PID" 2>/dev/null
+    wait "$_SPINNER_PID" 2>/dev/null || true
+    printf '\r\033[K' >&2
+    _SPINNER_PID=""
+  fi
+  if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" ]]; then
+    rm -f "$CLAUDII_SPINNER_LABEL_FILE"
+    unset CLAUDII_SPINNER_LABEL_FILE
+  fi
+}
+
+# Live-agents map from `claude agents --json` — populated once per command run.
+# Parallel arrays (bash 3.2 compatible — no declare -A).
+# Authoritative source of PID liveness, replacing the kill -0 + 24h-recycling guard.
+_LIVE_PIDS=()
+_LIVE_PIDS_KIND=()
+_LIVE_PIDS_STATUS=()
+_LIVE_PIDS_INITED=0
+_LIVE_PIDS_KICKED=0
+_LIVE_PIDS_PID=""
+_LIVE_PIDS_TMP=""
+# Start the `claude agents --json` fetch in the background so its ~0.37s Node
+# startup overlaps later work (the history pass + the session-cache loop);
+# _live_pids_init reaps it. Best-effort: if claude is missing or mktemp fails,
+# init just falls back to a synchronous fetch. Safe to background here —
+# bin/claudii is non-interactive with no job control, so `( … ) &` + `$!` leaks
+# no job-table entry (the leak the zsh precmd path guards against). Only ever
+# called from the bash CLI path (_cmd_default).
+_live_pids_kick() {
+  (( _LIVE_PIDS_INITED )) && return 0
+  (( _LIVE_PIDS_KICKED )) && return 0
+  command -v claude >/dev/null 2>&1 || return 0
+  _LIVE_PIDS_TMP=$(mktemp "${TMPDIR:-/tmp}/claudii-agents.XXXXXX" 2>/dev/null) || { _LIVE_PIDS_TMP=""; return 0; }
+  ( claude agents --json >"$_LIVE_PIDS_TMP" 2>/dev/null || true ) &
+  _LIVE_PIDS_PID=$!
+  _LIVE_PIDS_KICKED=1
+  return 0
+}
+# Returns 0 unconditionally — best-effort initialization, callers run under
+# `set -euo pipefail` so we must never leak a non-zero exit (claude missing,
+# garbage JSON, jq missing, etc. → silently keep arrays empty for fallback).
+# Reaps the _live_pids_kick background job when one was started, else fetches
+# inline (preserves the original synchronous behaviour for non-overview callers).
+_live_pids_init() {
+  (( _LIVE_PIDS_INITED )) && return 0
+  _LIVE_PIDS_INITED=1
+  local _json="" _pid _kind _status _i=0
+  if (( _LIVE_PIDS_KICKED )) && [[ -n "$_LIVE_PIDS_TMP" ]]; then
+    if [[ -n "$_LIVE_PIDS_PID" ]]; then wait "$_LIVE_PIDS_PID" 2>/dev/null || true; fi
+    _json=$(<"$_LIVE_PIDS_TMP") || _json=""   # $(<) avoids a cat fork; guard keeps set -e safe
+    rm -f "$_LIVE_PIDS_TMP" 2>/dev/null
+  else
+    command -v claude >/dev/null 2>&1 || return 0
+    _json=$(claude agents --json 2>/dev/null) || return 0
+  fi
+  [[ -z "$_json" || "$_json" == "[]" ]] && return 0
+  while IFS=$'\t' read -r _pid _kind _status; do
+    [[ -z "$_pid" ]] && continue
+    _LIVE_PIDS[$_i]="$_pid"
+    _LIVE_PIDS_KIND[$_i]="$_kind"
+    _LIVE_PIDS_STATUS[$_i]="$_status"
+    (( ++_i ))
+  done < <(jq -r '.[] | [.pid, (.kind // ""), (.status // "")] | @tsv' <<<"$_json" 2>/dev/null)
+  return 0
+}
+
+# Returns 0 iff $1 appears in _LIVE_PIDS (no fallback to kill -0 here — caller decides).
+_pid_is_live() {
+  local _p="$1" _i
+  for (( _i=0; _i<${#_LIVE_PIDS[@]}; _i++ )); do
+    [[ "${_LIVE_PIDS[$_i]}" == "$_p" ]] && return 0
+  done
+  return 1
+}
+
+# Looks up the `kind` for a known-live pid; echoes empty string if not found.
+# Always returns 0 — caller captures via command substitution under `set -e`,
+# so a non-zero exit (empty _LIVE_PIDS, no match) would abort the script.
+_pid_kind() {
+  local _p="$1" _i
+  for (( _i=0; _i<${#_LIVE_PIDS[@]}; _i++ )); do
+    if [[ "${_LIVE_PIDS[$_i]}" == "$_p" ]]; then
+      printf '%s' "${_LIVE_PIDS_KIND[$_i]}"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# Session JSONL map — build once, O(1) lookup per session.
+# Uses parallel arrays (bash 3.2 compatible — no declare -A).
+_SID_MAP_KEYS=()
+_SID_MAP_VALS=()
+_session_build_map() {
+  _SID_MAP_KEYS=()
+  _SID_MAP_VALS=()
+  local _jsonl _sid _i=0
+  for _jsonl in "$HOME/.claude/projects"/*/*.jsonl; do
+    [[ -f "$_jsonl" ]] || continue
+    _sid="${_jsonl##*/}"
+    _sid="${_sid%.jsonl}"
+    _SID_MAP_KEYS[$_i]="$_sid"
+    _SID_MAP_VALS[$_i]="$_jsonl"
+    (( ++_i ))
+  done
+}
+
+# Resolve JSONL path for a session_id (uses map if built, falls back to scan).
+_session_jsonl() {
+  local sid="$1" _j _d   # _d local: was leaking into the caller's scope
+  [[ -z "$sid" ]] && return
+  # Map lookup
+  for (( _j=0; _j<${#_SID_MAP_KEYS[@]}; _j++ )); do
+    if [[ "${_SID_MAP_KEYS[$_j]}" == "$sid" ]]; then
+      echo "${_SID_MAP_VALS[$_j]}"
+      return
+    fi
+  done
+  # Fallback: direct scan
+  for _d in "$HOME/.claude/projects"/*/; do
+    [[ -f "${_d}${sid}.jsonl" ]] && echo "${_d}${sid}.jsonl" && return
+  done
+}
+
+# Single-pass JSONL resolver: extracts name, fingerprint, last_message, cwd in one
+# awk. Output: 4 lines (name\nfingerprint\nlast_message\ncwd), any may be empty.
+# cwd is the raw project path (first "cwd" seen); the caller shortens it.
+_session_resolve() {
+  local sid="$1" jsonl
+  jsonl=$(_session_jsonl "$sid")
+  [[ -z "$jsonl" ]] && { printf '\n\n\n\n'; return; }
+  awk '
+    # Session name: last "Session renamed to:" match
+    match($0, /"Session renamed to: [^"\\]*"/) {
+      name = substr($0, RSTART+21, RLENGTH-22)
+      # Strip ANSI escapes
+      gsub(/\033\[[0-9;]*m/, "", name)
+      gsub(/\\033\[[0-9;]*m/, "", name)
+      gsub(/\\e\[[0-9;]*m/, "", name)
+    }
+    # First cwd seen → project path (folds in the old _session_project_path
+    # grep|head|grep|sed pipe; same "first cwd" semantics). `"cwd":"` is 7 chars.
+    cwd == "" && match($0, /"cwd":"[^"]*"/) { cwd = substr($0, RSTART+7, RLENGTH-8) }
+    # Fingerprint: collect file_path occurrences
+    {
+      pos = 0
+      s = $0
+      while (match(s, /"file_path":"[^"]*"/)) {
+        fp = substr(s, RSTART+13, RLENGTH-14)
+        # basename
+        n = split(fp, parts, "/")
+        bn = parts[n]
+        files[bn]++
+        s = substr(s, RSTART + RLENGTH)
+      }
+    }
+    # Last user message
+    /"role":"user"/ { last_user = $0 }
+    END {
+      # Name (max 60 chars)
+      if (length(name) > 60) name = substr(name, 1, 60)
+      print name
+
+      # Fingerprint: top-5 by count
+      n = 0
+      for (f in files) { n++; fnames[n] = f; fcounts[n] = files[f] }
+      # Simple selection sort (max 5 from n)
+      fp_out = ""
+      for (i = 1; i <= 5 && i <= n; i++) {
+        max_idx = i
+        for (j = i+1; j <= n; j++) {
+          if (fcounts[j] > fcounts[max_idx]) max_idx = j
+        }
+        if (max_idx != i) {
+          tmp = fnames[i]; fnames[i] = fnames[max_idx]; fnames[max_idx] = tmp
+          tmp = fcounts[i]; fcounts[i] = fcounts[max_idx]; fcounts[max_idx] = tmp
+        }
+        fp_out = fp_out (fp_out == "" ? "" : " ") fnames[i] "(" fcounts[i] ")"
+      }
+      print fp_out
+
+      # Last user message (max 80 chars)
+      msg = ""
+      if (last_user != "") {
+        if (match(last_user, /"text":"[^"]*"/)) {
+          # the text-key prefix is 8 chars; strip it and the trailing quote
+          msg = substr(last_user, RSTART+8, RLENGTH-9)
+        }
+        if (length(msg) > 80) msg = substr(msg, 1, 80)
+      }
+      print msg
+
+      # Project path (raw cwd; caller shortens $HOME→~ + truncates)
+      print cwd
+    }
+  ' "$jsonl" 2>/dev/null || printf '\n\n\n\n'
+}
+
+# Shorten CC's prompt-cache miss-cause vocabulary (prompt_cache.last_miss_cause
+# .causes, CC 2.1.260+) for a status row. Input: causes joined by "+"
+# ("tools_changed+ttl_expired_5m"); output in _MCS, same joiner
+# ("tools+ttl"). Unknown names pass through clipped to 12 chars, so a cause CC
+# adds later still reads. No fork.
+_miss_cause_short() {
+  local _rest="$1" _one
+  _MCS=""
+  while [[ -n "$_rest" ]]; do
+    _one="${_rest%%+*}"
+    if [[ "$_rest" == *+* ]]; then _rest="${_rest#*+}"; else _rest=""; fi
+    case "$_one" in
+      tools_changed)          _one="tools" ;;
+      system_prompt_changed)  _one="sysprompt" ;;
+      ttl_expired*)           _one="ttl" ;;
+      likely_server_side)     _one="server" ;;
+      *)                      _one="${_one:0:12}" ;;
+    esac
+    _MCS="${_MCS:+$_MCS+}$_one"
+  done
+}
+
+# Parse session cache file (key=value lines) into _PSC_* variables.
+_parse_session_cache() {
+  _PSC_model= _PSC_ctx_pct= _PSC_cost= _PSC_rate_5h= _PSC_rate_7d=
+  _PSC_reset_5h= _PSC_reset_7d= _PSC_session_id= _PSC_ppid= _PSC_ppid_lstart=
+  _PSC_worktree= _PSC_agent= _PSC_cache_pct= _PSC_rate_7d_start=
+  _PSC_rate_5h_start= _PSC_project_path= _PSC_tok=
+  _PSC_pinned= _PSC_kind= _PSC_pace= _PSC_cron= _PSC_bg_tasks=
+  _PSC_misses= _PSC_miss_causes=
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      model)          _PSC_model="$_v" ;;
+      ctx_pct)        _PSC_ctx_pct="$_v" ;;
+      cost)           _PSC_cost="$_v" ;;
+      tok)            _PSC_tok="$_v" ;;
+      rate_5h)        _PSC_rate_5h="$_v" ;;
+      rate_7d)        _PSC_rate_7d="$_v" ;;
+      reset_5h)       _PSC_reset_5h="$_v" ;;
+      reset_7d)       _PSC_reset_7d="$_v" ;;
+      session_id)     _PSC_session_id="$_v" ;;
+      ppid)           _PSC_ppid="$_v" ;;
+      ppid_lstart)    _PSC_ppid_lstart="$_v" ;;
+      worktree)       _PSC_worktree="$_v" ;;
+      agent)          _PSC_agent="$_v" ;;
+      cache_pct)      _PSC_cache_pct="$_v" ;;
+      rate_7d_start)  _PSC_rate_7d_start="$_v" ;;
+      rate_5h_start)  _PSC_rate_5h_start="$_v" ;;
+      project_path)   _PSC_project_path="$_v" ;;
+      pinned)         _PSC_pinned="$_v" ;;
+      pace)           _PSC_pace="$_v" ;;
+      next_cron_at)   _PSC_cron="$_v" ;;
+      bg_tasks)       _PSC_bg_tasks="$_v" ;;
+      misses)         _PSC_misses="$_v" ;;
+      miss_causes)    _PSC_miss_causes="$_v" ;;
+    esac
+  done < "$1"
+  _PSC_mtime=$(_mtime "$1")
+  # _NOW is set once per command by callers (_cmd_sessions / _cmd_sessions_inactive /
+  # _cmd_default) so this per-session helper doesn't fork `date` each loop iteration;
+  # falls back to a fork when unset (standalone call).
+  _PSC_age=$(( ${_NOW:-$(date +%s)} - _PSC_mtime ))
+  # Active = Claude Code process (ppid) is still running.
+  # API path: ppid is listed by `claude agents --json` (caller ran _live_pids_init).
+  # Authoritative when it matches — no PID-recycling risk, also reveals _PSC_kind.
+  # Fallback: kill -0 + 24h age cap. Runs even when the API is populated because
+  # `claude agents --json` deliberately omits the CURRENT interactive session —
+  # without this fallback, `claudii se` from inside a live session would mark
+  # its own row as inactive.
+  _PSC_is_active=0
+  if [[ "$_PSC_ppid" =~ ^[0-9]+$ ]] && [[ "$_PSC_ppid" != "0" ]]; then
+    if (( _LIVE_PIDS_INITED )) && _pid_is_live "$_PSC_ppid"; then
+      _PSC_is_active=1
+      _PSC_kind=$(_pid_kind "$_PSC_ppid")
+    elif (( _PSC_age < 86400 )) && kill -0 "$_PSC_ppid" 2>/dev/null; then
+      # kill -0 proves the PID exists, not that it's still THIS session — once a
+      # session ends its long-lived claude PID can be recycled onto an unrelated
+      # process. When the cache carries the ancestor's start time (ppid_lstart,
+      # written by claudii-cc-statusline), confirm identity by comparing it to
+      # the live process's lstart; a mismatch means the PID was recycled → not
+      # active. Caches without the key keep the original kill-0-only behaviour.
+      if [[ -n "$_PSC_ppid_lstart" ]]; then
+        local _psc_live_lstart
+        _psc_live_lstart=$(ps -o lstart= -p "$_PSC_ppid" 2>/dev/null)
+        _psc_live_lstart="${_psc_live_lstart#"${_psc_live_lstart%%[![:space:]]*}"}"
+        [[ "$_psc_live_lstart" == "$_PSC_ppid_lstart" ]] && _PSC_is_active=1
+      else
+        _PSC_is_active=1
+      fi
+    fi
+  fi
+}
+
+# Render 8-block context bar into _CTX_BAR.
+_render_ctx_bar() {
+  local _pct=${1:-0}
+  # Round half-up like every sibling renderer (bar_filled in lib/fmt.awk,
+  # _bar_filled in lib/render.sh) — the old floor under-filled by up to one
+  # cell (62% → 4/8 where the shared rule gives 5/8). Same integer trick as
+  # _bar_filled; not calling it directly because helpers.sh must not depend
+  # on render.sh (claudii-cc-statusline sources helpers alone).
+  local _filled=$(( (_pct * 16 / 100 + 1) / 2 ))
+  [[ $_filled -gt 8 ]] && _filled=8
+  local _empty=$(( 8 - _filled ))
+  local _clr
+  if   [[ $_pct -ge 90 ]]; then _clr=$CLAUDII_CLR_RED
+  elif [[ $_pct -ge 70 ]]; then _clr=$CLAUDII_CLR_YELLOW
+  else                          _clr=$CLAUDII_CLR_GREEN
+  fi
+  local _bar="" i
+  for ((i=0; i<_filled; i++)); do _bar+="$CLAUDII_SYM_BAR_FULL"; done
+  for ((i=0; i<_empty;  i++)); do _bar+="$CLAUDII_SYM_BAR_EMPTY"; done
+  _CTX_BAR="${_clr}${_bar}${CLAUDII_CLR_RESET}"
+}
+
+# Render age (seconds) into _AGE_STR ("Xs ago" … "Xd ago").
+_render_age() {
+  _fmt_brief "${1:-0}"
+  _AGE_STR="${_BRIEF_FMT} ago"
+}
+
+# _str_hash <string> — djb2 into _HASH (8 hex chars), pure bash, no fork.
+# Used to key per-repo/per-branch cache files (the `ci` statusline segment):
+# sanitizing a path into a filename either truncates deep paths — which turns
+# two different repos into one cache entry — or grows past the filename limit,
+# and forking a hash tool on every statusline render is not an option.
+# Deterministic across bash 3.2/5.x for byte-identical input; callers that need
+# to predict the filename (tests) source this file rather than reimplement it.
+_str_hash() {
+  local _s=$1 _i _c _h=5381
+  for (( _i = 0; _i < ${#_s}; _i++ )); do
+    printf -v _c '%d' "'${_s:_i:1}"
+    _h=$(( (_h * 33 + _c) & 0xFFFFFFFF ))
+  done
+  printf -v _HASH '%08x' "$_h"
+}
+
+# Anthropic's weekly rate-limit window — the rolling 7-day quota that actually
+# gates work, not the calendar week `cost.week_start` describes. Claude Code
+# hands each session `rate_limits.seven_day.{used_percentage,resets_at}`; the
+# quota is account-wide, so every live session carries the same reset epoch.
+#
+# Sets _WW_RESET (epoch the quota refills), _WW_START (_WW_RESET - 7d) and
+# _WW_PCT (used percentage). All three stay empty when no cache knows a window:
+# Claude Code drops the field once resets_at has passed and does not restore it
+# until the next API response, so absence is a normal state, not an error.
+_WW_START= _WW_RESET= _WW_PCT=
+_week_window() {
+  local _dir="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}}"
+  local _f _best_mt=0
+  _WW_START= _WW_RESET= _WW_PCT=
+  # _parse_session_cache forks `date` per file when _NOW is unset, and this loop
+  # runs over every session cache. The list-commands set it; week and limits
+  # reach the parser through here and did not, so each of them forked date once
+  # per session file. One assignment, one fork.
+  [[ -n "${_NOW:-}" ]] || _NOW=$(date +%s)
+  _session_files "$_dir"
+  (( ${#_SESSION_FILES[@]} )) || return 1
+  for _f in "${_SESSION_FILES[@]}"; do
+    _parse_session_cache "$_f" || continue
+    [[ -n "$_PSC_reset_7d" ]] || continue
+    # Newest writer wins — the glob is ordered by session id, not by freshness.
+    [[ "$_PSC_mtime" =~ ^[0-9]+$ ]] || continue
+    (( _PSC_mtime > _best_mt )) || continue
+    _best_mt=$_PSC_mtime
+    _WW_RESET="${_PSC_reset_7d%.*}"
+    _WW_PCT="$_PSC_rate_7d"
+  done
+  [[ "$_WW_RESET" =~ ^[0-9]+$ ]] || { _WW_START= _WW_RESET= _WW_PCT=; return 1; }
+  _WW_START=$(( _WW_RESET - 604800 ))
+  return 0
+}
+
+# ── status-models cache — the one bash parser ────────────────────────────────
+#
+# bin/claudii-status writes ~/.cache/claudii/status-models as flat key=value:
+#
+#   opus=ok | sonnet=degraded | haiku=down   one line per tracked model family
+#   _incident=investigating|identified|monitoring   current incident stage
+#   _incident_started=<epoch>                       when that incident opened
+#   _api=unreachable                                status.claude.com itself is down
+#
+# Every consumer used to re-derive the path and re-parse the file. One of them
+# (`claudii status`, lib/cmd/system.sh) forked a `grep` AND a `cut` per model
+# plus two more greps for the adaptive-TTL branch — 10 forks to read five lines.
+# These four functions replaced all of that. The two statusline hot paths
+# (bin/claudii-cc-statusline, lib/statusline.zsh) still carry their own inline
+# copies on purpose — see tests/test_status_cache_agreement.sh, which pins them
+# against this one instead of the "kept in sync" comments that used to.
+#
+# NO associative array: /bin/bash 3.2 (macOS, and the CI leg) silently degrades
+# `declare -A` to an indexed array, so the obvious key=value map would collapse
+# every key onto arr[0], last write wins. Parallel indexed arrays instead —
+# the shape _session_build_map already uses.
+#
+# NO grep: `producer | grep -q` returns 141 under `pipefail` even when it
+# matched (docs/gotchas.md #31), and model health is exactly where that bit —
+# a model kept reading `ok` while it was down. Bash pattern matching only: no
+# pipe, no fork, nothing to misreport.
+
+# _status_cache_file [path] — resolve the cache path into _SC_FILE.
+# A function rather than a `$(...)` helper: command substitution would fork a
+# subshell, which is the cost this whole block exists to remove.
+_status_cache_file() {
+  _SC_FILE="${1:-${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models}"
+}
+
+# _status_cache_read [path] — read the cache once. Returns 1 when it is missing
+# or empty (a normal state before the first fetch), 0 otherwise. Sets:
+#   _SC_FILE              the path actually read
+#   _SC_RAW               full file content
+#   _SC_KEYS[] _SC_VALS[] model families in file order (internal _* keys excluded)
+#   _SC_COUNT             number of model entries
+#   _SC_INCIDENT          incident stage ("" when none)
+#   _SC_INCIDENT_STARTED  incident start epoch ("" when none)
+#   _SC_API               "unreachable" when the status API could not be reached
+#   _SC_ANY_ISSUE         1 when any model is down or degraded
+# The writer emits at most one _incident line; first-wins here matches what
+# lib/cmd/overview.sh did before and keeps a hand-edited cache deterministic.
+_status_cache_read() {
+  _status_cache_file "${1:-}"
+  _SC_RAW=""; _SC_KEYS=(); _SC_VALS=(); _SC_COUNT=0
+  _SC_INCIDENT=""; _SC_INCIDENT_STARTED=""; _SC_API=""; _SC_ANY_ISSUE=0
+  [[ -f "$_SC_FILE" ]] || return 1
+  # $(<file) is a bash builtin read, not a `cat` fork.
+  { _SC_RAW=$(<"$_SC_FILE"); } 2>/dev/null
+  [[ -n "$_SC_RAW" ]] || return 1
+  local _k _v
+  # Here-string, not a pipe: a piped `while read` runs in a subshell and every
+  # assignment below would die with it.
+  while IFS='=' read -r _k _v; do
+    [[ -z "$_k" ]] && continue
+    case "$_k" in
+      _incident)         [[ -n "$_SC_INCIDENT" ]] || _SC_INCIDENT="$_v"; continue ;;
+      _incident_started) [[ -n "$_SC_INCIDENT_STARTED" ]] || _SC_INCIDENT_STARTED="$_v"; continue ;;
+      _api)              [[ -n "$_SC_API" ]] || _SC_API="$_v"; continue ;;
+      _*)                continue ;;
+    esac
+    _SC_KEYS[_SC_COUNT]="$_k"
+    _SC_VALS[_SC_COUNT]="$_v"
+    _SC_COUNT=$(( _SC_COUNT + 1 ))
+    case "$_v" in down|degraded) _SC_ANY_ISSUE=1 ;; esac
+  done <<< "$_SC_RAW"
+  return 0
+}
+
+# _status_cache_state <model> — that model's state into _SC_STATE. Returns 1
+# (and empties _SC_STATE) when the cache does not list it; an unlisted model is
+# assumed working, so callers treat "" as healthy rather than as an error.
+_status_cache_state() {
+  local _i=0
+  _SC_STATE=""
+  while (( _i < _SC_COUNT )); do
+    if [[ "${_SC_KEYS[_i]}" == "$1" ]]; then
+      _SC_STATE="${_SC_VALS[_i]}"
+      return 0
+    fi
+    _i=$(( _i + 1 ))
+  done
+  return 1
+}
+
+# _status_cache_verdict [csv-model-list] — the collapsed-health decision every
+# ClaudeStatus renderer makes. Empty/absent list = every model in the cache
+# (what the overview does); a list = exactly those, healthy-if-unlisted (what
+# the two statuslines do, keyed on statusline.models). That difference is
+# deliberate and pinned in tests/test_status_cache_agreement.sh.
+# Requires _status_cache_read. Sets:
+#   _SCV_TOTAL _SCV_OK _SCV_DOWN _SCV_DEGR   counts
+#   _SCV_PROBLEMS[]   "<model>=<state>" for the down/degraded ones, in order
+#   _SCV_WORST        "down" | "degraded" | ""
+#   _SCV_COLLAPSE     none | ok | down | degraded | problems
+_status_cache_verdict() {
+  local _list="${1:-}" _m _i
+  local -a _mv=()
+  _SCV_TOTAL=0; _SCV_OK=0; _SCV_DOWN=0; _SCV_DEGR=0
+  _SCV_PROBLEMS=(); _SCV_WORST=""; _SCV_COLLAPSE="none"
+  if [[ -n "$_list" ]]; then
+    IFS=',' read -ra _mv <<< "$_list"
+  else
+    _i=0
+    while (( _i < _SC_COUNT )); do
+      _mv[_i]="${_SC_KEYS[_i]}"
+      _i=$(( _i + 1 ))
+    done
+  fi
+  for _m in ${_mv[@]+"${_mv[@]}"}; do
+    _m="${_m// /}"
+    [[ -z "$_m" ]] && continue
+    _SCV_TOTAL=$(( _SCV_TOTAL + 1 ))
+    _status_cache_state "$_m" || _SC_STATE=""
+    case "$_SC_STATE" in
+      down)
+        _SCV_DOWN=$(( _SCV_DOWN + 1 )); _SCV_WORST="down"
+        _SCV_PROBLEMS+=("${_m}=down") ;;
+      degraded)
+        _SCV_DEGR=$(( _SCV_DEGR + 1 ))
+        # `if`, not `[[ … ]] && …`: helpers.sh runs under bin/claudii's set -e.
+        if [[ "$_SCV_WORST" != "down" ]]; then _SCV_WORST="degraded"; fi
+        _SCV_PROBLEMS+=("${_m}=degraded") ;;
+      *)
+        _SCV_OK=$(( _SCV_OK + 1 )) ;;
+    esac
+  done
+  if   (( _SCV_TOTAL == 0 ));            then _SCV_COLLAPSE="none"
+  elif (( _SCV_OK   == _SCV_TOTAL ));    then _SCV_COLLAPSE="ok"
+  elif (( _SCV_DOWN == _SCV_TOTAL ));    then _SCV_COLLAPSE="down"
+  elif (( _SCV_DEGR == _SCV_TOTAL ));    then _SCV_COLLAPSE="degraded"
+  else                                        _SCV_COLLAPSE="problems"
+  fi
+  return 0
+}

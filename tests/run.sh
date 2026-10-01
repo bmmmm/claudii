@@ -1,0 +1,342 @@
+#!/bin/bash
+# claudii test runner — simple bash-based E2E tests
+# Usage: ./tests/run.sh [--summary] [--for <source_file>] [test_file...]
+#
+# Runs each test file as a subprocess (parallel by default). With one or more
+# test_file args, only those files run (same parallel/aggregate path, so
+# --summary works). Set CLAUDII_TEST_SEQUENTIAL=1 to force sequential execution.
+
+set -uo pipefail
+# Note: no set -e — tests may produce non-zero exits intentionally
+
+CLAUDII_HOME="$(cd "$(dirname "$0")/.." && pwd)"
+TESTS_DIR="$CLAUDII_HOME/tests"
+PASS=0
+FAIL=0
+ERRORS=()
+# Captured stdout of each test file that had ≥1 failure — surfaced under
+# --summary so a CI failure carries the assert's Expected/Got diff, not just
+# the test name (the diff is otherwise discarded in summary mode).
+_FAIL_DETAILS=()
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+# Test helpers
+assert_eq() {
+  local desc="$1" expected="$2" actual="$3"
+  if [[ "$expected" == "$actual" ]]; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  else
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Expected: ${GREEN}$expected${NC}"
+    echo -e "    Actual:   ${RED}$actual${NC}"
+    (( ++FAIL ))
+    ERRORS+=("$desc")
+  fi
+}
+
+assert_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  # Use grep on here-string — avoids SIGPIPE broken pipe with pipefail on large input (Ubuntu CI)
+  # -F: treat needle as literal string (not regex) — use assert_matches for regex
+  # --: a needle starting with '-' (e.g. "-it-4bit") would otherwise be parsed as
+  #     grep flags — on BSD grep that prints "invalid option -- t" and the match
+  #     silently fails (false ✗ for contains, accidental ✓ for not_contains).
+  if grep -qF -- "$needle" <<< "$haystack"; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  else
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Expected to contain: ${GREEN}$needle${NC}"
+    echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
+    (( ++FAIL ))
+    ERRORS+=("$desc")
+  fi
+}
+
+assert_not_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  if grep -qF -- "$needle" <<< "$haystack"; then
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Expected NOT to contain: ${RED}$needle${NC}"
+    echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
+    (( ++FAIL ))
+    ERRORS+=("$desc")
+  else
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  fi
+}
+
+assert_exit_code() {
+  local desc="$1" expected="$2" cmd="$3"
+  local actual _errexit=0
+  [[ $- == *e* ]] && _errexit=1
+  set +e
+  eval "$cmd" >/dev/null 2>&1
+  actual=$?
+  (( _errexit )) && set -e || true
+  assert_eq "$desc" "$expected" "$actual"
+}
+
+assert_file_exists() {
+  local desc="$1" path="$2"
+  if [[ -f "$path" ]]; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  else
+    echo -e "  ${RED}✗${NC} $desc: file not found: $path"
+    (( ++FAIL ))
+    ERRORS+=("$desc")
+  fi
+}
+
+assert_no_literal_ansi() {
+  local desc="$1" text="$2"
+  if grep -qF '\033' <<< "$text"; then
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Output contains literal \\\\033 — ANSI not rendered as ESC bytes"
+    (( ++FAIL )); ERRORS+=("$desc")
+  else
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  fi
+}
+
+# Canonical CURRENT-format history fixture row — the 11-col layout
+# bin/claudii-cc-statusline writes:
+#   timestamp  model  cost  ctx_pct  rate_5h  session_id  in_tok  out_tok  api_ms
+#   rate_7d  reset_7d
+# Appends one row to the file in $1. Single source of the column layout for
+# test fixtures: a future schema change updates THIS helper (and the
+# consumers), not every printf across cost/trends/cli tests (see the
+# cost-history-format lesson). Legacy-format fixtures (6-col, CRLF, short
+# rows) stay as explicit printf in the tests — they exercise format deviations.
+hist_row() {
+  local _f="$1" _ts="$2" _model="$3" _cost="$4" _ctx="${5:-0}" _rate="${6:-0}" _sid="$7" _in="${8:-0}" _out="${9:-0}" _api="${10:-0}"
+  # Cols 10/11 (rate_7d, reset_7d) arrived with the weekly-window feature and
+  # stay empty by default — that is exactly what pre-feature history files
+  # look like, so existing fixtures keep exercising the absent-column path.
+  local _r7="${11:-}" _rst7="${12:-}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$_ts" "$_model" "$_cost" "$_ctx" "$_rate" "$_sid" "$_in" "$_out" "$_api" \
+    "$_r7" "$_rst7" >> "$_f"
+}
+
+assert_matches() {
+  local desc="$1" needle="$2" haystack="$3"
+  if grep -qE -- "$needle" <<< "$haystack"; then
+    echo -e "  ${GREEN}✓${NC} $desc"
+    (( ++PASS ))
+  else
+    echo -e "  ${RED}✗${NC} $desc"
+    echo -e "    Expected to match: ${GREEN}$needle${NC}"
+    echo -e "    Got (first 200 chars): ${RED}${haystack:0:200}${NC}"
+    (( ++FAIL ))
+    ERRORS+=("$desc")
+  fi
+}
+
+# Export for test files (subprocess mode)
+export CLAUDII_HOME TESTS_DIR
+export GREEN RED YELLOW NC
+# The real home, captured before any sandboxing — tests/test_isolation.sh
+# asserts against it, and it is the only way a test can tell "sandboxed" from
+# "happens to be a temp dir".
+export _CLAUDII_TEST_REAL_HOME="$HOME"
+export -f assert_eq assert_contains assert_not_contains assert_exit_code assert_file_exists
+export -f assert_no_literal_ansi assert_matches hist_row
+
+# ── Subprocess helper ────────────────────────────────────────────────────────
+# Runs a single test file in a subshell, writes output + summary line to $out_file.
+# Summary line format: CLAUDII_TEST_RESULT:<pass>:<fail>
+# Error lines format:  CLAUDII_TEST_ERROR:<description>
+_run_single_test() {
+  local test_file="$1" out_file="$2"
+  (
+    PASS=0; FAIL=0; ERRORS=()
+    # ── Sandbox ──────────────────────────────────────────────────────────────
+    # HOME and the XDG roots point into a private temp dir, so a test file that
+    # forgets its own cache override writes THERE and not into the user's live
+    # ~/.cache/claudii. It used to write into the live one: 96 of the 132
+    # statusline invocations in test_sessionline.sh carried no override, and
+    # every render appended a fixture row to the real cost history —
+    # 66,812 of 475,659 rows across all months, enough to overstate the 7-day
+    # session count by 12 and to pull avg API/session from 43m down to 39m.
+    #
+    # CLAUDII_CACHE_DIR is deliberately NOT set here. It outranks
+    # HOME/XDG_CACHE_HOME wherever it is read (lib/cmd/vpnii.sh:68 and the
+    # helpers), so a blanket value would defeat the tests that vary HOME per
+    # invocation on purpose — setting it turned 3 asserts in test_vpnii.sh red.
+    local _sandbox
+    _sandbox=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_home.XXXXXX")
+    export HOME="$_sandbox/home"
+    export XDG_CACHE_HOME="$_sandbox/cache"
+    export XDG_CONFIG_HOME="$_sandbox/config"
+    export XDG_DATA_HOME="$_sandbox/data"
+    # Isolate zsh subprocesses — empty ZDOTDIR prevents sourcing user's .zshrc/.zshenv
+    export ZDOTDIR="$_sandbox/zdotdir"
+    # Scratch root for test files that want a named, inspectable directory.
+    # These used to be fixed paths under the repo's own tmp/ ("$CLAUDII_HOME/tmp/
+    # test_status"), which made the suite unsafe to run twice at once: two
+    # concurrent runs of test_status.sh alone produced 6 and 15 failures. The
+    # names stay readable; the uniqueness comes from the sandbox root.
+    export CLAUDII_TEST_TMP="$_sandbox/tmp"
+    mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
+             "$ZDOTDIR" "$CLAUDII_TEST_TMP"
+    echo -e "${YELLOW}$(basename "$test_file")${NC}"
+    source "$test_file"
+    echo "CLAUDII_TEST_RESULT:${PASS}:${FAIL}"
+    if [[ ${#ERRORS[@]} -gt 0 ]]; then
+      for err in "${ERRORS[@]}"; do
+        echo "CLAUDII_TEST_ERROR:$err"
+      done
+    fi
+    rm -rf "$_sandbox" 2>/dev/null || true
+  ) > "$out_file" 2>&1
+}
+
+# Parse flags
+_for_file=""
+_summary_only=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --for)     _for_file="${2:-}"; shift 2 ;;
+    --summary) _summary_only=1; shift ;;
+    *) break ;;
+  esac
+done
+
+# Select test files: explicit args > full glob
+_test_files=()
+if [[ $# -gt 0 ]]; then
+  for _f in "$@"; do
+    [[ -f "$_f" ]] || { echo -e "${RED}Test file not found: $_f${NC}" >&2; exit 1; }
+    _test_files+=("$_f")
+  done
+else
+  for _f in "$TESTS_DIR"/test_*.sh; do
+    [[ -f "$_f" ]] && _test_files+=("$_f")
+  done
+fi
+
+# Run tests — parallel subprocesses, aggregate results
+{
+  _out_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_run.XXXXXX")
+  _pids=()
+  _out_files=()
+
+  for test_file in "${_test_files[@]}"; do
+    # Skip files that don't touch the requested source file
+    if [[ -n "$_for_file" ]]; then
+      grep -qE "^# touches:.*(^|[[:space:]])${_for_file}([[:space:]]|$)" "$test_file" 2>/dev/null || continue
+    fi
+    _base=$(basename "$test_file" .sh)
+    _out_file="$_out_dir/${_base}.out"
+    _out_files+=("$_out_file")
+
+    if [[ "${CLAUDII_TEST_SEQUENTIAL:-0}" == "1" ]]; then
+      _run_single_test "$test_file" "$_out_file"
+    else
+      _run_single_test "$test_file" "$_out_file" &
+      _pids+=($!)
+    fi
+  done
+
+  # A --for filter that matches nothing used to print "0 passed" and exit 0,
+  # which reads exactly like "the tests for this file pass". 17 source files
+  # appear in no `# touches:` header at all, so that green was one typo — or one
+  # unlisted file — away at any time.
+  if [[ -n "$_for_file" && ${#_out_files[@]} -eq 0 ]]; then
+    echo -e "${RED}No test file declares '# touches: … ${_for_file} …'${NC}" >&2
+    echo "  Add it to the touches header of the tests that exercise it," >&2
+    echo "  or run the suite without --for." >&2
+    exit 1
+  fi
+
+  # Wait for all parallel jobs
+  if [[ "${CLAUDII_TEST_SEQUENTIAL:-0}" != "1" ]]; then
+    for _pid in "${_pids[@]}"; do
+      wait "$_pid" 2>/dev/null || true
+    done
+  fi
+
+  # Aggregate results — preserve file order
+  for _out_file in "${_out_files[@]}"; do
+    [[ -f "$_out_file" ]] || continue
+    if (( ! _summary_only )); then
+      echo ""
+      grep -v '^CLAUDII_TEST_RESULT:' "$_out_file" | grep -v '^CLAUDII_TEST_ERROR:' || true
+    fi
+    _summary=$(grep '^CLAUDII_TEST_RESULT:' "$_out_file" || true)
+    # A test file that dies mid-run never prints its result marker. Without
+    # this, the aggregate silently loses every assertion in it and the suite
+    # still exits 0 — which is exactly what happened when test_docs.sh kept a
+    # reference to a deleted array: fatal under /bin/bash 3.2 (unbound variable
+    # in "${arr[@]}"), a no-op under bash 5.x, so the CI leg that mattered
+    # reported 143 fewer passing asserts and stayed green. A gate that can
+    # vanish is worse than no gate.
+    if [[ -z "$_summary" ]]; then
+      FAIL=$(( FAIL + 1 ))
+      ERRORS+=("$(basename "${_out_file%.out}"): died before reporting a result (no CLAUDII_TEST_RESULT marker)")
+      _FAIL_DETAILS+=("$(grep -vE '^CLAUDII_TEST_(RESULT|ERROR):' "$_out_file")")
+    fi
+    if [[ -n "$_summary" ]]; then
+      _p=$(echo "$_summary" | cut -d: -f2)
+      _f=$(echo "$_summary" | cut -d: -f3)
+      PASS=$(( PASS + _p ))
+      FAIL=$(( FAIL + _f ))
+      # Stash the failing file's full output (sans the machine-readable marker
+      # lines) so --summary can print it; captured here because $_out_dir is
+      # removed before the summary block runs.
+      if [[ "$_f" =~ ^[0-9]+$ ]] && (( _f > 0 )); then
+        _FAIL_DETAILS+=("$(grep -vE '^CLAUDII_TEST_(RESULT|ERROR):' "$_out_file")")
+      fi
+    fi
+    while IFS= read -r _err_line; do
+      ERRORS+=("${_err_line#CLAUDII_TEST_ERROR:}")
+    done < <(grep '^CLAUDII_TEST_ERROR:' "$_out_file" || true)
+  done
+
+  rm -rf "$_out_dir"
+}
+
+# Summary
+if (( _summary_only )); then
+  if (( FAIL > 0 )); then
+    echo -e "${RED}${FAIL} failed${NC} / ${PASS} passed"
+    for err in "${ERRORS[@]}"; do echo "  - $err"; done
+    # Surface the captured Expected/Got diff so a CI failure is diagnosable from
+    # the log without a verbose re-run. Guarded for bash 3.2: an empty-array
+    # "${arr[@]}" expansion errors under set -u, so gate on the element count.
+    if (( ${#_FAIL_DETAILS[@]} > 0 )); then
+      echo ""
+      echo -e "${RED}── failing test output ──${NC}"
+      for _d in "${_FAIL_DETAILS[@]}"; do printf '%s\n\n' "$_d"; done
+    fi
+  else
+    echo -e "${GREEN}${PASS} passed${NC}"
+  fi
+else
+  echo ""
+  echo "───────────────────"
+  if (( FAIL > 0 )); then
+    echo -e "  ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
+  else
+    echo -e "  ${GREEN}$PASS passed${NC}"
+  fi
+  if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    echo ""
+    echo -e "${RED}Failures:${NC}"
+    for err in "${ERRORS[@]}"; do
+      echo "  - $err"
+    done
+  fi
+  echo ""
+fi
+
+exit $FAIL

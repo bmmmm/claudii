@@ -1,0 +1,377 @@
+# claudii statusline — RPROMPT with per-model health + session dashboard
+# shellcheck source=lib/visual.sh
+source "${CLAUDII_HOME}/lib/visual.sh"
+
+# _CLAUDII_USER_PROMPT is set by claudii.plugin.zsh before sourcing libs —
+# do not set it here, that would overwrite the value captured before config.zsh/functions.zsh ran.
+
+# 0 = no session dashboard until a real command runs (preexec sets it to 1)
+typeset -gi _CLAUDII_CMD_RAN=0
+# Literal dollar sign for safe PROMPT_SUBST embedding — $0 would be eaten by PROMPT_SUBST
+typeset -g _CLAUDII_DOLLAR='$'
+# Set to 1 by se/si/sessions commands — suppresses session dashboard for that cycle
+typeset -gi _CLAUDII_SHOWED_SESSIONS=0
+typeset -g _CLAUDII_LAST_CMD=""
+# PID of the last background status-fetch job — used to skip redundant spawns
+typeset -g _CLAUDII_STATUS_PID=""
+# Set while _claudii_statusline is executing — reentrancy guard
+typeset -g _CLAUDII_PRECMD_RUNNING=""
+
+function _claudii_preexec {
+  _CLAUDII_CMD_RAN=1
+  _CLAUDII_LAST_CMD="${1:-}"
+}
+
+function TRAPWINCH {
+  _CLAUDII_CMD_RAN=1
+  zle reset-prompt 2>/dev/null
+}
+
+function _claudii_statusline {
+  # Reentrancy guard — flag holds the start epoch; treat as stuck after 5s
+  # so a Ctrl-C / signal interrupt mid-render can't freeze RPROMPT for the
+  # rest of the session.
+  if [[ "${_CLAUDII_PRECMD_RUNNING:-}" == <-> ]]; then
+    (( ${EPOCHSECONDS:-0} - _CLAUDII_PRECMD_RUNNING < 5 )) && return
+  fi
+  typeset -g _CLAUDII_PRECMD_RUNNING=${EPOCHSECONDS:-1}
+  {
+    local _t=$EPOCHREALTIME
+    _claudii_statusline_render
+    local _el=$(( int(($EPOCHREALTIME - _t) * 1000000) ))
+    _CLAUDII_METRICS[precmd.last_us]=$_el
+    _CLAUDII_METRICS[precmd.calls]=$(( ${_CLAUDII_METRICS[precmd.calls]:-0} + 1 ))
+    _CLAUDII_METRICS[precmd.total_us]=$(( ${_CLAUDII_METRICS[precmd.total_us]:-0} + _el ))
+    _claudii_log debug "precmd: $(_claudii_fmt_us $_el)"
+  } always {
+    typeset -g _CLAUDII_PRECMD_RUNNING=
+  }
+}
+
+# Spawn claudii-status in background, but only if no previous fetch is still running.
+# Uses PID file for dedup — ( cmd & ) subshell pattern prevents [N] PID job-control leak.
+function _claudii_status_spawn {
+  local _pid_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status.pid"
+  # Check _CLAUDII_STATUS_PID (in-memory) or PID file
+  local _check_pid="${_CLAUDII_STATUS_PID:-}"
+  if [[ -z "$_check_pid" && -f "$_pid_file" ]]; then
+    { _check_pid=$(<"$_pid_file"); } 2>/dev/null
+  fi
+  if [[ -n "$_check_pid" ]] && kill -0 "$_check_pid" 2>/dev/null; then
+    # PID is alive — verify it's actually our job via PID file mtime.
+    # Status job completes in < 15s; if the file is older than 30s the PID was recycled.
+    local _pid_age=0
+    if (( _CLAUDII_HAVE_ZSTAT )); then
+      local -A _pst
+      zstat -H _pst "$_pid_file" 2>/dev/null \
+        && _pid_age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_pst[mtime]:-0} ))
+    else
+      _pid_age=$(( ${EPOCHSECONDS:-$(date +%s)} - $(stat -f%m "$_pid_file" 2>/dev/null || stat -c%Y "$_pid_file" 2>/dev/null || echo 0) ))
+    fi
+    if (( _pid_age < 30 )); then
+      _claudii_log debug "status_spawn: job running (pid=$_check_pid age=${_pid_age}s)"
+      return  # genuinely our running job
+    fi
+    _claudii_log debug "status_spawn: PID $_check_pid alive but file ${_pid_age}s old — recycled, respawning"
+  fi
+  # ( cmd & ) — subshell exits immediately, grandchild is orphaned to init.
+  # PID written by claudii-status itself (see --pid-file). No $! available with this pattern.
+  _CLAUDII_STATUS_PID=""
+  ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_pid_file" &>/dev/null & )
+}
+
+function _claudii_statusline_render {
+  # Restore PROMPT to the user's original every cycle
+  PROMPT="${_CLAUDII_USER_PROMPT}"
+
+  # Single cache-load call — fast mtime check, jq only on config change
+  _claudii_cache_load
+  [[ "${_CLAUDII_CFG_CACHE[statusline.enabled]:-${_CLAUDII_DEF_CACHE[statusline.enabled]:-true}}" != "true" ]] && { RPROMPT=""; return; }
+
+  local status_cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status-models"
+  local ttl="${_CLAUDII_CFG_CACHE[status.cache_ttl]:-${_CLAUDII_DEF_CACHE[status.cache_ttl]:-300}}"
+
+  if [[ ! -f "$status_cache" ]]; then
+    _claudii_status_spawn
+    RPROMPT="%F{8}[…]%f"; return
+  fi
+
+  # Age calculation — no subprocesses: zstat builtin + $EPOCHSECONDS
+  local age=0
+  if (( _CLAUDII_HAVE_ZSTAT )); then
+    local -A _zst
+    zstat -H _zst "$status_cache" 2>/dev/null \
+      && age=$(( ${EPOCHSECONDS:-$(date +%s)} - ${_zst[mtime]:-0} ))
+  else
+    age=$(( ${EPOCHSECONDS:-$(date +%s)} - $(stat -f%m "$status_cache" 2>/dev/null || stat -c%Y "$status_cache" 2>/dev/null || echo 0) ))
+  fi
+
+  # Read cache BEFORE TTL decision — needed to determine effective TTL
+  local cache_content=""
+  { cache_content=$(<"$status_cache"); } 2>/dev/null
+  [[ -z "$cache_content" ]] && { RPROMPT="%F{8}[…]%f"; return; }
+
+  # Adaptive TTL based on last known status
+  local effective_ttl=$ttl
+  if [[ $'\n'"$cache_content" != *$'\n'"_api=unreachable"* ]]; then
+    if [[ $'\n'"$cache_content" == *$'\n'*"=down"* || $'\n'"$cache_content" == *$'\n'*"=degraded"* ]]; then
+      effective_ttl=$(( ttl / 5 ))
+      (( effective_ttl < 60 )) && effective_ttl=60
+    else
+      effective_ttl=$(( ttl * 2 ))
+    fi
+  fi
+
+  if (( age > effective_ttl )); then
+    _claudii_log debug "statusline: cache stale (${age}s > effective TTL ${effective_ttl}s, base ${ttl}s), refreshing"
+    _claudii_status_spawn
+  fi
+
+  local models_str="${_CLAUDII_CFG_CACHE[statusline.models]:-${_CLAUDII_DEF_CACHE[statusline.models]:-opus,sonnet,haiku,fable}}"
+  local models=(${(s:,:)models_str})
+
+  # Collapsed health: all-healthy → a single "claude ✓" (an unlisted model is
+  # assumed working); only down/degraded models get named; a uniform all-down /
+  # all-degraded row collapses to one "claude" glyph.
+  #
+  # A DELIBERATE third copy of lib/helpers.sh's _status_cache_read /
+  # _status_cache_verdict. It cannot call them: this is zsh, helpers.sh is bash,
+  # and sourcing a bash library into precmd would cost a prompt. So the
+  # agreement is asserted rather than commented — tests/test_status_cache_agreement.sh
+  # renders one cache through this function, through bin/claudii-cc-statusline
+  # and through the helper, and compares. Change the classification here and it
+  # goes red.
+  local -i _sl_total=0 _sl_ok=0 _sl_down=0 _sl_degr=0
+  local _sl_problems=""
+  for model in "${models[@]}"; do
+    model="${model// /}"
+    [[ -z "$model" ]] && continue
+    (( ++_sl_total ))
+    # Pattern match in-process — no grep subprocess
+    if [[ $'\n'"$cache_content" == *$'\n'"${model}=down"* ]]; then
+      (( ++_sl_down )); _sl_problems+="%F{red}${(C)model} ${CLAUDII_SYM_DOWN}%f "
+    elif [[ $'\n'"$cache_content" == *$'\n'"${model}=degraded"* ]]; then
+      (( ++_sl_degr )); _sl_problems+="%F{yellow}${(C)model} ${CLAUDII_SYM_DEGRADED}%f "
+    else
+      (( ++_sl_ok ))
+    fi
+  done
+
+  local segments=""
+  if (( _sl_total > 0 )); then
+    if   (( _sl_ok   == _sl_total )); then segments="%F{green}claude ${CLAUDII_SYM_OK}%f "
+    elif (( _sl_down == _sl_total )); then segments="%F{red}claude ${CLAUDII_SYM_DOWN}%f "
+    elif (( _sl_degr == _sl_total )); then segments="%F{yellow}claude ${CLAUDII_SYM_DEGRADED}%f "
+    else                                   segments="$_sl_problems"
+    fi
+  fi
+
+  local age_str refreshing="" unreachable=""
+  if (( age < 60 )); then age_str="${age}s"
+  elif (( age < 3600 )); then age_str="$(( age / 60 ))m"
+  else age_str="$(( age / 3600 ))h"
+  fi
+  (( age > effective_ttl )) && refreshing=" %F{8}⟳%f"
+  [[ $'\n'"$cache_content" == *$'\n'"_api=unreachable"* ]] && unreachable=" %F{8}?%f"
+
+  # Incident indicator — when an incident exists but no tracked model is
+  # actually affected (the per-model glyphs are all ✓), show a neutral note
+  # glyph instead of the stage-colored alarm; otherwise the stage color
+  # reflects the incident stage. Same two fields the helper exposes as
+  # _SC_INCIDENT / _SC_ANY_ISSUE; gated by tests/test_status_cache_agreement.sh.
+  local incident_sym="" _models_affected=0 _incident_stage=""
+  if [[ $'\n'"$cache_content" == *$'\n'*"=down"* || $'\n'"$cache_content" == *$'\n'*"=degraded"* ]]; then
+    _models_affected=1
+  fi
+  if [[ $'\n'"$cache_content" == *$'\n'"_incident=investigating"* ]]; then
+    _incident_stage="investigating"
+  elif [[ $'\n'"$cache_content" == *$'\n'"_incident=identified"* ]]; then
+    _incident_stage="identified"
+  elif [[ $'\n'"$cache_content" == *$'\n'"_incident=monitoring"* ]]; then
+    _incident_stage="monitoring"
+  fi
+  if [[ -n "$_incident_stage" && $_models_affected -eq 0 ]]; then
+    incident_sym=" %F{8}${CLAUDII_SYM_NOTE}%f"
+  elif [[ "$_incident_stage" == "investigating" ]]; then
+    incident_sym=" %F{red}${CLAUDII_SYM_INVESTIGATING}%f"
+  elif [[ "$_incident_stage" == "identified" ]]; then
+    incident_sym=" %F{yellow}${CLAUDII_SYM_IDENTIFIED}%f"
+  elif [[ "$_incident_stage" == "monitoring" ]]; then
+    incident_sym=" %F{cyan}${CLAUDII_SYM_MONITORING}%f"
+  fi
+
+  RPROMPT="[${segments% }] %F{8}${age_str}%f${refreshing}${unreachable}${incident_sym}"
+
+  # Session dashboard — session lines prepended to PROMPT (conditional: only after real commands)
+  _claudii_session_dashboard
+}
+
+typeset -ga _CLAUDII_SDASH_MODELS _CLAUDII_SDASH_CTXS _CLAUDII_SDASH_TOKS
+typeset -ga _CLAUDII_SDASH_5HS _CLAUDII_SDASH_R5HS
+typeset -gi _CLAUDII_SDASH_COUNT=0
+
+# Token short-form (K/M/B) for the dashboard — mirrors lib/render.sh _fmt_tok
+# (whole-K rounding + B branch). bin/claudii-cc-statusline's _tok deliberately
+# differs (one-decimal K, no B branch) for the live per-call ↑/↓ counts. Echoes
+# "" for empty / zero / non-numeric input so the caller can skip the segment.
+function _claudii_fmt_tok {
+  local n=${1%.*} t
+  [[ "$n" == <-> ]] || { printf ''; return; }
+  (( n == 0 )) && { printf ''; return; }
+  # Promote at the ROUNDED boundary, not the raw unit: 999500..999999 rounds to
+  # 1.0M (not "1000K"), 999.95M..999.99M to 1.0B. Mirror of lib/render.sh _fmt_tok.
+  if (( n >= 999950000 )); then
+    t=$(( (n + 50000000) / 100000000 ))
+    printf '%d.%dB' $(( t / 10 )) $(( t % 10 ))
+  elif (( n >= 999500 )); then
+    t=$(( (n + 50000) / 100000 ))
+    printf '%d.%dM' $(( t / 10 )) $(( t % 10 ))
+  elif (( n >= 1000 )); then
+    printf '%dK' $(( (n + 500) / 1000 ))
+  else
+    printf '%d' "$n"
+  fi
+}
+
+# Iterates session cache files, populates _CLAUDII_DASH_* arrays.
+# Returns 0 if active sessions found, 1 if none.
+function _claudii_collect_sessions {
+  local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  _CLAUDII_SDASH_MODELS=() _CLAUDII_SDASH_CTXS=() _CLAUDII_SDASH_TOKS=()
+  _CLAUDII_SDASH_5HS=() _CLAUDII_SDASH_R5HS=()
+  _CLAUDII_SDASH_COUNT=0
+
+  local -A _sfst
+  local _sf _sf_mt _sf_age sc s_ppid
+  local s_model s_ctx s_tok s_5h s_r5h _best_r5h="" _best_r5h_mt=0
+  for _sf in "$_cache_base"/session-*(N); do
+    [[ "$_sf" == *.tmp.* ]] && continue
+    _sf_mt=0
+    if (( _CLAUDII_HAVE_ZSTAT )); then
+      _sfst=()
+      zstat -H _sfst "$_sf" 2>/dev/null && _sf_mt=${_sfst[mtime]:-0}
+    else
+      _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
+    fi
+    _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
+
+    sc=""
+    { sc=$(<"$_sf"); } 2>/dev/null
+    [[ -z "$sc" ]] && continue
+    local _sc_nl=$'\n'"$sc"
+
+    s_ppid=""
+    [[ "$_sc_nl" == *$'\n'ppid=* ]] && s_ppid="${${_sc_nl#*$'\n'ppid=}%%$'\n'*}"
+    if [[ "$s_ppid" =~ ^[0-9]+$ && "$s_ppid" != "0" ]]; then
+      # Authoritative liveness check — show even if file is old (long-running task).
+      # 24h cap guards against PID recycling (OS reuses PIDs of long-dead processes).
+      (( _sf_age >= 86400 )) && continue
+      kill -0 "$s_ppid" 2>/dev/null || continue
+    else
+      # No ppid → fall back to age-based filter (< 300s)
+      (( _sf_age >= 300 )) && continue
+    fi
+
+    s_model="" s_ctx="" s_tok="" s_5h="" s_r5h=""
+    [[ "$_sc_nl" == *$'\n'model=* ]]    && s_model="${${_sc_nl#*$'\n'model=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'ctx_pct=* ]]  && s_ctx="${${_sc_nl#*$'\n'ctx_pct=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'tok=* ]]      && s_tok="${${_sc_nl#*$'\n'tok=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'rate_5h=* ]]  && s_5h="${${_sc_nl#*$'\n'rate_5h=}%%$'\n'*}"
+    [[ "$_sc_nl" == *$'\n'reset_5h=* ]] && s_r5h="${${_sc_nl#*$'\n'reset_5h=}%%$'\n'*}"
+    [[ -z "$s_model" ]] && continue
+
+    _CLAUDII_SDASH_MODELS+=("$s_model")
+    _CLAUDII_SDASH_CTXS+=("$s_ctx")
+    _CLAUDII_SDASH_TOKS+=("$s_tok")
+    _CLAUDII_SDASH_5HS+=("$s_5h")
+    _CLAUDII_SDASH_R5HS+=("$s_r5h")
+    # Keep the reset_5h from the FRESHEST session (max mtime), not the glob-last
+    # one — the account-wide 5h window can have rolled between two samples, and
+    # glob order is by session id, not freshness. Mirrors the freshest-wins
+    # logic in lib/functions.zsh _claudii_rl_warn.
+    [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && (( _sf_mt > _best_r5h_mt )) \
+      && { _best_r5h="$s_r5h"; _best_r5h_mt=$_sf_mt; }
+    (( ++_CLAUDII_SDASH_COUNT ))
+  done
+  # Backfill missing reset_5h — all sessions share the same account reset time
+  if [[ -n "$_best_r5h" ]]; then
+    local _bi
+    for (( _bi=1; _bi<=${#_CLAUDII_SDASH_R5HS}; _bi++ )); do
+      [[ -z "${_CLAUDII_SDASH_R5HS[$_bi]}" ]] && _CLAUDII_SDASH_R5HS[$_bi]="$_best_r5h"
+    done
+  fi
+  (( _CLAUDII_SDASH_COUNT > 0 ))
+}
+
+function _claudii_session_dashboard {
+  local _dash_mode="${_CLAUDII_CFG_CACHE[session-dashboard.enabled]:-${_CLAUDII_DEF_CACHE[session-dashboard.enabled]:-${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}}}"
+  # "auto"/"on"/"true" enable; off/false/0 disable. (auto is the default-on
+  # sentinel — don't flip to an != on/true whitelist or it breaks the default.)
+  if [[ "$_dash_mode" == off || "$_dash_mode" == false || "$_dash_mode" == 0 ]]; then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+  if (( _CLAUDII_CMD_RAN == 0 )); then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+  _CLAUDII_CMD_RAN=0
+
+  # Show session dashboard only after claudii commands — skip after ls, git, etc.
+  [[ "${_CLAUDII_LAST_CMD}" != claudii* ]] && {
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  }
+  # Skip if se/si/sessions already showed session info this cycle
+  if (( _CLAUDII_SHOWED_SESSIONS )); then
+    _CLAUDII_SHOWED_SESSIONS=0
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+
+  _claudii_collect_sessions
+  if (( _CLAUDII_SDASH_COUNT == 0 )); then
+    PROMPT="${_CLAUDII_USER_PROMPT}"; return
+  fi
+
+  # Read rate_display once — color thresholds key off raw used%, only the
+  # displayed number flips when set to "remaining". _rate_mark distinguishes
+  # the modes visually (no marker for "used", ↓ for "remaining").
+  local _rate_disp="${_CLAUDII_CFG_CACHE[statusline.rate_display]:-${_CLAUDII_DEF_CACHE[statusline.rate_display]:-used}}"
+  local _rate_mark=""
+  [[ "$_rate_disp" == "remaining" ]] && _rate_mark="↓"
+
+  # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
+  local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
+  local _di _line _ctx _tok _tf _r5h _r5h_int _r5h_disp _r5h_clr _rst _rem
+  for (( _di=1; _di<=_CLAUDII_SDASH_COUNT; _di++ )); do
+    _line="  %F{8}${_CLAUDII_SDASH_MODELS[$_di]}"
+    _ctx="${_CLAUDII_SDASH_CTXS[$_di]%.*}"
+    [[ -n "$_ctx" ]] && _line+="  ${_ctx}%%"
+    # Token throughput replaces the old $cost (no $ to PROMPT_SUBST-escape).
+    _tok="${_CLAUDII_SDASH_TOKS[$_di]}"
+    if [[ -n "$_tok" && "$_tok" != "0" && "$_tok" != "null" ]]; then
+      _tf=$(_claudii_fmt_tok "$_tok") && [[ -n "$_tf" ]] && _line+="  ${_tf} tok"
+    fi
+    _r5h="${_CLAUDII_SDASH_5HS[$_di]}"
+    if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then
+      _r5h_int=${_r5h%.*}
+      _r5h_disp=$_r5h_int
+      [[ "$_rate_disp" == "remaining" ]] && _r5h_disp=$(( 100 - _r5h_int ))
+      if (( _r5h_int >= 80 )); then _r5h_clr="%F{red}"
+      elif (( _r5h_int >= 50 )); then _r5h_clr="%F{yellow}"
+      else _r5h_clr="%F{green}"
+      fi
+      _line+="%f  ${_r5h_clr}5h${_rate_mark}:${_r5h_disp}%%"
+      _rst="${_CLAUDII_SDASH_R5HS[$_di]}"
+      if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
+        _rem=$(( _rst - _now ))
+        (( _rem > 0 )) && _line+=" ↺$(( _rem / 60 ))m"
+      fi
+    fi
+    _line+="%f"
+    _dash_lines+="${_line}"$'\n'
+  done
+
+  PROMPT="${_dash_lines}${_CLAUDII_USER_PROMPT}"
+}
+
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd _claudii_statusline
+add-zsh-hook preexec _claudii_preexec

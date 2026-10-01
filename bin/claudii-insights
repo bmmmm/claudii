@@ -1,0 +1,413 @@
+#!/bin/bash
+# claudii-insights — aggregates Claude Code JSONL transcripts to per-session JSON cache
+#
+# Each session JSONL gets a corresponding cache file at:
+#   $CACHE_DIR/insights/<session-id>.json
+#
+# Cache is mtime-invalidated against the source JSONL. First run for a fresh
+# cache iterates all sessions (~5-30s for typical histories); subsequent runs
+# only reprocess sessions whose JSONL has been touched since the last cache.
+#
+# Usage:
+#   claudii-insights aggregate         # refresh all stale caches (default)
+#   claudii-insights aggregate --force # rebuild every cache
+#   claudii-insights aggregate <jsonl> # refresh one specific file
+#   claudii-insights cache-dir         # print insights cache directory
+#   claudii-insights merge [--days N] [--until-days M]
+#                                      # stream merged stats to stdout (jq-able)
+#                                      # includes per-skill, per-plugin and per-MCP-tool attribution
+#   claudii-insights gc --older-than DAYS [--yes]
+#                                      # prune orphaned caches (dry-run without --yes)
+#
+# CLAUDII_NOW (epoch seconds, env) pins "now" for `merge`'s --days/--until-days
+# cutoffs — deterministic tests inject it; unset in production uses the live
+# clock. Same seam name as lib/cmd/cost.sh's forecast month projection.
+
+set -uo pipefail
+
+export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+command -v jq >/dev/null 2>&1 || { printf 'claudii-insights: jq not found — install jq\n' >&2; exit 1; }
+
+PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+CACHE_DIR="$CACHE_BASE/insights"
+JQ_PROGRAM="$CLAUDII_HOME/lib/insights.jq"
+# sessionId<TAB>repo, one line per aggregated session, later lines win. Read by
+# claudii-otel (session.id → repo for OTEL samples) instead of parsing every
+# cache file (3 s for 15k caches). Lives OUTSIDE insights/ so no *.json glob
+# there picks it up.
+REPOMAP_LOG="$CACHE_BASE/insights-repomap.tsv"
+
+mkdir -p "$CACHE_DIR" && chmod 0700 "$CACHE_DIR"
+
+[[ -f "$JQ_PROGRAM" ]] || { printf 'claudii-insights: missing %s\n' "$JQ_PROGRAM" >&2; exit 1; }
+
+_mtime() { stat -f%m "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || echo 0; }
+
+# shellcheck source=lib/insights_stream.sh
+source "$CLAUDII_HOME/lib/insights_stream.sh"
+
+# List a session's subagent transcripts (<proj>/<sid>/subagents/*.jsonl).
+# Prints nothing when the session has none.
+_subagent_files() {
+  local jsonl="$1"
+  local sdir="${jsonl%.jsonl}/subagents"
+  [[ -d "$sdir" ]] || return 0
+  local f
+  for f in "$sdir"/*.jsonl; do
+    [[ -f "$f" ]] && printf '%s\n' "$f"
+  done
+}
+
+# Aggregate one JSONL into its cache file. Returns 0 on success.
+# Subagent transcripts are appended after the parent file so insights.jq has
+# the agentId→skill map complete before subagent lines stream in.
+_aggregate_one() {
+  local jsonl="$1"
+  local sid; sid="$(basename "$jsonl" .jsonl)"
+  local out="$CACHE_DIR/$sid.json"
+  local files=("$jsonl")
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] && files+=("$sub")
+  done < <(_subagent_files "$jsonl")
+  local tmp; tmp=$(mktemp "$out.XXXXXX") || return 1
+  if jq -R -n --arg sid "$sid" -f "$JQ_PROGRAM" "${files[@]}" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$out"
+    # Only extend a log a full run has built — a partial one would hide every
+    # session it lacks from its readers (they fall back to a full scan if it
+    # is missing, never if it is incomplete).
+    # A forced run rebuilds the log at its end anyway — skip the extra jq.
+    if [[ -f "$REPOMAP_LOG" && "${_AGG_FORCE:-0}" != "1" ]]; then
+      _repomap_lines < "$out" >> "$REPOMAP_LOG" 2>/dev/null
+    fi
+    return 0
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# Decide whether a JSONL needs reaggregation. Subagent transcripts count:
+# a session is stale when its parent OR any subagent file outdates the cache.
+_is_stale() {
+  local jsonl="$1" force="$2"
+  local sid; sid="$(basename "$jsonl" .jsonl)"
+  local cache="$CACHE_DIR/$sid.json"
+  [[ "$force" == "1" ]] && return 0
+  [[ ! -s "$cache" ]] && return 0
+  local jm cm sub
+  jm=$(_mtime "$jsonl"); cm=$(_mtime "$cache")
+  (( jm > cm )) && return 0
+  while IFS= read -r sub; do
+    [[ -z "$sub" ]] && continue
+    (( $(_mtime "$sub") > cm )) && return 0
+  done < <(_subagent_files "$jsonl")
+  return 1
+}
+
+# Must match `schema_version` in lib/insights.jq — bump both together on any
+# breaking change to the per-session cache shape (drives the rebuild gate below).
+SCHEMA_VERSION=10
+
+# Schema gate: compare the .schema marker written after the last successful
+# rebuild. The previous approach (min schema_version across ALL cache files)
+# looped forever once orphaned caches existed — sessions whose JSONL Claude
+# Code already deleted can never be re-aggregated, so their old version kept
+# forcing a full rebuild on every run. Orphans are tolerated at merge time
+# (missing keys default via // 0 and // {}).
+_schema_ok() {
+  [[ "$(cat "$CACHE_DIR/.schema" 2>/dev/null)" == "$SCHEMA_VERSION" ]]
+}
+
+# Cache JSON on stdin → "sessionId<TAB>repo" lines (sessions with both).
+_repomap_lines() {
+  jq -r 'select((.sessionId // "") != "" and (.project.repo // "") != "")
+         | [.sessionId, .project.repo] | @tsv' 2>/dev/null
+}
+
+# Rewrite the log from every cache, orphans included (their JSONL is gone, so
+# no aggregate run would ever append them again).
+_repomap_rebuild() {
+  local tmp; tmp=$(mktemp "$REPOMAP_LOG.XXXXXX") || return 1
+  if _insights_stream "$CACHE_DIR" | _repomap_lines > "$tmp"; then
+    mv -f "$tmp" "$REPOMAP_LOG"
+  else
+    rm -f "$tmp"; return 1
+  fi
+}
+
+_cmd_aggregate() {
+  local force=0 target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force|-f) force=1 ;;
+      *) target="$1" ;;
+    esac
+    shift
+  done
+
+  if [[ -n "$target" ]]; then
+    [[ -f "$target" ]] || { printf 'not found: %s\n' "$target" >&2; exit 1; }
+    _aggregate_one "$target"
+    return $?
+  fi
+
+  # Schema bump → force a full rebuild so commands never read stale shapes.
+  if (( ! force )) && ! _schema_ok; then
+    printf 'insights: schema bump → rebuilding all caches\n' >&2
+    force=1
+  fi
+
+  # Use a marker file to skip the per-file stat loop. find -newer is O(1) for
+  # the unchanged majority. On --force or first run, scan all files.
+  # maxdepth 4 reaches <proj>/<sid>/subagents/agent-*.jsonl — those map back
+  # to their parent session file (sort -u dedups multi-agent sessions) so a
+  # subagent-only update still re-aggregates the parent.
+  local marker="$CACHE_DIR/.last-scan"
+  local find_args=("$PROJECTS_DIR" -maxdepth 4 -name "*.jsonl" -type f)
+  if [[ "$force" != "1" && -f "$marker" ]]; then
+    find_args+=(-newer "$marker")
+  fi
+
+  _AGG_FORCE="$force"
+  # Touch marker BEFORE scan so any writes during scan get picked up next time.
+  : > "$marker.next"
+
+  local processed=0 failed=0
+  while IFS= read -r jsonl; do
+    [[ -z "$jsonl" ]] && continue
+    [[ -f "$jsonl" ]] || continue   # mapped parent of orphaned subagent dir
+    # When using -newer the file is by definition stale — still check cache
+    # absence for the first-run case (no marker yet, every file is "new").
+    local sid; sid="$(basename "$jsonl" .jsonl)"
+    if [[ "$force" == "1" || ! -s "$CACHE_DIR/$sid.json" ]] || _is_stale "$jsonl" "$force"; then
+      if _aggregate_one "$jsonl"; then
+        (( ++processed ))
+      else
+        (( ++failed ))
+      fi
+    fi
+  done < <(find "${find_args[@]}" 2>/dev/null \
+             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u)
+
+  mv -f "$marker.next" "$marker"
+  printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
+  shopt -s nullglob
+  local cached_total=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  # Rebuild the session→repo log whole when it is missing, after a forced run
+  # (orphans must be in it too — no run would ever append them again), and
+  # when re-aggregations of active sessions have piled up duplicate lines past
+  # twice the number of caches (each one appends; readers keep the last).
+  local log_lines=0
+  [[ -f "$REPOMAP_LOG" ]] && log_lines=$(wc -l < "$REPOMAP_LOG" | tr -d ' ')
+  if (( force )) || [[ ! -f "$REPOMAP_LOG" ]] || (( log_lines > 2 * ${#cached_total[@]} + 100 )); then
+    _repomap_rebuild
+  fi
+
+  printf 'insights: %d processed · %d cached · %d failed\n' "$processed" "$((${#cached_total[@]} - processed))" "$failed" >&2
+}
+
+# Merge all (or filtered) cache files into one aggregated JSON on stdout.
+# Filters:
+#   --days N         only include sessions whose last_seen is within N days
+#   --until-days M   only include sessions older than M days (last_seen < now-M)
+#                    — combine with --days for a bounded window [now-N, now-M),
+#                    used by `skills-cost --compare` for the prior period.
+# (A --project filter existed as a parsed-but-dead flag since the first merge
+# version — the per-session caches carry no project field, so it could never
+# filter anything. Removed rather than silently no-op'ing; needs a schema bump
+# to implement for real.)
+_cmd_merge() {
+  local days="" until_days="" wl=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --days)         shift; days="${1:-}" ;;
+      --until-days)   shift; until_days="${1:-}" ;;
+      --with-latency) wl=true ;;
+      *) printf 'merge: unknown option: %s\n' "$1" >&2
+         printf 'Usage: claudii-insights merge [--days N] [--until-days M] [--with-latency]\n' >&2; exit 1 ;;
+    esac
+    shift
+  done
+
+  # --days / --until-days, when given, must be a positive integer. A non-numeric
+  # value makes the `date -v "-${days}d"` below fail → empty cutoff → silently
+  # "no cutoff" (all sessions). Validate BEFORE the empty-cache early-return so the
+  # error fires regardless of cache state. Sibling guard in lib/cmd/skills-cost.sh.
+  if [[ -n "$days" ]] && { ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; }; then
+    printf 'merge: --days must be a positive integer (got: %s)\n' "$days" >&2
+    exit 1
+  fi
+  if [[ -n "$until_days" ]] && { ! [[ "$until_days" =~ ^[0-9]+$ ]] || [[ "$until_days" -lt 1 ]]; }; then
+    printf 'merge: --until-days must be a positive integer (got: %s)\n' "$until_days" >&2
+    exit 1
+  fi
+  # CLAUDII_NOW (epoch seconds, env), when set, is validated the same way: an
+  # unnumeric value used to die on an unbound-variable reference INSIDE the
+  # cutoff arithmetic below (under `set -u`, "junk - days*86400" re-expands
+  # "junk" as a variable name) — but that failure happens inside the `$(...)`
+  # command substitution, so it only empties cutoff_iso/until_iso, it does not
+  # propagate. An empty cutoff reads as "no bound" in lib/insights-merge.jq:29,
+  # so `CLAUDII_NOW=junk claudii limits --days 60` silently returned every
+  # session ever cached, rc 0, with only a swallowed stderr warning
+  # (_insights_merged_json redirects stderr). Reject it up front instead.
+  if [[ -n "${CLAUDII_NOW:-}" ]] && ! [[ "$CLAUDII_NOW" =~ ^[0-9]+$ ]]; then
+    printf 'merge: CLAUDII_NOW must be a positive integer epoch (got: %s)\n' "$CLAUDII_NOW" >&2
+    exit 1
+  fi
+
+  shopt -s nullglob
+  local files=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    printf '{}\n'
+    return 0
+  fi
+
+  # ISO 8601 cutoffs in UTC (python-free date math), anchored on CLAUDII_NOW
+  # (epoch seconds) when set — same seam name _cmd_cost_forecast (lib/cmd/cost.sh)
+  # uses for its month projection; kept as the one name for this purpose rather
+  # than reusing lib/functions.zsh's _CLAUDII_NOW (a same-purpose but
+  # zsh-specific seam for the rl_warn countdown — it CAN cross a fork, as
+  # tests/test_rl_warn.sh and test_clre.sh already do, so that is not the
+  # reason a second name exists; cost.sh's precedent is). Unset in production
+  # -> live clock (claudii#5: `limits` fixtures with hard-coded dates aged out
+  # of their --days window, and no seam reached this merge step to pin it).
+  # Plain epoch arithmetic (UTC has no DST) replaces the old `-v -Nd` / "N days
+  # ago" relative parsing, so both branches share the one anchor. GNU's
+  # `-d @<epoch>` tried first: it never touches the filesystem, whereas BSD's
+  # `-r <epoch>` doubles as "read a FILE's mtime" on GNU, so trying `-r` first
+  # would silently return the wrong date on GNU if a file happened to be named
+  # like the epoch. `-d` is not a BSD option at all (fails fast, "illegal
+  # option"), so the fallback to `-r` is reached cleanly there. Both attempts
+  # are silenced: with CLAUDII_NOW validated above and $days/$until_days
+  # already digit-checked, the arithmetic can no longer produce a value either
+  # dialect would reject, so a further failure would only ever be the expected
+  # per-platform miss, never new information worth surfacing.
+  local _now_epoch="${CLAUDII_NOW:-$(date +%s)}"
+  local cutoff_iso="" until_iso=""
+  if [[ -n "$days" ]]; then
+    cutoff_iso=$(date -u -d "@$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -r "$(( _now_epoch - days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  fi
+  if [[ -n "$until_days" ]]; then
+    until_iso=$(date -u -d "@$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -r "$(( _now_epoch - until_days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  fi
+
+  # Merge program lives in lib/insights-merge.jq (window filters + tolerant
+  # attribution_models summing). The caches arrive on stdin, bounded by the
+  # window — never as jq arguments (see lib/insights_stream.sh).
+  _insights_stream "$CACHE_DIR" "$days" | jq -n \
+    --arg cutoff "$cutoff_iso" \
+    --arg until "$until_iso" \
+    --argjson with_latency "$wl" \
+    -f "$CLAUDII_HOME/lib/insights-merge.jq"
+}
+
+# Prune ORPHANED cache files (source JSONL deleted by Claude Code) older than
+# a cutoff. Orphans are kept by design — they are the only cost history beyond
+# CC's transcript retention — so this is strictly opt-in: --older-than is
+# required and nothing is deleted without --yes (dry-run is the default).
+# Caches whose JSONL still exists are never touched: deleting one would NOT
+# trigger re-aggregation (the marker-based scan only sees files newer than
+# .last-scan), silently losing data until the next --force.
+_cmd_gc() {
+  local days="" yes=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --older-than) shift; days="${1:-}" ;;
+      --yes|-y)     yes=1 ;;
+      *) printf 'gc: unknown option: %s\n' "$1" >&2
+         printf 'Usage: claudii-insights gc --older-than DAYS [--yes]\n' >&2; exit 1 ;;
+    esac
+    shift
+  done
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'gc: --older-than DAYS is required (positive integer, got: %s)\n' "${days:-<empty>}" >&2
+    exit 1
+  fi
+
+  # window-cutoff probe — keep in sync with _window_cutoffs (lib/timefmt.sh)
+  local cutoff_iso cutoff_epoch
+  if date -v -1d +%Y-%m-%d >/dev/null 2>&1; then
+    cutoff_iso=$(date -u -v "-${days}d" +%Y-%m-%dT%H:%M:%SZ)
+  else
+    cutoff_iso=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ)
+  fi
+  cutoff_epoch=$(( $(date +%s) - days * 86400 ))
+
+  shopt -s nullglob
+  local files=("$CACHE_DIR"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    printf 'gc: no cache files\n'
+    return 0
+  fi
+
+  # One find pass for all live session ids — never one find per cache file.
+  local live_sids
+  live_sids=$(find "$PROJECTS_DIR" -maxdepth 2 -name "*.jsonl" -type f 2>/dev/null \
+                | sed 's|.*/||; s|\.jsonl$||')
+
+  local pruned=0 kept_live=0 kept_recent=0
+  local line sid last_seen base
+  # One jq pass for all (sid, last_seen) pairs.
+  while IFS=$'\t' read -r sid last_seen; do
+    [[ -z "$sid" ]] && continue
+    if [[ $'\n'"$live_sids"$'\n' == *$'\n'"$sid"$'\n'* ]]; then
+      (( ++kept_live ))
+      continue
+    fi
+    # Age check: last_seen when present; file mtime as fallback for degenerate
+    # caches without timestamped records (mtime = last aggregation ≈ session end).
+    if [[ -n "$last_seen" ]]; then
+      if [[ "$last_seen" > "$cutoff_iso" ]]; then
+        (( ++kept_recent ))
+        continue
+      fi
+    elif (( $(_mtime "$CACHE_DIR/$sid.json") > cutoff_epoch )); then
+      (( ++kept_recent ))
+      continue
+    fi
+    if (( yes )); then
+      rm -f "$CACHE_DIR/$sid.json" && (( ++pruned ))
+    else
+      printf 'would prune: %s  (last_seen: %s)\n' "$sid" "${last_seen:-none}"
+      (( ++pruned ))
+    fi
+  done < <(printf '%s\0' "${files[@]}" \
+             | xargs -0 jq -r '[(input_filename | sub(".*/"; "") | sub("\\.json$"; "")), (.last_seen // "")] | @tsv' 2>/dev/null)
+
+  if (( yes )); then
+    printf 'gc: pruned %d orphaned cache(s) older than %dd  (%d live, %d recent orphans kept)\n' \
+      "$pruned" "$days" "$kept_live" "$kept_recent"
+  else
+    printf 'gc: %d orphaned cache(s) older than %dd would be pruned  (%d live, %d recent orphans kept)\n' \
+      "$pruned" "$days" "$kept_live" "$kept_recent"
+    (( pruned > 0 )) && printf 'gc: dry-run — re-run with --yes to delete\n'
+  fi
+}
+
+cmd="${1:-aggregate}"; shift || true
+case "$cmd" in
+  aggregate) _cmd_aggregate "$@" ;;
+  merge)     _cmd_merge "$@" ;;
+  gc)        _cmd_gc "$@" ;;
+  cache-dir) printf '%s\n' "$CACHE_DIR" ;;
+  -h|--help|help)
+    cat <<'EOF'
+claudii-insights — aggregate JSONL transcripts to JSON cache
+
+Usage:
+  claudii-insights aggregate [--force | <jsonl>]
+  claudii-insights merge [--days N] [--until-days M]
+                         # includes per-skill, per-plugin and per-MCP-tool attribution
+  claudii-insights gc --older-than DAYS [--yes]
+                         # prune orphaned caches (source JSONL gone); dry-run without --yes
+  claudii-insights cache-dir
+EOF
+    ;;
+  *) printf 'claudii-insights: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
+esac

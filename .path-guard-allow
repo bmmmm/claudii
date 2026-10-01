@@ -1,0 +1,3 @@
+# path-guard: the test suites build fake home paths (/Users/alice, /home/alice …) on purpose
+tests/test_commands.sh
+tests/test_sessionline.sh

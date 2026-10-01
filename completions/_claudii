@@ -1,0 +1,365 @@
+#compdef claudii
+# claudii zsh completion
+# Loaded automatically via claudii.plugin.zsh (fpath)
+
+_claudii() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  _arguments -C \
+    '--json[Output structured JSON]' \
+    '--tsv[Output tab-separated values]' \
+    '1: :->command' \
+    '*: :->args'
+
+  case $state in
+    command)
+      local -a commands
+      commands=(
+        'on:Enable all display layers (ClaudeStatus, Session Dashboard, Sessionline)'
+        'off:Disable all display layers'
+        'claudestatus:Toggle ClaudeStatus RPROMPT (on/off)'
+        'session-dashboard:Toggle Session Dashboard above prompt (on/off)'
+        'dashboard:Toggle Session Dashboard above prompt (on/off) [deprecated, use session-dashboard]'
+        'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
+        'status:Live model health check / set refresh interval'
+        'sessions:Active sessions, costs, rate limits'
+        'se:Shorthand for sessions'
+        'sessions-inactive:Inactive sessions with age, context and rate limits'
+        'si:Shorthand for sessions-inactive'
+        'session:Per-session token / tool / subagent drilldown (by session-id substring)'
+        'pin:Protect a session from GC (by session ID)'
+        'unpin:Remove GC protection from a session'
+        'config:Read or write config values'
+        'cost:Accounting — costs per period (today/week/month/year), per-model breakdown'
+        'week:Usage inside the Anthropic weekly rate-limit window (tokens, cost, pace)'
+        'skills-cost:Per-skill, per-plugin and per-MCP-tool cost breakdown from attribution data'
+        'trends:Visualization — daily cost chart, 30-day model split, costliest day'
+        'tokens:Token usage breakdown by type, model and day (7d default)'
+        'perf:Response-time p50/p90/p99, throughput (tok/s), latency trend and API health (7d default)'
+        'pf:Shorthand for perf'
+        'tools:Tool call counts, error rates, subagents and thinking volume (7d default)'
+        'repos:Sessions per repo — count + real duration (30d default, --daily for per-day view)'
+        'limits:Rate-limit hits — when they happened and which model ran (7d default)'
+        'cache:Prompt-cache hit rate per day and per model (7d default)'
+        'explain:Components, symbols & data flow'
+        'layers:Alias for explain'
+        'version:Show version number'
+        'changelog:Release notes for current version'
+        'doctor:Check claudii installation health'
+        'restart:Reload plugin'
+        'update:Update claudii (auto-detects Homebrew or git install)'
+        'search:Launch Claude in search mode'
+        'agents:List configured agents (alias → skill mapping) or show onboarding'
+        'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
+        'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
+        'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
+        'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
+        'resume:Resume a session by ID'
+        'insomnii:Bedtime statusline plugin (on/off/auto/status/install)'
+        'help:Show help'
+      )
+      _describe 'command' commands
+      ;;
+
+    args)
+      case $words[2] in
+        status)
+          local -a opts
+          opts=(
+            '5m:Refresh every 5 minutes'
+            '15m:Refresh every 15 minutes (default)'
+            '30m:Refresh every 30 minutes'
+            '60m:Refresh every hour'
+            '--history:Show full model-state transition log'
+            '--days:Limit --history to the last N days'
+          )
+          _describe 'status option' opts
+          ;;
+
+        claudestatus)
+          local -a toggle_opts
+          toggle_opts=(
+            'on:Enable'
+            'off:Disable'
+          )
+          _describe 'toggle option' toggle_opts
+          ;;
+
+        gc|g)
+          local -a gc_opts
+          gc_opts=(
+            '--insights:Prune orphaned insights caches older than DAYS (dry-run by default)'
+            '--yes:Apply deletions instead of dry-run'
+          )
+          _describe 'gc option' gc_opts
+          ;;
+
+        insomnii)
+          local -a ins_subs
+          ins_subs=(
+            'on:Require delegation (warn via doctor if missing)'
+            'off:Suppress delegation, leave clock segment empty'
+            'auto:Delegate when installed (default)'
+            'status:Show cc-insomnii detection + active mode'
+            'install:Clone + install the cc-insomnii binary'
+          )
+          _describe 'insomnii subcommand' ins_subs
+          ;;
+
+        session-dashboard|dashboard)
+          local -a dash_cmds
+          dash_cmds=(
+            'on:Enable session dashboard'
+            'off:Disable session dashboard'
+          )
+          _describe 'session-dashboard subcommand' dash_cmds
+          ;;
+
+        sessions|se|ss)
+          local -a se_opts
+          se_opts=(
+            '--resume:Resume a session by ID (exec claude --resume <id>)'
+          )
+          _describe 'sessions option' se_opts
+          ;;
+
+        cost|c)
+          local -a cost_opts
+          cost_opts=(
+            '--forecast:5h-budget burn rate + this-month spend projection'
+            '--window:Week section over the Anthropic 7-day rate-limit window'
+            '--json:JSON output'
+            '--tsv:Tab-separated output'
+          )
+          _describe 'cost option' cost_opts
+          ;;
+
+        week|w)
+          local -a week_opts
+          week_opts=(
+            '--history:per-window bars over a span (30d, 90d, or a window count; default 30d)'
+            '--json:JSON output'
+          )
+          _describe 'week option' week_opts
+          ;;
+
+        skills-cost)
+          local -a sc_opts
+          sc_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days'
+            '30d:Last 30 days (default)'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--days:Rolling window in days (default 30)'
+            '--compare:Trend compare two windows BEFORE:AFTER (e.g. 30:30), out-tokens/call metric'
+            '--plugins:Show attribution_plugins instead of attribution_skills'
+            '--mcp:Show attribution_mcp (per-MCP-tool, cost split per message)'
+            '--json:JSON output (rows + meta)'
+          )
+          _describe 'skills-cost option' sc_opts
+          ;;
+
+        tokens|tools|limits|cache)
+          local -a win_opts
+          win_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days (default)'
+            '30d:Last 30 days'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--days:Explicit rolling window in days'
+            '--json:Structured JSON output'
+          )
+          _describe 'window' win_opts
+          ;;
+
+        repos)
+          local -a repos_opts
+          repos_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days'
+            '30d:Last 30 days (default)'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--daily:Per-day breakdown (repo × day)'
+            '--all:Include headless/micro sessions (TMPDIR runs, < 2min activity)'
+            '--days:Explicit rolling window in days'
+            '--json:Structured JSON output'
+          )
+          _describe 'repos option' repos_opts
+          ;;
+
+        perf|pf)
+          local -a perf_opts
+          perf_opts=(
+            'today:Last 24 hours'
+            '7d:Last 7 days (default)'
+            '30d:Last 30 days'
+            '90d:Last 90 days'
+            'year:Last 365 days'
+            '--days:Explicit rolling window in days'
+            '--repo:Narrow every section to one repository'
+            '--watch:Auto-refresh every 30s (--watch=N for custom interval)'
+            '--json:Structured JSON output'
+          )
+          _describe 'perf option' perf_opts
+          ;;
+
+        resume)
+          local _cache="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+          local -a _ids
+          for _f in "$_cache"/session-*(N); do
+            local _id="${_f##*/session-}"
+            _ids+=("$_id")
+          done
+          _describe 'session id' _ids
+          ;;
+
+        cc-statusline|sessionline)
+          case $words[3] in
+            preset)
+              local -a sl_presets
+              sl_presets=(
+                'focused:Dense 2-line layout (model+dir+ctx+rates / clock+health+vpn)'
+                'calm:Bare 2-line layout (model / context-bar)'
+                'default:Restore shipped 5-line layout (all segments)'
+              )
+              _describe 'cc-statusline preset' sl_presets
+              ;;
+            *)
+              local -a sl_opts
+              sl_opts=(
+                'on:Activate in-session statusline in ~/.claude/settings.json'
+                'off:Deactivate in-session statusline'
+                'preset:Switch to a named layout (focused/calm/default)'
+              )
+              _describe 'cc-statusline option' sl_opts
+              ;;
+          esac
+          ;;
+
+        omlx)
+          local -a omlx_opts
+          omlx_opts=(
+            'status:Show whether omlx integration is wired up (default)'
+            'connect:Walk through the setup — detect gateii path, verify omlx server'
+            'disconnect:Remove the omlx segment from custom statusline layouts'
+            'test:Render the statusline against a synthetic active.json'
+          )
+          _describe 'omlx command' omlx_opts
+          ;;
+
+        vpnii)
+          local -a vpnii_opts
+          vpnii_opts=(
+            'set:Mark VPN tunnel active — claudii vpnii set <name>'
+            'clear:Mark VPN as down (alias: down/off)'
+            'show:Print current tunnel name (alias: status)'
+            '--user:Override target user for set/clear (default: SUDO_USER → console → $USER)'
+          )
+          _describe 'vpnii command' vpnii_opts
+          ;;
+
+        vibemap)
+          local -a vibemap_opts
+          vibemap_opts=(
+            'strip:Last N days × 24-hour heatmap (default view, use --days N)'
+            'grid:Weekday × 3-hour-bin heatmap'
+            'status:Show enabled/path/entries/oldest entry'
+            'path:Print the vibemap file path'
+            'clear:Delete the vibemap file'
+            '--days:Number of days for strip view (1..90, default 30)'
+          )
+          _describe 'vibemap command' vibemap_opts
+          ;;
+
+        config)
+          case $words[3] in
+            get|set)
+              local -a keys
+              keys=(
+                'aliases.cl.model:Model for cl (default: sonnet)'
+                'aliases.cl.effort:Effort for cl (default: xhigh)'
+                'aliases.clo.model:Model for clo (default: opus)'
+                'aliases.clo.effort:Effort for clo (default: xhigh)'
+                'aliases.clm.model:Model for clm (default: opus)'
+                'aliases.clm.effort:Effort for clm (default: xhigh)'
+                'aliases.clq.model:Model for clq (default: sonnet)'
+                'aliases.clq.effort:Effort for clq (default: medium)'
+                'aliases.clf.model:Model for clf (default: fable)'
+                'aliases.clf.effort:Effort for clf (default: xhigh)'
+                'fallback.enabled:Auto-fallback on outage (true/false)'
+                'fallback.opus.model:Fallback model when opus is down'
+                'fallback.sonnet.model:Fallback model when sonnet is down'
+                'status.cache_ttl:Status cache TTL in seconds (default: 300)'
+                'status.rss_url:Status RSS feed URL'
+                'ci.cache_ttl:CI-state cache TTL in seconds for the ci segment (default: 300)'
+                'statusline.enabled:Show RPROMPT statusline (true/false)'
+                'statusline.models:Models to show (opus,sonnet,haiku,fable)'
+                'statusline.lines:CC-Statusline layout (array of segment arrays)'
+                'statusline.max_width:Hard per-line column budget; over-budget segments are dropped with a … (0 = off)'
+                'statusline.max_label:Max characters for branch/dir/worktree/session/agent names (default 20, 0 = off)'
+                'statusline.separator:Segment separator width — tight (default) or wide'
+                'statusline.omlx_active_path:Path to gateii data/agents/active.json for the omlx segment'
+                'session-dashboard.enabled:Session Dashboard mode (on/off)'
+                'debug.level:Debug log level (off/error/warn/info/debug)'
+                'search.dir:Directory for claudii search mode'
+                'ui.spinner:Spinner mode (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)'
+                'statusline.rate_display:Rate-limit display mode (used/remaining)'
+                'statusline.bedtime:Bedtime threshold forwarded to cc-insomnii(1) and used by vibemap (HH:MM, default 23:00)'
+                'statusline.insomnii:cc-insomnii(1) clock delegation (auto/on/off, default auto)'
+                'vibemap.enabled:Opt-in activity heatmap logging (true/false, default false)'
+                'vibemap.path:Custom path for vibemap.tsv (default: ~/.cache/claudii/vibemap.tsv)'
+                'vibemap.overview:Show Activity strip in the bare overview (true/false, default true)'
+                'overview.sections:Bare overview sections — order + selection (array, default account/usage/sessions/activity/agents/services/commands)'
+                'display.timezone:IANA timezone for absolute timestamps (empty = system local)'
+                'notifications.enabled:terminalSequence alerts from hooks (master switch, true/false)'
+                'notifications.model_down:Window-title alert when a model is down (true/false)'
+                'notifications.burn_eta:Bell + title when burn-ETA < threshold (true/false)'
+                'notifications.burn_eta_threshold_min:Burn-ETA alert threshold in minutes (default: 30)'
+                'notifications.session_end:Desktop notification on session end (true/false)'
+                'notifications.osc:Notify flavor — 777 (Ghostty/urxvt/Warp) or 9 (iTerm2/WezTerm)'
+                'presence.file:Path touched by off / removed by on (CLAUDE_CLIENT_PRESENCE_FILE)'
+                'theme.name:Active color theme name (loaded by lib/visual.sh)'
+                'search.model:Model for claudii search mode'
+                'search.effort:Effort for claudii search mode'
+                'perf.otel.enabled:Read exact latency from OpenTelemetry (opt-in, true/false)'
+                'perf.otel.endpoint:OTLP/HTTP receiver bind address (default: http://127.0.0.1:4318)'
+                'perf.otel.beta_traces:Capture the llm_request span for TTFT (true/false)'
+                'perf.otel.forward:Mirror OTLP batches to a central collector URL (empty = local only)'
+              )
+              _describe 'config key' keys
+              ;;
+            export)
+              _files
+              ;;
+            theme)
+              local -a theme_names
+              theme_names=(
+                'default:Default theme (magenta accent, standard ANSI colors)'
+                'pastel:Pastel theme (softer 256-color palette)'
+              )
+              _describe 'theme name' theme_names
+              ;;
+            *)
+              local -a subcommands
+              subcommands=(
+                'get:Get a config value (dot-notation)'
+                'set:Set a config value'
+                'reset:Reset to defaults'
+                'export:Print config as JSON (or write to file)'
+                'import:Replace config from a JSON file'
+                'theme:List or set the color theme'
+              )
+              _describe 'config subcommand' subcommands
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_claudii "$@"

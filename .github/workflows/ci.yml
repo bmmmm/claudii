@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Matches the Forgejo pre-mirror gate: a new push to the same ref cancels the
+# in-flight run instead of queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      # Run every matrix leg even when one fails — fail-fast would cancel the
+      # other legs on the first red job, serializing independent failures across
+      # multiple pushes (a macOS-C flake once masked a separate de_DE bug until
+      # the first was fixed). The suite is seconds-fast; surface all legs at once.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        locale: [C, de_DE.UTF-8]
+        # de_DE.UTF-8 (comma decimals) guards the awk LC_NUMERIC class: under a
+        # comma locale onetrueawk both truncates "12.34"+0 -> 12 at the radix AND
+        # prints %.Nf as "12,34". macOS ships the locale and uses onetrueawk (the
+        # strictest); Ubuntu would need locale-gen and its mawk is radix-agnostic
+        # (the bug barely manifests), so the comma run lives on macOS only.
+        exclude:
+          - os: ubuntu-latest
+            locale: de_DE.UTF-8
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      LC_ALL: ${{ matrix.locale }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y zsh
+
+      - name: Run tests
+        run: bash tests/run.sh

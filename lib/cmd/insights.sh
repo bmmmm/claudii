@@ -1,0 +1,1440 @@
+# lib/cmd/insights.sh — JSONL-derived insight commands (cache, tools, loop, limits)
+# Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
+#
+# All commands in this file share the same data path:
+#   bin/claudii-insights aggregate         # refresh per-session JSON cache
+#   bin/claudii-insights merge --days N    # produce one merged JSON
+# Heavy lifting is done in jq; bash only renders bars and labels.
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+# shellcheck source=lib/insights_stream.sh
+source "$CLAUDII_HOME/lib/insights_stream.sh"
+
+_insights_run() {
+  "$CLAUDII_HOME/bin/claudii-insights" "$@"
+}
+
+_insights_refresh() { _insights_run aggregate >/dev/null 2>&1; }
+
+# Merge the per-session caches into one aggregated JSON.
+# Args: [days] [until_days]. `until_days` bounds the window from above
+# (last_seen < now-until_days) — used by `skills-cost --compare` for the prior
+# period; omit it for the usual "last N days" view.
+_insights_merged_json() {
+  local days="${1:-7}"
+  local until_days="${2:-}"
+  if [[ -n "$until_days" ]]; then
+    _insights_run merge --days "$days" --until-days "$until_days" 2>/dev/null
+  else
+    _insights_run merge --days "$days" 2>/dev/null
+  fi
+}
+
+# Render a 20-block bar coloured green-up-to-filled, dim-for-empty.
+# Args: filled_count (0..20)
+# Echoes the rendered bar (ANSI included).
+_insights_bar() {
+  local filled="${1:-0}"
+  (( filled < 0 ))  && filled=0
+  (( filled > 20 )) && filled=20
+  local empty=$(( 20 - filled ))
+  local f="" e=""
+  (( filled > 0 )) && printf -v f "%${filled}s" "" && f="${f// /█}"
+  (( empty  > 0 )) && printf -v e "%${empty}s"  "" && e="${e// /░}"
+  printf '%s%s%s%s%s' \
+    "${CLAUDII_CLR_GREEN}" "$f" \
+    "${CLAUDII_CLR_DIM}"   "$e" \
+    "${CLAUDII_CLR_RESET}"
+}
+
+# Short-number formatting (B/M/K) now lives in lib/render.sh as _fmt_tok
+# (pure bash, no per-call awk fork). Call sites below use it directly.
+
+# Map full model id to short label.
+# When a new model ships, add its versioned case ABOVE the bare fallback
+# (most-specific-first; the bare *opus*/*sonnet*/*haiku* lines must stay last).
+# Older versions are kept on purpose so historical cost/insights data still
+# resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
+#
+# THE single bash model->label map. lib/cmd/overview.sh's _norm_model_short
+# delegates here (it only collapses the version off) instead of keeping a second
+# case list — the two used to drift, and `claudii` and `claudii perf` printed
+# different strings for the SAME status-cache line. The awk sibling
+# (lib/model_tier.awk `tier_label`) and the jq sibling (lib/tier.jq `tier`) stay
+# separate implementations — different languages, not duplication worth removing
+# — but tests/test_model_label_agreement.sh pins all four against one fixture
+# list so a drift like that goes red instead of shipping.
+#
+# Case-folded first, like tolower()/ascii_downcase() in those two siblings, so a
+# capitalised id resolves instead of dropping through to the raw passthrough
+# (_norm_model_short matched case-insensitively and callers still rely on that).
+# bash 3.2 has no ${var,,} and the fold costs a fork, so it only runs when the
+# input actually carries an uppercase letter — real model ids ("claude-opus-4-8")
+# and the status-cache family keys never pay it. [[:upper:]], not [A-Z]: bracket
+# RANGES are locale-collated and CI has a de_DE leg.
+_insights_model_label() {
+  local _m="$1"
+  case "$_m" in
+    *[[:upper:]]*) _m=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_m") ;;
+  esac
+  case "$_m" in
+    *fable-5-1*)  printf 'Fable 5.1'  ;;
+    *fable-5*)    printf 'Fable 5'    ;;
+    *fable*)      printf 'Fable'      ;;
+    # Mythos is the Fable tier under a different access program (Project
+    # Glasswing): claude-mythos-5-1 has the same 1M window and the same
+    # $10/$50 per MTok as claude-fable-5-1, which is why lib/model_tier.awk,
+    # lib/tier.jq and the _rates table in lib/cmd/skills-cost.sh all bill and
+    # label it as Fable. Bash was the only one of the four that did not know
+    # the alias, so `claudii perf` printed a bare "mythos" where the overview
+    # printed "Fable". No version is claimed here — the tier is what the three
+    # siblings agree on. bin/claudii-status carries the family in
+    # _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
+    *mythos*)     printf 'Fable'      ;;
+    *opus-5-5*)   printf 'Opus 5.5'   ;;
+    *opus-5*)     printf 'Opus 5'     ;;
+    *opus-4-8*)   printf 'Opus 4.8'   ;;
+    *opus-4-7*)   printf 'Opus 4.7'   ;;
+    *opus-4-6*)   printf 'Opus 4.6'   ;;
+    *opus*)       printf 'Opus'       ;;
+    *sonnet-5*)   printf 'Sonnet 5'   ;;
+    *sonnet-4-6*) printf 'Sonnet 4.6' ;;
+    *sonnet*)     printf 'Sonnet'     ;;
+    *haiku-4-5*)  printf 'Haiku 4.5'  ;;
+    *haiku*)      printf 'Haiku'      ;;
+    '<synthetic>'|synthetic) printf 'synthetic' ;;
+    *)            printf '%s' "$1"    ;;
+  esac
+}
+
+# Map ISO date (YYYY-MM-DD) to "Today" or a strftime label (default %a, the
+# 3-letter weekday; repos passes '%a %d %b'). UTC because the aggregator buckets
+# on timestamp[:10] (Z-suffixed ISO). Today is memoized in _IDL_TODAY so a
+# multi-row drilldown pays one date fork, not one per row.
+_insights_day_label() {
+  local day="$1" fmt="${2:-%a}"
+  [[ -n "${_IDL_TODAY:-}" ]] || _IDL_TODAY=$(date -u +%Y-%m-%d)
+  if [[ "$day" == "$_IDL_TODAY" ]]; then
+    printf 'Today'
+  # LC_ALL=C, not LC_TIME=C — LC_TIME loses to a set LC_ALL, so a de_DE shell
+  # rendered German month/weekday names against the English-output rule. Same
+  # defeat as _fmt_abs in lib/timefmt.sh.
+  elif LC_ALL=C date -j -f %Y-%m-%d "$day" +"$fmt" >/dev/null 2>&1; then
+    LC_ALL=C date -j -f %Y-%m-%d "$day" +"$fmt"
+  else
+    LC_ALL=C date -d "$day" +"$fmt" 2>/dev/null || printf '%s' "$day"
+  fi
+}
+
+# ── The CLI argument contract ────────────────────────────────────────────────
+# One message and one exit code for a bad argument, for every command in the
+# dispatcher. Before this, `claudii <cmd> --bogus` answered 0, 1 or 2 depending
+# on which command you asked, under three different message prefixes — and
+# `cost --bogus` said nothing at all and exited 0.
+#
+#   rc 2  the CLI could not accept your arguments — unknown option, missing
+#         value, malformed value. Nothing ran.
+#   rc 1  the command understood you and then failed (no data, a view that has
+#         no --tsv shape, a session id that matches nothing).
+#   rc 0  it worked.
+#
+# rc 2 for a usage error is already the house convention one layer down
+# (lib/history_scrub.sh exits 2 on an unknown option, lib/history_rows.awk on an
+# unknown emit field); this is the same rule at the CLI surface.
+#
+# lib/cmd/*.sh are SOURCED into bin/claudii, so this RETURNS — it must never
+# exit, or a bad flag tears down the whole process (and skips _spinner_stop,
+# leaving a spinner on the terminal). Callers propagate with `|| return $?`.
+# The dispatch case is the last statement in bin/claudii, so a handler's return
+# value already becomes the process exit status.
+#
+# $3 is an optional usage hint, printed as a second line: it belongs in here
+# rather than at the call site, because a bare `_cli_unknown_opt …` followed by
+# more printfs would trip `set -e` on the non-zero return before reaching them.
+_cli_unknown_opt() {
+  printf 'claudii %s: unknown option: %s\n' "$1" "$2" >&2
+  if [[ -n "${3:-}" ]]; then printf '  try: claudii %s %s\n' "$1" "$3" >&2; fi
+  return 2
+}
+
+# THE argument parser: cache/tokens/tools/limits/repos/perf/skills-cost all run
+# their window vocabulary and their argument validation through here, so the
+# rules are stated once. Commands with no rolling window (cost, week) share only
+# the exit-code contract above, via _cli_unknown_opt.
+#
+# Lets the window be *cycled* without remembering --days: a named window
+# (today/day, week, month, quarter, year), a generic <N>d token (e.g. 14d), or
+# the explicit --days N / -d N. Sets _IW_DAYS (validated positive int), _IW_HELP
+# (1 when -h/--help was seen) and _IW_WINDOW_GIVEN (1 when any explicit window
+# was consumed — repos and skills-cost use it to apply their 30d defaults).
+# Prints an actionable error and returns 2 (the usage-error code — see
+# _cli_unknown_opt) on:
+#   • --days/-d with no value or a following flag → "needs a value"
+#   • a bare integer (window typo, never a valid repo either) → "did you mean Nd"
+#   • an unknown token (unless positional mode captures it)
+# Opt-in positional mode: a caller setting _IW_ALLOW_POSITIONAL=1 (repos) has
+# exactly ONE non-flag, non-window token captured into _IW_POSITIONAL (a second
+# → error). Shadowing precedence: the FIRST window-looking token is the window;
+# once a window is consumed, a SECOND window-looking token becomes the positional
+# (so `repos 365d year` drills into a repo named "year"). All other callers keep
+# the strict unknown-argument error.
+# Args: command-label, then the command's positional "$@" (bin/claudii has
+# already stripped --json/--tsv into $_FORMAT before dispatch).
+_insights_window() {
+  local cmd="$1"; shift
+  local days=7
+  local _allow_pos="${_IW_ALLOW_POSITIONAL:-0}"
+  _IW_HELP=0
+  _IW_DAYS=7   # bind early so callers reading it after a non-zero return stay set-u-safe
+  _IW_WINDOW_GIVEN=0
+  _IW_POSITIONAL=""
+  # CLAUDII_NOW (epoch seconds, env), when set, is validated here too — the
+  # ONE place cache/tokens/tools/limits/repos/perf/skills-cost share, so a bad
+  # value is caught before any of them touch data. Two failure modes without
+  # this: (1) commands that call merge (cache/tokens/tools/limits) hit
+  # bin/claudii-insights's own CLAUDII_NOW guard, but that guard's `exit 1`
+  # happens inside `_insights_run`'s subprocess and _insights_merged_json
+  # redirects its stderr (2>/dev/null); under bin/claudii's `set -euo
+  # pipefail` the failing `merged=$(...)` assignment then kills the WHOLE
+  # process before any of THIS command's own output runs — stdout AND stderr
+  # both empty, rc 1, no actionable message at all (the same class of trap
+  # documented a few lines below for --days). (2) `repos` never calls merge at
+  # all, so it never even hits that guard — it fell through to
+  # _window_cutoffs's live-clock fallback and rendered silently wrong (rc 0).
+  # Validating here fixes both: it runs in THIS process (message reaches the
+  # user), before any data path, with the same rc-2 contract as --days below.
+  if [[ -n "${CLAUDII_NOW:-}" ]] && ! [[ "$CLAUDII_NOW" =~ ^[0-9]+$ ]]; then
+    printf 'claudii %s: CLAUDII_NOW must be a positive integer epoch (got: %s)\n' "$cmd" "$CLAUDII_NOW" >&2
+    return 2
+  fi
+  while [[ $# -gt 0 ]]; do
+    local _wv=""
+    case "$1" in
+      --days|-d)
+        local _nv="${2:-}"
+        if [[ -z "$_nv" || "${_nv:0:1}" == "-" ]]; then
+          printf 'claudii %s: %s needs a value (e.g. --days 30)\n' "$cmd" "$1" >&2
+          return 2
+        fi
+        days="$_nv"; _IW_WINDOW_GIVEN=1; shift ;;
+      today|day)   _wv=1   ;;
+      week)        _wv=7   ;;
+      month)       _wv=30  ;;
+      quarter)     _wv=90  ;;
+      year)        _wv=365 ;;
+      [0-9]*d)     _wv="${1%d}" ;;
+      -h|--help)   _IW_HELP=1 ;;
+      *)
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+          printf 'claudii %s: bare number %s is not a window — did you mean %sd, or --days %s?\n' \
+            "$cmd" "$1" "$1" "$1" >&2
+          return 2
+        fi
+        if (( _allow_pos )) && [[ "${1:0:1}" != "-" ]]; then
+          if [[ -n "$_IW_POSITIONAL" ]]; then
+            printf 'claudii %s: unexpected argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+            return 2
+          fi
+          _IW_POSITIONAL="$1"
+        else
+          _cli_unknown_opt "$cmd" "$1" '[today|7d|30d|year] [--days N]' || return $?
+        fi
+        ;;
+    esac
+    # Window-looking token: it is the window until one has been consumed; after
+    # that, in positional mode, a second window-looking token is the positional.
+    if [[ -n "$_wv" ]]; then
+      if (( _allow_pos && _IW_WINDOW_GIVEN )); then
+        if [[ -n "$_IW_POSITIONAL" ]]; then
+          printf 'claudii %s: unexpected argument: %s (already set: %s)\n' "$cmd" "$1" "$_IW_POSITIONAL" >&2
+          return 2
+        fi
+        _IW_POSITIONAL="$1"
+      else
+        days="$_wv"; _IW_WINDOW_GIVEN=1
+      fi
+    fi
+    shift || break   # value-flag as last arg consumed $@; avoid set -e abort on empty shift
+  done
+  _IW_DAYS="$days"
+  (( _IW_HELP )) && return 0
+  if ! [[ "$days" =~ ^[0-9]+$ ]] || [[ "$days" -lt 1 ]]; then
+    printf 'claudii %s: --days must be a positive integer (got: %s)\n' "$cmd" "$days" >&2
+    return 2
+  fi
+  return 0
+}
+
+# Human window label: "today" for a 1-day window, "last N days" otherwise.
+# Keeps the section headers grammatical when a named window resolves to 1 day.
+_insights_window_label() {
+  if [[ "${1:-}" == "1" ]]; then printf 'today'; else printf 'last %s days' "$1"; fi
+}
+
+# These insight views are nested (by-type/by-model/by-day, tool tables, hit
+# strips) — a flat TSV would have to invent a shape. --json carries the full
+# structure; reject --tsv with a pointer instead of silently ignoring it.
+_insights_reject_tsv() {
+  printf 'claudii: %s has no --tsv view (nested data) — use --json\n' "$1" >&2
+}
+
+# ── --json builders ──────────────────────────────────────────────────────────
+# One per command. Each takes the merged JSON (the same aggregate the pretty
+# path renders) and emits the curated view as JSON — raw model ids (not the
+# friendly labels, which are a bash concern), derived hit_pct/error_pct rounded
+# to one decimal. Called with merged="{}" for the empty-cache case, so the
+# `// {}` / `// []` defaults yield the same envelope shape with empty arrays.
+# Kept inline alongside the pretty-path jq for the same view (the established
+# convention in this file) rather than re-aggregating in a shared .jq module.
+
+_cache_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
+    ($m.days // {}) as $day
+    | {
+        window_days: $days,
+        per_day: (
+          $day | to_entries
+          | map({day: (.key | split("|")[0]), v: .value})
+          | group_by(.day)
+          | map({ day: .[0].day,
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add),
+                  input:        ([.[].v.in_tok       // 0] | add) })
+          | map(. + {total: (.cache_read + .cache_create + .input)})
+          | map(select(.total > 0))
+          | map(. + {hit_pct: hit(.cache_read; .total)})
+          | sort_by(.day) | reverse
+        ),
+        per_model: (
+          ($m.models // {}) | to_entries
+          | map({ model: .key,
+                  cache_read:   (.value.cache_read   // 0),
+                  cache_create: (.value.cache_create // 0),
+                  input:        (.value.in_tok       // 0) })
+          | map(. + {total: (.cache_read + .cache_create + .input)})
+          | map(select(.total > 0 and .model != "<synthetic>"))
+          | map(. + {hit_pct: hit(.cache_read; .total)})
+          | sort_by(-.total)
+        ),
+        summary: (
+          ([$day[]? | .cache_read   // 0] | add // 0) as $r
+          | ([$day[]? | .cache_create // 0] | add // 0) as $c
+          | ([$day[]? | .in_tok       // 0] | add // 0) as $i
+          | {cache_read: $r, cache_create: $c, input: $i,
+             total: ($r + $c + $i), hit_pct: hit($r; ($r + $c + $i))}
+        )
+      }'
+}
+
+_tokens_json() {
+  local merged="$1" days="$2" floor="$3"
+  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" '
+    def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
+    [ ($m.days // {}) | to_entries[]
+      | (.key | split("|")) as $p
+      | select($p[1] != "<synthetic>" and $p[0] >= $floor)
+      | {day: $p[0], model: $p[1], v: .value} ] as $rows
+    | {
+        window_days: $days,
+        by_type: {
+          "cache read":  ([$rows[].v.cache_read   // 0] | add // 0),
+          "input":       ([$rows[].v.in_tok       // 0] | add // 0),
+          "cache write": ([$rows[].v.cache_create // 0] | add // 0),
+          "output":      ([$rows[].v.out_tok      // 0] | add // 0)
+        },
+        by_model: (
+          $rows | group_by(.model)
+          | map({ model: .[0].model,
+                  input:        ([.[].v.in_tok       // 0] | add),
+                  output:       ([.[].v.out_tok      // 0] | add),
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add) })
+          | map(select((.input + .output + .cache_read + .cache_create) > 0))
+          | map(. + {hit_pct: hit(.cache_read; (.cache_read + .cache_create + .input))})
+          | sort_by(-(.input + .output))
+        ),
+        by_day: (
+          $rows | group_by(.day)
+          | map({ day: .[0].day,
+                  in_out: (([.[].v.in_tok // 0] | add) + ([.[].v.out_tok // 0] | add)),
+                  input:        ([.[].v.in_tok       // 0] | add),
+                  cache_read:   ([.[].v.cache_read   // 0] | add),
+                  cache_create: ([.[].v.cache_create // 0] | add) })
+          | map(select(.in_out > 0))
+          | map(. + {hit_pct: hit(.cache_read; (.cache_read + .cache_create + .input))})
+          | sort_by(.day) | reverse
+        )
+      }'
+}
+
+_tools_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    def pct1($n; $d): if $d > 0 then (($n * 1000 / $d) | round) / 10 else 0 end;
+    ([$m.tools[]? ] | add // 0) as $tc
+    | ([$m.tool_errors[]? ] | add // 0) as $te
+    | {
+        window_days: $days,
+        total_calls: $tc,
+        total_errors: $te,
+        ok_pct: pct1(($tc - $te); $tc),
+        tools: (
+          ($m.tool_errors // {}) as $e
+          | ($m.tools // {}) | to_entries
+          | map(select(.key != "") | {name: .key, calls: .value, errors: ($e[.key] // 0)})
+          | map(. + {error_pct: pct1(.errors; .calls)})
+          | sort_by(-.calls)
+        ),
+        subagents: (
+          ($m.subagent_types // {}) | to_entries
+          | map(select(.key != "") | {type: .key, count: .value})
+          | sort_by(-.count)
+        ),
+        thinking_blocks: ($m.thinking_blocks // 0)
+      }'
+}
+
+_limits_json() {
+  local merged="$1" days="$2"
+  jq -n --argjson m "$merged" --argjson days "$days" '
+    ($m.limit_hits // []) as $h
+    | {
+        window_days: $days,
+        total: ($h | length),
+        hits: ($h | sort_by(.timestamp) | reverse
+               | map({timestamp: (.timestamp // ""), model: (.model // "")})),
+        by_model: ($h | map(.model // "unknown") | group_by(.)
+                   | map({model: .[0], count: length}) | sort_by(-.count))
+      }'
+}
+
+# ── claudii cache ────────────────────────────────────────────────────────────
+
+_cmd_cache() {
+  _cfg_init
+  _insights_refresh
+
+  # Window parsing + validation is centralized in _insights_window (the merge
+  # also validates, but _insights_merged_json swallows its stderr, so a bad
+  # value used to surface as the misleading "No insight data yet").
+  _insights_window cache "$@" || return $?
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii cache [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Show prompt-cache hit rate per day and per model.\n'
+    return 0
+  fi
+  local days="$_IW_DAYS"
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv cache; return 1; }
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _cache_json "{}" "$days"; return 0; }
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _cache_json "$merged" "$days"
+    return 0
+  fi
+
+  printf '\n  %sclaudii cache%s  %sv%s%s\n\n' \
+    "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
+    "${CLAUDII_CLR_ACCENT}" "${VERSION:-?}" "${CLAUDII_CLR_RESET}"
+
+  # Single jq pass → per-day (D), per-model (M), summary (S) rows, tab-delimited,
+  # hit% pre-formatted to one decimal in jq (pct1s). Replaces 3 jq calls plus a
+  # per-row awk fork each: jq aggregates and formats, bash only renders. Collect-
+  # then-render (not mid-stream section state) stays set-u-safe under bash 3.2.
+  local _rows
+  _rows=$(jq -r '
+    def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
+                      | "\(($z/10)|floor).\($z%10)" else "0.0" end;
+    ( (.days // {}) | to_entries
+      | map({day:(.key|split("|")[0]), v:.value})
+      | group_by(.day)
+      | map({day:.[0].day, cr:([.[].v.cache_read//0]|add),
+             cc:([.[].v.cache_create//0]|add), in:([.[].v.in_tok//0]|add)})
+      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0))
+      | sort_by(.day) | reverse
+      | .[] | ["D", .day, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
+    ),
+    ( (.models // {}) | to_entries
+      | map({model:.key, cr:(.value.cache_read//0),
+             cc:(.value.cache_create//0), in:(.value.in_tok//0)})
+      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0 and .model!="<synthetic>"))
+      | sort_by(-.total)
+      | .[] | ["M", .model, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
+    ),
+    ( ([(.days//{})[]?|.cache_read//0]|add//0) as $r
+      | ([(.days//{})[]?|.cache_create//0]|add//0) as $c
+      | ([(.days//{})[]?|.in_tok//0]|add//0) as $i
+      | ($r+$c+$i) as $t
+      | ["S", ($r|tostring), ($t|tostring), pct1s($r;$t)] | @tsv
+    )
+  ' <<< "$merged")
+
+  local -a _d_rows=() _m_rows=()
+  local _s_row="" _ln _tag
+  while IFS= read -r _ln; do
+    [[ -z "$_ln" ]] && continue
+    _tag="${_ln%%$'\t'*}"
+    case "$_tag" in
+      D) _d_rows+=("${_ln#D$'\t'}") ;;
+      M) _m_rows+=("${_ln#M$'\t'}") ;;
+      S) _s_row="${_ln#S$'\t'}" ;;
+    esac
+  done <<< "$_rows"
+
+  # ── Per-day hit rate ──
+  printf '  %s●%s %sCache hit rate (%dd)%s\n' \
+    "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
+    "${CLAUDII_CLR_ACCENT}" "$days" "${CLAUDII_CLR_RESET}"
+
+  if (( ${#_d_rows[@]} == 0 )); then
+    printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+  else
+    local _r day creads total pct_str pct_int filled label bar creads_h total_h
+    for _r in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r day creads total pct_str <<< "$_r"
+      pct_int=$(( 100 * creads / total ))
+      filled=$(( (pct_int * 20 + 50) / 100 ))
+      label=$(_insights_day_label "$day")
+      bar=$(_insights_bar "$filled")
+      creads_h=$(_fmt_tok "$creads")
+      total_h=$(_fmt_tok "$total")
+      printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
+        "$label" \
+        "$bar" \
+        "${CLAUDII_CLR_CYAN}" "$pct_str" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_DIM}" "$creads_h" "$total_h" "${CLAUDII_CLR_RESET}"
+    done
+  fi
+
+  echo
+
+  # ── Per-model hit rate ──
+  printf '  %s●%s %sBy model (%dd)%s\n' \
+    "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
+    "${CLAUDII_CLR_ACCENT}" "$days" "${CLAUDII_CLR_RESET}"
+
+  if (( ${#_m_rows[@]} == 0 )); then
+    printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+  else
+    local _rm model mcreads mtotal mpct_str mpct_int mfilled mlabel mbar mtotal_h
+    for _rm in "${_m_rows[@]}"; do
+      IFS=$'\t' read -r model mcreads mtotal mpct_str <<< "$_rm"
+      mpct_int=$(( 100 * mcreads / mtotal ))
+      mfilled=$(( (mpct_int * 20 + 50) / 100 ))
+      mlabel=$(_insights_model_label "$model")
+      mbar=$(_insights_bar "$mfilled")
+      mtotal_h=$(_fmt_tok "$mtotal")
+      printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
+        "$mlabel" \
+        "$mbar" \
+        "${CLAUDII_CLR_CYAN}" "$mpct_str" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_DIM}" "$mtotal_h" "${CLAUDII_CLR_RESET}"
+    done
+  fi
+
+  echo
+
+  # ── Summary line ──
+  if [[ -n "$_s_row" ]]; then
+    local tot_r tot_all hit_pct saved_h
+    IFS=$'\t' read -r tot_r tot_all hit_pct <<< "$_s_row"
+    if (( tot_all > 0 )); then
+      saved_h=$(_fmt_tok "$tot_r")
+      printf '  %s●%s Saved: %s%s%s tokens cached · %s%s%%%s hit rate (%dd)\n' \
+        "${CLAUDII_CLR_GREEN}" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_CYAN}"  "$saved_h" "${CLAUDII_CLR_RESET}" \
+        "${CLAUDII_CLR_CYAN}"  "$hit_pct" "${CLAUDII_CLR_RESET}" \
+        "$days"
+    fi
+  fi
+  echo
+}
+
+# ── claudii tokens ───────────────────────────────────────────────────────────
+# "Where do my tokens go." Token breakdown by type / model / day from the
+# insights cache. Per-model output comes from the days{} key-split
+# ("YYYY-MM-DD|model" carries out_tok, which models{} alone does not).
+
+_cmd_tokens() {
+  _cfg_init
+  _insights_refresh
+
+  _insights_window tokens "$@" || return $?
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii tokens [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Token breakdown by type, model and day (input+output is the\n'
+    printf 'primary figure; cache read/write and hit%% shown alongside).\n'
+    return 0
+  fi
+  local days="$_IW_DAYS"
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv tokens; return 1; }
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _tokens_json "{}" "$days" ""; return 0; }
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  # Floor every view at exactly `days` calendar days. The merge windows sessions
+  # by last_seen, so a long-running session can drag in day-entries older than
+  # the window; without this floor "last 7 days" shows 8+ rows and the bare
+  # weekday labels repeat ambiguously. Empty floor (date failed) → no-op (every
+  # string >= ""). Shared by the json and pretty paths.
+  _window_cutoffs "$days"
+  local floor="$_WC_FLOOR"
+
+  if [[ "$fmt" == "json" ]]; then
+    _tokens_json "$merged" "$days" "$floor"
+    return 0
+  fi
+
+  local RW=66 BAR_W=34
+
+  local note hpad; note=$(_insights_window_label "$days")
+  hpad=$(( RW - 14 - ${#note} )); (( hpad < 1 )) && hpad=1
+  printf '\n  %sclaudii tokens%s%*s%s%s%s\n\n' \
+    "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
+    "$hpad" "" \
+    "${CLAUDII_CLR_DIM}" "$note" "${CLAUDII_CLR_RESET}"
+
+  # One jq pass for all three sections (shared day-filter computed once), tab-
+  # delimited and tagged: T=by-type, M=by-model, D=by-day. Replaces three jq
+  # passes that each re-filtered .days. Bash renders from arrays; hit% stays on
+  # the pure-bash _cache_hit_pct (a cheap subshell, not a fork+exec).
+  local _rows
+  _rows=$(jq -r --arg floor "$floor" '
+    [ .days | to_entries[]
+      | (.key | split("|")) as $p
+      | select($p[1] != "<synthetic>" and $p[0] >= $floor)
+      | {day:$p[0], model:$p[1], v:.value} ] as $rows
+    | ( {"cache read":  ([$rows[].v.cache_read   // 0] | add // 0),
+         "input":       ([$rows[].v.in_tok       // 0] | add // 0),
+         "cache write": ([$rows[].v.cache_create // 0] | add // 0),
+         "output":      ([$rows[].v.out_tok      // 0] | add // 0)}
+        | to_entries | sort_by(-.value)
+        | .[] | ["T", .key, (.value|tostring)] | @tsv
+      ),
+      ( $rows | group_by(.model)
+        | map({model:.[0].model, input:([.[].v.in_tok//0]|add), output:([.[].v.out_tok//0]|add),
+               cr:([.[].v.cache_read//0]|add), cw:([.[].v.cache_create//0]|add)})
+        | map(select((.input+.output+.cr+.cw)>0)) | sort_by(-(.input+.output))
+        | .[] | ["M", .model, (.input|tostring), (.output|tostring), (.cr|tostring), (.cw|tostring)] | @tsv
+      ),
+      ( $rows | group_by(.day)
+        | map({day:.[0].day, inout:(([.[].v.in_tok//0]|add)+([.[].v.out_tok//0]|add)),
+               cr:([.[].v.cache_read//0]|add), inp:([.[].v.in_tok//0]|add), cw:([.[].v.cache_create//0]|add)})
+        | map(select(.inout>0)) | sort_by(.day) | reverse
+        | .[] | ["D", .day, (.inout|tostring), (.cr|tostring), (.inp|tostring), (.cw|tostring)] | @tsv
+      )
+  ' <<< "$merged")
+
+  local -a _t_rows=() _m_rows=() _d_rows=()
+  local _ln _tag
+  while IFS= read -r _ln; do
+    [[ -z "$_ln" ]] && continue
+    _tag="${_ln%%$'\t'*}"
+    case "$_tag" in
+      T) _t_rows+=("${_ln#T$'\t'}") ;;
+      M) _m_rows+=("${_ln#M$'\t'}") ;;
+      D) _d_rows+=("${_ln#D$'\t'}") ;;
+    esac
+  done <<< "$_rows"
+
+  # ── By type (share of throughput) ──
+  local tp=0 _tr t v
+  if (( ${#_t_rows[@]} > 0 )); then
+    for _tr in "${_t_rows[@]}"; do
+      IFS=$'\t' read -r t v <<< "$_tr"
+      tp=$(( tp + v ))
+    done
+  fi
+
+  _render_shead "By type" "$(_fmt_tok "$tp") throughput" "$RW"
+  if (( tp == 0 )); then
+    printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+  else
+    local bf pct suf
+    for _tr in "${_t_rows[@]}"; do
+      IFS=$'\t' read -r t v <<< "$_tr"
+      bf=$(_bar_filled "$v" "$tp" "$BAR_W")
+      pct=$(( v * 100 / tp ))
+      printf -v suf '%s%3d%%%s' "${CLAUDII_CLR_CYAN}" "$pct" "${CLAUDII_CLR_RESET}"
+      _render_bar_row "$t" 11 "$(_fmt_tok "$v")" 7 "$bf" "$BAR_W" "$suf"
+    done
+  fi
+  echo
+
+  # ── By model (input / output / cache rd / cache wr / hit) — D-grid ──
+  printf '  %sBy model%s\n' "${CLAUDII_CLR_ACCENT}" "${CLAUDII_CLR_RESET}"
+  if (( ${#_m_rows[@]} == 0 )); then
+    printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+  else
+    local rows="" _mr model inp out cr cw label hit
+    for _mr in "${_m_rows[@]}"; do
+      IFS=$'\t' read -r model inp out cr cw <<< "$_mr"
+      label=$(_insights_model_label "$model")
+      # Hit rate over the whole input side: cache_read / (read + create + input).
+      # cache_read dwarfs raw input, so read/(read+input) alone pins at 100% —
+      # cache_create must be in the denominator (matches `claudii cache`).
+      hit=$(_cache_hit_pct "$cr" $(( inp + cw )))
+      rows+="${label}"$'\x1f'"$(_fmt_tok "$inp")"$'\x1f'"$(_fmt_tok "$out")"$'\x1f'"$(_fmt_tok "$cr")"$'\x1f'"$(_fmt_tok "$cw")"$'\x1f'"${hit}%"$'\n'
+    done
+    printf '%s' "$rows" | _render_dgrid "Model" $'input\x1foutput\x1fcache rd\x1fcache wr\x1fhit'
+  fi
+  echo
+
+  # ── By day (in+out magnitude, normalised to busiest day) — B-bars ──
+  _render_shead "By day" "in+out · cache hit" "$RW"
+  if (( ${#_d_rows[@]} == 0 )); then
+    printf '    %s(no data)%s\n' "${CLAUDII_CLR_DIM}" "${CLAUDII_CLR_RESET}"
+  else
+    local today; today=$(date -u +%Y-%m-%d)
+    local maxio=0 _dr d io ccr cinp ccw wd lbl bf2 hit suf2
+    for _dr in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
+      (( io > maxio )) && maxio=$io
+    done
+    for _dr in "${_d_rows[@]}"; do
+      IFS=$'\t' read -r d io ccr cinp ccw <<< "$_dr"
+      wd=$(LC_ALL=C date -j -f %Y-%m-%d "$d" +%a 2>/dev/null || LC_ALL=C date -d "$d" +%a 2>/dev/null || printf '%s' "$d")
+      if [[ "$d" == "$today" ]]; then lbl="Today $wd"; else lbl="$wd"; fi
+      bf2=$(_bar_filled "$io" "$maxio" "$BAR_W")
+      hit=$(_cache_hit_pct "$ccr" $(( cinp + ccw )))
+      printf -v suf2 '%s%3d%%%s' "${CLAUDII_CLR_CYAN}" "$hit" "${CLAUDII_CLR_RESET}"
+      _render_bar_row "$lbl" 9 "$(_fmt_tok "$io")" 7 "$bf2" "$BAR_W" "$suf2"
+    done
+  fi
+  echo
+}
+
+# ── claudii session <id> ─────────────────────────────────────────────────────
+# Per-session drilldown: token split, tools, subagents, stop reasons, limit hits
+# from the per-session insights cache (keyed by sessionId, substring match like
+# pin). Live ctx%/model/project come from the session-* cache when one still
+# exists — ended sessions keep only the insights cache, so those degrade
+# gracefully (dominant model from the token data, no ctx bar, repo basename).
+
+_cmd_session() {
+  _cfg_init
+  _insights_refresh
+
+  local needle="${1:-}"
+  case "$needle" in
+    ''|-h|--help)
+      printf 'Usage: claudii session <id>\n\n'
+      printf 'Per-session token / tool / subagent drilldown. <id> is a session-id\n'
+      printf 'substring (first match wins); list ids with: claudii se\n'
+      [[ -z "$needle" ]] && return 1 || return 0
+      ;;
+  esac
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
+  local cdir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  local idir="$cdir/insights"
+
+  # Match insights cache by sessionId substring (first wins).
+  local jf="" sid="" f
+  for f in "$idir"/*"$needle"*.json; do
+    [[ -e "$f" ]] || continue
+    jf="$f"; sid="${f##*/}"; sid="${sid%.json}"; break
+  done
+  if [[ -z "$jf" ]]; then
+    printf 'claudii: no session matching %s — list ids with: claudii se\n' "$needle" >&2
+    return 1
+  fi
+
+  # Enrichment: live session-* cache for ctx%/model/project (often absent).
+  local have_live=0 sf s2 _scontent _nl
+  for sf in "$cdir"/session-*; do
+    [[ -f "$sf" ]] || continue
+    [[ "$sf" == *.tmp.* ]] && continue
+    # Read once + parameter-expansion match — was a grep fork per cache file.
+    _scontent=""; { _scontent=$(<"$sf"); } 2>/dev/null
+    _nl=$'\n'"$_scontent"; s2=""
+    [[ "$_nl" == *$'\n'session_id=* ]] && { s2="${_nl#*$'\n'session_id=}"; s2="${s2%%$'\n'*}"; }
+    if [[ "$s2" == "$sid" ]]; then _parse_session_cache "$sf"; have_live=1; break; fi
+  done
+
+  # Single jq pass over the per-session cache → every section the render needs,
+  # tagged and US-delimited (US, not tab: first_seen/last_seen and the subagent/
+  # stop strings can be empty, which IFS=$'\t' would collapse — CLAUDE.md trap).
+  # Replaces seven separate jq invocations over the same small file. META/DOM/TOK/
+  # SUB/STOP emit exactly one line each; TOOL emits up to 8, LH zero or more.
+  local _srows
+  _srows=$(jq -r '
+    def U: [31] | implode;
+    ( ["META", (.first_seen // ""), (.last_seen // ""),
+       ((.thinking_blocks // 0)|tostring),
+       (([.tools[]?]|add // 0)|tostring),
+       (([.tool_errors[]?]|add // 0)|tostring)] | join(U) ),
+    ( ["DOM",
+       ( [ .days | to_entries[] | (.key|split("|")) as $p
+           | select($p[1] != "<synthetic>")
+           | {m:$p[1], t:((.value.in_tok//0)+(.value.out_tok//0))} ]
+         | group_by(.m) | map({m:.[0].m, t:([.[].t]|add)})
+         | (max_by(.t).m) // "" ) ] | join(U) ),
+    ( [ .days | to_entries[] | select((.key|split("|")[1]) != "<synthetic>") | .value ] as $v
+      | ["TOK", (([$v[].in_tok//0]|add//0)|tostring), (([$v[].out_tok//0]|add//0)|tostring),
+         (([$v[].cache_read//0]|add//0)|tostring), (([$v[].cache_create//0]|add//0)|tostring)] | join(U) ),
+    ( (.tool_errors // {}) as $e
+      | (.tools // {}) | to_entries
+      | map(select(.key != "") | {name:.key, n:.value, e:($e[.key]//0)})
+      | sort_by(-.n) | .[:8]
+      | .[] | ["TOOL", .name, (.n|tostring), (.e|tostring)] | join(U) ),
+    ( .subagent_types // {} | to_entries | sort_by(-.value)
+      | ["SUB", ((map(.value)|add//0)|tostring), ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
+    ( .stop_reasons // {} | to_entries | sort_by(-.value)
+      | ["STOP", ((map("\(.key) ×\(.value)"))|join(" · "))] | join(U) ),
+    ( .limit_hits // [] | sort_by(.timestamp) | .[] | ["LH", (.timestamp // ""), (.model // "")] | join(U) )
+  ' "$jf")
+
+  local first_seen="" last_seen="" think="0" tcalls="0" terrs="0" dom=""
+  local t_in=0 t_out=0 t_cr=0 t_cw=0 sub_tot=0 sub_str="" stop_str=""
+  local -a _stool_rows=() _slh_rows=()
+  local _sl _tag _rest
+  while IFS= read -r _sl; do
+    [[ -z "$_sl" ]] && continue
+    _tag="${_sl%%$'\x1f'*}"; _rest="${_sl#*$'\x1f'}"
+    case "$_tag" in
+      META) IFS=$'\x1f' read -r first_seen last_seen think tcalls terrs <<< "$_rest" ;;
+      DOM)  dom="$_rest" ;;
+      TOK)  IFS=$'\x1f' read -r t_in t_out t_cr t_cw <<< "$_rest" ;;
+      TOOL) _stool_rows+=("$_rest") ;;
+      SUB)  IFS=$'\x1f' read -r sub_tot sub_str <<< "$_rest" ;;
+      STOP) stop_str="$_rest" ;;
+      LH)   _slh_rows+=("$_rest") ;;
+    esac
+  done <<< "$_srows"
+
+  # Duration = last_seen - first_seen.
+  local dur="—" e0 e1
+  if [[ -n "$first_seen" && -n "$last_seen" ]]; then
+    _iso_epoch "$first_seen"; e0="$_EPOCH"
+    _iso_epoch "$last_seen";  e1="$_EPOCH"
+    if [[ "$e0" =~ ^[0-9]+$ && "$e1" =~ ^[0-9]+$ ]] && (( e1 >= e0 )); then
+      _fmt_rel $(( e1 - e0 )); [[ -n "$_REL_FMT" ]] && dur="$_REL_FMT"
+    fi
+  fi
+
+  # Model: live (stripped) else the dominant model by in+out tokens.
+  local model_lbl
+  if (( have_live )) && [[ -n "${_PSC_model:-}" ]]; then
+    model_lbl=$(_strip_model_name "$_PSC_model")
+  else
+    model_lbl=$(_insights_model_label "$dom")   # dom from the single jq pass above
+  fi
+
+  # Project: live path (shortened) else the repo basename from the transcript dir.
+  local proj="" pdir d enc
+  if (( have_live )) && [[ -n "${_PSC_project_path:-}" ]]; then
+    proj="${_PSC_project_path/#$HOME/~}"
+  else
+    pdir="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+    for d in "$pdir"/*/; do
+      if [[ -e "$d$sid.jsonl" ]]; then enc="${d%/}"; enc="${enc##*/}"; proj="${enc##*-}"; break; fi
+    done
+  fi
+
+  # ── Header ──
+  printf '\n  %sclaudii session%s  %s%s%s' \
+    "$cyan" "$reset" "$accent" "${sid:0:8}" "$reset"
+  [[ -n "$proj" ]] && printf '  %s·  %s%s' "$dim" "$proj" "$reset"
+  printf '\n\n'
+
+  # ── Status: ● model · duration [· ctx bar] ──
+  printf '  %s●%s %s%s%s   %s·%s   %s%s%s' \
+    "$green" "$reset" "$accent" "$model_lbl" "$reset" \
+    "$dim" "$reset" "$cyan" "$dur" "$reset"
+  if (( have_live )) && [[ "${_PSC_ctx_pct:-}" =~ ^[0-9]+$ ]]; then
+    local cf; cf=$(_bar_filled "$_PSC_ctx_pct" 100 16)
+    printf '   %s·%s   %s  %s%d%% ctx%s' \
+      "$dim" "$reset" "$(_bar_c "$cf" 16)" "$cyan" "$_PSC_ctx_pct" "$reset"
+  fi
+  printf '\n\n'
+
+  local RW=66 BAR_W=34
+
+  # ── Tokens (share over input+output+cache-write; cache read shown separately) ──
+  # t_in/t_out/t_cr/t_cw come from the single jq pass above.
+  local work=$(( t_in + t_out + t_cw ))
+
+  _render_shead "Tokens" "share" "$RW"
+  if (( work == 0 )); then
+    printf '    %s(no token data)%s\n' "$dim" "$reset"
+  else
+    local pair _sl _sv bf pct suf
+    for pair in "input:$t_in" "output:$t_out" "cache write:$t_cw"; do
+      _sl="${pair%%:*}"; _sv="${pair##*:}"
+      bf=$(_bar_filled "$_sv" "$work" "$BAR_W")
+      pct=$(( _sv * 100 / work ))
+      printf -v suf '%s%3d%%%s' "$cyan" "$pct" "$reset"
+      _render_bar_row "$_sl" 11 "$(_fmt_tok "$_sv")" 7 "$bf" "$BAR_W" "$suf"
+    done
+    printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
+    local hit; hit=$(_cache_hit_pct "$t_cr" $(( t_in + t_cw )))
+    printf '  %-11s  %s%7s%s   %s%d%% hit%s\n' \
+      "cache read" "$cyan" "$(_fmt_tok "$t_cr")" "$reset" "$dim" "$hit" "$reset"
+    if [[ "$think" =~ ^[0-9]+$ ]] && (( think > 0 )); then
+      printf '  %-11s  %sin %d blocks%s\n' "thinking" "$dim" "$think" "$reset"
+    fi
+  fi
+  echo
+
+  # ── Tools (top 8 by count, normalized bars, error markers) ──
+  local tnote="${tcalls} calls"
+  [[ "$terrs" =~ ^[0-9]+$ ]] && (( terrs > 0 )) && tnote="$tnote · $terrs err"
+  _render_shead "Tools" "$tnote" "$RW"
+  # toolrows (top 8) come from the single jq pass above as _stool_rows.
+  if (( ${#_stool_rows[@]} == 0 )); then
+    printf '    %s(no tool calls)%s\n' "$dim" "$reset"
+  else
+    local maxn=0 _str nm cnt ec tbf tsuf
+    for _str in "${_stool_rows[@]}"; do
+      IFS=$'\x1f' read -r nm cnt ec <<< "$_str"
+      (( cnt > maxn )) && maxn=$cnt
+    done
+    for _str in "${_stool_rows[@]}"; do
+      IFS=$'\x1f' read -r nm cnt ec <<< "$_str"
+      tsuf=""
+      tbf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
+      if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
+        printf -v tsuf '%s⚠ %d err%s' "$yellow" "$ec" "$reset"
+      fi
+      _render_bar_row "$nm" 16 "$cnt" 5 "$tbf" "$BAR_W" "$tsuf"
+    done
+  fi
+  echo
+
+  # ── Subagents / Stop reasons / Limit hits (compact one-liners) ──
+  # sub_tot/sub_str/stop_str/_slh_rows come from the single jq pass above.
+  if [[ "$sub_tot" =~ ^[0-9]+$ ]] && (( sub_tot > 0 )); then
+    printf '  %s%-12s%s %s%3d%s   %s%s%s\n' \
+      "$accent" "Subagents" "$reset" "$cyan" "$sub_tot" "$reset" "$dim" "$sub_str" "$reset"
+  fi
+
+  if [[ -n "$stop_str" ]]; then
+    printf '  %s%-12s%s     %s%s%s\n' \
+      "$accent" "Stop reasons" "$reset" "$dim" "$stop_str" "$reset"
+  fi
+
+  if (( ${#_slh_rows[@]} > 0 )); then
+    local lcount=0 _lhr lt lm last_ts="" last_m=""
+    for _lhr in "${_slh_rows[@]}"; do
+      IFS=$'\x1f' read -r lt lm <<< "$_lhr"
+      [[ -z "$lt" ]] && continue
+      last_ts="$lt"; last_m="$lm"; (( ++lcount ))
+    done
+    local labs="—"; _iso_epoch "$last_ts"
+    if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then _fmt_abs "$_EPOCH" '%a %H:%M'; [[ -n "$_ABS_FMT" ]] && labs="$_ABS_FMT"; fi
+    # The model is "what ran when the cap hit", not "what is to blame" (the 5h
+    # budget is account-wide). Drop the clause when it did not resolve.
+    local during=""
+    [[ -n "$last_m" && "$last_m" != "unknown" ]] && during=" · during $(_insights_model_label "$last_m")"
+    printf '  %s⚠ Limit hits%s %s%3d%s   %s5h budget reached %s%s  (account-wide)%s\n' \
+      "$yellow" "$reset" "$cyan" "$lcount" "$reset" "$dim" "$labs" "$during" "$reset"
+  fi
+  echo
+}
+
+# ── claudii tools ────────────────────────────────────────────────────────────
+# Tool / efficiency lens over the rolling window: call counts + error rates,
+# subagents spawned, thinking volume. The throughput/reliability companion to
+# skills-cost (which is $-focused). MCP tool names are shortened to their tool
+# segment; the long tail is folded into a "+N more" line.
+
+_cmd_tools() {
+  _cfg_init
+  _insights_refresh
+
+  _insights_window tools "$@" || return $?
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii tools [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Tool call counts, error rates, subagents and thinking volume\n'
+    printf 'for the rolling window.\n'
+    return 0
+  fi
+  local days="$_IW_DAYS"
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv tools; return 1; }
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _tools_json "{}" "$days"; return 0; }
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _tools_json "$merged" "$days"
+    return 0
+  fi
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" yellow="${CLAUDII_CLR_YELLOW}"
+  local RW=66 BAR_W=28
+
+  # Totals (both always numeric → @tsv safe).
+  local totcalls toterrs
+  IFS=$'\t' read -r totcalls toterrs < <(jq -r '
+    [ ([.tools[]? ] | add // 0), ([.tool_errors[]? ] | add // 0) ] | @tsv
+  ' <<< "$merged")
+  (( totcalls == 0 )) && { printf '  No tool calls recorded in the last %dd.\n\n' "$days"; return 0; }
+  local okpct; okpct=$(LC_ALL=C awk -v c="$totcalls" -v e="$toterrs" 'BEGIN{printf "%.1f", 100*(c-e)/c}')
+
+  local note hpad; printf -v note '%s · %s calls · %s%% ok' "$(_insights_window_label "$days")" "$totcalls" "$okpct"
+  hpad=$(( RW - 13 - ${#note} )); (( hpad < 1 )) && hpad=1
+  printf '\n  %sclaudii tools%s%*s%s%s%s\n\n' \
+    "$cyan" "$reset" "$hpad" "" "$dim" "$note" "$reset"
+
+  # ── Tool table (top 15 by calls; rest folded) ──
+  _render_shead "Tool" "calls · share · errors" "$RW"
+  # error_pct (1 decimal) + hi-flag (rate > 5%) precomputed in jq so the render
+  # loop no longer forks two awks per tool row. Both fields stay non-empty
+  # ("0.0"/"0") so @tsv + IFS=$'\t' read cannot collapse them (CLAUDE.md trap).
+  local toolrows; toolrows=$(jq -r '
+    def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
+                      | "\(($z/10)|floor).\($z%10)" else "0.0" end;
+    (.tool_errors // {}) as $e
+    | (.tools // {}) | to_entries
+    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
+    | sort_by(-.n)
+    | .[] | [.name, .n, .e, pct1s(.e;.n),
+             (if .e>0 and (.e*100/.n)>5 then "1" else "0" end)] | @tsv
+  ' <<< "$merged")
+  local maxn=0 idx=0 rest_n=0 rest_c=0 nm cnt ec erate hi
+  while IFS=$'\t' read -r nm cnt ec erate hi; do
+    [[ -z "$nm" ]] && continue
+    (( idx == 0 )) && maxn=$cnt
+    if (( idx < 15 )); then
+      local disp="$nm"
+      case "$nm" in mcp__*) disp="${nm##*__}"; [[ -z "$disp" ]] && disp="$nm" ;; esac
+      (( ${#disp} > 18 )) && disp="${disp:0:18}"
+      local bf share suf err_str hi_mark
+      bf=$(_bar_filled "$cnt" "$maxn" "$BAR_W")
+      share=$(( cnt * 100 / totcalls ))
+      if [[ "$ec" =~ ^[0-9]+$ ]] && (( ec > 0 )); then
+        hi_mark=""; [[ "$hi" == "1" ]] && hi_mark=" ${yellow}⚠${reset}"
+        printf -v err_str '%s%d err · %s%%%s%s' "$dim" "$ec" "$erate" "$reset" "$hi_mark"
+      else
+        printf -v err_str '%s—%s' "$dim" "$reset"
+      fi
+      printf -v suf '%s%3d%%%s   %s' "$cyan" "$share" "$reset" "$err_str"
+      _render_bar_row "$disp" 18 "$cnt" 6 "$bf" "$BAR_W" "$suf"
+    else
+      (( ++rest_n )); rest_c=$(( rest_c + cnt ))
+    fi
+    (( ++idx ))
+  done <<< "$toolrows"
+  if (( rest_n > 0 )); then
+    printf '  %s+%d more tools · %s calls%s\n' "$dim" "$rest_n" "$(_fmt_tok "$rest_c")" "$reset"
+  fi
+  echo
+
+  # ── Subagents (spawned types) ──
+  local subrows; subrows=$(jq -r '
+    .subagent_types // {} | to_entries | map(select(.key != "")) | sort_by(-.value)
+    | .[] | [.key, .value] | @tsv
+  ' <<< "$merged")
+  if [[ -n "$subrows" ]]; then
+    local subtot; subtot=$(jq -r '[.subagent_types[]?] | add // 0' <<< "$merged")
+    _render_shead "Subagents" "$subtot spawned" "$RW"
+    local smax=0 sidx=0 stype scnt
+    while IFS=$'\t' read -r stype scnt; do
+      [[ -z "$stype" ]] && continue
+      (( sidx == 0 )) && smax=$scnt
+      local sbf; sbf=$(_bar_filled "$scnt" "$smax" "$BAR_W")
+      _render_bar_row "$stype" 18 "$scnt" 6 "$sbf" "$BAR_W" ""
+      (( ++sidx ))
+    done <<< "$subrows"
+    echo
+  fi
+
+  # ── Thinking volume + error-rate warning ──
+  local think; think=$(jq -r '.thinking_blocks // 0' <<< "$merged")
+  if [[ "$think" =~ ^[0-9]+$ ]] && (( think > 0 )); then
+    printf '  %sThinking%s     %s%s blocks%s\n' "$accent" "$reset" "$cyan" "$(_fmt_tok "$think")" "$reset"
+  fi
+  local worst; worst=$(jq -r '
+    (.tool_errors // {}) as $e
+    | (.tools // {}) | to_entries
+    | map(select(.key != "") | {name: .key, n: .value, e: ($e[.key] // 0)})
+    | map(select(.n >= 20)) | map(. + {rate: (.e * 100 / .n)})
+    | (max_by(.rate) // empty) | select(.rate > 5)
+    | [.name, (.rate | floor)] | @tsv
+  ' <<< "$merged")
+  if [[ -n "$worst" ]]; then
+    local wname wrate _w; IFS=$'\t' read -r wname wrate <<< "$worst"
+    case "$wname" in mcp__*) _w="${wname##*__}"; [[ -n "$_w" ]] && wname="$_w" ;; esac
+    printf '  %s⚠ %s has the highest error rate (%s%%) — worth a look%s\n' \
+      "$yellow" "$wname" "$wrate" "$reset"
+  fi
+  echo
+}
+
+# ── claudii limits ───────────────────────────────────────────────────────────
+# Rate-limit hits over the rolling window from limit_hits[]. Time + model only
+# (the data carries no %, and the budget is account-wide — the model is "what
+# ran when the cap hit", not "what is to blame"). An hour strip shows when hits
+# cluster, since pacing total throughput across time is the only lever.
+
+_cmd_limits() {
+  _cfg_init
+  _insights_refresh
+
+  _insights_window limits "$@" || return $?
+  if (( _IW_HELP )); then
+    printf 'Usage: claudii limits [WINDOW] [--days N] [--json]\n\n'
+    printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d).\n'
+    printf 'Rate-limit hits in the rolling window: when they happened and\n'
+    printf 'which model was running (the 5h budget is account-wide).\n'
+    return 0
+  fi
+  local days="$_IW_DAYS"
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv limits; return 1; }
+
+  # "Where do I stand" before "where did I hit the wall". Reads the session
+  # cache and history directly, so it shows even when insights are still empty
+  # — hence ahead of the merged-data guard below. JSON keeps its own schema
+  # (`claudii week --json` serves the window).
+  if [[ "$fmt" != "json" ]] && _week_stats; then
+    _week_render_block
+  fi
+
+  local merged; merged=$(_insights_merged_json "$days")
+  if [[ -z "$merged" || "$merged" == "{}" ]]; then
+    [[ "$fmt" == "json" ]] && { _limits_json "{}" "$days"; return 0; }
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    _limits_json "$merged" "$days"
+    return 0
+  fi
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}" yellow="${CLAUDII_CLR_YELLOW}" green="${CLAUDII_CLR_GREEN}"
+  local RW=66
+
+  # Most-recent-first; timestamp is always present (leading field) → @tsv safe.
+  local hits; hits=$(jq -r '
+    .limit_hits // [] | sort_by(.timestamp) | reverse
+    | .[] | [(.timestamp // ""), (.model // "")] | @tsv
+  ' <<< "$merged")
+
+  if [[ -z "$hits" ]]; then
+    printf '\n  %s●%s %sNo rate-limit hits (%s)%s — clear runway.\n\n' \
+      "$green" "$reset" "$dim" "$(_insights_window_label "$days")" "$reset"
+    return 0
+  fi
+
+  # Single pass: count, hour buckets, model tally, per-day group-by. Hits arrive
+  # newest-first (jq sort_by(.timestamp)|reverse), so same-day rows are
+  # contiguous — a streaming group-by needs no map (bash 3.2 has no assoc
+  # arrays). Day tallies collect into parallel indexed arrays.
+  local total=0 ts model lhour modacc="" _mlabel _dkey _dlab
+  local -a hours=()
+  local _cur_key="" _cur_lab="" _cur_n=0 _dmax=0
+  local -a _day_labs=() _day_cnts=()
+  while IFS=$'\t' read -r ts model; do
+    [[ -z "$ts" ]] && continue
+    (( ++total ))
+    _mlabel=$(_insights_model_label "$model")   # used for the model tally
+    _iso_epoch "$ts"
+    _dkey=""; _dlab="?"
+    if [[ "$_EPOCH" =~ ^[0-9]+$ ]]; then
+      _fmt_abs "$_EPOCH" '%H'; lhour="$_ABS_FMT"
+      # Assignment form (not (( ++x ))): incrementing an unset array element
+      # trips set -u; the ${x:-0} default keeps it bound and exit-0.
+      if [[ "$lhour" =~ ^[0-9]+$ ]]; then
+        local _hb=$(( 10#$lhour )); hours[_hb]=$(( ${hours[_hb]:-0} + 1 ))
+      fi
+      # One date call yields both a collision-proof group key (YYYYMMDD, local
+      # TZ) and the display label, split on '|'.
+      _fmt_abs "$_EPOCH" '%Y%m%d|%a %d %b'
+      _dkey="${_ABS_FMT%%|*}"; _dlab="${_ABS_FMT#*|}"
+    fi
+    modacc+="$_mlabel"$'\n'
+    # Flush the previous day when the local day changes; accumulate otherwise.
+    # A hit with an unparseable timestamp (_dkey="") never opens a day.
+    if [[ -n "$_dkey" && "$_dkey" != "$_cur_key" ]]; then
+      if [[ -n "$_cur_key" ]]; then
+        _day_labs+=("$_cur_lab"); _day_cnts+=("$_cur_n")
+        (( _cur_n > _dmax )) && _dmax=$_cur_n
+      fi
+      _cur_key="$_dkey"; _cur_lab="$_dlab"; _cur_n=1
+    elif [[ -n "$_cur_key" ]]; then
+      (( ++_cur_n ))
+    fi
+  done <<< "$hits"
+  # Flush the final open day.
+  if [[ -n "$_cur_key" ]]; then
+    _day_labs+=("$_cur_lab"); _day_cnts+=("$_cur_n")
+    (( _cur_n > _dmax )) && _dmax=$_cur_n
+  fi
+
+  printf '\n  %s⚠ Rate limits%s   %s%d×%s %s· %s · 5h budget (account-wide)%s\n' \
+    "$yellow" "$reset" "$cyan" "$total" "$reset" "$dim" "$(_insights_window_label "$days")" "$reset"
+  printf '  %s%s%s\n' "$dim" "$(_rep '─' "$RW")" "$reset"
+
+  # Per-day distribution: one row per day (newest first), bar scaled to the
+  # busiest day, count suffix. Cap the rows; summarise the tail. This replaces
+  # the old flat recent-hits list, which was redundant when hits cluster (the
+  # top rows were all the same day) — exact times live in the "when" strip,
+  # models in the tally below.
+  local _DMAX_ROWS=8 _BARW=12 _i _bf _n_days=${#_day_labs[@]} _shown=0
+  local _row_lab="by day"
+  for (( _i=0; _i<_n_days; _i++ )); do
+    (( _shown >= _DMAX_ROWS )) && break
+    _bf=$(_bar_filled "${_day_cnts[_i]}" "$_dmax" "$_BARW")
+    printf '  %s%-8s%s%s%-10s%s  %s   %s%d\303\227%s\n' \
+      "$accent" "$_row_lab" "$reset" \
+      "$dim" "${_day_labs[_i]}" "$reset" \
+      "$(_bar_c "$_bf" "$_BARW")" \
+      "$cyan" "${_day_cnts[_i]}" "$reset"
+    _row_lab=""
+    (( ++_shown ))
+  done
+  (( _n_days > _shown )) && printf '  %s%-8s+%d earlier days%s\n' \
+    "$dim" "" "$(( _n_days - _shown ))" "$reset"
+  echo
+
+  # Hour strip (00..23): accent block where a hit landed, dim otherwise.
+  local strip="" h busiest=0 busiest_n=0
+  for (( h=0; h<24; h++ )); do
+    if (( ${hours[h]:-0} > 0 )); then
+      strip+="${accent}${CLAUDII_SYM_BAR_FULL}"
+      (( ${hours[h]:-0} > busiest_n )) && { busiest_n=${hours[h]:-0}; busiest=$h; }
+    else
+      strip+="${dim}${CLAUDII_SYM_BAR_EMPTY}"
+    fi
+  done
+  strip+="$reset"
+  printf '  %swhen%s   %s\n' "$accent" "$reset" "$strip"
+  printf '         %s%s%s\n' "$dim" "0     6     12    18  23" "$reset"
+
+  # Model tally (sorted desc) — "N× Label · ...".
+  local tally; tally=$(printf '%s' "$modacc" | sort | uniq -c | sort -rn \
+    | awk '{c=$1; $1=""; sub(/^ +/,""); printf "%s\303\227 %s \302\267 ", c, $0}')
+  tally="${tally% · }"
+  [[ -n "$tally" ]] && printf '  %smodels%s %s%s%s\n' "$accent" "$reset" "$dim" "$tally" "$reset"
+
+  # Insight: clustering note when the busiest hour holds 2+ hits.
+  if (( busiest_n >= 2 )); then
+    printf '  %s→ hits cluster around %02d:00 — the 5h budget is account-wide, so pacing total throughput helps most%s\n' \
+      "$dim" "$busiest" "$reset"
+  fi
+  echo
+}
+
+# ── claudii repos ────────────────────────────────────────────────────────────
+# Sessions per repo with REAL duration: gap-capped active time (schema v10
+# active_by_day, added in v9 — gaps > 10min count as idle), not the wall-clock
+# span that idle/resume inflates. Three views: per-repo table (default), per-day
+# breakdown (--daily), and a per-session drilldown (positional REPO).
+# Headless noise (TMPDIR runs, sessions with < 2min activity) folds into one
+# summary line; --all keeps it inline. Data comes straight from the
+# per-session caches via lib/repos.jq — not from merge, which flattens the
+# per-session grain this command is about.
+
+# Duration cell: _fmt_rel, with ASCII "-" for null (-1) / zero. _fmt_rel already
+# yields empty for <= 0, so the ${_REL_FMT:--} fallback covers -1 and 0 — no
+# explicit guard needed. ASCII (not em-dash): printf %Ns pads by BYTES, so a
+# 3-byte '—' misaligns the fixed-width duration columns.
+_repos_dur() {
+  local _v="${1:-0}"
+  _fmt_rel "$_v"
+  printf '%s' "${_REL_FMT:--}"
+}
+
+_cmd_repos() {
+  _cfg_init
+  _insights_refresh
+
+  # Own flags are peeled here; everything else (window tokens, the REPO
+  # positional, --days/-d + value) is forwarded to _insights_window, which owns
+  # the whole window vocabulary + arg validation. The window/positional
+  # shadowing and the "needs a value" / "did you mean Nd" errors all live there
+  # now — this loop no longer re-lists window tokens (lockstep-edit trap).
+  local daily=0 all=0
+  local -a wargs=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --daily)   daily=1 ;;
+      --all)     all=1 ;;
+      --days|-d)
+        # forward the flag; append the value only when it is not itself a flag,
+        # so a value-less --days reaches _insights_window's "needs a value" error
+        wargs+=("$1")
+        if [[ -n "${2:-}" && "${2:0:1}" != "-" ]]; then wargs+=("$2"); shift; fi
+        ;;
+      -h|--help)
+        printf 'Usage: claudii repos [REPO] [WINDOW] [--daily] [--all] [--json]\n\n'
+        printf 'WINDOW is one of today, 7d, 30d, 90d, year (or any <N>d); default 30d.\n'
+        printf 'Sessions per repo with real duration (active time; gaps > 10min = idle).\n'
+        printf '  REPO      drilldown: list that repo'"'"'s sessions. Put it AFTER a\n'
+        printf '            window to drill into a repo whose name looks like a\n'
+        printf '            window token, e.g. claudii repos 365d year\n'
+        printf '  --daily   per-day breakdown (which repos, how many sessions, how long)\n'
+        printf '  --all     include headless/micro sessions (TMPDIR runs, < 2min activity)\n'
+        return 0
+        ;;
+      -*)
+        _cli_unknown_opt repos "$1" '[REPO] [today|7d|30d|year] [--daily] [--all]' || return $?
+        ;;
+      *)
+        wargs+=("$1") ;;
+    esac
+    shift || break
+  done
+  _IW_ALLOW_POSITIONAL=1
+  local _iw_rc=0
+  _insights_window repos ${wargs[@]+"${wargs[@]}"} || _iw_rc=$?
+  unset _IW_ALLOW_POSITIONAL
+  (( _iw_rc == 0 )) || return "$_iw_rc"
+  local repo="$_IW_POSITIONAL"
+  local days="$_IW_DAYS"
+  (( _IW_WINDOW_GIVEN )) || days=30   # history view — a week is too short a default
+
+  local fmt="${_FORMAT:-}"
+  [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv repos; return 1; }
+
+  local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
+  local accent="${CLAUDII_CLR_ACCENT}"
+  local RW=66
+
+  local idir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/insights"
+  shopt -s nullglob
+  local files=("$idir"/*.json)
+  shopt -u nullglob
+  if (( ${#files[@]} == 0 )); then
+    if [[ "$fmt" == "json" ]]; then
+      jq -n --argjson days "$days" \
+        '{window_days: $days, by_repo: [], headless: {n: 0, total_active: 0}, by_day: [], sessions: []}'
+      return 0
+    fi
+    printf '  No insight data yet — run a Claude session and try again.\n'
+    return 0
+  fi
+
+  # Window cutoffs via the shared probe (same idiom as tokens/perf/merge).
+  # F9: floor is the cutoff's OWN date, not day-1 — admission uses last_seen >=
+  # cutoff, so a session admitted late on the cutoff day must still contribute
+  # its active time; a day-1 floor dropped it (n=1, total_active:0). repos.jq
+  # handles the rest.
+  _window_cutoffs "$days"
+  local cutoff="$_WC_CUTOFF" floor="${_WC_CUTOFF:0:10}"
+
+  local all_json=false; (( all )) && all_json=true
+  local data
+  # Streamed on stdin, bounded by the window (lib/insights_stream.sh).
+  data=$(_insights_stream "$idir" "$days" \
+         | jq -n --arg cutoff "$cutoff" --arg floor "$floor" --arg repo "$repo" \
+           --argjson all "$all_json" -f "$CLAUDII_HOME/lib/repos.jq" 2>/dev/null)
+  if [[ -z "$data" ]]; then
+    printf 'claudii: repos aggregation failed — rebuild the cache with: claudii-insights aggregate --force\n' >&2
+    return 1
+  fi
+
+  if [[ "$fmt" == "json" ]]; then
+    jq --argjson days "$days" '{window_days: $days} + .' <<< "$data"
+    return 0
+  fi
+
+  local note hpad; note=$(_insights_window_label "$days")
+  hpad=$(( RW - 13 - ${#note} ))
+  [[ -n "$repo" ]] && hpad=$(( hpad - ${#repo} - 1 ))   # ${repo:+ …} adds a space
+  (( hpad < 1 )) && hpad=1
+  printf '\n  %sclaudii repos%s%s%*s%s%s%s\n\n' \
+    "$cyan" "$reset" "${repo:+ ${accent}${repo}${reset}}" \
+    "$hpad" "" "$dim" "$note" "$reset"
+
+  # ── Drilldown: one repo, one row per session ──
+  if [[ -n "$repo" ]]; then
+    local _RMAX=30 shown=0 more=0
+    local sid sday act span msgs hl dlbl al sl
+    while IFS=$'\t' read -r sid sday act span msgs hl; do
+      [[ -z "$sid" ]] && continue
+      if (( shown >= _RMAX )); then (( ++more )); continue; fi
+      dlbl=$(_insights_day_label "$sday" '%a %d %b')
+      al=$(_repos_dur "$act"); sl=$(_repos_dur "$span")
+      printf '  %-11s %s%8s%s  %sspan %-8s%s  %s%4s msgs%s  %s%s%s%s\n' \
+        "$dlbl" \
+        "$cyan" "$al" "$reset" \
+        "$dim" "$sl" "$reset" \
+        "$dim" "$msgs" "$reset" \
+        "$dim" "${sid:0:8}" "$([[ "$hl" == "true" ]] && printf ' · headless')" "$reset"
+      (( ++shown ))
+    done < <(jq -r '.sessions[] | [.sid, .day, (.active // -1), .span, .msgs, .headless] | @tsv' <<< "$data")
+    if (( shown == 0 )); then
+      printf '  %sno sessions for %s in this window%s\n' "$dim" "$repo" "$reset"
+    fi
+    (( more > 0 )) && printf '  %s+%d earlier sessions%s\n' "$dim" "$more" "$reset"
+    echo
+    return 0
+  fi
+
+  # ── Daily view: one row per day, repos with count + active time ──
+  if (( daily )); then
+    local d r n a cur="" line="" al
+    _flush_day() {
+      [[ -z "$cur" ]] && return 0
+      printf '  %-11s %s\n' "$(_insights_day_label "$cur" '%a %d %b')" "$line"
+    }
+    while IFS=$'\t' read -r d r n a; do
+      [[ -z "$d" ]] && continue
+      if [[ "$d" != "$cur" ]]; then _flush_day; cur="$d"; line=""; fi
+      al=$(_repos_dur "$a")
+      [[ -n "$line" ]] && line+=" ${dim}·${reset} "
+      line+="${accent}${r}${reset} ${cyan}${n}×${reset} ${dim}${al}${reset}"
+    done < <(jq -r '.by_day[] | [.day, .repo, .n, .active] | @tsv' <<< "$data")
+    _flush_day
+    unset -f _flush_day
+    [[ -z "$cur" ]] && printf '  %s(no sessions in this window)%s\n' "$dim" "$reset"
+    echo
+    return 0
+  fi
+
+  # ── Default: per-repo table (D-grid, like tokens "By model") ──
+  local rows="" r n med tot span
+  while IFS=$'\t' read -r r n med tot span; do
+    [[ -z "$r" ]] && continue
+    rows+="${r}"$'\x1f'"${n}"$'\x1f'"$(_repos_dur "$med")"$'\x1f'"$(_repos_dur "$tot")"$'\x1f'"$(_repos_dur "$span")"$'\n'
+  done < <(jq -r '.by_repo[] | [.repo, .n, (.median_active // -1), .total_active, .total_span] | @tsv' <<< "$data")
+  if [[ -z "$rows" ]]; then
+    printf '  %s(no sessions in this window)%s\n' "$dim" "$reset"
+  else
+    printf '%s' "$rows" | _render_dgrid "Repo" $'sessions\x1fmedian\x1factive\x1fspan'
+  fi
+
+  # Headless summary (suppressed under --all — those rows are already inline).
+  if (( ! all )); then
+    local hn ha
+    IFS=$'\t' read -r hn ha < <(jq -r '[.headless.n, .headless.total_active] | @tsv' <<< "$data")
+    if [[ "$hn" =~ ^[0-9]+$ ]] && (( hn > 0 )); then
+      printf '  %s(headless) %d runs · %s active — TMPDIR/micro sessions, --all to include%s\n' \
+        "$dim" "$hn" "$(_repos_dur "$ha")" "$reset"
+    fi
+  fi
+  echo
+}

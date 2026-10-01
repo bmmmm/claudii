@@ -1,0 +1,713 @@
+# lib/cmd/system.sh — system/control commands
+# (on, off, claudestatus, session-dashboard, status, cc-statusline, update, doctor)
+# Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
+
+_cmd_on() {
+  _cfg_init
+  # Enable all three layers
+  _jq_update "$CONFIG" '.statusline.enabled = true | ."session-dashboard".enabled = "on"'
+  SETTINGS="${HOME}/.claude/settings.json"
+  if [[ -f "$SETTINGS" ]]; then
+    # _cc_statusline_connected — the configured command may be a wrapper chain
+    # ("cc-insomnii --after=claudii-cc-statusline", or a user wrapper script
+    # that itself invokes claudii-cc-statusline). A bare string/equality check
+    # used to clobber such chains with the plain command on every `claudii on`.
+    if ! _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)"; then
+      _jq_update "$SETTINGS" '. + {"statusLine": {"type": "command", "command": "claudii-cc-statusline"}}'
+    fi
+  fi
+  # CLAUDE_CLIENT_PRESENCE_FILE — wenn konfiguriert, File entfernen
+  local _presence_file
+  _presence_file=$(_cfgget presence.file 2>/dev/null || true)
+  _presence_file="${_presence_file/\$HOME/$HOME}"
+  _presence_file="${_presence_file/\~/$HOME}"
+  if [[ -n "$_presence_file" ]] && [[ -f "$_presence_file" ]]; then
+    rm -f "$_presence_file" 2>/dev/null || true
+  fi
+  echo -e "${CLAUDII_CLR_GREEN}All layers enabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
+}
+
+_cmd_off() {
+  _cfg_init
+  # Disable all three layers
+  _jq_update "$CONFIG" '.statusline.enabled = false | ."session-dashboard".enabled = "off"'
+  SETTINGS="${HOME}/.claude/settings.json"
+  if [[ -f "$SETTINGS" ]] && jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
+    _jq_update "$SETTINGS" 'del(.statusLine)'
+  fi
+  # CLAUDE_CLIENT_PRESENCE_FILE — wenn konfiguriert, File anlegen (suppresses CC mobile notifications)
+  local _presence_file
+  _presence_file=$(_cfgget presence.file 2>/dev/null || true)
+  _presence_file="${_presence_file/\$HOME/$HOME}"
+  _presence_file="${_presence_file/\~/$HOME}"
+  if [[ -n "$_presence_file" ]]; then
+    touch "$_presence_file" 2>/dev/null || true
+  fi
+  echo -e "${CLAUDII_CLR_YELLOW}All layers disabled${CLAUDII_CLR_RESET}  (ClaudeStatus · Session Dashboard · CC-Statusline)"
+}
+
+_cmd_claudestatus() {
+  _cfg_init
+  case "${2:-}" in
+    on)
+      _jq_update "$CONFIG" '.statusline.enabled = true'
+      echo -e "${CLAUDII_CLR_GREEN}ClaudeStatus enabled${CLAUDII_CLR_RESET}"
+      ;;
+    off)
+      _jq_update "$CONFIG" '.statusline.enabled = false'
+      echo -e "${CLAUDII_CLR_YELLOW}ClaudeStatus disabled${CLAUDII_CLR_RESET}"
+      ;;
+    "")
+      enabled=$(_cfgget statusline.enabled)
+      if [[ "$enabled" == "true" ]]; then
+        echo -e "ClaudeStatus: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      else
+        echo -e "ClaudeStatus: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
+      fi
+      ;;
+    *)
+      echo "Usage: claudii claudestatus [on|off] — run 'claudii claudestatus on' or 'claudii claudestatus off'" >&2; return 1
+      ;;
+  esac
+}
+
+_cmd_insomnii() {
+  _cfg_init
+  _ins_set_mode() {
+    _jq_update "$CONFIG" ".statusline.insomnii = \"$1\""
+  }
+  case "${2:-}" in
+    on|off|auto)
+      _ins_set_mode "$2"
+      echo -e "${CLAUDII_CLR_GREEN}insomnii delegation: $2${CLAUDII_CLR_RESET}"
+      [[ "$2" != "off" ]] && ! command -v cc-insomnii >/dev/null 2>&1 && \
+        echo -e "${CLAUDII_CLR_YELLOW}note:${CLAUDII_CLR_RESET} cc-insomnii binary not on PATH yet — install: ${CLAUDII_CLR_DIM}claudii insomnii install${CLAUDII_CLR_RESET}"
+      ;;
+    install)
+      # Bootstrap helper: clone the sibling repo and run its installer.
+      # Idempotent — re-running just re-installs from the latest checkout.
+      _ins_repo="${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
+      _ins_clone="${CC_INSOMNII_CLONE_DIR:-$HOME/.local/share/cc-insomnii-src}"
+      if command -v cc-insomnii >/dev/null 2>&1; then
+        echo -e "${CLAUDII_CLR_GREEN}cc-insomnii already installed:${CLAUDII_CLR_RESET} $(command -v cc-insomnii)"
+        echo "  re-run installer to upgrade: bash $_ins_clone/install.sh"
+        return 0
+      fi
+      if [[ ! -d "$_ins_clone/.git" ]]; then
+        echo "Cloning $_ins_repo → $_ins_clone ..."
+        git clone --depth=1 "$_ins_repo" "$_ins_clone" || {
+          echo -e "${CLAUDII_CLR_RED}clone failed${CLAUDII_CLR_RESET} — clone manually: git clone $_ins_repo" >&2
+          return 1
+        }
+      else
+        echo "Updating $_ins_clone ..."
+        ( cd "$_ins_clone" && git pull --ff-only ) || true
+      fi
+      bash "$_ins_clone/install.sh"
+      ;;
+    status|"")
+      _ins_mode=$(_cfgget statusline.insomnii)
+      [[ "$_ins_mode" != "on" && "$_ins_mode" != "off" ]] && _ins_mode="auto"
+      _ins_bedtime=$(_cfgget statusline.bedtime)
+      [[ -z "$_ins_bedtime" || "$_ins_bedtime" == "null" ]] && _ins_bedtime="23:00"
+      printf "  ${CLAUDII_CLR_BOLD}cc-insomnii${CLAUDII_CLR_RESET}\n"
+      if command -v cc-insomnii >/dev/null 2>&1; then
+        _ins_path=$(command -v cc-insomnii)
+        printf "  binary:    ${CLAUDII_CLR_GREEN}%s${CLAUDII_CLR_RESET}\n" "$_ins_path"
+      else
+        printf "  binary:    ${CLAUDII_CLR_DIM}not installed${CLAUDII_CLR_RESET}  (${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET})\n"
+      fi
+      printf "  delegation: %s\n" "$_ins_mode"
+      printf "  bedtime:   %s ${CLAUDII_CLR_DIM}(forwarded as CC_INSOMNII_BEDTIME)${CLAUDII_CLR_RESET}\n" "$_ins_bedtime"
+      printf "\n"
+      printf "  Subcommands:\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii on${CLAUDII_CLR_RESET}      require delegation (warn via doctor if missing)\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii off${CLAUDII_CLR_RESET}     suppress delegation, leave clock segment empty\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii auto${CLAUDII_CLR_RESET}    delegate when installed (default)\n"
+      printf "    ${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET} clone + install the binary from %s\n" "${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
+      ;;
+    *)
+      echo "Usage: claudii insomnii [on|off|auto|status|install]" >&2; return 1
+      ;;
+  esac
+}
+
+_cmd_session_dashboard() {
+  _cfg_init
+  case "${2:-}" in
+    on)
+      _jq_update "$CONFIG" '."session-dashboard".enabled = "on"'
+      echo -e "${CLAUDII_CLR_GREEN}Dashboard: on${CLAUDII_CLR_RESET}"
+      ;;
+    off)
+      _jq_update "$CONFIG" '."session-dashboard".enabled = "off"'
+      echo -e "${CLAUDII_CLR_YELLOW}Dashboard: off${CLAUDII_CLR_RESET}"
+      ;;
+    "")
+      current=$(_cfgget session-dashboard.enabled)
+      [[ -z "$current" ]] && current=$(_cfgget dashboard.enabled)
+      current="${current:-off}"
+      if [[ "$current" == "off" ]]; then
+        echo -e "Session Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}  (claudii session-dashboard on to enable)"
+      else
+        echo -e "Session Dashboard: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
+      fi
+      ;;
+    *)
+      echo "Unknown subcommand: ${2} — run 'claudii session-dashboard [on|off]'" >&2; return 1
+      ;;
+  esac
+}
+
+# Map a model state to its display color. Sets _STATE_CLR (no subshell — bash
+# 3.2 has no namerefs). Shared so both sides of a transition get colored.
+_status_state_color() {
+  case "$1" in
+    ok)       _STATE_CLR="$CLAUDII_CLR_GREEN" ;;
+    degraded) _STATE_CLR="$CLAUDII_CLR_YELLOW" ;;
+    down)     _STATE_CLR="$CLAUDII_CLR_RED" ;;
+    *)        _STATE_CLR="$CLAUDII_CLR_DIM" ;;
+  esac
+}
+
+# One colored transition row: "<timestamp>  <Model>  old → new".
+# Shared by the bare-status "Recent changes" footer and `status --history`
+# (the case ladder used to be duplicated in both branches). BOTH states are
+# colored by their own state — a "down → ok" row paints "down" red, not bare.
+# Args: ts model old new — honors _CLAUDII_TZ via _fmt_abs.
+_status_print_transition() {
+  local _h_ts="$1" _h_model="$2" _h_old="$3" _h_new="$4" _h_label _h_clr_old _h_clr_new _STATE_CLR
+  _fmt_abs "$_h_ts" '%Y-%m-%d %H:%M %Z'
+  _h_label="$(tr '[:lower:]' '[:upper:]' <<< "${_h_model:0:1}")${_h_model:1}"
+  _status_state_color "$_h_old"; _h_clr_old="$_STATE_CLR"
+  _status_state_color "$_h_new"; _h_clr_new="$_STATE_CLR"
+  printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  %-9s %b%s%b → %b%s%b\n" \
+    "${_ABS_FMT:-$_h_ts}" "$_h_label" \
+    "$_h_clr_old" "$_h_old" "$CLAUDII_CLR_RESET" \
+    "$_h_clr_new" "$_h_new" "$CLAUDII_CLR_RESET"
+}
+
+# Bare `claudii status` render: per-model state, cache age + adaptive TTL,
+# current incidents, last-5 transitions. Reads $cache_file from the caller.
+_status_render() {
+  if [[ "$_FORMAT" == "json" ]]; then
+    if [[ -f "$cache_file" ]]; then
+      jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
+    else
+      echo "[]"
+    fi
+    return 0
+  fi
+
+  # Per-model status display
+  # Configured display timezone (display.timezone, e.g. Europe/Berlin)
+  # drives every absolute timestamp below via _fmt_abs.
+  _CLAUDII_TZ=$(_cfgget display.timezone)
+  printf '\n'
+  models_cfg=$(_cfgget statusline.models)
+  models_cfg="${models_cfg:-opus,sonnet,haiku}"
+  IFS=',' read -ra _status_models <<< "$models_cfg"
+
+  if [[ ! -f "$cache_file" ]]; then
+    printf '  no cache — run: claudii status 5m\n'
+  else
+    # One read for the whole render (_status_cache_read, lib/helpers.sh). This
+    # loop used to fork `grep`+`cut` PER MODEL and the TTL branch below two more
+    # greps — 10 forks on the 4-model default to read five lines of key=value.
+    _status_cache_read "$cache_file" || true
+    _status_any_issue=false
+    for _sm in "${_status_models[@]}"; do
+      _sm="${_sm// /}"
+      _status_cache_state "$_sm" || _SC_STATE=""
+      _sm_state="$_SC_STATE"
+      _sm_label="$(tr '[:lower:]' '[:upper:]' <<< "${_sm:0:1}")${_sm:1}"
+      case "${_sm_state:-unknown}" in
+        ok)       _sm_icon="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_GREEN}ok${CLAUDII_CLR_RESET}"       ;;
+        degraded) _sm_icon="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_YELLOW}degraded${CLAUDII_CLR_RESET}" ; _status_any_issue=true ;;
+        down)     _sm_icon="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_RED}down${CLAUDII_CLR_RESET}"     ; _status_any_issue=true ;;
+        *)        _sm_icon="${CLAUDII_CLR_DIM}?${CLAUDII_CLR_RESET}" ; _sm_text="${CLAUDII_CLR_DIM}unknown${CLAUDII_CLR_RESET}" ;;
+      esac
+      printf "  %-9s %b %b\n" "$_sm_label" "$_sm_icon" "$_sm_text"
+    done
+
+    printf '\n'
+    _cache_mtime=$(_mtime "$cache_file")
+    _now=$(date +%s)
+    _cache_age=$(( _now - _cache_mtime ))
+    if (( _cache_age < 60 )); then
+      _age_str="just now"
+    else
+      _age_str="$(( _cache_age / 60 ))m ago"
+    fi
+    _ttl_val=$(_cfgget status.cache_ttl)
+    _ttl_val="${_ttl_val:-900}"
+    # Mirror the adaptive RPROMPT TTL (lib/statusline.zsh): healthy → 2×
+    # base, degraded/down → base÷5 (min 60s), API unreachable → base.
+    # Display the effective interval — the bare config value promised
+    # "every 15m" while the healthy-state refresh actually ran at 30m.
+    _eff_ttl=$_ttl_val
+    if [[ "$_SC_API" != "unreachable" ]]; then
+      if (( _SC_ANY_ISSUE )); then
+        _eff_ttl=$(( _ttl_val / 5 ))
+        (( _eff_ttl < 60 )) && _eff_ttl=60
+      else
+        _eff_ttl=$(( _ttl_val * 2 ))
+      fi
+    fi
+    _ttl_min=$(( _ttl_val / 60 ))
+    _eff_min=$(( _eff_ttl / 60 )); (( _eff_min < 1 )) && _eff_min=1
+    if (( _eff_ttl == _ttl_val )); then
+      printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm${CLAUDII_CLR_RESET}\n" "$_age_str" "$_ttl_min"
+    else
+      printf "  ${CLAUDII_CLR_DIM}Last check: %s  ·  refreshes every %sm (adaptive, base %sm)${CLAUDII_CLR_RESET}\n" "$_age_str" "$_eff_min" "$_ttl_min"
+    fi
+  fi
+
+  _status_render_incidents
+
+  # Recent model-state transitions (logged by claudii-status on change)
+  _hist_file="${cache_file%/*}/status-history.tsv"
+  if [[ -s "$_hist_file" ]]; then
+    printf '\n'
+    printf "  ${CLAUDII_CLR_DIM}Recent changes:${CLAUDII_CLR_RESET}\n"
+    tail -5 "$_hist_file" | sort -rn | \
+    while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+      _status_print_transition "$_h_ts" "$_h_model" "$_h_old" "$_h_new"
+    done
+  fi
+  printf '\n'
+}
+
+# Current-incident section from status-unresolved.json (cached by
+# claudii-status): per-incident state line + up to 3 timestamped updates.
+_status_render_incidents() {
+  _inc_cache="${cache_file%/*}/status-unresolved.json"
+  [[ -f "$_inc_cache" ]] || return 0
+  _inc_count=$(jq -r '.incidents | length' "$_inc_cache" 2>/dev/null || echo "0")
+  if [[ "$_inc_count" == "0" ]]; then
+    printf "  ${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} No active incidents${CLAUDII_CLR_RESET}\n"
+    return 0
+  fi
+  jq -r '.incidents[] | [.name, .status, (.incident_updates // [] | .[0:3][] | [.status, .body, .created_at] | @tsv)] | @tsv' \
+    "$_inc_cache" 2>/dev/null | \
+  while IFS=$'\t' read -r _name _status _upd_status _upd_body _upd_time; do
+    _status_lc=$(echo "$_status" | tr '[:upper:]' '[:lower:]')
+    case "$_status_lc" in
+      resolved)      _ic="${CLAUDII_CLR_GREEN}"  ; _is="${CLAUDII_SYM_OK} Resolved"                       ;;
+      monitoring)    _ic="${CLAUDII_CLR_CYAN}"   ; _is="${CLAUDII_SYM_MONITORING} Monitoring"              ;;
+      identified)    _ic="${CLAUDII_CLR_YELLOW}" ; _is="${CLAUDII_SYM_IDENTIFIED} Identified"              ;;
+      investigating) _ic="${CLAUDII_CLR_RED}"    ; _is="${CLAUDII_SYM_INVESTIGATING} Investigating"        ;;
+      *)             _ic="${CLAUDII_CLR_DIM}"    ; _is="${CLAUDII_SYM_INACTIVE} ${_status}"               ;;
+    esac
+    printf '\n'
+    printf "  %b%s%b  %s\n" "$_ic" "$_is" "$CLAUDII_CLR_RESET" "$_name"
+  done
+  jq -r '.incidents[] | .incident_updates[0:3][] |
+         [.status,
+          ((.created_at // "") | if . == "" then "" else
+            (try (sub("\\.[0-9]+Z$"; "Z") | fromdate | tostring) catch .) end),
+          .body] | @tsv' \
+    "$_inc_cache" 2>/dev/null | \
+  while IFS=$'\t' read -r _upd_status _upd_time _upd_body; do
+    # _upd_time is epoch (or raw ISO if jq could not parse it)
+    _fmt_abs "$_upd_time" '%Y-%m-%d %H:%M %Z'
+    if [[ -n "$_ABS_FMT" ]]; then
+      # Already "YYYY-MM-DD HH:MM ZONE" — must NOT run the T→space swap here:
+      # it would eat the T in the zone abbreviation (CEST→"CES ", CET→"CE ",
+      # GMT→"GM "). The swap is only for the raw-ISO fallback below.
+      _ts="$_ABS_FMT"
+    else
+      # Fallback: raw ISO like "2026-06-13T00:50:00Z" → swap the date/time T.
+      _ts="${_upd_time%%.*}"; _ts="${_ts/T/ }"
+    fi
+    printf "    ${CLAUDII_CLR_DIM}%-22s${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_BOLD}%-15s${CLAUDII_CLR_RESET}  %s\n" \
+      "$_ts" "$_upd_status" "$_upd_body"
+  done
+}
+
+# `claudii status --history [--days N]` — full transition log (vs. the last-5
+# shown by bare `claudii status`), newest-first. Args: the option words after
+# --history (i.e. "$3" "$4" from _cmd_status).
+_status_history() {
+  _status_cache_file; cache_file="$_SC_FILE"
+  _hist_file="${cache_file%/*}/status-history.tsv"
+  _days=""
+  if [[ "${1:-}" == "--days" ]]; then
+    _days="${2:-}"
+    [[ "$_days" =~ ^[0-9]+$ ]] || { echo "Invalid --days value: ${2:-} — expected a positive integer, e.g. claudii status --history --days 7" >&2; return 1; }
+  elif [[ -n "${1:-}" ]]; then
+    echo "Unknown status --history option: ${1} — use: claudii status --history [--days N]" >&2; return 1
+  fi
+  _cutoff=0
+  if [[ -n "$_days" ]]; then
+    _cutoff=$(( $(date +%s) - _days * 86400 ))
+  fi
+  if [[ "$_FORMAT" == "json" ]]; then
+    if [[ -s "$_hist_file" ]]; then
+      awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn | \
+        jq -Rn '[inputs | select(length > 0) | split("\t") | {ts: (.[0]|tonumber), model: .[1], from: .[2], to: .[3]}]'
+    else
+      echo "[]"
+    fi
+    return 0
+  fi
+  _CLAUDII_TZ=$(_cfgget display.timezone)
+  printf '\n'
+  if [[ ! -s "$_hist_file" ]]; then
+    printf '  no transition history yet\n\n'
+    return 0
+  fi
+  if [[ -n "$_days" ]]; then
+    printf "  ${CLAUDII_CLR_DIM}Status transitions (last %s day%s):${CLAUDII_CLR_RESET}\n" "$_days" "$([[ "$_days" -eq 1 ]] && echo '' || echo s)"
+  else
+    printf "  ${CLAUDII_CLR_DIM}Status transitions (full log):${CLAUDII_CLR_RESET}\n"
+  fi
+  printf '\n'
+  _hist_count=0
+  while IFS=$'\t' read -r _h_ts _h_model _h_old _h_new; do
+    [[ -z "$_h_ts" ]] && continue
+    _status_print_transition "$_h_ts" "$_h_model" "$_h_old" "$_h_new"
+    (( ++_hist_count ))
+  done < <(awk -F'\t' -v c="$_cutoff" 'NF>=4 && $1+0 >= c' "$_hist_file" | sort -rn)
+  printf '\n'
+  if (( _hist_count == 0 )); then
+    printf "  ${CLAUDII_CLR_DIM}no transitions in window${CLAUDII_CLR_RESET}\n"
+  else
+    printf "  ${CLAUDII_CLR_DIM}%d transition%s${CLAUDII_CLR_RESET}\n" "$_hist_count" "$([[ "$_hist_count" -eq 1 ]] && echo '' || echo s)"
+  fi
+  printf '\n'
+}
+
+_cmd_status() {
+  _cfg_init
+  case "${2:-}" in
+    *m|*[0-9])
+      interval="${2:-}"
+      # Strip trailing 'm' for numeric validation (prevents injection in arithmetic).
+      _int_num="${interval%m}"
+      [[ "$_int_num" =~ ^[0-9]+$ ]] || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; return 1; }
+      [[ "$interval" == *m ]] && seconds=$(( _int_num * 60 )) || seconds="$_int_num"
+      (( seconds >= 30 )) || { echo "Invalid interval: $interval (minimum 30s) — valid values: 5m, 15m, 30m" >&2; return 1; }
+      _jq_update "$CONFIG" --argjson v "$seconds" '.status.cache_ttl = $v'
+      echo "Refresh interval: ${interval} (${seconds}s)"
+      ;;
+    "")
+      _status_cache_file; cache_file="$_SC_FILE"
+      "$CLAUDII_HOME/bin/claudii-status" --quiet || true
+      _status_render
+      ;;
+    --history)
+      _status_history "${3:-}" "${4:-}"
+      ;;
+    *)
+      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; return 1
+      ;;
+  esac
+}
+
+_cc_statusline_preset_json() {
+  # Bake known presets here. Writes the JSON array for `.statusline.lines`.
+  case "$1" in
+    focused)
+      # 3 lines, dense. Line 1: model+dir+branch (identity — where am I).
+      # Line 2: context+compact-eta+rates (metrics — how much is left).
+      # Line 3: claude-status+vpn+tailscale (env). Dense means compact: the one-glyph
+      # `context` segment, not the bar. cc-insomnii (if installed) prepends its
+      # own line via the --after wrapper, so no clock segment here.
+      printf '%s' '[["model","dir","branch"],["context","compact-eta","rate-5h","rate-7d"],["claude-status","vpn","tailscale"]]'
+      ;;
+    calm)
+      # 2 lines, bare. Model on top, context bar below. Nothing else.
+      printf '%s' '[["model"],["context-bar"]]'
+      ;;
+    default)
+      # Restore the shipped default layout (mirrors config/defaults.json).
+      printf '%s' '[["model","cc-version","tokens","cache-create","cache-hit","response"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","worktrees","branch","dir","remotes","git-sync"],["omlx","proxy","cost","context","compact-eta"],["claude-status"]]'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_cmd_cc_statusline() {
+  SETTINGS="${HOME}/.claude/settings.json"
+  case "${2:-}" in
+    preset)
+      _preset_name="${3:-}"
+      if [[ -z "$_preset_name" ]]; then
+        printf "  ${CLAUDII_CLR_BOLD}cc-statusline presets${CLAUDII_CLR_RESET}\n"
+        printf "    ${CLAUDII_CLR_CYAN}focused${CLAUDII_CLR_RESET}   dense 3-line layout: model+dir / ctx-bar+rates / clock+health+vpn\n"
+        printf "    ${CLAUDII_CLR_CYAN}calm${CLAUDII_CLR_RESET}      bare 2-line layout: model / context-bar\n"
+        printf "    ${CLAUDII_CLR_CYAN}default${CLAUDII_CLR_RESET}   shipped 5-line layout (everything)\n"
+        printf "\n  Usage: ${CLAUDII_CLR_CYAN}claudii cc-statusline preset <name>${CLAUDII_CLR_RESET}\n"
+        return 0
+      fi
+      _preset_lines=$(_cc_statusline_preset_json "$_preset_name") || {
+        echo "Unknown preset: $_preset_name" >&2
+        echo "  → claudii cc-statusline preset   (list available)" >&2
+        return 1
+      }
+      _cfg_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
+      if [[ ! -f "$_cfg_file" ]]; then
+        mkdir -p "$(dirname "$_cfg_file")"
+        cp "$CLAUDII_HOME/config/defaults.json" "$_cfg_file"
+      fi
+      _jq_update "$_cfg_file" ".statusline.lines = $_preset_lines"
+      echo -e "${CLAUDII_CLR_GREEN}cc-statusline preset:${CLAUDII_CLR_RESET} $_preset_name"
+      echo -e "  ${CLAUDII_CLR_DIM}written to .statusline.lines in $_cfg_file${CLAUDII_CLR_RESET}"
+      ;;
+    on)
+      if [[ ! -f "$SETTINGS" ]]; then
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; return 1
+      fi
+      # Pick the right statusLine command. When cc-insomnii is installed AND
+      # delegation isn't explicitly off, use the wrapper so insomnii always
+      # owns the first line. Otherwise plain claudii-cc-statusline.
+      _ins_mode=$(jq -r '.statusline.insomnii // "auto"' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null || echo "auto")
+      if [[ "$_ins_mode" != "off" ]] && command -v cc-insomnii >/dev/null 2>&1; then
+        _sl_cmd="cc-insomnii --after=claudii-cc-statusline"
+        _sl_label="cc-insomnii wrapper (insomnii line on top + claudii layout)"
+      else
+        _sl_cmd="claudii-cc-statusline"
+        _sl_label="claudii-cc-statusline (no insomnii wrapper)"
+      fi
+      _current=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+      if [[ "$_current" == "$_sl_cmd" ]]; then
+        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
+      elif [[ "$_current" != "claudii-cc-statusline" ]] && _cc_statusline_connected "$_current"; then
+        # Custom wrapper chain that ultimately invokes claudii-cc-statusline —
+        # keep it. Only the plain command gets auto-upgraded to the insomnii
+        # wrapper; a user chain would lose its extra segments if replaced.
+        echo -e "${CLAUDII_CLR_CYAN}CC-Statusline already active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_current)${CLAUDII_CLR_RESET}"
+      else
+        _jq_update "$SETTINGS" ". + {\"statusLine\": {\"type\": \"command\", \"command\": \"$_sl_cmd\"}}"
+        echo -e "${CLAUDII_CLR_GREEN}CC-Statusline enabled${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}($_sl_label)${CLAUDII_CLR_RESET}"
+        echo -e "  → restart Claude Code to activate"
+      fi
+      ;;
+    off)
+      if [[ ! -f "$SETTINGS" ]]; then
+        echo "Error: $SETTINGS not found — run 'claudii update' to re-install, or check https://github.com/bmmmm/claudii" >&2; return 1
+      fi
+      if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
+        _jq_update "$SETTINGS" 'del(.statusLine)'
+        echo -e "${CLAUDII_CLR_YELLOW}CC-Statusline disabled${CLAUDII_CLR_RESET}  → restart Claude Code"
+      else
+        echo "CC-Statusline was not configured"
+      fi
+      ;;
+    "")
+      if [[ ! -f "$SETTINGS" ]]; then
+        echo "CC-Statusline: not configured  ($SETTINGS missing)"
+      else
+        _cur_cmd=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
+        case "$_cur_cmd" in
+          "")
+            echo "CC-Statusline: not configured"
+            echo "  → claudii cc-statusline on  to enable"
+            ;;
+          claudii-cc-statusline)
+            echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(plain — no insomnii wrapper)${CLAUDII_CLR_RESET}"
+            ;;
+          *cc-insomnii*--after=claudii-cc-statusline*|*cc-insomnii*--after\ claudii-cc-statusline*)
+            echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(cc-insomnii wrapper)${CLAUDII_CLR_RESET}"
+            ;;
+          *)
+            if _cc_statusline_connected "$_cur_cmd"; then
+              echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_cur_cmd)${CLAUDII_CLR_RESET}"
+            else
+              echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
+            fi
+            ;;
+        esac
+      fi
+      ;;
+    *)
+      echo "Usage: claudii cc-statusline [on|off|preset <name>]" >&2; return 1
+      ;;
+  esac
+}
+
+_cmd_update() {
+  # Resolve the Homebrew prefix only if brew exists; an empty $(brew --prefix) would
+  # make the glob "$_brew_prefix"/* match every path, mis-routing brew-less git installs
+  # (Linux, source clones) into the brew branch. The `|| _brew_prefix=""` is load-bearing
+  # under set -euo pipefail.
+  local _brew_prefix=""
+  if command -v brew >/dev/null 2>&1; then
+    _brew_prefix=$(brew --prefix 2>/dev/null) || _brew_prefix=""
+  fi
+  if [[ -n "$_brew_prefix" && "$CLAUDII_HOME" == "$_brew_prefix"/* ]]; then
+    echo "claudii: Homebrew install detected"
+    brew upgrade claudii || { printf "claudii: brew upgrade failed\n" >&2; return 1; }
+  elif git -C "$CLAUDII_HOME" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "claudii: Git install detected"
+    git -C "$CLAUDII_HOME" pull --ff-only || { printf "claudii: git pull failed\n" >&2; return 1; }
+  else
+    echo "claudii: cannot determine install method — try: brew upgrade claudii  or  cd $CLAUDII_HOME && git pull" >&2
+    return 1
+  fi
+  printf "${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK} Updated. Run: claudii restart${CLAUDII_CLR_RESET}\n"
+}
+
+_cmd_doctor() {
+  _cfg_init
+
+  # Collect check results into parallel arrays: name, status (ok/warn/fail), detail
+  declare -a _dc_name _dc_status _dc_detail
+  _dc_count=0
+
+  _dc_add() { _dc_name[$_dc_count]="$1"; _dc_status[$_dc_count]="$2"; _dc_detail[$_dc_count]="$3"; _dc_count=$(( _dc_count + 1 )); }
+
+  # 1. Claude Code
+  if command -v claude >/dev/null 2>&1; then
+    claude_ver=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+    _dc_add "claude_code" "ok" "Claude Code $claude_ver"
+  else
+    _dc_add "claude_code" "fail" "Claude Code not found — install from https://claude.ai/download"
+  fi
+
+  # 2. jq
+  if command -v jq >/dev/null 2>&1; then
+    jq_ver=$(jq --version 2>/dev/null || echo "unknown")
+    _dc_add "jq" "ok" "jq $jq_ver"
+  else
+    _dc_add "jq" "fail" "jq not installed — brew install jq"
+  fi
+
+  # 3. CC-Statusline config
+  settings="${HOME}/.claude/settings.json"
+  if [[ ! -f "$settings" ]]; then
+    _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
+  elif _cc_statusline_connected "$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)"; then
+    # Accepts wrapper chains too (cc-insomnii wrapper, user wrapper scripts)
+    _dc_add "cc_statusline" "ok" "CC-Statusline configured"
+  elif jq -e '.statusLine' "$settings" >/dev/null 2>&1; then
+    other=$(jq -r '.statusLine.command // "unknown"' "$settings")
+    _dc_add "cc_statusline" "warn" "CC-Statusline: other command ($other) — claudii cc-statusline on"
+  else
+    _dc_add "cc_statusline" "warn" "CC-Statusline not configured — claudii cc-statusline on"
+  fi
+
+  # 4. Cache directory
+  cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  if [[ -d "$cache_dir" ]]; then
+    local _dc_files=("$cache_dir"/*); [[ -e "${_dc_files[0]}" ]] && cache_count=${#_dc_files[@]} || cache_count=0
+    _dc_add "cache" "ok" "Cache directory exists ($cache_count files)"
+  else
+    _dc_add "cache" "warn" "Cache directory missing — will be created on first status check"
+  fi
+
+  # 4b. Session cache GC — stale files (ppid dead AND age > 24h)
+  _dc_now=$(date +%s)
+  _dc_stale=0
+  for _dc_sf in "$cache_dir"/session-*; do
+    [[ -f "$_dc_sf" ]] || continue
+    [[ "$_dc_sf" == *.tmp.* ]] && continue
+    _dc_sf_sc=""; { _dc_sf_sc=$(<"$_dc_sf"); } 2>/dev/null
+    _dc_sf_ppid=""
+    [[ $'\n'"$_dc_sf_sc" == *$'\n'ppid=* ]] && { _dc_sf_t="${_dc_sf_sc#*$'\n'ppid=}"; _dc_sf_ppid="${_dc_sf_t%%$'\n'*}"; }
+    _dc_sf_mt=$(_mtime "$_dc_sf")
+    (( _dc_now - _dc_sf_mt < 86400 )) && continue
+    [[ -n "$_dc_sf_ppid" ]] && kill -0 "$_dc_sf_ppid" 2>/dev/null && continue
+    (( ++_dc_stale ))
+  done
+  if (( _dc_stale > 0 )); then
+    _dc_s=""; (( _dc_stale != 1 )) && _dc_s="s"
+    _dc_add "session_gc" "info" "Session cache: ${_dc_stale} stale file${_dc_s}, GC runs on next shell load"
+  fi
+
+  # 5. Completions
+  comp_dir="$CLAUDII_HOME/completions"
+  if [[ -f "$comp_dir/_claudii" ]]; then
+    _dc_add "completions" "ok" "Completions file present ($comp_dir)"
+  else
+    _dc_add "completions" "fail" "Completions not found — add to .zshrc: fpath+=($comp_dir)"
+  fi
+
+  # 6. Plugin loaded
+  if [[ -n "${CLAUDII_HOME:-}" ]]; then
+    _dc_add "plugin" "ok" "Plugin loaded (CLAUDII_HOME=$CLAUDII_HOME)"
+  else
+    _dc_add "plugin" "warn" "CLAUDII_HOME not set — source claudii.plugin.zsh in .zshrc"
+  fi
+
+  # 7. insomnii — optional standalone bedtime statusline. When detected,
+  # claudii's clock segment delegates to it (see statusline.insomnii config).
+  _ins_mode=$(jq -r '.statusline.insomnii // "auto"' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null || echo "auto")
+  [[ "$_ins_mode" != "off" && "$_ins_mode" != "on" ]] && _ins_mode="auto"
+  if command -v cc-insomnii >/dev/null 2>&1; then
+    _ins_path=$(command -v cc-insomnii)
+    if [[ "$_ins_mode" == "off" ]]; then
+      _dc_add "insomnii" "info" "cc-insomnii detected ($_ins_path) — clock segment disabled (statusline.insomnii=off)"
+    else
+      _dc_add "insomnii" "ok" "cc-insomnii detected ($_ins_path) — clock segment active (mode=$_ins_mode)"
+    fi
+  else
+    if [[ "$_ins_mode" == "on" ]]; then
+      _dc_add "insomnii" "warn" "cc-insomnii required (statusline.insomnii=on) but not on PATH — clock segment will be empty"
+    else
+      _dc_add "insomnii" "info" "cc-insomnii not installed — clock segment is empty (optional: install from github.com/bmmmm/cc-insomnii)"
+    fi
+  fi
+
+  # 7b. Repo commit guards — only meaningful in a source checkout, and only
+  # then because .git/hooks is per-clone and untracked: the repo shipped a
+  # .githooks/pre-commit for months that never ran once, because core.hooksPath
+  # points at .git/hooks and nothing looked at .githooks/. That is how a
+  # documented command (`restart`) kept a green docs test while having no
+  # dispatch arm. Reporting it here is what keeps the gate from dying quietly
+  # on the next clone.
+  if [[ -d "$CLAUDII_HOME/.githooks/pre-commit.d" && -d "$CLAUDII_HOME/.git" ]]; then
+    if bash "$CLAUDII_HOME/scripts/install-hooks.sh" --check >/dev/null 2>&1; then
+      _dc_add "hooks" "ok" "repo commit guards installed (.git/hooks/pre-commit.d)"
+    else
+      _dc_add "hooks" "warn" "repo commit guards not installed — run: bash scripts/install-hooks.sh"
+    fi
+  fi
+
+  # 8. Version
+  _dc_add "version" "ok" "claudii v$VERSION"
+
+  _doctor_failed() {
+    local i
+    for (( i=0; i<_dc_count; i++ )); do
+      [[ "${_dc_status[$i]}" == "fail" ]] && return 0
+    done
+    return 1
+  }
+
+  if [[ "$_FORMAT" == "json" ]]; then
+    _json_arr="["
+    _first=1
+    for (( i=0; i<_dc_count; i++ )); do
+      [[ "$_first" -eq 0 ]] && _json_arr+=","
+      _json_arr+=$(jq -n --arg name "${_dc_name[$i]}" --arg status "${_dc_status[$i]}" --arg detail "${_dc_detail[$i]}" \
+        '{"check": $name, "status": $status, "detail": $detail}')
+      _first=0
+    done
+    _json_arr+="]"
+    echo "$_json_arr" | jq .
+    _doctor_failed && return 1 || return 0
+  fi
+
+  ok="${CLAUDII_CLR_GREEN}${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}"
+  warn="${CLAUDII_CLR_YELLOW}${CLAUDII_SYM_WARN}${CLAUDII_CLR_RESET}"
+  fail="${CLAUDII_CLR_RED}${CLAUDII_SYM_ERROR}${CLAUDII_CLR_RESET}"
+  info="${CLAUDII_CLR_DIM}·${CLAUDII_CLR_RESET}"
+  printf '\n'
+  printf "  ${CLAUDII_CLR_CYAN}claudii doctor${CLAUDII_CLR_RESET}\n\n"
+  for (( i=0; i<_dc_count; i++ )); do
+    case "${_dc_status[$i]}" in
+      ok)   icon="$ok"   ;;
+      warn) icon="$warn" ;;
+      info) icon="$info" ;;
+      *)    icon="$fail" ;;
+    esac
+    printf "  %b %s\n" "$icon" "${_dc_detail[$i]}"
+  done
+  printf '\n'
+
+  _doctor_failed && return 1 || return 0
+}

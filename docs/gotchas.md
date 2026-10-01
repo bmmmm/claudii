@@ -1,0 +1,71 @@
+# Gotchas
+
+Referenced from CLAUDE.md § "Rules" — one-line triggers live there, the
+incident detail and recovery mechanics live here.
+
+## `/bin/bash` 3.2 vs Homebrew bash 5.x (CI)
+
+CI macos-latest runs `/bin/bash` 3.2; local `bash` is Homebrew 5.x and
+silently masks 3.2-only breakage (e.g. `${4:-{\}}` → `{\}` on 3.2 vs `{}` on
+5.x). A green local `bash tests/run.sh` run is not a green CI run — when a
+change touches test fixtures or any shell-quoting/default-arg/expansion
+logic, run `/bin/bash tests/run.sh` before pushing.
+
+It also hides a **performance** cliff: 3.2's pattern matcher is multibyte-aware
+under a UTF-8 locale and crawls on big strings. `[[ "$big" == "{}" ]]` on a
+60 MB variable takes ~20 s on `/bin/bash` 3.2 + en_US.UTF-8, under 1 s with
+bash 5 or `LC_ALL=C` — `claudii perf 90d` spent 22 of its 47 s on exactly
+that line (2026-09-25). Keep data that grows with history in files and let jq
+decide; never hold it in a bash variable, compare it, or pass it through
+here-strings.
+
+## No `declare -A` in `bin/`
+
+`/bin/bash` 3.2 silently degrades it to an indexed array (string keys
+evaluate as `arr[0]`, last-write-wins). Use `case` for label maps,
+`printf -v "_p_${k}" "%s" "$v"` + `${!_p_…}` for sparse 2D lookups, or
+parallel indexed arrays; guard new maps with a regression assert that
+invokes `/bin/bash` explicitly (the Homebrew-5.x test runner won't catch
+it).
+
+## Never string-match `statusLine.command`
+
+Use `_cc_statusline_connected` (`lib/helpers.sh`) instead. The configured
+command may be a wrapper chain (`cc-insomnii --after=<user-wrap>` where only
+the wrap script invokes `claudii-cc-statusline`); literal matching broke
+twice (insomnii wrapper, then user sleep-wrap) and made `claudii on` clobber
+the user's chain.
+
+## An awk file carries no semantics of its own
+
+Verify any claim about a `lib/*.awk` program against its `-v` bindings at
+the call site (`lib/cmd/*.sh`). Variable names lie: `trends.awk`'s
+`week_start` is bound to the *rolling* `seven_ts`, not the calendar week
+start. A review finding "confirmed" from the awk side alone produced a
+false CONFIRMED once (2026-07-02) — the refutation only surfaced on the
+pre-fix re-read of the binding site.
+
+## A `lib/cmd/*.sh` function needs the colour vars stubbed in a test
+
+`bin/claudii` exports `CLAUDII_CLR_*` and `CLAUDII_SYM_SEP`; the lib files
+never define them. `tests/run.sh` runs with `set -u`, so a unit test that
+sources `lib/cmd/<x>.sh` to call one render function directly dies with
+`CLAUDII_CLR_DIM: unbound variable` — and the assert reads as an empty
+render, not as a setup error. Stub them (empty strings) in the subshell
+before the `source`, as `test_sessionline.sh` does for `_session_tok_seg`.
+
+## Never pass a growing file list — or data built from one — as argv
+
+Anything that grows with history goes to the consumer on stdin or as a file,
+never as arguments: a cache-dir glob (`jq … "${files[@]}"`), and equally a
+single big `--arg`/`--argjson` value. Limits: macOS 1 MiB for the whole
+argument list, Linux 2 MiB total but **128 KiB per argument**. The failure
+is silent in practice: callers swallow stderr, so the command just prints
+nothing. 2026-09-25: ~15k insights caches (headless `claude -p` batch runs
+added 4k in a week) broke tokens/cache/limits/tools/skills-cost/repos with
+rc 126 (b64eaac); the OTEL session→repo map was a ~0.8 MB `--argjson`, over
+Linux's per-argument cap (c9d7ab9). Use `_insights_stream`
+(`lib/insights_stream.sh`) for the insights caches, `--slurpfile`/`--rawfile`
+for big jq inputs, and let `tests/test_insights_bulk.sh` (10k long-named
+files) prove a new consumer.
+

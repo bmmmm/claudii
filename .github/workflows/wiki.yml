@@ -1,0 +1,44 @@
+name: Wiki
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [man/man1/claudii.1]
+
+permissions:
+  contents: write
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Convert man page to markdown
+        run: pandoc -f man -t gfm --wrap=none man/man1/claudii.1 > "${{ runner.temp }}/Home.md"
+
+      - name: Push to wiki
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          WIKI_DIR="${{ runner.temp }}/wiki"
+          WIKI_URL="https://github.com/${{ github.repository }}.wiki.git"
+          git clone "$WIKI_URL" "$WIKI_DIR" 2>/dev/null || {
+            mkdir -p "$WIKI_DIR" && cd "$WIKI_DIR" && git init
+            git remote add origin "$WIKI_URL"
+          }
+          cp "${{ runner.temp }}/Home.md" "$WIKI_DIR/Home.md"
+          cd "$WIKI_DIR"
+          git add Home.md
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: update wiki from man page"
+          git push origin HEAD:master || git push origin HEAD:main

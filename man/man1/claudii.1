@@ -1,0 +1,1918 @@
+.\" claudii manual — auto-synced to wiki via GitHub Actions
+.TH CLAUDII 1 "September 2, 2026" "claudii 0.28.0" "claudii manual"
+.
+.SH NAME
+claudii \- Fast Claude Code aliases with live model status and session insights
+.
+.SH SYNOPSIS
+.B claudii
+.IR command " [" args ]
+.PP
+When invoked with no arguments,
+.B claudii
+shows a contextual summary: active session data, a rate-limit warning
+(when 5h usage >= 80%), or a welcome message when no cache exists.
+.
+.SH EXAMPLES
+.TP
+Quick start — enable everything at once:
+.B claudii on
+.TP
+Live health check:
+.B claudii status
+.TP
+Show active sessions with token throughput and rate limits:
+.B claudii se
+.TP
+Response-time and throughput for one repo:
+.B claudii perf --repo claudii
+.TP
+Read a config value:
+.B claudii config get aliases.cl.model
+.TP
+Switch CC-Statusline to dense layout:
+.B claudii cc-statusline preset focused
+.TP
+Toggle only ClaudeStatus RPROMPT:
+.B claudii claudestatus off
+.
+.SH DESCRIPTION
+.B claudii
+is a zsh plugin and CLI for Claude Code power users:
+fast aliases to launch Claude with the right model and effort,
+live model health in your RPROMPT, and a metrics statusline inside Claude Code sessions.
+.
+.SH INSTALL
+.B Homebrew (recommended):
+.PP
+.RS
+.nf
+brew tap bmmmm/tap
+brew install claudii
+.fi
+.RE
+.PP
+Add to
+.IR ~/.zshrc :
+.RS
+.nf
+source "$(brew --prefix)/opt/claudii/libexec/claudii.plugin.zsh"
+.fi
+.RE
+.PP
+.B Manual:
+.PP
+.RS
+.nf
+git clone https://github.com/bmmmm/claudii ~/claudii
+bash ~/claudii/install.sh
+.fi
+.RE
+.
+.SH LAUNCHING CLAUDE
+Shell functions for fast model access.
+Configured under the
+.B aliases.*
+config namespace.
+Auto-fallback to a healthy model when the configured model is down
+.RB ( fallback.enabled ).
+.TP
+.B cl
+Claude Sonnet, xhigh effort. General-purpose default.
+.TP
+.B clo
+Claude Opus, xhigh effort. Complex tasks, server work.
+.TP
+.B clm
+Claude Opus, xhigh effort. Hardest problems, maximum reasoning.
+.TP
+.B clq
+Claude Sonnet, medium effort.
+Launches in the search workspace
+.RI ( search.dir ;
+see
+.BR search ).
+Equivalent to
+.BR "claudii search" .
+.TP
+.B clf
+Claude Fable, xhigh effort. Anthropic's most capable model, for the hardest
+reasoning and long-horizon agentic work.
+.TP
+.B clre
+Resume a previous session.
+Without an argument it opens the interactive session picker;
+with a session id it resumes that session directly
+.RB ( "clre " \fIid\fR ).
+Passes no
+.B \-\-model
+or
+.BR \-\-effort ,
+so the session keeps the model it was started with;
+extra flags are forwarded to
+.BR claude .
+.TP
+.B clh
+Show the alias table and run a live model health check.
+.TP
+.B clorch / cle
+Example agent aliases — see
+.BR "claudii agents" .
+.
+.SH OPTIONS
+.TP
+.B \-\-json
+Output structured JSON instead of formatted text.
+Available for:
+.BR status ", " sessions ", " cost ", " skills-cost ", " trends ", " doctor ", " version ", " agents ", " tokens ", " perf ", " tools ", " repos ", " limits ", " cache .
+.TP
+.B \-\-tsv
+Output tab-separated values (header + data rows).
+Available for:
+.BR sessions ", " cost .
+.TP
+.BR \-h ", " \-\-help
+Print the command's own usage and exit 0 \(em for the commands under the exit
+status contract below. The rest still answer their own older conventions:
+.BR config
+prints the config,
+.B sessions
+ignores the flag, and
+.BR claudestatus ", " gc ", " pin " and " status
+print a usage line but exit 1.
+.PP
+When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
+.B version
+prints only the bare version number when piped.
+.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The command understood the request and then failed \(em no data yet, a session
+id that matches nothing, a view that has no
+.B \-\-tsv
+shape.
+.TP
+.B 2
+claudii could not accept the arguments and nothing ran: an unknown option, a
+value-less
+.BR \-\-days ,
+a malformed window or
+.B \-\-compare
+spec. Reported as
+.RB \(lq "claudii " cmd ": unknown option: " arg \(rq
+on standard error, never on standard output.
+.PP
+28 of the 45 dispatched commands are under this contract. The others
+.RB ( cc-statusline ", " claudestatus ", " config ", " dashboard ", " gc ,
+.BR insomnii ", " omlx ", " pin ", " search ", " session ,
+.BR session-dashboard ", " sessionline ", " sessions ", " status ,
+.BR unpin ", " vibemap ", " vpnii )
+still exit 0 or 1 on a bad argument. The list only shrinks:
+.I tests/test_arg_contract.sh
+holds it as a ratchet and turns red if one is converted without being removed
+from it.
+.
+.SH DISPLAY LAYERS
+Three separate layers each serve a different scope:
+.TP
+.B ClaudeStatus (RPROMPT)
+Model health in the right-hand shell prompt. When every tracked model is
+healthy it collapses to a single
+.B claude \(dg
+\(em an unnamed model is assumed working. Only down or degraded models are
+named (Fable included); a plane-wide outage collapses to
+.BR "claude \(da" .
+Reads a local cache — no network calls in
+.IR precmd .
+Indicators:
+.B \(dg
+= ok,
+.B \(ti
+= degraded,
+.B \(da
+= down,
+.B ?
+= unreachable,
+.B \(lB\(el\(rB
+= loading,
+.B \(rn
+= refreshing.
+.br
+A trailing incident glyph mirrors status.claude.com:
+.B \[u203C]
+investigating,
+.B \[u2690]
+identified,
+.B \[u25CE]
+monitoring \(em stage-colored when a tracked model is actually affected.
+When an incident exists but none of your tracked models are affected (e.g. a
+note about models you don't use), it shows a neutral
+.B \[u24D8]
+instead of an alarm.
+.TP
+.B Session Dashboard (above prompt)
+Per-session summary lines above the prompt, rendered via the precmd hook.
+Shows model, context %, token throughput, 5h rate limit + countdown.
+Only shown after
+.B claudii
+commands; suppressed after
+.BR se / si / sessions .
+.TP
+.B CC-Statusline (inside Claude Code)
+Metrics line inside Claude Code sessions via the
+.B statusLine
+hook in
+.IR ~/.claude/settings.json .
+Receives live JSON from Claude Code on each turn.
+Segments configured via
+.B statusline.lines
+(see
+.BR CONFIGURATION ).
+.PP
+Data flow:
+.RS
+.nf
+Claude Code \(-> CC-Statusline (stdin JSON) \(-> cache \(-> Session Dashboard
+                                            \(-> history-YYYY-MM.tsv
+.fi
+.RE
+.
+.SH COMMANDS
+.
+.SS Overview (bare claudii)
+Running
+.B claudii
+with no arguments prints the Overview: a modular status page built from
+sections. Default order: account (rate limits with reset countdown and
+wall-clock reset time + today's token throughput), usage
+(30-day token-per-day sparkline from history, with today/average/peak),
+sessions (active/inactive/stale counts, next cron wake, bg tasks), activity
+(mini vibemap strip), agents (configured agents grouped by model tier,
+plus shell aliases), services (ClaudeStatus / Dashboard / CC-Statusline
+state), commands (grouped quick reference).
+.PP
+Section order and selection are config-driven via
+.B overview.sections
+(array of section names) \(em remove a name to hide that section,
+reorder the array to reorder the output. Unknown names render an
+inline warning instead of failing.
+.PP
+Dim lines starting with \(->\& list invocable commands only \(em
+never data.
+.
+.SS Display Layer Control
+.TP
+.B on
+Enable all three layers at once (ClaudeStatus, Session Dashboard, CC-Statusline).
+When
+.B presence.file
+is configured, removes the presence file (re-enables Claude Code mobile notifications).
+.TP
+.B off
+Disable all three layers at once.
+When
+.B presence.file
+is configured, touches the presence file (suppresses Claude Code mobile notifications via
+.BR CLAUDE_CLIENT_PRESENCE_FILE ) .
+.TP
+.BR "claudestatus " [on|off]
+Toggle only the ClaudeStatus RPROMPT.
+Without argument: show current state.
+.TP
+.BR "session-dashboard " [on|off]
+Toggle only the Session Dashboard above the prompt.
+Without argument: show current state.
+Deprecated alias:
+.BR dashboard .
+.TP
+.BR "cc-statusline " [on|off]
+Toggle only the CC-Statusline inside Claude Code.
+Modifies
+.IR ~/.claude/settings.json .
+Without argument: show current state.
+.TP
+.BI "cc-statusline preset " [name]
+Switch the CC-Statusline layout to a named preset.
+Without a name, lists available presets.
+.RS
+.IP \(bu 2
+.B focused
+\(em dense 3-line layout: identity / metrics / env.
+.IP \(bu 2
+.B calm
+\(em bare 2-line layout: model / context-bar.
+.IP \(bu 2
+.B default
+\(em restore the shipped 5-line layout.
+.RE
+.IP
+After switching, restart Claude Code to see the change.
+Writes
+.B statusline.lines
+to
+.IR config.json .
+.TP
+.BR "insomnii " [on|off|auto|status|install]
+Manage the optional
+.BR cc-insomnii (1)
+bedtime clock segment.
+.RS
+.IP \(bu 2
+.B on
+\(em require delegation; doctor warns if the binary is missing.
+.IP \(bu 2
+.B off
+\(em suppress delegation; the clock segment is empty.
+.IP \(bu 2
+.B auto
+\(em delegate when installed, skip when not (default).
+.IP \(bu 2
+.B status
+(or no argument) \(em show binary path and active mode.
+.IP \(bu 2
+.B install
+\(em clone
+.B $CC_INSOMNII_REPO
+(default
+.IR https://github.com/bmmmm/cc-insomnii )
+and run its
+.BR install.sh .
+Idempotent.
+.RE
+.
+.SS Model Health (ClaudeStatus)
+.TP
+.B status
+Live model health check (bypasses cache).
+Per-model status table with icons, last-check time, active incidents, and
+recent state transitions (from the status history log).
+Absolute timestamps honor
+.BR display.timezone .
+Supports
+.BR \-\-json .
+Alias:
+.BR s .
+.TP
+.BR "status " 5m|15m|30m|60m
+Set the base background cache refresh interval (default: 15m).
+Values below 30s are rejected.
+The effective interval adapts to the last known state: 2\(mu base while
+healthy, base\(di5 (min 60s) during incidents, base when the status API is
+unreachable.
+.TP
+.BR "status \-\-history " [\-\-days\ N]
+Print the full model-state transition log from
+.IR status-history.tsv ,
+newest first (bare
+.B status
+shows only the last 5).
+.B \-\-days\ N
+limits output to transitions within the last
+.I N
+days.
+Absolute timestamps honor
+.BR display.timezone .
+Supports
+.BR \-\-json .
+.
+.SS Sessions and Cost
+.TP
+.B sessions
+List active and recent sessions: model, context %, token throughput with
+cache-hit rate, rate limits, worktree, agent context, and a fingerprint of
+top-5 files accessed. Cost is no longer in this view \(em see
+.BR cost .
+Background sessions
+.RB ( "claude --bg" )
+are marked
+.BR [bg] .
+Supports
+.BR \-\-json " and " \-\-tsv .
+Aliases:
+.BR se ", " ss .
+.TP
+.BI "sessions \-\-resume " id
+Resume a session by ID.
+Equivalent to
+.BR "claude --resume " id .
+.TP
+.B sessions-inactive
+Inactive (ended or stale) sessions with age, context, and rate-limit data.
+Shows badges: pinned, stale, or idle.
+Alias:
+.BR si .
+.TP
+.BI "session " session-id
+Per-session drilldown from the insights cache, matched by session-id substring
+(first match wins). Shows the token split (input / output / cache write as share
+bars, plus cache read with its hit rate and the thinking-block count), the
+top tools with per-tool error markers, and compact lines for subagents, stop
+reasons, and rate-limit hits (account-wide). Live context %, model, and project
+come from the
+.I session-*
+cache when one still exists; for ended sessions the model is inferred from the
+token data and the context bar is omitted.
+.TP
+.BI "pin " session-id
+Protect an inactive session from garbage collection.
+Matches by session ID substring (first match wins).
+.TP
+.BI "unpin " session-id
+Remove GC protection from a pinned session.
+.TP
+.B gc
+Remove stale session cache files.
+Pinned sessions are never removed.
+Run
+.B claudii si
+to inspect before garbage collecting.
+With
+.BI "\-\-insights " DAYS
+additionally prunes orphaned insights caches (sessions whose source transcript
+Claude Code already deleted) older than
+.I DAYS
+days.
+Dry-run by default \(em add
+.B \-\-yes
+to delete.
+Orphaned caches are the only cost history beyond Claude Code's transcript
+retention; caches whose transcript still exists are never touched.
+Alias:
+.BR g .
+.TP
+.BI "resume " session-id
+Resume a session by ID
+.RB ( "claude --resume " id ).
+Use
+.B claudii se
+to list IDs.
+.TP
+.B cost
+The dollar view (token throughput lives in the other commands). Per-period spend
+with a per-tier breakdown: Today and Week show share bars sorted by amount plus
+the period token total; Months and Years render as a column matrix (model tiers
+\(mu periods) with row and column totals. Reads from
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+(written by the CC-Statusline handler).
+Supports
+.BR \-\-json " and " \-\-tsv .
+Alias:
+.BR c .
+.RS
+.PP
+With
+.B \-\-window
+the Week section is replaced by
+.BR Window :
+the same per-tier breakdown, but over Anthropic rolling 7-day rate-limit
+window instead of the calendar week set by
+.IR cost.week_start .
+The window boundary sits mid-day, so this bucket is cut on row timestamps
+rather than on dates. Prints a notice and exits when no window is known yet.
+See
+.BR week .
+.PP
+With
+.B \-\-forecast
+the spend tables are replaced by a burn-rate projection in two blocks. The
+.B 5h budget
+block shows the current account-wide rate-limit usage, the burn rate (the slope
+of
+.I rate_5h
+over the last 20 minutes, with an accelerating/slowing note), a projected
+time-to-limit when the budget is on track to be hit before the window resets,
+and the reset countdown \(em the live state comes from the newest active
+.I session-*
+cache (history carries no reset timestamp), so it degrades to a month-only view
+when no session is live. The
+.B "This month"
+block shows spend so far, the $/day pace, the month-end projection with an
+honest \(+- band derived from daily-spend variance, and a comparison against
+last month. Honors
+.BR \-\-json " and " \-\-tsv .
+.RE
+.TP
+.B week
+Usage inside Anthropic rolling 7-day rate-limit window \(em the quota that
+actually gates work, as opposed to the calendar week
+.B cost
+reports. Shows tokens, dollars and session count consumed since the window
+opened, the used percentage, the reset countdown, and the daily pace with the
+moment the quota runs dry if that falls before the reset.
+.RS
+.PP
+The window itself comes from
+.I rate_limits.seven_day
+in the CC-Statusline payload; its start is the reset epoch minus seven days.
+Claude Code reports the window only after a session's first API response and
+drops it once the reset passes, so an empty window is a normal state, not an
+error.
+.PP
+The
+.B quota
+line carries a token estimate Anthropic does not publish. It is labelled
+.I estimated
+while it is derived from tokens-so-far over percent-used, and
+.I measured
+once a wide enough percentage spread inside one window allows deriving it from
+\(*Dtokens instead. Both remain approximations \(em Anthropic weighs models and
+cache differently than raw token counts. A Max plan also carries a second,
+Opus-only weekly limit that the payload does not expose; use
+.B /usage
+in Claude Code to see both.
+.PP
+A
+.I measured
+quota is read as a range \(em
+.RB ( "~3.4M\(en4.6M left" )
+\(em whenever the window's own calibration points disagree by more than ten
+percent. The points are (percent, tokens-at-that-percent) pairs; the quota
+implied by every pair at least ten percentage points apart is collected, and
+the estimate is their median (a Theil\(enSen slope, so one runaway pair cannot
+drag it) with the extremes as the range. Where the pairs agree the range
+collapses back to a single figure, so its width is itself the reading: a wide
+band says the reported percentage does not track raw token counts. In
+.B \-\-json
+the median is
+.I limit_estimate
+(unchanged) alongside
+.I limit_low
+and
+.IR limit_high ,
+both null when fewer than two calibration points lie ten points apart.
+.PP
+.B \-\-history " [" SPAN ]
+draws one bar per window, so a week reads against its neighbours rather than in
+isolation.
+.I SPAN
+is a period \(em
+.BR 30d " (the default), " 90d ", any " N d
+\(em or a plain window count
+.RB ( "\-\-history 8" ).
+A period keeps every window that
+.I overlaps
+it; windows are never sliced, so the oldest bar may start before the cutoff and
+its label says so. Days is the default because it is the span the rest of
+claudii speaks, and because a window count stops being a proxy for a period the
+moment Anthropic ends a window early. It combines with
+.BR \-\-json ,
+which then returns
+.I windows
+\(em one object per window with
+.IR window_start ,
+.IR window_reset ,
+.IR tokens ,
+.I cost
+and
+.IR sessions ,
+plus the booleans
+.IR reconstructed ,
+.I short
+and
+.I current
+\(em alongside
+.IR measured_from ,
+the epoch from which boundaries stop being extrapolated. The three booleans are
+independent, unlike the single marker the bars show, where
+.I current
+overrides the others.
+.PP
+Anthropic sometimes ends a weekly window early for technical reasons; the reset
+it had announced then never fires. Because of that, claudii derives a window
+boundary from the point where the reported reset
+.I changes
+\(em recorded per row \(em and only falls back to a 7-day grid where nothing was
+recorded. Reconstructed boundaries are marked
+.RB ( ~ )
+and a window that came in short is labelled
+.BR short .
+Windows predating this feature are all reconstructed, since Claude Code reports
+no past resets. An observed boundary is adopted only when it is plausible \(em
+it must lie in the past, the reset must still be ahead, and the resulting
+window must run between an hour and eight days; anything else falls back to
+the 7-day grid rather than rebasing every figure in the block on a corrupt
+record.
+Supports
+.BR \-\-json .
+Alias:
+.BR w .
+.RE
+.TP
+.B skills-cost
+Per-skill (or per-plugin, per-MCP-tool) cost breakdown using attribution data
+from
+.BR claudii-insights .
+Shows calls, total cost, average cost per call, the dominant model
+(the model behind \[>=]80% of a row's attributed calls, otherwise
+.BR mixed ),
+and an outlier flag
+.RB ( ! )
+when a row's average is \[>=]2\[mu] the median with at least 10 calls.
+Subagent usage counts toward the skill that spawned the agent.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days). Same vocabulary as
+.BR tokens ", " tools ", " limits ", " cache " and " repos ,
+which all share one parser; unlike those, the default here is 30 days.
+.TP
+.BI "\-\-days " N
+Rolling window (default 30). Passed to
+.BR "claudii-insights merge" .
+.TP
+.BI "\-\-compare " BEFORE : AFTER
+Trend comparison of two windows: the prior period
+.RI "[now\-(" BEFORE + AFTER "), now\-" AFTER ")"
+against the recent
+.RI "[now\-" AFTER ", now]"
+\(em e.g.
+.B "\-\-compare 30:30"
+is the previous 30 days vs the last 30.
+The headline metric is
+.BR out-tokens/call ,
+which (unlike $/call) does not scale with session context size, so it isolates
+whether a skill talks less after a
+.I SKILL.md
+edit; $/call is shown but flagged context-confounded.
+Honors
+.BR \-\-json .
+.TP
+.B \-\-plugins
+Show
+.B attribution_plugins
+instead of
+.B attribution_skills
+(same column layout).
+.TP
+.B \-\-mcp
+Show
+.B attribution_mcp
+\(em per-MCP-tool costs. A message's usage is split evenly across the MCP
+tools it invokes, so totals stay comparable with the skills table.
+.TP
+.B \-\-json
+Emit rows + outlier flag as JSON to stdout (parseable, no color codes).
+Each row carries the token split
+.RB ( in_tok ", " out_tok ", " cache_read ", " cache_create )
+\(em the signal that separates \(lqskill talks too much\(rq (out-heavy)
+from \(lqskill runs in fat sessions\(rq (cache_read-heavy).
+Costs are priced per model: each per-model token bucket
+.RB ( attribution_models ", "
+schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
+0.1\(mu input \(em except Opus 5.5, 0.05\(mu, and Fable 5.1, a flat $0.25/M
+\(em and cache_create 1.25\(mu input). Version-aware within a tier: Sonnet 4.x
+and Fable 5 keep their own older rates, and Opus 5.5 (now the default Opus)
+carries the newer, cheaper rate while older Opus ids keep the existing one.
+Pre-v5 / orphaned caches carry no
+per-model split \(em their residual tokens fall back to the flat Sonnet 4.x rate.
+.B meta.pricing
+documents the rates and the residual fallback.
+.RE
+.TP
+.B trends
+Token-primary rolling 7-day chart: daily token bars (normalized to the busiest
+day) with spend as a dim side column, a 30-day model split by tokens, busiest
+day, average API duration per session, and the 7d-vs-30d token trend.
+Reads from
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+(written by the CC-Statusline handler).
+Supports
+.BR \-\-json .
+Alias:
+.BR t .
+.TP
+.B tokens
+Token breakdown for the rolling window (default: 7 days), aggregated from the
+JSONL transcripts under
+.IR ~/.claude/projects .
+Input+output is the primary figure; cache read/write and the cache-hit rate
+.RB ( cache_read " / (" cache_read " + " cache_create " + " input ))
+are shown alongside. Three sections:
+.B By type
+(throughput split across cache read / input / cache write / output, as share
+bars),
+.B By model
+(a per-model matrix of input / output / cache rd / cache wr / hit), and
+.B By day
+(in+output per calendar day, bars normalized to the busiest day, with the
+day-level hit rate). All three are floored to exactly
+.I N
+calendar days so the window matches the header.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
+.RE
+.TP
+.B tools
+Tool / efficiency lens over the rolling window (default: 7 days): a table of the
+top tools by call count with share bars and per-tool error rate (a
+.B \(rq
+flag marks rates above 5%), the subagent types spawned, total thinking-block
+volume, and a one-line callout of the highest-error-rate tool. The
+throughput/reliability companion to
+.B skills-cost
+(which is cost-focused). MCP tool names are shortened to their tool segment and
+the long tail is folded into a
+.B +N more
+line.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
+.RE
+.TP
+.B repos [REPO]
+Sessions per repository for the rolling window (default: 30 days): how many
+sessions ran in which repo and how long they really took. Duration is the
+.B active
+time \(em gap-capped main-thread activity where pauses longer than 10 minutes
+count as idle \(em not the wall-clock span, which idle time and resumed
+sessions inflate (shown alongside as
+.BR span ).
+The default view is a per-repo table (sessions, median active, total active,
+total span). Headless noise \(em TMPDIR runs and micro sessions with under
+2 minutes of activity \(em folds into one dim
+.B (headless)
+summary line. A positional
+.I REPO
+argument lists that repo's sessions one per row (day, active, span, messages,
+session id).
+.RS
+.TP
+.B \-\-daily
+Per-day breakdown instead of the repo table: one row per calendar day
+(newest first) listing each active repo with its session count and active time.
+.TP
+.B \-\-all
+Include headless/micro sessions in the repo and daily views (TMPDIR sessions
+appear as
+.BR (tmp) ).
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (by_repo, by_day, sessions, headless) instead
+of the formatted tables.
+.RE
+.TP
+.B limits
+Rate-limit hits in the rolling window (default: 7 days) from the insights
+.IR limit_hits .
+Groups the hits by day (newest-first, a bar scaled to the busiest day plus that
+day's hit count), an hour strip showing when hits cluster, and a per-model
+tally. Time and model only
+\(em the data carries no percentage, and the 5h budget is account-wide, so the
+model is \(lqwhat ran\(rq, not \(lqwhat is to blame\(rq. With no hits it reports
+clear runway.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
+.RE
+.TP
+.B cache
+Prompt-cache hit rate per day and per model (default: 7-day window).
+Aggregated from JSONL transcripts under
+.IR ~/.claude/projects .
+First run is slower (5\(en30 s) while the cache warms; subsequent runs
+only re-aggregate changed sessions.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+The word forms
+.BR day ", " week ", " month ", " quarter
+are also accepted (1 / 7 / 30 / 90 days).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.B \-\-json
+Emit the view as structured JSON (the curated aggregate, raw model ids) instead
+of the formatted tables.
+.RE
+.TP
+.B perf
+Response-time and throughput dashboard for the rolling window (default: 7 days).
+Latency is estimated from the JSONL transcripts as the wall-clock gap between an
+assistant response and its parent record
+.RB ( assistant.timestamp " \(mi " parent.timestamp ),
+main-thread responses only (sidechains interleave concurrently and are excluded).
+Sections:
+.B By model
+(response-time
+.BR p50 / p90 / p99
+and output
+.BR tok/s ),
+.B By context window
+(latency bucketed by context-window occupancy \(em
+.IR input " + " cache_read " + " cache_creation
+tokens \(em so the response-time cost of a large window is visible:
+.BR p50 / p90 / p99
+climb and the
+.B p99
+tail explodes as the window grows),
+a
+.B Latency trend
+(per-day p50 sparkline with a today-vs-baseline delta as an early-warning
+signal), a
+.B By repo
+breakdown, and a one-line
+.B API health
+read from the ClaudeStatus cache. Throughput is output tokens over end-to-end
+time (includes wait).
+.PP
+With the optional OpenTelemetry source enabled
+.RB ( "claudii\-otel setup" ,
+which flips the config flag, writes the shell env the plugin sources, and
+generates a launchd plist;
+.B claudii\-otel off
+reverts), perf reads exact metrics instead of the transcript estimate: real
+.I duration_ms
+and
+.I ttft_ms
+(time to first token, the
+.B TTFT
+line), the per-response
+.B success
+rate with retry count, and an
+.B "API errors"
+breakdown by HTTP status code from
+.I api_error
+events. The local receiver
+.RB ( "claudii\-otel receiver" )
+captures Claude Code's OTLP/JSON export under
+.IR ~/.cache/claudii/otel/ ;
+by default nothing leaves the machine. Setting
+.I perf.otel.forward
+to an internal collector URL makes the receiver additionally mirror each batch
+there (best-effort, for central retention on a shared gateway); claudii itself
+still reads only the local file. The active source is shown in the header
+.RB ( "source: otel" " vs " "source: transcript" ).
+.B claudii\-otel doctor
+reports whether the receiver, launchd job, and config flag agree and how fresh
+the captured data is \(em the first stop when
+.B perf
+still shows
+.BR "source: transcript" .
+.PP
+The receiver stores every log record and span as one flat JSON line under
+.IR events/<kind>\-YYYY\-MM\-DD.ndjson
+(kinds:
+.IR llm ", " err ", " api ", " tool ", " hook ", " other ;
+a body that is not OTLP is kept verbatim as
+.IR unparsed ),
+without the OTLP envelope and without the five identity constants Claude Code
+puts on every record (user e\-mail, user and account ids, organization id
+\(em they never change and are of no use locally; the optional forward still
+carries them to the collector). Closed days are gzipped next to the open one,
+and the perf samples of each closed day are extracted from its
+.I llm
+and
+.I err
+files into a small
+.I rows/
+file, so
+.B perf
+parses only its window, however long the history grows.
+.B claudii\-otel
+compacts closed days on its own
+.RB ( "claudii\-otel compact"
+does it on demand). The receiver also keeps
+.I receiver.status
+(sha of the file it runs, last batch, forward counters);
+.B doctor
+compares that sha with the repo's receiver and reports
+.B DRIFT
+when a stale copy is running. A capture from claudii 0.28 or earlier
+.RI ( traces.jsonl / logs.jsonl )
+is not read any more;
+.B doctor
+prints the one\-off conversion
+.RB ( "claudii\-otel receiver \-\-flatten" ),
+which dates every record by its own timestamp and refuses to run twice for
+one tag \(em restart the receiver first, so that new batches land in the new
+layout.
+.RS
+.TP
+.B today | 7d | 30d | 90d | year
+Cycle the rolling window without
+.BR \-\-days
+\(em a named window or any
+.IR N d
+token (e.g.
+.IR 14d ).
+.TP
+.BI "\-\-days " N
+Override the rolling window with an explicit day count.
+.TP
+.BI "\-\-repo " NAME
+Narrow every section to one repository; the
+.B By repo
+breakdown is replaced by a
+.B By session
+breakdown within that repo.
+.TP
+.BI "\-\-watch" "[=N]"
+Clear the screen and re-render every
+.I N
+seconds (default: 30). Press Ctrl-C to exit. Compatible with all other flags.
+.TP
+.B \-\-json
+Emit the view as structured JSON (percentiles in milliseconds, raw model ids)
+instead of the formatted tables.
+.RE
+.
+.SS Configuration
+.TP
+.B config
+Show all config values.
+.TP
+.BI "config get " key
+Read a value using dot-notation.
+Example:
+.BR "claudii config get aliases.cl.model" .
+.TP
+.BI "config set " "key value"
+Set a value.
+Example:
+.BR "claudii config set statusline.models opus,sonnet" .
+.TP
+.B "config reset"
+Reset all config to defaults.
+.TP
+.BI "config export " "[file]"
+Print config as JSON, or write to
+.I file
+if specified.
+.TP
+.BI "config import " file
+Replace config with a JSON file (backs up existing config first).
+.TP
+.B "config theme"
+List available color themes. Active theme marked with an asterisk.
+.TP
+.BI "config theme " name
+Set the active theme.
+Available:
+.B default
+(magenta accent, standard ANSI) and
+.B pastel
+(softer 256-color palette).
+Stored as
+.B theme.name
+in
+.IR config.json .
+.TP
+.B agents
+List configured agents as a table with columns
+.IR ALIAS ", " SKILL ", " MODEL ", " EFFORT ", " DESCRIPTION .
+With no agents configured, shows onboarding instructions instead.
+Supports
+.BR \-\-json .
+Configure via:
+.RS
+.nf
+claudii config set agents.clorch.skill orchestrate
+claudii config set agents.clorch.model opus
+claudii config set agents.clorch.effort high
+claudii config set agents.clorch.description "Orchestrator"
+.fi
+.RE
+.TP
+.BI "search " "['query']"
+Launch Claude Code in the configured search directory
+.RI ( search.dir ,
+default
+.IR ~/search ;
+empty or
+.B @search
+also mean the default). The directory is created on first use. It lies
+outside the claudii checkout on purpose: Claude Code loads
+.I CLAUDE.md
+from the start directory upwards.
+If a
+.I query
+is provided it is passed as the initial prompt.
+.
+.SS Local LLM (omlx / gateii)
+.TP
+.B "omlx status"
+Show whether the omlx segment is wired in, the
+.I active.json
+path, and oMLX server reachability.
+.TP
+.B "omlx connect"
+Detect a gateii install, store the path, and probe the server.
+.TP
+.B "omlx test"
+Render the cc-statusline against a synthetic
+.I active.json
+with the omlx segment.
+.TP
+.B "omlx disconnect"
+Remove the
+.B omlx
+entry from any custom
+.B statusline.lines
+layout.
+.PP
+Override the
+.I active.json
+path via
+.B CLAUDII_OMLX_ACTIVE
+or config key
+.BR statusline.omlx_active_path .
+.
+.SS VPN State (vpnii)
+Shows the active WireGuard tunnel name in the cc-statusline and RPROMPT.
+State file:
+.IR ~/.cache/claudii/vpnii .
+.B claudii vpnii
+wraps write/clear with privilege drop so the file is always user-owned.
+.PP
+Recommended wg-quick config:
+.PP
+.RS
+.EX
+[Interface]
+\&...
+PostUp  = claudii vpnii set HomeLab
+PreDown = claudii vpnii clear
+.EE
+.RE
+.TP
+.BI "vpnii set " "<name>"
+Mark tunnel
+.I name
+as active.
+Resolves the target user via
+.B SUDO_USER
+\(rA console owner \(rA
+.B $USER
+\(rA
+.BR CLAUDII_USER .
+.TP
+.B "vpnii clear"
+Remove the state file.
+Aliases:
+.BR "vpnii down" ", " "vpnii off" .
+.TP
+.B "vpnii show"
+Print the current tunnel name, or
+.I "no tunnel"
+when none is set.
+Alias:
+.BR "vpnii status" .
+.PP
+Tailscale is detected separately via interface scan
+(IPv4 in 100.64.0.0/10) and needs no state file \(em it renders as its own
+.B tailscale
+statusline segment, independent of
+.BR vpn .
+.
+.SS Activity Heatmap (vibemap)
+Opt-in prompt-timing tracker, rendered as an ASCII heatmap.
+Default
+.BR off .
+When enabled, the cc-statusline appends one TSV line per render to
+.IR ~/.cache/claudii/vibemap.tsv .
+Schema:
+.BR "epoch \\\\t weekday \\\\t hour \\\\t minute \\\\t model \\\\t sid8 \\\\t delta_ms" .
+No prompt content is recorded.
+.TP
+.B vibemap
+Last 30 days \[mu] 24-hour strip (default view).
+Today\[aq]s row is highlighted with a \[u25B6] marker and a cursor at the current hour.
+.TP
+.BI "vibemap strip" " [--days N]"
+The same strip with a custom window: last
+.I N
+days \[mu] 24 hours (default 30, range 1\(en90).
+.TP
+.B "vibemap grid"
+Weekday \[mu] 3-hour-bin grid.
+Today\[aq]s weekday column is highlighted in accent color with a \[u25B6] prefix.
+.TP
+.B "vibemap status"
+Show enabled state, file path, entry count, and oldest entry.
+.TP
+.B "vibemap path"
+Print the vibemap file path.
+.TP
+.B "vibemap clear"
+Remove the vibemap file.
+.PP
+Enable:
+.BR "claudii config set vibemap.enabled true" .
+.
+.SS System
+.TP
+.B explain
+Component overview with current status, data flow, and symbol legend.
+Aliases:
+.BR layers ", " components .
+.TP
+.B restart
+Reload the plugin by sourcing
+.IR ~/.zshrc .
+.TP
+.B update
+Update claudii.
+Auto-detects Homebrew (runs
+.BR "brew upgrade claudii" )
+or git
+.RB ( "git pull --ff-only" ).
+Run
+.B claudii restart
+after updating.
+.TP
+.B version
+Print version. When piped, prints the bare number only.
+Supports
+.BR \-\-json .
+.TP
+.B changelog
+Release notes for the current version.
+Alias:
+.BR about .
+.TP
+.B doctor
+Installation health check: Claude Code, jq, CC-Statusline config, cache directory,
+completions, plugin load, cc-insomnii state, and version.
+Supports
+.BR \-\-json .
+Alias:
+.BR d .
+.
+.SH SHORTCUTS
+.PP
+.TS
+l l.
+s	status
+se	sessions
+ss	sessions
+si	sessions-inactive
+c	cost
+t	trends
+d	doctor
+g	gc
+about	changelog
+.TE
+.
+.SH CC-STATUSLINE SEGMENTS
+Each segment is separated by a dim
+.B \(bv
+character and omitted when its data is absent.
+The layout is controlled by
+.B statusline.lines
+(array of arrays; each inner array is one output line).
+.PP
+.TS
+l l l.
+Segment	Example	Description
+_
+model	\fBClaude Opus 4.8\fR	Model name (bold); effort level appended (ultracode/xhigh/max highlighted); \[u25B2] when thinking active
+cc-version	v2.1.90 +2	Claude Code app/CLI version, from the statusLine payload's top-level \fIversion\fR field. Dim when current; red with a \fB+N\fR releases-behind count when a newer build exists. See below
+context	\[u25D1] 62%	Context fill as one glyph + usable% (\[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF] ramp, threshold-coloured). The compact default
+context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2591]\[u2591] 62%	Same value as a 10-block bar \(em ten columns instead of one
+compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
+cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Native \fIprompt_cache.hit_ratio\fR on Claude Code 2.1.251+, derived from the context window on older builds
+cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price; a miss on the last request names its cause (\[u2668]4m\[u00B7]miss:tools, CC 2.1.260+). See below. Requires Claude Code 2.1.251+
+response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
+rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
+rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
+cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
+tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M/B suffixes
+lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
+duration	1h 23m	Wall-clock session duration (dim)
+api-duration	api:45m	Time waiting for Claude API responses (dim)
+burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim; requires >= 3 min session)
+pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs linear: \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
+cron	\[u23F0] 42m	Time until next scheduled cron run (from Stop-hook session_crons). Opt-in only.
+bg-tasks	\[u2699] 2bg	Number of background tasks pending (from Stop-hook bg_tasks). Opt-in only.
+compactions	\[u267B]2	Compactions this session survived (detected via context-usage collapse). Opt-in only.
+delta-5h	\[u03B4]5h:+12%	5h rate change since session start
+delta-7d	\[u03B4]7d:+3%	7d rate change since session start
+cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
+session-name	my-feature	Custom session name (from /rename or --name)
+worktree	feat/login \[u23B7] main	Worktree + branch (dim) \(em the one this session runs in
+worktrees	\[u2442]3 \[u232B]1	Linked worktrees in this repo (cyan), prunable ones called out as \[u232B]P (yellow). See below
+dir	\[u2302] my-app	Working directory basename (dim)
+github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
+remotes	\[u21E1]fj\[u00B7]gh	Where the repo is published (from git remotes) \(em \fBfj\fR self-hosted forge (any non-GitHub host) / \fBgh\fR GitHub / \fBlocal\fR no remote
+git-sync	\[u25CF]2 \[u2191]1 \[u2193]1	Working-copy sync state vs.\& upstream. See the colour key below
+branch	\[u2387] main	Current branch (dim; yellow when uncommitted work sits on main/master/trunk, or on a detached HEAD). See below
+ci	CI \[u2713]	Newest GitHub Actions run on this branch. See below
+sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
+agent	@orc	Agent name prefixed @ (dim)
+ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
+vpn	\[u2B21] HomeLab	Active WireGuard tunnel name, from the \fBvpnii\fR state file. Empty when no tunnel is active
+tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Its own segment \(em not glued to \fBvpn\fR \(em so the two can sit on different lines
+claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
+omlx	\[u26A1] digest qwen3-30b-a3b 42s	Active local-agent run from \fBgateii\fR's \fIactive.json\fR \(em task, model and age. Hidden once the run is older than 300s
+proxy	\[u21C4] gateii	Where this session's API traffic goes, read from \fIANTHROPIC_BASE_URL\fR in the project's \fB.claude/settings.local.json\fR (\fBgateii\fR for localhost:8888, otherwise the host). Dim \[u2192] api when that file exists without the key; empty when it does not
+bumpii	\[u2B06] 2 \[u2709] 8	Pending tool updates and unread release news, from the \fBbumpii\fR(1)-backed cache. Opt-in. See below
+clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
+.TE
+.PP
+.B context / context-bar color thresholds:
+green < 70%, yellow 70\(en89%, red >= 90% of the
+.I usable
+context \(em the raw used-percentage rescaled to the model's practical (pre-compact)
+window, so the display fills as the compact point nears rather than at 100%.
+Both segments render the same number; they differ only in width \(em
+.B context
+spends one column on a
+.BR \[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF]
+fill glyph (the level stays readable without colour), while
+.B context-bar
+spends ten on the block bar. The
+practical window is model-aware: flat-1M-billing models \(em opus, fable,
+mythos, and sonnet 5+ (incl.\& their 1M window) \(em end at 80%, while a
+legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k (e.g.\&
+sonnet[1m]) ends at a 195k habit ceiling \(em so a 1M sonnet[1m] bar fills
+near 195k, not 800k. Sonnet 5, Fable, and Mythos ship 1M as their default
+window (no [1m] opt-in needed), so they get the same flat-rate treatment as
+opus here.
+.B CLAUDE_CODE_AUTO_COMPACT_WINDOW
+(inherited from Claude Code) overrides the default scale.
+A
+.B >200k
+marker is appended when the context exceeds 200k tokens on a model where that
+still means something, and it is
+.IR model-aware .
+Opus, Fable, Mythos, and Sonnet 5+ bill a flat rate across their entire 1M
+window (no >200k long-context premium; Opus's real capacity edge is the ~780k
+compact point, not 200k), so Claude Code's
+.I exceeds_200k_tokens
+flag is a non-event there and no marker is shown at all. For a legacy-sonnet
+model (4.6 and earlier), crossing 200k still matters: on a native 1M window
+(e.g.\& sonnet[1m], a paid opt-in) it is the long-context pricing tier, shown
+as a yellow
+.BR >200k ;
+on a 200k-class window it is a genuine overflow of the standard window, shown as
+a red
+.BR >200k .
+No constant window label is rendered \(em a dim
+.B 1M
+next to every reading said nothing that ever changed. The prompt-cache hit
+ratio moved out of this segment into its own opt-in
+.BR cache-hit .
+.PP
+.B cc-version:
+red instead of dim, with a
+.B +N
+suffix, once a newer Claude Code build exists.
+.I N
+is exact \(em the position of the installed version inside a cached list of
+recent release tags, not a version-number diff \(em because Claude Code's
+release numbers are not sequential (a tag gets skipped/yanked now and then),
+so
+.RI "\[u201C]" 2.1.233\ vs.\&\ 2.1.231 "\[u201D] "
+is not reliably \[u201C]2 releases\[u201D]. A
+.B +?
+means the installed version fell out of the cached window \(em definitely
+outdated, count unknown \(em rather than a fabricated number. No cache yet
+(first run, or the background check never having succeeded) renders the
+plain dim version, same as up to date, until there is an actual answer. No
+render ever makes a network call:
+.BR claudii-cc-update-refresh (1)
+maintains
+.I status-cc-version
+in the background under the TTL
+.RB ( cc_version.cache_ttl ,
+default 3600s), asking GitHub's public releases API for
+.IR anthropics/claude-code .
+The cache schema (
+.IR latest= / tags= / checked= )
+is the only contract a future refresher needs to honor \(em a
+.BR bumpii (1)-backed
+one could populate the same file without this segment changing at all.
+.PP
+.B bumpii:
+.B \[u2B06]N
+tracked tools with a newer release, and
+.B \[u2709]K
+repos with unread release news \(em both yellow, both omitted at zero. A half
+that could not be checked renders a dim
+.B ?
+instead of a zero:
+.RI \[u201C] "nothing pending" \[u201D]
+is the one answer a broken update check must never give. The same rule ages
+the whole segment \(em past 26h the numbers are yesterday's, and it reads a
+dim
+.BR "\[u2B06] stale" .
+No render makes a network call:
+.BR claudii-bumpii-refresh (1)
+maintains
+.I status-bumpii
+in the background under the TTL
+.RB ( bumpii.cache_ttl ,
+default 21600s), which tightens to TTL/12 (min 5m) while anything is showing,
+so a machine you just upgraded clears within minutes rather than at the TTL
+mark. Opt-in \(em add
+.B bumpii
+to
+.BR statusline.lines .
+.PP
+.B git-sync color key:
+the working copy's state vs.\& its upstream, as a compact traffic light \(em
+.B \[u25CF]N
+uncommitted paths (commit pending, yellow),
+.B \[u2191]N
+commits ahead (push pending, yellow),
+.B \[u2193]N
+commits behind (pull pending, red \(em you're missing commits, the highest
+merge-conflict risk). Clean and in sync shows a green
+.BR \[u2713] .
+A single
+.B git status
+fork per render scans the working tree; it ships in the default layout, but the
+layout gate keeps the fork off for any custom
+.B statusline.lines
+that omits
+.BR git-sync .
+No upstream or a detached HEAD shows only the dirty state;
+outside a git repo the segment is empty.
+.PP
+.B WIDTH \(em keeping a line from wrapping:
+three mechanisms, applied in this order, because a statusline that wraps is
+worse than one that says less.
+.B statusline.max_label
+(default 20) caps the only unbounded values a line carries \(em branch,
+directory, worktree, session and agent names \(em with a trailing
+.BR … ;
+everything else is a number or a fixed glyph. It also strips the
+.B worktree-
+prefix Claude Code puts on worktree branch names, since the segments next to it
+already say it is a worktree. 0 disables it.
+.B statusline.separator
+picks
+.B tight
+(default,
+.RB \(dq " │ " \(dq )
+or
+.B wide
+(the historical
+.RB \(dq "  │  " \(dq );
+two columns per gap is invisible until a dense line has eight of them.
+.B statusline.max_width
+(default 0 = off) is the backstop: a hard per-line column budget. A segment
+that does not fit is skipped and the line continues \(em one wide segment (a
+long branch name) must not take every cheap segment behind it down with it,
+since
+.BR ⇡fj·gh ,
+.B ●3
+and
+.B ⑂1
+cost three columns each. A line that lost anything ends in a dim
+.BR … ,
+so a shortened line always shows that it was shortened. The first segment of a
+line always renders in full \(em a line reduced to nothing but an ellipsis
+carries no information \(em which is the one case where the budget can be
+exceeded.
+.PP
+All three count characters, not bytes, in every locale: under
+.B LC_ALL=C
+bash's
+.B ${#…}
+counts bytes and every glyph here is a three-byte sequence, so a column budget
+measured that way reports overflows that do not exist \(em and a cut made that
+way can land inside a character. Lengths therefore drop UTF-8 continuation
+bytes before measuring, and a byte-mode cut backs off to the nearest character
+boundary, which only ever shortens the result.
+.PP
+.B max_width
+is deliberately not auto-detected. Nothing in the statusLine JSON carries the
+terminal width, and the usual fallbacks lie in exactly this context: Claude
+Code hands the command a
+.B COLUMNS
+of 0, and
+.B tput cols
+with a piped stdout answers with terminfo's 80 no matter how wide the window
+really is. Truncating a 140-column terminal to 80 on a guess is worse than not
+truncating at all \(em so the number is yours to set.
+.PP
+.B cache-ttl:
+the prompt cache as a decision, not a statistic. While the cached prefix is
+warm the segment counts down to the moment it goes cold
+.RI ( prompt_cache.expires_at ,
+computed in the same jq pass \(em no extra fork), turning yellow at two
+minutes. Once it is cold \(em and only when the session has actually seen
+caching, so providers that never report cache tokens stay silent \(em it shows
+what continuing costs:
+.IR prompt_cache.recache_tokens_if_cold ,
+the tokens the next request re-caches, e.g.
+.BR "\[u2668]cold\[u00B7]312.0K" .
+That is the number behind "if I pause now, what does resuming cost?".
+When the last request was a miss, the warm countdown carries the cause Claude
+Code diagnosed
+.RI ( prompt_cache.last_miss_cause ,
+2.1.260+), e.g.
+.BR "\[u2668]4m\[u00B7]miss:tools"
+after a tool set change,
+.B sysprompt
+for a system-prompt change,
+.B ttl
+for an expired prefix,
+.B server
+for a miss the API caused; several causes join with "+". The row shows it
+exactly while the cached prefix is the one that miss produced: the next
+request, a hit, retires it. Cumulative counts land in the session cache
+.RI ( misses= ", " miss_causes= )
+and on the
+.B se
+detail line as "3 miss\[u00B7]tools" (count and most frequent cause).
+Absent entirely on Claude Code builds before 2.1.251 and before the first API
+response. The statistics themselves (expected rebuilds, per-request detail)
+stay in
+.BR "/cost" .
+.PP
+.B compact-eta:
+how long the remaining context lasts at the rate you are actually filling it \(em
+the question a percentage cannot answer ("does the task I am about to start
+still fit?"). The rate is an exponential moving average of the context growth
+between renders, persisted per session; samples shorter than 15 seconds are
+dropped as noise, and the negative jump a compaction produces is skipped rather
+than fed in (the window shrank, the burn rate did not change). A long gap with
+no growth decays the rate, so an idle session does not keep claiming an
+hour-old pace. Colour: dim >= 30 min, plain 15\(en29, yellow 5\(en14, red < 5.
+Beyond 10 hours nothing is rendered \(em that is not a number anyone acts on.
+Needs at least two renders to have a rate at all.
+.PP
+.B response:
+the API time the last completed turn took, as the delta of the cumulative
+.I total_api_duration_ms
+between two renders. It keeps showing that value until a new turn produces a
+new one \(em a render without an API call in between (a plain refresh) would
+otherwise blank it, and "the last response took 4.1s" stays true meanwhile.
+This is the live counterpart to
+.BR "claudii perf" ,
+which has the aggregates: it is what separates "the model is thinking" from
+"the API is slow today" \(em and the
+.B claude-status
+segment next to it says which.
+.PP
+.B branch:
+the branch nothing else showed. The
+.B worktree
+segment only names a branch when the session actually runs inside a worktree,
+so a plain checkout rendered no branch at all. Dim by default; yellow when
+uncommitted changes are sitting directly on
+.BR main / master / trunk
+\(em WIP that wants a feature branch, a nudge rather than an alarm \(em and
+yellow
+.B \[u2387] detached
+on a detached HEAD. It shares the single
+.B git status
+fork with
+.B git-sync
+(and
+.BR ci ,
+which needs the branch name to look up the right run), so a layout using all
+three still scans the working tree once.
+.PP
+.B ci:
+the newest GitHub Actions run on the branch this session is on \(em
+.B CI \[u2713]
+green success,
+.B CI \[u2717]
+red failure,
+.B CI \[u25CF]
+cyan in progress,
+.B CI \[u25CC]
+dim queued,
+.B CI \[u2298]
+dim cancelled/skipped/neutral, and a dim
+.B CI ?
+when the refresh itself broke (an indicator whose lookup failed must never be
+indistinguishable from a green one). A branch with no runs yet, a repo with no
+GitHub remote, and a missing
+.BR gh (1)
+render nothing at all \(em those are permanent states, and a permanent glyph
+would be permanent noise. Past an hour without a successful refresh the segment
+reads
+.BR "CI stale" .
+No render ever makes a network call: the segment reads a cache file that
+.BR claudii-ci-refresh (1)
+maintains in the background, keyed per repo
+.I and
+branch so parallel sessions and worktrees never fight over one entry. The TTL
+(\fBci.cache_ttl\fR, default 300s) adapts \(em a run in flight is polled 10x
+more often, a branch with no runs backs off 6x. Opt-in: not in the default
+layout, since it needs
+.BR gh (1)
+and a GitHub-hosted repo.
+.PP
+.B worktrees:
+.B \[u2442]N
+counts the
+.I linked
+worktrees of the repo the session is working in \(em the main working tree is
+never counted, so N is exactly what
+.B git worktree remove
+can act on. Leftover orchestration worktrees are what this exists for: from
+inside the main checkout they are invisible, they keep branches and stale state
+alive, and they accumulate across waves. Worktrees git reports as
+.I prunable
+(their directory is gone, only stale admin data is left) are called out
+separately as a yellow
+.BR \[u232B]P ,
+since those are garbage rather than parallel work \(em clear them with
+.BR "git worktree prune" .
+The worktree this session itself runs in is named by the
+.B worktree
+segment instead. One
+.B git worktree list
+fork per render, only when the segment is in the active layout; empty at zero
+linked worktrees and outside a git repo.
+.PP
+.B rate-5h / rate-7d:
+color is cyan < 50%, yellow 50\(en79%, red >= 80%.
+Set
+.B statusline.rate_display
+to
+.B remaining
+to flip percentages from "used" to "what's left"
+(e.g.\&
+.B 5h:62%
+becomes
+.BR 5h:38% ).
+Color thresholds always key off the underlying usage.
+.PP
+.B clock:
+when
+.B cc-insomnii
+is on
+.B PATH
+and
+.B statusline.insomnii
+is
+.B auto
+(default) or
+.BR on ,
+claudii pipes the upstream JSON to cc-insomnii and uses its output verbatim.
+Set
+.B statusline.insomnii
+to
+.B off
+to suppress.
+Bedtime forwarded as
+.B CC_INSOMNII_BEDTIME
+from
+.B statusline.bedtime
+(default
+.IR 23:00 ).
+.PP
+.B cron / Stop-hook integration:
+.B claudii-stop-hook
+reads the Stop-hook JSON that Claude Code fires after every session turn and
+extracts
+.B session_crons
+(array of scheduled tasks with a
+.B next_run_at
+timestamp) and
+.B background_tasks
+(sibling array).
+The earliest
+.B next_run_at
+is persisted as
+.B next_cron_at=<epoch>
+in the per-session cache.
+To enable, add
+.B claudii-stop-hook
+to the
+.B hooks.Stop
+array in
+.IR ~/.claude/settings.json :
+.PP
+.RS
+.EX
+"hooks": {
+  "Stop": [{ "type": "command", "command": "claudii-stop-hook" }]
+}
+.EE
+.RE
+.PP
+The
+.B cron
+segment then renders
+.B \[u23F0] <relative>
+(e.g.\&
+.BR "\[u23F0] 42m" )
+when the epoch is in the future.
+Not in the default layout \(em add
+.B cron
+to
+.B statusline.lines
+to opt in.
+.B claudii se
+also shows the glyph inline per session row when cached.
+.PP
+.B Terminal notifications (terminalSequence):
+with
+.B notifications.enabled
+set to
+.IR true ,
+the hooks emit
+.B terminalSequence
+JSON (Claude Code \(>= 2.1.141) so the terminal shows alerts without a
+controlling tty (works in tmux):
+.B claudii-stop-hook
+sets the window title when a monitored model is
+.I down
+(\fBnotifications.model_down\fR) and rings the bell when the cached burn-ETA
+drops below
+.B notifications.burn_eta_threshold_min
+minutes (\fBnotifications.burn_eta\fR);
+.B claudii-session-end-hook
+(wire into
+.BR hooks.SessionEnd )
+sends a desktop notification with the session cost on real session
+termination.
+.B notifications.osc
+picks the notify flavor:
+.I 777
+(Ghostty, urxvt, Warp) or
+.I 9
+(iTerm2, WezTerm, Windows Terminal).
+.PP
+.RS
+.EX
+"hooks": {
+  "Stop":       [{ "type": "command", "command": "claudii-stop-hook" }],
+  "SessionEnd": [{ "type": "command", "command": "claudii-session-end-hook" }]
+}
+.EE
+.RE
+.
+.SH CONFIGURATION
+User config:
+.I ~/.config/claudii/config.json
+(or
+.I $XDG_CONFIG_HOME/claudii/config.json
+if set).
+Created automatically from defaults on first run.
+.PP
+Key paths (dot-notation):
+.PP
+.TS
+l l l.
+Key	Default	Description
+_
+aliases.cl.model	sonnet	Model for \fBcl\fR
+aliases.cl.effort	xhigh	Effort for \fBcl\fR
+aliases.clo.model	opus	Model for \fBclo\fR
+aliases.clm.effort	xhigh	Effort for \fBclm\fR
+aliases.clq.model	sonnet	Model for \fBclq\fR / search
+aliases.clf.model	fable	Model for \fBclf\fR
+fallback.enabled	true	Auto-fallback on outage
+fallback.opus.model	sonnet	Fallback when opus is down
+status.cache_ttl	300	Status cache TTL in seconds
+ci.cache_ttl	300	CI-state cache TTL in seconds (\fBci\fR segment; adaptive \(em see below)
+cc_version.cache_ttl	3600	Claude Code release-check cache TTL in seconds (\fBcc-version\fR segment)
+bumpii.cache_ttl	21600	Update/release-news cache TTL in seconds (\fBbumpii\fR segment; adaptive \(em see above)
+display.timezone	(empty)	IANA timezone for absolute timestamps (e.g. Europe/Berlin); empty = system local
+statusline.enabled	true	ClaudeStatus in RPROMPT
+statusline.models	opus,sonnet,haiku,fable	Models to monitor
+statusline.lines	(5-line default)	CC-Statusline layout — array of segment-ID arrays
+statusline.max_width	0	Hard per-line column budget (0 = off). See WIDTH below
+statusline.max_label	20	Max characters for branch/dir/worktree/session/agent names (0 = off)
+statusline.separator	tight	Segment separator: \fBtight\fR (\(dq │ \(dq) or \fBwide\fR (\(dq  │  \(dq)
+statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
+statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
+statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
+session-dashboard.enabled	off	Session Dashboard above prompt: on/off
+notifications.enabled	false	terminalSequence alerts from hooks (master switch)
+notifications.model_down	true	Window-title alert when a model is down
+notifications.burn_eta	true	Bell + title when burn-ETA < threshold
+notifications.burn_eta_threshold_min	30	Burn-ETA alert threshold (minutes)
+notifications.session_end	true	Desktop notification on session end
+notifications.osc	777	Notify flavor: \fB777\fR (Ghostty/urxvt/Warp) or \fB9\fR (iTerm2/WezTerm)
+presence.file	(empty)	Path touched by \fBoff\fR / removed by \fBon\fR (CLAUDE_CLIENT_PRESENCE_FILE); empty = disabled
+search.dir	~/search	Search workspace for search/clq (created on use)
+ui.spinner	random	Spinner style (random/beam/wave/dots/pulse/bounce/arc/orbit/ascii)
+debug.level	off	Log level: off/error/warn/info/debug
+vibemap.enabled	false	Opt-in activity tracking
+vibemap.overview	true	Show Activity strip in claudii overview
+perf.otel.enabled	false	Exact latency via OpenTelemetry (opt-in); off = transcript estimate
+perf.otel.endpoint	http://127.0.0.1:4318	OTLP/HTTP receiver bind address
+perf.otel.beta_traces	true	Capture the claude_code.llm_request span (TTFT)
+perf.otel.forward	(empty)	Mirror OTLP batches to a central collector URL; empty = local only
+overview.sections	account…commands	Overview section order + selection (array)
+.TE
+.
+.SH STATUS CACHE
+.I "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
+(override:
+.BR CLAUDII_CACHE_DIR ).
+Contains one line per model:
+.PP
+.RS
+.nf
+opus=ok
+sonnet=down
+haiku=ok
+.fi
+.RE
+.PP
+Refreshed automatically in the background when older than
+.B status.cache_ttl
+seconds. While a model is down or degraded the interval is shortened to a
+fifth (minimum 60s) so a recovery is picked up quickly; an unreachable status
+API keeps the base interval.
+.PP
+Every state transition (e.g. opus ok\(->degraded) is appended to
+.I status-history.tsv
+in the same directory as a tab-separated line:
+epoch, model, old state, new state.
+The newest entries appear under \(lqRecent changes\(rq in
+.BR "claudii status" ;
+the log is trimmed to the newest 500 lines once it exceeds 1000.
+.
+.SH ENVIRONMENT
+.TP
+.B CLAUDII_HOME
+Path to the plugin directory. Set automatically.
+.TP
+.B CLAUDII_CACHE_DIR
+Override the cache directory (default:
+.IR ${XDG_CACHE_HOME:-~/.cache}/claudii ).
+.TP
+.B CLAUDII_FORCE_COLOR
+Set to 1 to keep ANSI colors when stdout is not a terminal (e.g.\&
+.BR "claudii se | less -R" ).
+By default piped or redirected output is plain text.
+.TP
+.B CLAUDII_LOG_LEVEL
+Override the debug log level (off, error, warn, info, debug).
+.TP
+.B CLAUDII_NOW
+Test-only: pin "now" (epoch seconds) for
+.BR cost " " --forecast \&'s
+month projection and for every rolling
+.B --days
+window (limits, cache, tokens, tools, repos, perf). Used when set;
+otherwise the live clock wins.
+.TP
+.B CLAUDII_SPINNER_MODE
+Override the spinner animation (takes precedence over
+.BR ui.spinner ).
+.TP
+.B XDG_CONFIG_HOME
+Overrides the config directory (default:
+.IR ~/.config ).
+.TP
+.B XDG_CACHE_HOME
+Overrides the base cache directory (default:
+.IR ~/.cache ).
+.
+.SH FILES
+.TP
+.I ~/.config/claudii/config.json
+User configuration.
+.TP
+.I $CLAUDII_HOME/config/defaults.json
+Shipped defaults (read-only reference).
+.TP
+.I ~/.cache/claudii/status-models
+Per-model status cache written by
+.BR claudii-status .
+.TP
+.I ~/.cache/claudii/session-*
+Per-session cache files written by the CC-Statusline handler
+(model, context %, token throughput, cost, rate-limit data).
+.TP
+.I ~/.cache/claudii/history-YYYY-MM.tsv
+Persistent session history (Flight Recorder), rotated monthly.
+One TSV line per CC-Statusline update: timestamp, model, cost, context %,
+5h rate, session_id, input_tok, output_tok, api_duration_ms.
+Read by
+.BR "claudii trends" " and " "claudii cost" .
+.TP
+.I ~/.cache/claudii/vibemap.tsv
+Opt-in activity log (written only when
+.B vibemap.enabled
+is true).
+.TP
+.I ~/.claude/settings.json
+Claude Code settings, modified by
+.BR "claudii cc-statusline" .
+.
+.SH VISUAL LANGUAGE
+.PP
+.TS
+l l l.
+Symbol	Meaning	Color
+_
+\(bu	active session	green
+\(ci	ended / inactive	dim
+\(tf	warning	yellow
+\(mu	error / failure	red
+\(OK	ok / success	green
+\(da	down (model)	red
+~	degraded	yellow
+|	separator	\(em
+\[u2588]	progress bar filled	context-sensitive
+\[u2591]	progress bar empty	dim
+.TE
+.PP
+Internal:
+.B _claudii_sym
+.RI ( lib/visual.sh )
+accepts names
+.RB ( active ", " inactive ", " warn ", " error ", " ok ", " down ", " degraded ", " sep )
+and prints the colored symbol.
+Constants:
+.B CLAUDII_SYM_*
+(symbols),
+.B CLAUDII_CLR_*
+(ANSI colors).
+.
+.SH SEE ALSO
+.BR claude (1),
+.BR cc-insomnii (1),
+.BR jq (1),
+.BR zsh (1)
+.
+.SH AUTHOR
+bmmmm
+.SH PROJECT
+.UR https://github.com/bmmmm/claudii
+.UE

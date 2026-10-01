@@ -1,0 +1,537 @@
+# touches: bin/claudii-status lib/cmd/system.sh
+# test_status.sh — status checker E2E tests
+
+# Setup: test config so models are well-known and controllable
+export XDG_CONFIG_HOME="$CLAUDII_TEST_TMP/test_status"
+rm -rf "$XDG_CONFIG_HOME/claudii"
+mkdir -p "$XDG_CONFIG_HOME/claudii"
+cp "$CLAUDII_HOME/config/defaults.json" "$XDG_CONFIG_HOME/claudii/config.json"
+
+# Redirect cache to test-local dir (not user's ~/.cache)
+export CLAUDII_CACHE_DIR="$CLAUDII_TEST_TMP/test_status_cache"
+mkdir -p "$CLAUDII_CACHE_DIR"
+
+# Clean cache
+rm -f "$CLAUDII_CACHE_DIR"/status-unresolved.json
+rm -f "$CLAUDII_CACHE_DIR"/status-models
+
+# Determine which models the status script will check (driven by config)
+models_raw=$(jq -r '.statusline.models' "$XDG_CONFIG_HOME/claudii/config.json")
+IFS=',' read -ra STATUS_MODELS <<< "$models_raw"
+
+# Offline curl shim for the smoke block below. These three invocations used to
+# hit https://status.claude.com for real, which made the opening of this file
+# depend on the network and on Anthropic's current incident list — the later
+# blocks all mock curl already (see the _tz_inc_dir shim). Exit 22 is curl's
+# HTTP-error code, i.e. exactly the offline path these asserts describe
+# ("even offline → all-ok fallback").
+_off_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_offline.XXXXXX")
+cat > "$_off_dir/curl" <<'EOF'
+#!/bin/bash
+exit 22
+EOF
+chmod +x "$_off_dir/curl"
+
+# status runs without crash — exit 0 (all ok) or 1 (degraded) are both valid
+exit_code=0
+PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" >/dev/null 2>&1 || exit_code=$?
+assert_eq "status: no crash (exit 0 or 1)" "true" "$([[ $exit_code -le 1 ]] && echo true || echo false)"
+output=$(PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" 2>&1 || true)
+
+# quiet mode suppresses output
+output=$(PATH="$_off_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>&1 || true)
+assert_eq "quiet mode produces no output" "" "$output"
+
+# model status cache always created (even offline → all-ok fallback)
+assert_file_exists "model status cache created" "$CLAUDII_CACHE_DIR/status-models"
+
+# Offline contract. curl is shimmed to exit 22 above, so `unresolved` stays
+# empty and bin/claudii-status:199 never reaches the write — the incidents
+# cache must be absent, while the model cache above still carries the
+# all-ok fallback.
+#
+# This replaces an if/else whose every branch asserted "true" == "true": with a
+# live network it took whichever path the internet happened to offer, and it
+# could not fail in either. The populated-incidents path is covered for real by
+# the mocked blocks further down (_tz_inc_dir, _github_inc_dir, _api_inc_dir).
+assert_eq "offline: no unresolved.json cache is written" "absent" \
+  "$([[ -f "$CLAUDII_CACHE_DIR/status-unresolved.json" ]] && echo present || echo absent)"
+
+# All configured models must appear in cache with valid state
+cached=$(cat "$CLAUDII_CACHE_DIR/status-models")
+for model in "${STATUS_MODELS[@]}"; do
+  model="${model// /}"
+  assert_contains "cache has ${model} entry" "${model}=" "$cached"
+  line=$(grep "^${model}=" "$CLAUDII_CACHE_DIR/status-models" || true)
+  if grep -qE "^${model}=(ok|degraded|down)$" <<< "$line"; then
+    assert_eq "cache ${model} has valid state" "true" "true"
+  else
+    assert_eq "cache ${model} has valid state" "${model}=ok|degraded|down" "$line"
+  fi
+done
+
+# status subcommand via claudii shows output
+output=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+if grep -qE '✗|~|✓|available|down|degraded' <<< "$output"; then
+  assert_eq "claudii status shows meaningful output" "true" "true"
+else
+  assert_eq "claudii status shows meaningful output" "contains status text" "$output"
+fi
+
+# Adding a new model to config: status must check it too
+bash "$CLAUDII_HOME/bin/claudii" config set statusline.models "opus,sonnet,haiku,testmodel" >/dev/null 2>&1
+rm -f "$CLAUDII_CACHE_DIR/status-models"
+bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>/dev/null || true
+cached=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "new model in config appears in cache" "testmodel=" "$cached"
+
+# ── Incident display: claudii status reads status-unresolved.json ────────────
+# _cmd_status calls $CLAUDII_HOME/bin/claudii-status directly, so we need a
+# temp CLAUDII_HOME with a stub binary that writes mock incident data.
+_stub_home="$CLAUDII_TEST_TMP/test_status_stub_home"
+mkdir -p "$_stub_home/bin" "$_stub_home/lib/cmd" "$_stub_home/config"
+# Symlink all real files except claudii-status (which we stub)
+for _f in claudii claudii-cc-statusline; do
+  ln -sf "$CLAUDII_HOME/bin/$_f" "$_stub_home/bin/$_f" 2>/dev/null || true
+done
+cp -r "$CLAUDII_HOME/lib" "$_stub_home/"
+cp "$CLAUDII_HOME/config/defaults.json" "$_stub_home/config/"
+cat > "$_stub_home/bin/claudii-status" <<'STUB'
+#!/bin/bash
+CACHE_DIR="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+mkdir -p "$CACHE_DIR"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CACHE_DIR/status-models"
+printf '{"incidents":[{"name":"API Degraded","status":"investigating","impact":"minor","incident_updates":[{"status":"Investigating","body":"We are looking into elevated error rates.","created_at":"2026-04-09T10:00:00.000Z"}]}]}\n' > "$CACHE_DIR/status-unresolved.json"
+exit 0
+STUB
+chmod +x "$_stub_home/bin/claudii-status"
+_inc_out=$(CLAUDII_HOME="$_stub_home" bash "$_stub_home/bin/claudii" status 2>&1 || true)
+if grep -q "API Degraded" <<< "$_inc_out"; then
+  assert_eq "claudii status: incident name from unresolved.json shown" "true" "true"
+else
+  assert_eq "claudii status: incident name from unresolved.json shown" "API Degraded" "$_inc_out"
+fi
+if grep -qi "investigating" <<< "$_inc_out"; then
+  assert_eq "claudii status: incident status shown" "true" "true"
+else
+  assert_eq "claudii status: incident status shown" "investigating" "$_inc_out"
+fi
+rm -rf "$_stub_home"
+
+# Regression: the incident-update timestamp must not mangle the timezone
+# abbreviation. The render did `_ts="$_ABS_FMT"; _ts="${_ts/T/ }"` — the
+# T→space swap (meant only for the raw-ISO fallback) ate the T in the zone
+# name, so CEST printed as "CES ", CET as "CE ", GMT as "GM ".
+_tz_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_tz.XXXXXX")
+mkdir -p "$_tz_inc_dir/srv"
+cat > "$_tz_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Timezone render check","status":"monitoring","impact":"minor",
+  "incident_updates":[{"status":"monitoring","body":"Watching.","created_at":"2026-06-13T00:50:00.000Z"}],
+  "components":[{"name":"claude.ai"}]
+}]}
+JSON
+cat > "$_tz_inc_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_tz_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_tz_inc_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+PATH="$_tz_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_tz_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+# June in Europe/Berlin is CEST (UTC+2): 00:50 UTC → 02:50 CEST. The full
+# 4-char zone must survive (the bug truncated it to "CES").
+assert_contains "incident update: full CEST zone (not mangled to CES)" "02:50 CEST" "$_tz_out"
+rm -rf "$_tz_inc_dir"
+
+# ANSI guard: claudii status output must not contain literal ESC sequences as \033 text
+_status_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+if grep -qF '\033' <<< "$_status_out"; then
+  assert_eq "claudii status: no literal \\033 in output" "no literal escapes" "found literal \\033"
+else
+  assert_eq "claudii status: no literal \\033 in output" "true" "true"
+fi
+
+# Regression: incident with no model in name/body and components ≠ API
+# must NOT mark all models as down. Real example: "Connection failures
+# for organizations restricting GitHub access by IP address" (May 2026)
+# — affected only orgs with GitHub IP allowlists, but the old heuristic
+# flagged Opus/Sonnet/Haiku as down because no model name was matched.
+_github_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_gh.XXXXXX")
+mkdir -p "$_github_inc_dir/cache" "$_github_inc_dir/srv"
+cat > "$_github_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Connection failures for organizations restricting GitHub access by IP address",
+  "status":"identified","impact":"major",
+  "incident_updates":[{"body":"We have identified an issue affecting organizations that restrict GitHub access by source IP address. A recent infrastructure change altered the IP addresses Anthropic uses for outbound connections to GitHub, which may cause Claude Code remote sessions to fail."}],
+  "components":[{"name":"claude.ai"},{"name":"Claude Code"}]
+}]}
+JSON
+# Serve the canned JSON from a `file://` URL — claudii-status uses curl,
+# which supports file:// transparently. Skips network.
+_github_url="file://$_github_inc_dir/srv/unresolved.json"
+# claudii-status hard-checks https:// — bypass by writing cache directly via
+# a stub-binary path: invoke the parser logic by faking `curl` via PATH.
+# Simpler: spin a tiny bash wrapper that exports a CURL override.
+cat > "$_github_inc_dir/curl" <<EOF
+#!/bin/bash
+# Mock curl: when fetching the unresolved URL, return the canned JSON.
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_github_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_github_inc_dir/curl"
+# Reset cache, run with mocked curl
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_github_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_gh_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "github-IP incident: opus stays ok" "opus=ok" "$_gh_cache"
+assert_contains "github-IP incident: sonnet stays ok" "sonnet=ok" "$_gh_cache"
+assert_contains "github-IP incident: haiku stays ok" "haiku=ok" "$_gh_cache"
+assert_contains "github-IP incident: indicator preserved" "_incident=identified" "$_gh_cache"
+rm -rf "$_github_inc_dir"
+
+# Regression: incident whose components list includes "API" (broad inference
+# outage) must still flag all models as degraded/down — this is the one case
+# where "no model named, but everything affected" is real.
+_api_inc_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_api.XXXXXX")
+mkdir -p "$_api_inc_dir/srv"
+cat > "$_api_inc_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Elevated error rates","status":"investigating","impact":"major",
+  "incident_updates":[{"body":"We are investigating elevated error rates."}],
+  "components":[{"name":"API"}]
+}]}
+JSON
+cat > "$_api_inc_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_api_inc_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_api_inc_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_api_inc_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_api_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+if grep -qE '^opus=(down|degraded)$' <<< "$_api_cache"; then
+  assert_eq "API-component incident: opus flagged" "true" "true"
+else
+  assert_eq "API-component incident: opus flagged" "down|degraded" "$_api_cache"
+fi
+if grep -qE '^sonnet=(down|degraded)$' <<< "$_api_cache"; then
+  assert_eq "API-component incident: sonnet flagged" "true" "true"
+else
+  assert_eq "API-component incident: sonnet flagged" "down|degraded" "$_api_cache"
+fi
+rm -rf "$_api_inc_dir"
+
+# Regression: incident that names specific models we do NOT track (a real
+# Mythos/Fable feature-access suspension) lists the "API" component because
+# model access flows through it — but it must NOT cascade onto opus/sonnet/
+# haiku. The model-scope check suppresses the broad-API fallback; the
+# _incident marker is still persisted so consumers show the note indicator.
+_mythos_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_mythos.XXXXXX")
+mkdir -p "$_mythos_dir/srv"
+cat > "$_mythos_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"We have suspended access to Claude Mythos 5 and Claude Fable 5",
+  "status":"monitoring","impact":"minor",
+  "incident_updates":[{"body":"Learn more here: https://anthropic.com/news/fable-mythos-access"}],
+  "components":[{"name":"claude.ai"},{"name":"Claude API (api.anthropic.com)"},{"name":"Claude Code"},{"name":"Claude Cowork"}]
+}]}
+JSON
+cat > "$_mythos_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_mythos_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_mythos_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_mythos_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_my_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "untracked-model incident: opus stays ok" "opus=ok" "$_my_cache"
+assert_contains "untracked-model incident: sonnet stays ok" "sonnet=ok" "$_my_cache"
+assert_contains "untracked-model incident: haiku stays ok" "haiku=ok" "$_my_cache"
+assert_contains "untracked-model incident: note indicator preserved" "_incident=monitoring" "$_my_cache"
+rm -rf "$_mythos_dir"
+
+# Regression: multiline incident name must be flattened to single line
+# (bin/claudii-status does `jq -r .incidents[0].name | tr '\n' ' ' | sed 's/ *$//'`
+#  to prevent multi-line names from breaking RPROMPT/stderr layout)
+_mock_json='{"incidents":[{"name":"Line1\nLine2\nLine3","impact":"minor"}]}'
+_flat=$(echo "$_mock_json" | jq -r '.incidents[0].name' | tr '\n' ' ' | sed 's/ *$//')
+assert_eq "incident name: newlines stripped to spaces" "Line1 Line2 Line3" "$_flat"
+assert_eq "incident name: zero embedded newlines" "0" "$(printf '%s' "$_flat" | tr -cd '\n' | wc -c | tr -d ' ')"
+
+# ── `claudii status` footer: effective (adaptive) refresh interval ──
+# Healthy state → 2× base TTL with "(adaptive, base Xm)" suffix; unreachable
+# API → bare base TTL, no suffix. Fresh cache mtime keeps claudii-status on
+# its cache-hit path (no network) so the prepared cache survives the display.
+
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_ftr_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+assert_contains "status footer: healthy shows adaptive interval" "(adaptive, base" "$_ftr_out"
+
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n_api=unreachable\n' > "$CLAUDII_CACHE_DIR/status-models"
+_ftr_out=$(bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+assert_contains "status footer: unreachable shows base interval" "refreshes every" "$_ftr_out"
+if grep -q "(adaptive, base" <<< "$_ftr_out"; then
+  assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "suffix present"
+else
+  assert_eq "status footer: unreachable has no adaptive suffix" "no suffix" "no suffix"
+fi
+
+# ── Transition log: state changes land in status-history.tsv ─────────────────
+_tr_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_tr.XXXXXX")
+mkdir -p "$_tr_dir/srv"
+cat > "$_tr_dir/srv/unresolved.json" <<'JSON'
+{"incidents":[{
+  "name":"Elevated errors on Claude Opus","status":"investigating","impact":"minor",
+  "incident_updates":[{"body":"Investigating elevated errors on Opus."}],
+  "components":[{"name":"Claude Opus"}]
+}]}
+JSON
+cat > "$_tr_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_tr_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_tr_dir/curl"
+
+# Reset models (an earlier section appended "testmodel" — it would log an
+# extra unknown→ok transition and break the exact-count assert below)
+bash "$CLAUDII_HOME/bin/claudii" config set statusline.models "opus,sonnet,haiku" >/dev/null 2>&1
+
+# First run with NO previous cache → no transitions logged
+rm -f "$CLAUDII_CACHE_DIR"/status-models "$CLAUDII_CACHE_DIR"/status-unresolved.json "$CLAUDII_CACHE_DIR"/status-history.tsv
+PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+assert_eq "transition log: first run logs nothing" "false" "$([[ -s "$CLAUDII_CACHE_DIR/status-history.tsv" ]] && echo true || echo false)"
+
+# Previous cache all-ok, incident flags opus → exactly the opus transition logged
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+touch -t 200001010000 "$CLAUDII_CACHE_DIR/status-models"   # force stale
+PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_tr_log=$(cat "$CLAUDII_CACHE_DIR/status-history.tsv" 2>/dev/null || true)
+assert_contains "transition log: opus ok→degraded logged" "$(printf 'opus\tok\tdegraded')" "$_tr_log"
+assert_eq "transition log: only changed model logged" "1" "$(printf '%s\n' "$_tr_log" | grep -c . || true)"
+if grep -qE '^[0-9]+	' <<< "$(head -1 <<< "$_tr_log")"; then
+  assert_eq "transition log: epoch first column" "true" "true"
+else
+  assert_eq "transition log: epoch first column" "epoch<TAB>..." "$_tr_log"
+fi
+
+# Internal _incident= keys must never appear as models in the log
+assert_eq "transition log: no _-keys logged" "false" "$(grep -q '	_' <<< "$_tr_log" && echo true || echo false)"
+
+# claudii status renders the Recent changes section from the log
+# (ANSI-stripped — the new state is color-wrapped, "ok → degraded" would
+# otherwise never match literally; mock curl keeps any refetch deterministic)
+_tr_out=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "claudii status: Recent changes section shown" "Recent changes" "$_tr_out"
+assert_contains "claudii status: transition rendered" "ok → degraded" "$_tr_out"
+
+# display.timezone drives the rendered timestamp (zone suffix via %Z)
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "UTC" >/dev/null 2>&1
+_tr_utc=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | grep -A2 "Recent changes" || true)
+assert_contains "claudii status: UTC timestamp suffix" "UTC" "$_tr_utc"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+_tr_de=$(PATH="$_tr_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii" status 2>&1 | grep -A2 "Recent changes" || true)
+if grep -qE 'CET|CEST' <<< "$_tr_de"; then
+  assert_eq "claudii status: Europe/Berlin timestamp suffix" "true" "true"
+else
+  assert_eq "claudii status: Europe/Berlin timestamp suffix" "CET|CEST" "$_tr_de"
+fi
+rm -rf "$_tr_dir"
+
+# ── `claudii status --history`: full transition log ──────────────────────────
+# Seed a synthetic log: one entry ~10 days ago, two within the last day.
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+_hist_now=$(date +%s)
+{
+  printf '%s\topus\tok\tdegraded\n'   "$(( _hist_now - 10*86400 ))"
+  printf '%s\tsonnet\tok\tdown\n'     "$(( _hist_now - 3600 ))"
+  printf '%s\topus\tdown\tok\n'       "$(( _hist_now - 600 ))"
+} > "$CLAUDII_CACHE_DIR/status-history.tsv"
+
+_h_full=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "status --history: header shown" "full log" "$_h_full"
+assert_contains "status --history: old opus transition shown" "ok → degraded" "$_h_full"
+assert_contains "status --history: recent sonnet transition shown" "ok → down" "$_h_full"
+assert_contains "status --history: count footer" "3 transitions" "$_h_full"
+# Newest-first ordering: the opus down→ok (most recent) must precede the
+# 10-days-ago opus ok→degraded in the rendered output.
+_h_first=$(printf '%s\n' "$_h_full" | grep -nE 'down → ok' | head -1 | cut -d: -f1)
+_h_last=$(printf '%s\n' "$_h_full" | grep -nE 'ok → degraded' | head -1 | cut -d: -f1)
+assert_eq "status --history: newest-first ordering" "true" "$([[ -n "$_h_first" && -n "$_h_last" && "$_h_first" -lt "$_h_last" ]] && echo true || echo false)"
+
+# --days 1 drops the 10-days-ago entry → 2 transitions, no "ok → degraded"
+_h_win=$(bash "$CLAUDII_HOME/bin/claudii" status --history --days 1 2>&1 | sed $'s/\033\\[[0-9;]*m//g' || true)
+assert_contains "status --history --days 1: windowed header" "last 1 day" "$_h_win"
+assert_contains "status --history --days 1: count footer" "2 transitions" "$_h_win"
+if grep -q "ok → degraded" <<< "$_h_win"; then
+  assert_eq "status --history --days 1: old entry filtered out" "filtered" "still present"
+else
+  assert_eq "status --history --days 1: old entry filtered out" "filtered" "filtered"
+fi
+
+# --days drives display.timezone via %Z (UTC vs Europe/Berlin)
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "UTC" >/dev/null 2>&1
+_h_utc=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 || true)
+assert_contains "status --history: UTC timezone suffix" "UTC" "$_h_utc"
+bash "$CLAUDII_HOME/bin/claudii" config set display.timezone "Europe/Berlin" >/dev/null 2>&1
+
+# --json: array of {ts,model,from,to}, newest-first, correct length
+_h_json=$(bash "$CLAUDII_HOME/bin/claudii" status --history --json 2>&1 || true)
+assert_eq "status --history --json: 3 rows" "3" "$(printf '%s' "$_h_json" | jq 'length' 2>/dev/null || echo NaN)"
+assert_eq "status --history --json: newest row is opus→ok" "ok" "$(printf '%s' "$_h_json" | jq -r '.[0].to' 2>/dev/null || true)"
+assert_eq "status --history --json: ts is numeric" "number" "$(printf '%s' "$_h_json" | jq -r '.[0].ts | type' 2>/dev/null || true)"
+assert_eq "status --history --json --days 1: 2 rows" "2" "$(bash "$CLAUDII_HOME/bin/claudii" status --history --json --days 1 2>&1 | jq 'length' 2>/dev/null || echo NaN)"
+
+# Error paths
+_h_baddays=$(bash "$CLAUDII_HOME/bin/claudii" status --history --days abc 2>&1; echo "exit=$?")
+assert_contains "status --history: rejects non-numeric --days" "Invalid --days value" "$_h_baddays"
+assert_contains "status --history: non-numeric --days exits 1" "exit=1" "$_h_baddays"
+_h_badopt=$(bash "$CLAUDII_HOME/bin/claudii" status --history --bogus 2>&1; echo "exit=$?")
+assert_contains "status --history: rejects unknown option" "Unknown status --history option" "$_h_badopt"
+
+# Empty log → friendly message, no crash
+rm -f "$CLAUDII_CACHE_DIR/status-history.tsv"
+_h_empty=$(bash "$CLAUDII_HOME/bin/claudii" status --history 2>&1 || true)
+assert_contains "status --history: empty log message" "no transition history yet" "$_h_empty"
+assert_eq "status --history --json: empty log is []" "0" "$(bash "$CLAUDII_HOME/bin/claudii" status --history --json 2>&1 | jq 'length' 2>/dev/null || echo NaN)"
+
+# ── Bug: transition row colors BOTH states (old + new) ───────────────────────
+# A "down → ok" row must paint the old "down" red — it used to render bare
+# (only the new state was colored). CLAUDII_FORCE_COLOR=1 keeps the ANSI codes
+# under the test's piped stdout (bin/claudii blanks colors when not a TTY).
+# Red = \033[0;31m, reset = \033[0m. The cache is all-ok (fresh mtime →
+# cache-hit, no network), so the only red-wrapped "down" can come from the
+# transition row's old state.
+printf '%s\topus\tdown\tok\n' "$(( $(date +%s) - 600 ))" > "$CLAUDII_CACHE_DIR/status-history.tsv"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_clr_raw=$(CLAUDII_FORCE_COLOR=1 bash "$CLAUDII_HOME/bin/claudii" status 2>&1 || true)
+_RED=$(printf '\033[0;31m'); _RST=$(printf '\033[0m')
+case "$_clr_raw" in
+  *"${_RED}down${_RST}"*) assert_eq "transition: old 'down' state colored red" "true" "true" ;;
+  *)                      assert_eq "transition: old 'down' state colored red" "red-wrapped down" "bare/uncolored down" ;;
+esac
+
+# ── Bug: adaptive cache gate — down/degraded shortens the refetch TTL ─────────
+# The zsh precmd / cc-statusline refreshers spawn claudii-status on a ÷5
+# interval while a model is down, but claudii-status itself used to gate the
+# real refetch on the full base TTL — so a recovered model stayed "down" in the
+# RPROMPT for up to base TTL. claudii-status must apply the same ÷5 (min 60s).
+_adt_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_adt.XXXXXX")
+mkdir -p "$_adt_dir/srv"
+cat > "$_adt_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_adt_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_adt_dir/curl"
+# Set mtime to N seconds ago (BSD date -v on macOS/CI, GNU date -d fallback).
+_set_mtime_ago() {
+  local _f="$1" _n="$2" _t
+  _t=$(date -v-"${_n}"S +%Y%m%d%H%M.%S 2>/dev/null) || _t=$(date -d "${_n} seconds ago" +%Y%m%d%H%M.%S 2>/dev/null)
+  [[ -n "$_t" ]] && touch -t "$_t" "$_f"
+}
+
+# base TTL 300 → down-gate = 60s. Cache 150s old + opus down: mock returns "no
+# incidents" → the refetch must run and rewrite opus=ok.
+printf '{"incidents":[]}\n' > "$_adt_dir/srv/unresolved.json"
+printf 'opus=down\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_set_mtime_ago "$CLAUDII_CACHE_DIR/status-models" 150
+CLAUDII_CACHE_TTL=300 PATH="$_adt_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_adt_down=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "adaptive gate: down cache (150s, base 300) refetched to ok" "opus=ok" "$_adt_down"
+
+# Negative: healthy cache 150s old must NOT refetch (gate stays base 300s). The
+# mock now returns an Opus incident; a wrongful refetch would flip opus off ok.
+printf '{"incidents":[{"name":"Elevated errors on Claude Opus","status":"investigating","impact":"major","incident_updates":[{"body":"x"}],"components":[{"name":"Claude Opus"}]}]}\n' > "$_adt_dir/srv/unresolved.json"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$CLAUDII_CACHE_DIR/status-models"
+_set_mtime_ago "$CLAUDII_CACHE_DIR/status-models" 150
+CLAUDII_CACHE_TTL=300 PATH="$_adt_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_adt_ok=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_contains "adaptive gate: healthy cache (150s, base 300) not refetched" "opus=ok" "$_adt_ok"
+rm -rf "$_adt_dir"
+
+# SIGPIPE regression: `producer | grep -q` returns 141 under `pipefail` when the
+# match lands on an early LINE and more than a pipe buffer (64 KiB) still
+# follows — grep -q exits on the match, the producer's next write gets EPIPE.
+# Bash builtins are NOT exempt; only a single long line is (grep must read to
+# the line end before it can match). _search_text has exactly the fatal shape:
+# incident names are newline-joined, and the (unbounded) update bodies are
+# appended after the LAST name. A model named in the FIRST incident is then
+# read as absent → the model stays "ok" while it is actually down.
+_sp_dir=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_sigpipe.XXXXXX")
+mkdir -p "$_sp_dir/srv"
+# ~190 KB of body text, well past the 64 KiB pipe buffer. Streamed straight
+# into the file rather than handed to jq as an argument: Linux caps a single
+# argv entry at 128 KiB (MAX_ARG_STRLEN), so `jq --arg body "<190KB>"` fails
+# with E2BIG there while macOS accepts it — which would leave an empty fixture
+# and a green-looking "no incident" run instead of a real test.
+{
+  printf '%s' '{"incidents":[{"name":"Elevated error rates for Claude Opus",'
+  printf '%s' '"status":"investigating","impact":"major",'
+  printf '%s' '"incident_updates":[{"body":"Opus requests are failing."}],'
+  printf '%s' '"components":[{"name":"Claude Opus"}]},'
+  printf '%s' '{"name":"Unrelated dashboard latency","status":"monitoring",'
+  printf '%s' '"impact":"minor","incident_updates":[{"body":"'
+  awk 'BEGIN{for(i=0;i<3400;i++) printf "we are continuing to monitor the elevated error rates. "}'
+  printf '%s\n' '"}],"components":[{"name":"claude.ai"}]}]}'
+} > "$_sp_dir/srv/unresolved.json"
+# The fixture is the test here — assert it before trusting anything downstream.
+# An unparseable or truncated feed makes claudii-status write _api=unreachable,
+# which would read as "opus not flagged" and fail for the wrong reason.
+assert_eq "sigpipe: fixture is valid JSON with two incidents" "2" \
+  "$(jq -r '.incidents | length' "$_sp_dir/srv/unresolved.json" 2>/dev/null || echo ERR)"
+assert_eq "sigpipe: fixture body clears the 64 KiB pipe buffer" "true" \
+  "$(jq -r '(.incidents[1].incident_updates[0].body | length) > 65536' \
+     "$_sp_dir/srv/unresolved.json" 2>/dev/null || echo ERR)"
+cat > "$_sp_dir/curl" <<EOF
+#!/bin/bash
+for arg in "\$@"; do
+  case "\$arg" in
+    *unresolved.json*) cat "$_sp_dir/srv/unresolved.json"; exit 0 ;;
+  esac
+done
+exit 22
+EOF
+chmod +x "$_sp_dir/curl"
+rm -f "$CLAUDII_CACHE_DIR/status-models" "$CLAUDII_CACHE_DIR/status-unresolved.json"
+PATH="$_sp_dir:$PATH" bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_sp_cache=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
+assert_not_contains "sigpipe: opus named in first incident is not read as ok" "opus=ok" "$_sp_cache"
+assert_contains "sigpipe: opus flagged despite 200 KB of trailing body text" "opus=down" "$_sp_cache"
+# Untouched models must stay ok — proves the fix does not just flag everything.
+assert_contains "sigpipe: sonnet unaffected" "sonnet=ok" "$_sp_cache"
+assert_contains "sigpipe: haiku unaffected" "haiku=ok" "$_sp_cache"
+rm -rf "$_sp_dir"
+
+# Cleanup
+rm -rf "$XDG_CONFIG_HOME" "$CLAUDII_CACHE_DIR"
+unset XDG_CONFIG_HOME CLAUDII_CACHE_DIR
