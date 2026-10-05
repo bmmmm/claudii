@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- **`tokens` and the other insight commands no longer exit silently (rc 138) when many sessions are new since the last refresh** — `claudii-insights aggregate` read each session's subagent list through `< <(_subagent_files)` inside `_cmd_aggregate`'s loop, and `/bin/bash` 3.2 closes a process-substitution fd opened inside a function only when the outermost function returns. One fd leaked per scanned session until bash corrupted its heap and died with SIGBUS/SIGABRT, taking the calling command down before it printed anything. `_subagent_files` now fills an array instead; open fds stay flat across the loop. (`bin/claudii-insights`)
+
 ---
 
 ## [v0.29.0] — 2026-10-02
