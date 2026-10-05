@@ -118,8 +118,11 @@ _session_toggle_pin() {
   for f in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
     # sid reset per file — a cache without a session_id line must not inherit
     # the previous iteration's sid and false-match the needle.
-    local sid="" line
-    while IFS= read -r line; do sid="${line#*=}"; break; done < <(grep '^session_id=' "$f" 2>/dev/null)
+    # Command substitution, not `< <(grep)`: /bin/bash 3.2 keeps a function's
+    # process-substitution fd open until the outermost function returns.
+    local sid=""
+    sid=$(grep -m1 '^session_id=' "$f" 2>/dev/null) || true
+    sid="${sid#*=}"
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
       local _tmp="${f}.pin.$$"
       if [[ "$action" == "pin" ]]; then

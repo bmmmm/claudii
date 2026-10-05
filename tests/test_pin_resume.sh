@@ -36,6 +36,16 @@ CLAUDII_CACHE_DIR="$_PR_TMP" XDG_CONFIG_HOME="$_PR_XDG" \
 assert_eq "pin valid: session file has pinned=1" "1" \
   "$(grep -c '^pinned=1$' "$_PR_TMP/session-${_pr_sid}" || true)"
 
+# ── pin: matches the session_id line, not only the file name ────────────────
+# The file name carries no part of the id, so only the session_id read can match.
+_PR_SID_DIR="$(mktemp -d)"
+printf 'model=Sonnet\nsession_id=feedface00\n' > "$_PR_SID_DIR/session-unrelated"
+CLAUDII_CACHE_DIR="$_PR_SID_DIR" XDG_CONFIG_HOME="$_PR_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" pin feedface >/dev/null 2>&1
+assert_eq "pin by session_id: file has pinned=1" "1" \
+  "$(grep -c '^pinned=1$' "$_PR_SID_DIR/session-unrelated" || true)"
+rm -rf "$_PR_SID_DIR"
+
 # ── pin: idempotent — pinning an already-pinned session exits 0, no corruption ─
 _pin_idem=$(CLAUDII_CACHE_DIR="$_PR_TMP" XDG_CONFIG_HOME="$_PR_XDG" \
   bash "$CLAUDII_HOME/bin/claudii" pin "$_pr_sid" 2>&1; echo "exit:$?")
