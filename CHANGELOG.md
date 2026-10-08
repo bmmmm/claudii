@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **`clq` / `claudii search` default to Haiku at xhigh effort instead of Sonnet at medium** — Haiku 5.5 xhigh scores what Sonnet 5.5 medium does on the Artificial Analysis index (41 vs 41) at about a quarter of the cost per task. An existing `aliases.clq` or `search.*` in your config still wins. (`config/defaults.json`, `lib/cmd/config.sh`)
+
 ### Fixed
 - **`tokens` and the other insight commands no longer exit silently (rc 138) when many sessions are new since the last refresh** — `claudii-insights aggregate` read each session's subagent list through `< <(_subagent_files)` inside `_cmd_aggregate`'s loop, and `/bin/bash` 3.2 closes a process-substitution fd opened inside a function only when the outermost function returns. One fd leaked per scanned session until bash corrupted its heap and died with SIGBUS/SIGABRT, taking the calling command down before it printed anything. `_subagent_files` now fills an array instead; open fds stay flat across the loop. `pin`/`unpin` had the same pattern once per `session-*` cache (failed with "Too many open files" under a low fd limit) and now reads `session_id` by command substitution. (`bin/claudii-insights`, `lib/cmd/sessions.sh`, `tests/test_pin_resume.sh`)
 

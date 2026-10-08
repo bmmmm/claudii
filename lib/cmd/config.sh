@@ -122,15 +122,15 @@ _cmd_search() {
   _cfg_init
   search_dir=$(_claudii_search_dir "$(_cfgget search.dir)")
 
-  # Try search.model first, fall back to aliases.clq.model, then to default sonnet
+  # Try search.model first, fall back to aliases.clq.model, then to default haiku
   model=$(_cfgget search.model)
   [[ -z "$model" ]] && model=$(_cfgget aliases.clq.model)
-  [[ -z "$model" ]] && model="sonnet"
+  [[ -z "$model" ]] && model="haiku"
 
-  # Try search.effort first, fall back to aliases.clq.effort, then to default medium
+  # Try search.effort first, fall back to aliases.clq.effort, then to default xhigh
   effort=$(_cfgget search.effort)
   [[ -z "$effort" ]] && effort=$(_cfgget aliases.clq.effort)
-  [[ -z "$effort" ]] && effort="medium"
+  [[ -z "$effort" ]] && effort="xhigh"
 
   cd "$search_dir" 2>/dev/null || { echo "claudii: cannot use search directory: $search_dir" >&2; return 1; }
   exec claude --model "$model" --effort "$effort" "${@:2}"
