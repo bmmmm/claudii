@@ -15,7 +15,19 @@ _insights_run() {
   "$CLAUDII_HOME/bin/claudii-insights" "$@"
 }
 
-_insights_refresh() { _insights_run aggregate >/dev/null 2>&1; }
+# A cold run re-aggregates every session touched since the last scan — after a
+# week away that is thousands of transcripts and tens of seconds of silence,
+# which reads as a hang. Spin meanwhile (_spinner_start is a no-op off a TTY and
+# under --json, so pipes stay clean). `|| rc=$?`, not a bare call: under the
+# dispatcher's set -e a failing aggregate would exit before _spinner_stop and
+# leave the spinner drawing over the prompt.
+_insights_refresh() {
+  local rc=0
+  _spinner_start "insights cache"
+  _insights_run aggregate >/dev/null 2>&1 || rc=$?
+  _spinner_stop
+  return "$rc"
+}
 
 # Merge the per-session caches into one aggregated JSON.
 # Args: [days] [until_days]. `until_days` bounds the window from above

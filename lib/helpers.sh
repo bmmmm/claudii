@@ -259,9 +259,15 @@ _spinner_start() {
   fi
   _claudii_spinner &
   _SPINNER_PID=$!
+  # Without job control, bash starts background jobs with SIGINT ignored: Ctrl-C
+  # killed the command but left the spinner drawing over the prompt. Re-raise
+  # instead of `exit 130` (_spinner_stop resets the trap): a caller's shell loop
+  # aborts only on death-by-SIGINT, not on a plain exit status.
+  trap '_spinner_stop; kill -INT $$' INT
 }
 
 _spinner_stop() {
+  trap - INT
   if [[ -n "${_SPINNER_PID:-}" ]]; then
     kill "$_SPINNER_PID" 2>/dev/null
     wait "$_SPINNER_PID" 2>/dev/null || true

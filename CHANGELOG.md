@@ -12,6 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Fixed
 - **`tokens` and the other insight commands no longer exit silently (rc 138) when many sessions are new since the last refresh** — `claudii-insights aggregate` read each session's subagent list through `< <(_subagent_files)` inside `_cmd_aggregate`'s loop, and `/bin/bash` 3.2 closes a process-substitution fd opened inside a function only when the outermost function returns. One fd leaked per scanned session until bash corrupted its heap and died with SIGBUS/SIGABRT, taking the calling command down before it printed anything. `_subagent_files` now fills an array instead; open fds stay flat across the loop. `pin`/`unpin` had the same pattern once per `session-*` cache (failed with "Too many open files" under a low fd limit) and now reads `session_id` by command substitution. (`bin/claudii-insights`, `lib/cmd/sessions.sh`, `tests/test_pin_resume.sh`)
+- **`tokens` and the other insight commands show a spinner while the cache refreshes** — a cold `aggregate` re-reads every session touched since the last scan (46 s after a week away), and until now printed nothing at all in that time, so the command looked hung. Ctrl-C during any spinner (`cost`, `se`, …) also left it drawing over the prompt: without job control bash starts background jobs with SIGINT ignored. `_spinner_start` now traps INT, stops the spinner and re-raises SIGINT, so a calling shell loop still aborts. (`lib/cmd/insights.sh`, `lib/helpers.sh`)
 
 ---
 
