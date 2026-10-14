@@ -27,12 +27,17 @@
 # model. If a real platform ID ever does show up with a trailing suffix, widen
 # this tail rather than dropping it — the digit/dash exclusion is what stops a
 # hypothetical future "opus-5-50" or "opus-5-5-1" from misclassifying as 5.5.
+# Sonnet 5.5 (5% cache read) reuses that tail as "sonnet-5-5"; plain "sonnet"
+# stays Sonnet 5. Haiku 5.5 ($0.10/$0.50) follows the legacy pattern instead:
+# haiku-4* ids are "haiku-legacy" ($1/$5), any other haiku is the current rate.
 def tier($m):
   ($m // "" | ascii_downcase) as $l
   | if   ($l | test("(^|[^a-z])(fable|mythos)[- ]5($|[^0-9.-])")) then "fable-legacy"
     elif ($l | test("(^|[^a-z])(fable|mythos)([^a-z]|$)")) then "fable"
     elif ($l | test("(^|[^a-z])opus[- ]5[- ]5($|[^0-9.-])")) then "opus-5-5"
     elif ($l | test("(^|[^a-z])opus([^a-z]|$)"))           then "opus"
+    elif ($l | test("(^|[^a-z])haiku[- ]4([^0-9]|$)"))     then "haiku-legacy"
     elif ($l | test("(^|[^a-z])haiku([^a-z]|$)"))          then "haiku"
     elif ($l | test("sonnet[- ]4([^0-9]|$)"))              then "sonnet-legacy"
+    elif ($l | test("(^|[^a-z])sonnet[- ]5[- ]5($|[^0-9.-])")) then "sonnet-5-5"
     else "sonnet" end;

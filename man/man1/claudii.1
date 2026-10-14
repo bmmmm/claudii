@@ -671,10 +671,12 @@ from \(lqskill runs in fat sessions\(rq (cache_read-heavy).
 Costs are priced per model: each per-model token bucket
 .RB ( attribution_models ", "
 schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
-0.1\(mu input \(em except Opus 5.5, 0.05\(mu, and Fable 5.1, a flat $0.25/M
-\(em and cache_create 1.25\(mu input). Version-aware within a tier: Sonnet 4.x
-and Fable 5 keep their own older rates, and Opus 5.5 (now the default Opus)
-carries the newer, cheaper rate while older Opus ids keep the existing one.
+0.1\(mu input \(em except Opus 5.5 and Sonnet 5.5, 0.05\(mu, and Fable 5.1, a
+flat $0.25/M \(em and cache_create 1.25\(mu input). Version-aware within a tier:
+Sonnet 4.x, Haiku 4.x and Fable 5 keep their own older rates, and Opus 5.5 (now
+the default Opus) carries the newer, cheaper rate while older Opus ids keep the
+existing one. Haiku 5.5 is priced at its up-to-100K-prompt rate ($0.10/$0.50/M);
+its higher rate above 100K prompt tokens per request is not modeled.
 Pre-v5 / orphaned caches carry no
 per-model split \(em their residual tokens fall back to the flat Sonnet 4.x rate.
 .B meta.pricing
@@ -1304,8 +1306,8 @@ fill glyph (the level stays readable without colour), while
 .B context-bar
 spends ten on the block bar. The
 practical window is model-aware: flat-1M-billing models \(em opus, fable,
-mythos, and sonnet 5+ (incl.\& their 1M window) \(em end at 80%, while a
-legacy-sonnet model (4.6 and earlier) whose window exceeds ~244k (e.g.\&
+mythos, sonnet 5+ and sonnet 4.6 (incl.\& their 1M window) \(em end at 80%, while a
+legacy-sonnet model (4.5 and earlier) whose window exceeds ~244k (e.g.\&
 sonnet[1m]) ends at a 195k habit ceiling \(em so a 1M sonnet[1m] bar fills
 near 195k, not 800k. Sonnet 5, Fable, and Mythos ship 1M as their default
 window (no [1m] opt-in needed), so they get the same flat-rate treatment as
@@ -1317,12 +1319,12 @@ A
 marker is appended when the context exceeds 200k tokens on a model where that
 still means something, and it is
 .IR model-aware .
-Opus, Fable, Mythos, and Sonnet 5+ bill a flat rate across their entire 1M
+Opus, Fable, Mythos, Sonnet 5+ and Sonnet 4.6 bill a flat rate across their entire 1M
 window (no >200k long-context premium; Opus's real capacity edge is the ~780k
 compact point, not 200k), so Claude Code's
 .I exceeds_200k_tokens
 flag is a non-event there and no marker is shown at all. For a legacy-sonnet
-model (4.6 and earlier), crossing 200k still matters: on a native 1M window
+model (4.5 and earlier), crossing 200k still matters: on a native 1M window
 (e.g.\& sonnet[1m], a paid opt-in) it is the long-context pricing tier, shown
 as a yellow
 .BR >200k ;
@@ -1492,7 +1494,11 @@ for a system-prompt change,
 .B ttl
 for an expired prefix,
 .B server
-for a miss the API caused; several causes join with "+". The row shows it
+for a miss the API caused,
+.B model
+for a model switch,
+.B rewrite
+for rewritten messages; several causes join with "+". The row shows it
 exactly while the cached prefix is the one that miss produced: the next
 request, a hit, retires it. Cumulative counts land in the session cache
 .RI ( misses= ", " miss_causes= )

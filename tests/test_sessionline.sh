@@ -460,17 +460,22 @@ assert_eq "window marker: opus/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's
 assert_eq "window marker: opus never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 # Non-opus 200k-class window + exceeds_200k → genuine overflow → red >200k.
 # -F on the count: the needle's '[' is a literal SGR byte, not a regex bracket.
-_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":95,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-5"},"context_window":{"used_percentage":95,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "window marker: sonnet/200k overflow >200k is red" $'\033[0;31m>200k' "$_wm"
 # Non-opus native 1M window (sonnet[1m]) + exceeds_200k → pricing tier → yellow.
-_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":30,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+_wm=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-5[1m]"},"context_window":{"used_percentage":30,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_contains "window marker: sonnet[1m]/1M >200k is yellow" $'\033[0;33m>200k' "$_wm"
 assert_eq "window marker: sonnet[1m] not red" "0" "$(printf '%s' "$_wm" | grep -cF $'\033[0;31m>200k' || true)"
+# Sonnet 4.6 bills 1M flat (pricing doc: every model from 4.6 on except Haiku
+# 5.5) → no marker, unlike Sonnet 4.5 above.
+_wm=$(echo '{"model":{"display_name":"Sonnet 4.6","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":30,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
+  | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
+assert_eq "window marker: sonnet-4-6 never shows >200k" "0" "$(printf '%s' "$_wm" | grep -cF '>200k' || true)"
 # Sonnet 5 on its 1M window + exceeds_200k → no marker, NEVER >200k — same
 # flat-billing treatment as opus (1M is the default, no [1m] opt-in, confirmed
-# 2026-07-01), unlike Sonnet 4.6 and earlier above.
+# 2026-07-01), unlike Sonnet 4.5 and earlier above.
 _wm=$(echo '{"model":{"display_name":"Sonnet 5","id":"claude-sonnet-5"},"context_window":{"used_percentage":28,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":1.0},"exceeds_200k_tokens":true}' \
   | XDG_CONFIG_HOME="$_test_cfg_dir" bash "$SL" 2>/dev/null)
 assert_eq "window marker: sonnet-5/1M shows no 1M label" "0" "$(echo "$_wm" | sed 's/\x1b\[[0-9;]*m//g' | grep -c '1M' || true)"
@@ -582,6 +587,9 @@ assert_contains "cache-ttl: next request (hit) retires the cause" "♨6m" "$_pm"
 assert_not_contains "cache-ttl: retired cause is gone" "miss:" "$_pm"
 _pm=$(_pm_json $(( _pm_now + 530 )) 3 '{"causes":["system_prompt_changed","ttl_expired_5m"]}' | _pm_run)
 assert_contains "cache-ttl: multi-cause miss joins with +" "♨8m·miss:sysprompt+ttl" "$_pm"
+_pm_mcs=$(source "$CLAUDII_HOME/lib/helpers.sh"; _miss_cause_short "model_changed+ttl_expired_1h+messages_rewritten"; printf '%s' "$_MCS")
+assert_eq "miss cause: model_changed/messages_rewritten shorten" "model+ttl+rewrite" "$_pm_mcs"
+unset _pm_mcs
 _pm=$(_pm_json "$(( _pm_now + 650 )).5" 4 '{"causes":["likely_server_side","some_future_cause_name"]}' | _pm_run)
 assert_contains "cache-ttl: fractional expires_at still stamps; server + unknown clipped to 12" "♨10m·miss:server+some_future_" "$_pm"
 _pm=$(_pm_json $(( _pm_now + 770 )) 5 'null' | _pm_run)
@@ -1294,14 +1302,25 @@ output=$(echo '{"model":{"display_name":"Fable 5","id":"claude-fable-5"},"contex
 assert_contains "model-aware: fable-5/1M uses 96% scale (40%→41%)" "41%" "$output"
 output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: sonnet/200k uses 83% scale (40%→48%)" "48%" "$output"
+# Sonnet 4.6 bills flat but opens at 200k: with no context_window_size the
+# window is inferred as 200k (83% scale), not 1M — both by id and by name.
+output=$(echo '{"model":{"display_name":"Sonnet 4.6","id":"claude-sonnet-4-6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet-4-6 without window size infers 200k (40%→48%)" "48%" "$output"
+output=$(echo '{"model":{"display_name":"Sonnet 4.6"},"context_window":{"used_percentage":40,"total_input_tokens":1,"total_output_tokens":1},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: display name Sonnet 4.6 infers 200k (40%→48%)" "48%" "$output"
+# On its 1M window Sonnet 4.6 gets the full-window floor, not the 195k ceiling:
+# raw 20% → 20*100/96 = 20%, not the clamped 100% of a legacy sonnet[1m].
+output=$(echo '{"model":{"display_name":"Sonnet 4.6","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+assert_contains "model-aware: sonnet-4-6[1m] skips the 195k floor (20%→20%)" "20%" "$output"
+assert_not_contains "model-aware: sonnet-4-6[1m] does not read full" "100%" "$output"
 
 # The only changed case: a non-opus 1M window (sonnet[1m]) hits the 195k FLOOR,
 # so scale = 195000/1000000 = 19.5 → 19. The bar fills near 195k, not 800k.
 #   raw 5% (=50k of 1M) → 5*100/19 = 26% (still room; well before the floor)
-output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":5,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-5[1m]"},"context_window":{"used_percentage":5,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: sonnet[1m] raw 5% scales to 26%" "26%" "$output"
 #   raw 20% (=200k of 1M, past the 195k floor) → 20*100/19 = 105 → clamped 100%
-output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-6[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
+output=$(echo '{"model":{"display_name":"Sonnet","id":"claude-sonnet-4-5[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)
 assert_contains "model-aware: sonnet[1m] past 195k floor reads full (100%)" "100%" "$output"
 # Contrast: opus/1M at the same raw 20% is still early (20*100/96 = 20%).
 output=$(echo '{"model":{"display_name":"Opus","id":"claude-opus-4-8[1m]"},"context_window":{"used_percentage":20,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":1000000},"cost":{"total_cost_usd":0.1}}' | bash "$SL" 2>&1)

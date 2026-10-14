@@ -738,15 +738,17 @@ if [[ -n "$model" ]]; then
 fi
 
 # Flat-1M-billing check: true for model families with a native 1M window and
-# no >200k long-context premium — opus (all versions), fable/mythos (all
-# versions — same pricing/window per Anthropic's docs), and sonnet-5+ (unlike
-# sonnet-4.6 and earlier, where 1M is a paid [1m] opt-in with its own long-
-# context pricing tier). Matches model id or display name; add new flat-
+# no >200k long-context premium — per Anthropic's pricing doc every model from
+# 4.6 on except Haiku 5.5: opus (all versions), fable/mythos (all versions),
+# sonnet-5+ and sonnet-4.6. Sonnet 4.5 and earlier still bill 1M as a paid
+# [1m] opt-in with its own long-context tier; Haiku stays non-flat (the only
+# family with a per-request tier). Matches model id or display name; add new flat-
 # billing families/versions here (see "When a new Claude model ships" in
 # CLAUDE.md — same most-specific-first discipline as _insights_model_label()).
 _flat_1m_model() {
   case "$1" in
     *[Oo]pus*|*[Ff]able*|*[Mm]ythos*|*[Ss]onnet-5*|*[Ss]onnet\ 5*) return 0 ;;
+    *[Ss]onnet-4-6*|*[Ss]onnet\ 4.6*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -761,7 +763,7 @@ _flat_1m_model() {
 # compact point = min(window * 80%, FLOOR), with
 # FLOOR = the full window on flat-1M-billing models (_flat_1m_model — the
 # real auto-compact point wins) and 195k on every other model (a habit
-# ceiling — so a 1M sonnet-4.6[1m] window fills near 195k, not 967k, instead of
+# ceiling — so a 1M sonnet-4.5[1m] window fills near 195k, not 967k, instead of
 # reading "20%" while you're already past the compact point).
 # The auto-compact point itself is window − 33k: Claude Code reserves a 20k
 # output buffer and compacts 13k before that edge (measured in CC 2.1.198;
@@ -777,8 +779,14 @@ _flat_1m_model() {
 # default.
 _ac_win="${ctx_size%.*}"
 _ac_mid="${model_id:-$model}"
+# Flat billing is not a default window: Sonnet 4.6 bills 1M flat but still
+# opens at 200k unless [1m] is requested, so it infers 200k without the tag.
 if [[ ! "$_ac_win" =~ ^[0-9]+$ ]] || (( _ac_win < 1 )); then
-  if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi
+  case "$_ac_mid" in
+    *[Ss]onnet-4-6\[1m\]*) _ac_win=1000000 ;;
+    *[Ss]onnet-4-6*|*[Ss]onnet\ 4.6*) _ac_win=200000 ;;
+    *) if _flat_1m_model "$_ac_mid"; then _ac_win=1000000; else _ac_win=200000; fi ;;
+  esac
 fi
 if _flat_1m_model "$_ac_mid"; then _ac_floor=$_ac_win; else _ac_floor=195000; fi
 # Re-verify after CC v2.1.273 fixed advisor-tool turns being double-counted
@@ -830,9 +838,9 @@ if [[ -n "$ctx_pct" && "$ctx_pct" != "null" ]]; then
   # Window / pricing marker — model-aware (_flat_1m_model). Only the >200k
   # warning is rendered; the dim "1M" window label was dropped as pure noise
   # (it is a constant per model — it never tells you anything that changed).
-  # On Opus/Fable/Mythos/Sonnet-5+ the flat 1M rate makes Claude Code's
+  # On Opus/Fable/Mythos/Sonnet-4.6+ the flat 1M rate makes Claude Code's
   # exceeds_200k_tokens flag a non-event, so those models get no marker at all.
-  # For a legacy-sonnet model (4.6 and earlier) crossing 200k still means
+  # For a legacy-sonnet model (4.5 and earlier) crossing 200k still means
   # something — on a native 1M window (sonnet[1m], a paid opt-in) it is the
   # long-context pricing tier → informational yellow; on a 200k-class window it
   # is a genuine overflow of the standard window → red.

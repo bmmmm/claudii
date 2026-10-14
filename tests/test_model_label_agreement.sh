@@ -53,9 +53,11 @@ claude-opus-5-5|Opus 5.5|Opus|Opus|opus-5-5
 claude-opus-5|Opus 5|Opus|Opus|opus
 claude-opus-4-8|Opus 4.8|Opus|Opus|opus
 claude-opus-4-7|Opus 4.7|Opus|Opus|opus
+claude-sonnet-5-5|Sonnet 5.5|Sonnet|Sonnet|sonnet-5-5
 claude-sonnet-5|Sonnet 5|Sonnet|Sonnet|sonnet
 claude-sonnet-4-6|Sonnet 4.6|Sonnet|Sonnet|sonnet-legacy
-claude-haiku-4-5|Haiku 4.5|Haiku|Haiku|haiku
+claude-haiku-5-5|Haiku 5.5|Haiku|Haiku|haiku
+claude-haiku-4-5|Haiku 4.5|Haiku|Haiku|haiku-legacy
 claude-fable-5-1|Fable 5.1|Fable|Fable|fable
 claude-fable-5|Fable 5|Fable|Fable|fable-legacy
 claude-mythos-5|Fable|Fable|Fable|fable-legacy

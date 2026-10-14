@@ -162,7 +162,7 @@ _cmd_skills_cost() {
   # Per-token pricing (USD), per model tier. These are the only hardcoded rates
   # in claudii (`claudii cost` reads costUSD from history instead). Per MTok:
   # Opus $5/$25, Sonnet 5 $2/$10 (standard list price since CC v2.1.243 — not a
-  # promo), legacy Sonnet 4.x $3/$15, Haiku $1/$5, Fable $10/$50; cache_read =
+  # promo), legacy Sonnet 4.x $3/$15, Haiku 5.5 $0.10/$0.50 (4.x $1/$5), Fable $10/$50; cache_read =
   # 0.1× input, cache_create (5m TTL) = 1.25× input. On a tier price change,
   # update this table AND the tier mapping in lib/tier.jq (shared jq module).
   # Sonnet 5 is the first price change WITHIN a tier — "sonnet" is the current
@@ -174,6 +174,13 @@ _cmd_skills_cost() {
   # columns at once: $4/$20 (not $5/$25) AND a 5% cache read (not the usual
   # 10%) — cr = 0.0000002, not 0.1×in's 0.0000004. "opus" still prices every
   # older opus id (5/4.8/4.7/4.6); "opus-5-5" is the new, not the legacy, rate.
+  # Sonnet 5.5 is the fourth: $2/$10 like Sonnet 5, but a 5% cache read since
+  # 2026-10-07 — "sonnet-5-5" differs from "sonnet" in "cr" alone.
+  # Haiku 5.5 (CC 2.1.293, now the default Haiku) is the fifth: $0.10/$0.50,
+  # cache read $0.01, 5m write $0.125. "haiku" is the 5.5 rate and every
+  # haiku-4* id prices as "haiku-legacy" ($1/$5). Above 100K prompt tokens per
+  # request Haiku 5.5 bills $0.50/$2.50 (5× every column); that tier is NOT
+  # modeled here, so requests over 100K are estimated up to 5× low.
   #
   # tot_usd uses real per-model token attribution (schema v5, attribution_models).
   # Pre-v5 / orphaned caches carry no per-model token split; their residual
@@ -185,7 +192,9 @@ _cmd_skills_cost() {
     "opus-5-5": {"in":0.000004, "out":0.00002, "cr":0.0000002, "cc":0.000005},
     "sonnet": {"in":0.000002, "out":0.00001,  "cr":0.0000002, "cc":0.0000025},
     "sonnet-legacy": {"in":0.000003, "out":0.000015, "cr":0.0000003, "cc":0.00000375},
-    "haiku":  {"in":0.000001, "out":0.000005, "cr":0.0000001, "cc":0.00000125},
+    "sonnet-5-5": {"in":0.000002, "out":0.00001, "cr":0.0000001, "cc":0.0000025},
+    "haiku":  {"in":0.0000001, "out":0.0000005, "cr":0.00000001, "cc":0.000000125},
+    "haiku-legacy":  {"in":0.000001, "out":0.000005, "cr":0.0000001, "cc":0.00000125},
     "fable":  {"in":0.00001,  "out":0.00005,  "cr":0.00000025, "cc":0.0000125},
     "fable-legacy":  {"in":0.00001, "out":0.00005, "cr":0.000001, "cc":0.0000125}
   }'
@@ -314,7 +323,7 @@ _cmd_skills_cost() {
     local _meta
     _meta=$(jq -n --arg med "$_median_avg" --arg d "$days" --arg mc "$_outlier_min_calls" \
       '{median_avg_usd:($med|tonumber),days:($d|tonumber),outlier_rule:("avg >= 2x median, calls >= " + $mc),
-        pricing:"per-model rates from schema-v5 token attribution (Opus 5.5 $4/$20/M, older Opus $5/$25/M, Sonnet 5 $2/$10/M, Sonnet 4.x $3/$15/M, Haiku $1/$5/M, Fable $10/$50/M; cache_read 0.1x input, except Opus 5.5 at 0.05x and Fable 5.1 at a flat $0.25/M; cache_create 1.25x input). Pre-v5 / orphaned caches lack the per-model token split; their residual tokens are priced at the flat Sonnet 4.x rate"}')
+        pricing:"per-model rates from schema-v5 token attribution (Opus 5.5 $4/$20/M, older Opus $5/$25/M, Sonnet 5 $2/$10/M, Sonnet 4.x $3/$15/M, Haiku 5.5 $0.10/$0.50/M (up-to-100K tier), Haiku 4.x $1/$5/M, Fable $10/$50/M; cache_read 0.1x input, except Opus 5.5 and Sonnet 5.5 at 0.05x and Fable 5.1 at a flat $0.25/M; cache_create 1.25x input). Pre-v5 / orphaned caches lack the per-model token split; their residual tokens are priced at the flat Sonnet 4.x rate"}')
     printf '%s\n' "{\"rows\":${_json_rows},\"meta\":${_meta}}"
     return 0
   fi

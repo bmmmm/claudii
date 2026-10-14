@@ -483,6 +483,8 @@ _miss_cause_short() {
       system_prompt_changed)  _one="sysprompt" ;;
       ttl_expired*)           _one="ttl" ;;
       likely_server_side)     _one="server" ;;
+      model_changed)          _one="model" ;;
+      messages_rewritten)     _one="rewrite" ;;
       *)                      _one="${_one:0:12}" ;;
     esac
     _MCS="${_MCS:+$_MCS+}$_one"

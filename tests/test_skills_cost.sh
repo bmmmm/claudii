@@ -286,7 +286,7 @@ assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
 
 # ── Test 11: per-model pricing (schema v5) — every tier at its own rate ───────
 # Each skill runs 1M input tokens on exactly one model. Priced at that model's
-# own input rate (Opus $5/M, Sonnet 5 $2/M, legacy Sonnet 4.x $3/M, Haiku $1/M,
+# own input rate (Opus $5/M, Sonnet 5 $2/M, legacy Sonnet 4.x $3/M, Haiku 4.x $1/M,
 # Fable $10/M), 1M tokens costs exactly the per-MTok price. The 4.6-vs-5 pair
 # pins the version-aware sonnet split in lib/tier.jq (first in-tier price
 # change). attribution_models carries the v5 per-model token objects;
@@ -304,9 +304,9 @@ assert_eq "skills-cost --json: split model is mixed" "mixed" "$_sc_model_mix"
 _SC_PM_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_PM_CACHE")
 mkdir -p "$_SC_PM_CACHE/insights"
 _sc_write_fixture "$_SC_PM_CACHE/insights/sess-pm.json" \
-  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opuscr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opus55out-skill":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"opus55cc-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet5-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable51cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"fablecr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}' \
+  '{"opus-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"opus55cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opuscr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"opus55out-skill":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"opus55cc-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"sonnet-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"sonnet5-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"fable51cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"fablecr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"haiku55-skill":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"haiku55cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"sonnet55cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"sonnet5cr-skill":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}' \
   '{}' '{}' \
-  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55-skill|claude-opus-5-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55cr-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opuscr-skill|claude-opus-4-8":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opus55out-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"skill|opus55cc-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet5-skill|claude-sonnet-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable51cr-skill|claude-fable-5-1":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|fablecr-skill|claude-fable-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}'
+  '{"skill|opus-skill|claude-opus-4-8":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55-skill|claude-opus-5-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|opus55cr-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opuscr-skill|claude-opus-4-8":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|opus55out-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":1000000,"cache_read":0,"cache_create":0},"skill|opus55cc-skill|claude-opus-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000},"skill|sonnet-skill|claude-sonnet-4-6":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|sonnet5-skill|claude-sonnet-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku-skill|claude-haiku-4-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable-skill|claude-fable-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|fable51cr-skill|claude-fable-5-1":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|fablecr-skill|claude-fable-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|haiku55-skill|claude-haiku-5-5":{"calls":1,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|haiku55cr-skill|claude-haiku-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|sonnet55cr-skill|claude-sonnet-5-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0},"skill|sonnet5cr-skill|claude-sonnet-5":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":1000000,"cache_create":0}}'
 
 _sc_pm_json=$(CLAUDII_CACHE_DIR="$_SC_PM_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
@@ -321,7 +321,7 @@ assert_eq "skills-cost per-model: opus-skill priced at \$5/M"   "5.00"  "$(LC_AL
 assert_eq "skills-cost per-model: opus-5-5 priced at \$4/M"     "4.00"  "$(LC_ALL=C awk -v v="$_sc_pm_opus55" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: sonnet-4-6 priced at legacy \$3/M" "3.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: sonnet-5 priced at \$2/M" "2.00"  "$(LC_ALL=C awk -v v="$_sc_pm_sonnet5" 'BEGIN{printf "%.2f", v}')"
-assert_eq "skills-cost per-model: haiku-skill priced at \$1/M"  "1.00"  "$(LC_ALL=C awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: haiku-4-5 priced at legacy \$1/M"  "1.00"  "$(LC_ALL=C awk -v v="$_sc_pm_haiku"  'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: fable-skill priced at \$10/M" "10.00" "$(LC_ALL=C awk -v v="$_sc_pm_fable"  'BEGIN{printf "%.2f", v}')"
 # 1M cache-read tokens → the tier's cache-read price, which is where Fable 5.1
 # and Fable 5 diverge (rounded to cents: $0.25 vs $1.00), and separately where
@@ -341,6 +341,17 @@ _sc_pm_o55out=$(jq -r '.rows[] | select(.name=="opus55out-skill") | .tot_usd' <<
 _sc_pm_o55cc=$(jq -r '.rows[] | select(.name=="opus55cc-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
 assert_eq "skills-cost per-model: opus-5-5 output at \$20/M" "20.00" "$(LC_ALL=C awk -v v="$_sc_pm_o55out" 'BEGIN{printf "%.2f", v}')"
 assert_eq "skills-cost per-model: opus-5-5 cache create at \$5/M" "5.00" "$(LC_ALL=C awk -v v="$_sc_pm_o55cc" 'BEGIN{printf "%.2f", v}')"
+# Haiku 5.5 ($0.10/M in, $0.01/M cache read) vs Haiku 4.5 above ($1/M), and
+# Sonnet 5.5's 5% cache read ($0.10/M) vs Sonnet 5's 10% ($0.20/M). %.3f on
+# the haiku cache read: at cents it would collapse $0.01 vs a stale $0.10.
+_sc_pm_h55=$(jq -r '.rows[] | select(.name=="haiku55-skill")    | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_h55cr=$(jq -r '.rows[] | select(.name=="haiku55cr-skill")  | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_s55cr=$(jq -r '.rows[] | select(.name=="sonnet55cr-skill") | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+_sc_pm_s5cr=$(jq -r '.rows[] | select(.name=="sonnet5cr-skill")   | .tot_usd' <<< "$_sc_pm_json" 2>/dev/null)
+assert_eq "skills-cost per-model: haiku-5-5 priced at \$0.10/M" "0.100" "$(LC_ALL=C awk -v v="$_sc_pm_h55" 'BEGIN{printf "%.3f", v}')"
+assert_eq "skills-cost per-model: haiku-5-5 cache read at \$0.01/M" "0.010" "$(LC_ALL=C awk -v v="$_sc_pm_h55cr" 'BEGIN{printf "%.3f", v}')"
+assert_eq "skills-cost per-model: sonnet-5-5 cache read at \$0.10/M" "0.10" "$(LC_ALL=C awk -v v="$_sc_pm_s55cr" 'BEGIN{printf "%.2f", v}')"
+assert_eq "skills-cost per-model: sonnet-5 cache read at \$0.20/M" "0.20" "$(LC_ALL=C awk -v v="$_sc_pm_s5cr" 'BEGIN{printf "%.2f", v}')"
 
 # ── Test 12: residual pricing — pre-v5 tokens (no per-model split) → Sonnet ───
 # Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
@@ -443,7 +454,7 @@ assert_contains "skills-cost --days (no value): exit 2" "rc=2" "$_sc_d_nout"
 unset _sc_cmp_noarg _sc_cmp_narc _sc_d_nout
 
 unset _sc_cmp_now _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
-unset _sc_pm_json _sc_pm_opus _sc_pm_opus55 _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_pm_o55cr _sc_pm_ocr _sc_pm_o55out _sc_pm_o55cc _sc_res_json _sc_res_tot
+unset _sc_pm_json _sc_pm_opus _sc_pm_opus55 _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_pm_o55cr _sc_pm_ocr _sc_pm_o55out _sc_pm_o55cc _sc_pm_h55 _sc_pm_h55cr _sc_pm_s55cr _sc_pm_s5cr _sc_res_json _sc_res_tot
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc _sc_d_narc \
