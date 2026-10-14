@@ -358,6 +358,12 @@ _cache_get() {
 _rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && { _cache_get rate_7d_start "$rate_7d"; _rate_7d_start="$_CG"; }
 _rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && { _cache_get rate_5h_start "$rate_5h"; _rate_5h_start="$_CG"; }
 _cache_get last_duration_ms ""; _last_duration_ms="$_CG"
+# idle-compact animation frame: flips on every render (statusLine.refreshInterval
+# re-renders while idle), persisted so the blink alternates at any interval.
+_ic_frame=""
+if _in_layout idle-compact; then
+  _cache_get ic_frame "0"; [[ "$_CG" == 1 ]] && _ic_frame=0 || _ic_frame=1
+fi
 
 # Compaction counter — no compaction signal exists in the statusline JSON, so
 # detect the footprint: context usage collapsing between renders of the SAME
@@ -386,18 +392,39 @@ _last_ctx_store=""
 # skipped rather than fed in: the window shrank, your burn rate did not change.
 # A zero delta over a long gap IS fed in, so an idle session decays toward 0
 # instead of keeping a stale rate from an hour ago. Alpha 1/3.
+# The sample is measured from its own baseline (cr_base_ms= / cr_base_pct= /
+# cr_base_api=), which moves only when a sample is taken or the context shrank
+# — not on every render. A render that brings no new information (context and
+# cumulative API time unchanged — a statusLine.refreshInterval re-run while you
+# read) keeps the baseline and feeds nothing: the idle gap becomes ONE sample
+# at the next real event, exactly as without a refresh interval. Overwriting
+# the baseline per render would never yield a sample at a 5 s cadence, and
+# sampling every re-run would decay the rate every 15 s of reading.
+# A cache from before these keys falls back to last_duration_ms/last_ctx_pct.
 _cache_get ctx_rate ""; _ctx_rate="$_CG"
 [[ "$_ctx_rate" =~ ^[0-9]+$ ]] || _ctx_rate=""
-if [[ "$_last_ctx_pct" =~ ^[0-9]+$ && "$_last_ctx_store" =~ ^[0-9]+$ \
-      && "$_last_duration_ms" =~ ^[0-9]+$ && "${duration_ms%.*}" =~ ^[0-9]+$ ]]; then
-  _cr_dt=$(( ${duration_ms%.*} - _last_duration_ms ))
-  _cr_dp=$(( _last_ctx_store - _last_ctx_pct ))
-  if (( _cr_dt >= 15000 && _cr_dp >= 0 )); then
+_cache_get cr_base_ms "$_last_duration_ms"; _cr_base_ms="$_CG"
+_cache_get cr_base_pct "$_last_ctx_pct";    _cr_base_pct="$_CG"
+_cache_get cr_base_api "";                  _cr_base_api="$_CG"
+_cr_move=1
+if [[ "$_cr_base_pct" =~ ^[0-9]+$ && "$_last_ctx_store" =~ ^[0-9]+$ \
+      && "$_cr_base_ms" =~ ^[0-9]+$ && "${duration_ms%.*}" =~ ^[0-9]+$ ]]; then
+  _cr_dt=$(( ${duration_ms%.*} - _cr_base_ms ))
+  _cr_dp=$(( _last_ctx_store - _cr_base_pct ))
+  if (( _cr_dt >= 0 && _cr_dp == 0 )) && [[ "${api_duration_ms%.*}" =~ ^[0-9]+$ \
+        && "${api_duration_ms%.*}" == "$_cr_base_api" ]]; then
+    _cr_move=0   # nothing happened since the baseline: no sample, keep it
+  elif (( _cr_dt >= 15000 && _cr_dp >= 0 )); then
     _cr_inst=$(( _cr_dp * 60000000 / _cr_dt ))
     if [[ -n "$_ctx_rate" ]]; then _ctx_rate=$(( (_ctx_rate * 2 + _cr_inst) / 3 ))
     else                           _ctx_rate=$_cr_inst
     fi
+  elif (( _cr_dt >= 0 && _cr_dp >= 0 )); then
+    _cr_move=0   # too short to measure yet: keep the baseline
   fi
+fi
+if (( _cr_move )); then
+  _cr_base_ms="${duration_ms%.*}"; _cr_base_pct="$_last_ctx_store"; _cr_base_api="${api_duration_ms%.*}"
 fi
 
 # Last-response latency — the delta of the cumulative API duration between two
@@ -694,6 +721,20 @@ if [[ -f "$_session_file" ]]; then
     fi
   done
 fi
+# Flight-recorder dedup: the row (every column but the timestamp) is built
+# once and doubles as the signature; a render that would repeat this
+# session's previous row is skipped. statusLine.refreshInterval re-renders an
+# idle session every few seconds, which would otherwise append ~720 identical
+# rows an hour. History consumers attribute per-session deltas between rows,
+# so a skipped duplicate changes no total, and no idle rows means an idle
+# session does not count as active on the days it merely stayed open.
+printf -v _hist_row '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
+  "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
+  "$rate_7d" "$reset_7d"
+_hist_sig="${_hist_row//$'\t'/|}"
+_cache_get hist_sig ""
+_hist_write=1; [[ "$_hist_sig" == "$_CG" ]] && _hist_write=0
 _tmp_session="${_session_file}.tmp.$$"
 { printf '%s\n' \
   "model=$model" "ctx_pct=$ctx_pct" "cost=$cost" \
@@ -713,6 +754,9 @@ _tmp_session="${_session_file}.tmp.$$"
   "rate_5h_start=$_rate_5h_start" \
   "last_duration_ms=$duration_ms" \
   "last_ctx_pct=$_last_ctx_store" \
+  "cr_base_ms=$_cr_base_ms" \
+  "cr_base_pct=$_cr_base_pct" \
+  "cr_base_api=$_cr_base_api" \
   "ctx_rate=$_ctx_rate" \
   "last_api_duration_ms=$api_duration_ms" \
   "last_api_delta=$_api_delta" \
@@ -725,6 +769,8 @@ _tmp_session="${_session_file}.tmp.$$"
   [[ -n "$_miss_exp" ]]             && printf 'miss_exp=%s\n'      "$_miss_exp"
   [[ -n "$_cc_settings" ]]          && printf 'cc_settings=%s\n'   "$_cc_settings"
   [[ -n "$_cc_sources" ]]           && printf 'cc_setting_sources=%s\n' "$_cc_sources"
+  [[ -n "$_ic_frame" ]]             && printf 'ic_frame=%s\n'      "$_ic_frame"
+  printf 'hist_sig=%s\n' "$_hist_sig"
   [[ -n "$pc_miss_causes" ]]        && printf 'miss_causes=%s\n'   "$pc_miss_causes"
   [[ -n "$_cached_pinned" ]]        && printf 'pinned=%s\n'        "$_cached_pinned"
   [[ -n "$_cached_next_cron_at" ]]  && printf 'next_cron_at=%s\n'  "$_cached_next_cron_at"
@@ -736,11 +782,7 @@ _tmp_session="${_session_file}.tmp.$$"
 # read further up, where the api window needs the clock first.)
 _history_file="$_cache_dir/history-${_date_ym}.tsv"
 [[ -f "$_history_file" ]] || { touch "$_history_file"; chmod 0600 "$_history_file"; }
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$_now" "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
-  "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
-  "$rate_7d" "$reset_7d" \
-  >> "$_history_file" 2>/dev/null || true
+(( _hist_write )) && printf '%s\t%s\n' "$_now" "$_hist_row" >> "$_history_file" 2>/dev/null || true
 
 _claudii_log debug "input: ${json:0:200}"
 _claudii_log debug "parsed: model=${model} ctx=${ctx_pct} cost=${cost} in=${input_tok} out=${output_tok} 5h=${rate_5h} 7d=${rate_7d} dur=${duration_ms} +${lines_add} -${lines_rm} win=${ctx_size} sid=${session_id:0:8} r5h=${reset_5h} r7d=${reset_7d} cache_r=${cache_read} cache_c=${cache_create} wt=${worktree_name} agent=${agent_name} model_id=${model_id}"
@@ -1084,7 +1126,7 @@ fi
 # Layout-gated; one jq fork (every file passed as --rawfile, parsed per
 # file; an MDM plist arrives on stdin through one plutil fork).
 _ic_truthy() { case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;; esac; return 1; }
-_seg_idle_compact=""
+_seg_idle_compact=""; _ic_kind=""; _ic_target=""; _ic_total=""
 _ic_r5=${rate_5h%.*}; _ic_r7=${rate_7d%.*}
 [[ "$_ic_r5" =~ ^[0-9]+$ ]] || _ic_r5=0; [[ "$_ic_r7" =~ ^[0-9]+$ ]] || _ic_r7=0
 if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true" \
@@ -1210,9 +1252,55 @@ if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true"
       # pc_ttl_left > offset: the time is still ahead — a late re-render must
       # not print one that already passed.
       if (( ctx_tokens >= _ic_min && pc_ttl_left > _ic_off )); then
-        _fmt_abs $(( ${pc_expires%.*} - _ic_off )) '%H:%M'
-        [[ -n "$_ABS_FMT" ]] && _seg_idle_compact="${DIM}⇲idle ${_ABS_FMT}${RST}"
+        _ic_kind=idle
+        _ic_target=$(( ${pc_expires%.*} - _ic_off )); _ic_total=$(( 3600 - _ic_off ))
       fi
+    fi
+  fi
+fi
+# Not compacting (flag off, too small, switched off, rate limit, 5m TTL…):
+# what happens when you stay away is the cache going cold — the next request
+# then re-caches the whole context. Same segment, ♨ instead of ⇲.
+# Skipped when cache-ttl is in the layout: that segment already counts down to
+# the same moment, and two signals for one event would disagree on urgency.
+if [[ -z "$_ic_kind" ]] && _in_layout idle-compact && ! _in_layout cache-ttl \
+   && [[ "$pc_warm" == "true" && "${pc_expires%.*}" =~ ^[0-9]+$ && "$pc_ttl_left" =~ ^[0-9]+$ ]] \
+   && (( pc_ttl_left > 0 )); then
+  _ic_kind=cold; _ic_target=${pc_expires%.*}
+  case "$pc_cache_ttl" in
+    5m) _ic_total=300 ;;
+    1h) _ic_total=3600 ;;
+    *)  if (( pc_ttl_left <= 300 )); then _ic_total=300; else _ic_total=3600; fi ;;
+  esac
+fi
+# Render: a glyph that fills from the last request toward the event, the clock
+# time of the event, and the time left. Colour follows the share of the wait
+# that has passed (scale-free: a 5-minute cache is not red from the start):
+# dim < 50%, white < 75%, yellow < 90%, then red and blinking (glyph and colour
+# alternate per render). With statusLine.refreshInterval set, every re-render
+# is a frame; without it the segment is a still taken at the last event.
+if [[ -n "$_ic_kind" ]]; then
+  _ic_left=$(( pc_ttl_left - ${pc_expires%.*} + _ic_target ))
+  if (( _ic_left > 0 && _ic_total > 0 )); then
+    _ic_pct=$(( (_ic_total - _ic_left) * 100 / _ic_total ))
+    (( _ic_pct < 0 )) && _ic_pct=0
+    if   (( _ic_pct < 20 )); then _ic_g="○"
+    elif (( _ic_pct < 40 )); then _ic_g="◔"
+    elif (( _ic_pct < 60 )); then _ic_g="◑"
+    elif (( _ic_pct < 80 )); then _ic_g="◕"
+    else                          _ic_g="●"
+    fi
+    if   (( _ic_pct < 50 )); then _ic_c="$DIM"
+    elif (( _ic_pct < 75 )); then _ic_c="$WHITE"
+    elif (( _ic_pct < 90 )); then _ic_c="$YELLOW"
+    elif [[ "$_ic_frame" == 1 ]]; then _ic_c="$YELLOW"; _ic_g="◕"
+    else                              _ic_c="$RED"
+    fi
+    _fmt_abs "$_ic_target" '%H:%M'; _ic_at="$_ABS_FMT"
+    _fmt_rel "$_ic_left"; _ic_rel="$_REL_FMT"
+    if [[ -n "$_ic_at" ]]; then
+      if [[ "$_ic_kind" == idle ]]; then _ic_s="⇲${_ic_g} idle"; else _ic_s="♨${_ic_g} cold"; fi
+      _seg_idle_compact="${_ic_c}${_ic_s} ${_ic_at}${_ic_rel:+ · $_ic_rel}${RST}"
     fi
   fi
 fi

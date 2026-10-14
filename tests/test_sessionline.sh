@@ -614,6 +614,57 @@ assert_contains "se: misses render count + top cause" "1K tok ⚡84% 3 miss·too
 assert_eq "se: zero/absent misses stay silent" "1" "$(printf '%s\n' "$_pm_seg" | grep -c 'miss' || true)"
 unset -f _pm_json _pm_run; unset _pm _pm_cache _pm_now _pm_file _pm_seg
 
+# ── statusLine.refreshInterval safety: renders every few seconds ────────────
+# compact-eta's rate must still be measured (its baseline only moves when a
+# sample is taken), and an idle session must not flood the flight recorder.
+_rf_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_rf_cfg")
+mkdir -p "$_rf_cfg/claudii" "$_rf_cfg/cache"
+printf '{"statusline":{"lines":[["context","compact-eta"]]}}\n' > "$_rf_cfg/claudii/config.json"
+_rf() {  # duration_ms ctx_pct cost
+  printf '{"session_id":"refresh1-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":%s,"context_window_size":1000000},"cost":{"total_duration_ms":%s,"total_cost_usd":%s}}' "$2" "$1" "$3" \
+    | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
+}
+for _rf_i in 0 1 2 3 4; do _rf $(( _rf_i * 5000 )) $(( 10 + _rf_i * 2 )) 1.0; done
+assert_contains "refresh: a 5 s render cadence still measures the context rate" "ctx_rate=" \
+  "$(grep '^ctx_rate=[0-9]' "$_rf_cfg/cache/session-refresh1" 2>/dev/null)"
+_rf3() {  # duration_ms ctx_pct api_ms
+  printf '{"session_id":"refresh3-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":%s,"context_window_size":1000000},"cost":{"total_duration_ms":%s,"total_api_duration_ms":%s,"total_cost_usd":1.0}}' "$2" "$1" "$3" \
+    | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
+}
+_rf3 0 10 1000; _rf3 20000 20 2000
+_rf_rate=$(grep '^ctx_rate=' "$_rf_cfg/cache/session-refresh3" | cut -d= -f2)
+for _rf_i in 1 2 3 4 5 6 7 8 9 10 11 12; do _rf3 $(( 20000 + _rf_i * 5000 )) 20 2000; done
+assert_eq "refresh: idle re-runs (nothing changed) leave the context rate alone" "$_rf_rate" \
+  "$(grep '^ctx_rate=' "$_rf_cfg/cache/session-refresh3" | cut -d= -f2)"
+_rf3 100000 30 3000
+# One sample over the whole 80 s since the last real event (10 points):
+# 10 * 60000000 / 80000 = 7500, blended 2:1 with the previous rate.
+assert_eq "refresh: the idle gap counts once, measured over its full length" \
+  "$(( (_rf_rate * 2 + 7500) / 3 ))" \
+  "$(grep '^ctx_rate=' "$_rf_cfg/cache/session-refresh3" | cut -d= -f2)"
+unset -f _rf3; unset _rf_rate
+_rf_hist() { cat "$_rf_cfg/cache"/history-*.tsv 2>/dev/null | awk -F'\t' '$6=="refresh2-0000"' | wc -l | tr -d ' '; }
+_rf2() {  # cost
+  printf '{"session_id":"refresh2-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":1000000},"cost":{"total_duration_ms":1000,"total_cost_usd":%s}}' "$1" \
+    | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
+}
+_rf2 1.0; _rf2 1.0; _rf2 1.0
+assert_eq "refresh: identical renders write one history row" "1" "$(_rf_hist)"
+_rf2 1.5
+assert_eq "refresh: a changed row is written at once" "2" "$(_rf_hist)"
+_rf2 1.5
+assert_eq "refresh: an identical row stays skipped (no idle heartbeat)" "2" "$(_rf_hist)"
+# The signature is the row itself, so every column counts — pin two that are
+# not the cost: the 7d quota (week boundaries) and output tokens.
+printf '{"session_id":"refresh2-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":1000000},"cost":{"total_duration_ms":1000,"total_cost_usd":1.5},"rate_limits":{"seven_day":{"used_percentage":41,"resets_at":1999999999}}}' \
+  | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
+assert_eq "refresh: a 7d quota change alone writes a row" "3" "$(_rf_hist)"
+printf '{"session_id":"refresh2-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":1000000,"total_output_tokens":77},"cost":{"total_duration_ms":1000,"total_cost_usd":1.5},"rate_limits":{"seven_day":{"used_percentage":41,"resets_at":1999999999}}}' \
+  | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
+assert_eq "refresh: an output-token change alone writes a row" "4" "$(_rf_hist)"
+assert_contains "refresh: the written row carries every column" $'\t41\t1999999999' "$(tail -1 "$_rf_cfg/cache"/history-*.tsv)"
+unset -f _rf _rf2 _rf_hist; unset _rf_cfg _rf_i
+
 # ── idle-compact: CC 2.1.290+ compacts a 1h-TTL conversation >= 200K tokens
 # at fireAtFraction (0.9) of the cache lifetime, i.e. expires_at − 6 min, but
 # only while the cached GrowthBook flag tengu_sunny_locket says "compact" ─────
@@ -642,99 +693,99 @@ _ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at] [5h used
 _ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CC_CMDLINE="" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
 _ic_global
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: 1h TTL over 200K shows expires_at − 6 min" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 1h TTL over 200K shows expires_at − 6 min" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 199989 true | _ic_run)
-assert_not_contains "idle-compact: 199999 tokens (one under 200K) stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: 199999 tokens (one under 200K) shows no compaction" "idle" "$_ic"
 _ic=$(_ic_json 1h 199990 true | _ic_run)
-assert_contains "idle-compact: exactly 200000 tokens shows" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: exactly 200000 tokens shows" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 5m 250000 true | _ic_run)
-assert_not_contains "idle-compact: 5m TTL stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: 5m TTL shows no compaction" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 false | _ic_run)
-assert_not_contains "idle-compact: cold cache stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: cold cache shows no compaction" "idle" "$_ic"
 _ic=$(_ic_json 1h 195000 true 9000 | _ic_run)
-assert_contains "idle-compact: output tokens count toward the context" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: output tokens count toward the context" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run)
 assert_not_contains "idle-compact: a time already passed is not shown" "idle" "$_ic"
 # The feature flag gates everything: absent, "log" (dry run) and "off" are off.
 rm -f "$_ic_cfg/cc/.claude.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: no .claude.json (no flag cache) stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: no .claude.json (no flag cache) shows no compaction" "idle" "$_ic"
 _ic_global 'null'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: absent flag stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: absent flag shows no compaction" "idle" "$_ic"
 _ic_global '{"mode":"log"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: flag mode log (dry run) stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: flag mode log (dry run) shows no compaction" "idle" "$_ic"
 _ic_global '{"mode":"off"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: flag mode off stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: flag mode off shows no compaction" "idle" "$_ic"
 _ic_global '{"mode":"compact_on_return"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: flag mode compact_on_return (CC 2.1.300) shows too" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: flag mode compact_on_return (CC 2.1.300) shows too" " idle $_ic_want" "$_ic"
 _ic_global '{"mode":"compact","fireAtFraction":0.5}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: flag fireAtFraction moves the time" "⇲idle $(_ic_at 1800)" "$_ic"
+assert_contains "idle-compact: flag fireAtFraction moves the time" " idle $(_ic_at 1800)" "$_ic"
 _ic_global '{"mode":"compact","fireAtFraction":0.99}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: fireAtFraction is clamped to 0.95" "⇲idle $(_ic_at 180)" "$_ic"
+assert_contains "idle-compact: fireAtFraction is clamped to 0.95" " idle $(_ic_at 180)" "$_ic"
 _ic_global '{"mode":"compact","fireAtFraction":0.1}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: fireAtFraction is clamped to 0.5" "⇲idle $(_ic_at 1800)" "$_ic"
+assert_contains "idle-compact: fireAtFraction is clamped to 0.5" " idle $(_ic_at 1800)" "$_ic"
 # Threshold: env, else the flag's minTokens, else 200000; floor 100000.
 _ic_global '{"mode":"compact","minTokens":150000}'
 _ic=$(_ic_json 1h 160000 true | _ic_run)
-assert_contains "idle-compact: flag minTokens lowers the bar" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: flag minTokens lowers the bar" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=170000)
 assert_not_contains "idle-compact: env threshold beats the flag" "idle" "$_ic"
 _ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
-assert_contains "idle-compact: invalid env threshold is ignored (flag applies)" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: invalid env threshold is ignored (flag applies)" " idle $_ic_want" "$_ic"
 _ic_global '{"mode":"compact","minTokens":-5}'
 _ic=$(_ic_json 1h 150000 true | _ic_run)
-assert_contains "idle-compact: a negative flag minTokens is raised to 100K, not dropped" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: a negative flag minTokens is raised to 100K, not dropped" " idle $_ic_want" "$_ic"
 _ic_global '{"mode":"compact","minTokens":150010.5}'
 _ic=$(_ic_json 1h 150000 true | _ic_run)
 assert_not_contains "idle-compact: a fractional flag minTokens is not rounded down" "idle" "$_ic"
 _ic_global
 _ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120000)
-assert_contains "idle-compact: env threshold lowers the bar" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: env threshold lowers the bar" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 99989 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1000)
 assert_not_contains "idle-compact: env threshold is floored at 100K (99999 silent)" "idle" "$_ic"
 _ic=$(_ic_json 1h 99990 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1000)
-assert_contains "idle-compact: env threshold floor is inclusive (100000 shows)" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: env threshold floor is inclusive (100000 shows)" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
-assert_contains "idle-compact: invalid env threshold falls back to 200K" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: invalid env threshold falls back to 200K" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=0300000)
 assert_not_contains "idle-compact: leading-zero threshold parses as decimal" "idle" "$_ic"
 # Env off-switches.
 _ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=1)
-assert_not_contains "idle-compact: DISABLE_AUTO_COMPACT turns it off" "idle" "$_ic"
+assert_not_contains "idle-compact: DISABLE_AUTO_COMPACT turns compaction off" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=false)
-assert_contains "idle-compact: DISABLE_AUTO_COMPACT=false is not truthy" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: DISABLE_AUTO_COMPACT=false is not truthy" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_COMPACT=true)
-assert_not_contains "idle-compact: DISABLE_COMPACT turns it off" "idle" "$_ic"
+assert_not_contains "idle-compact: DISABLE_COMPACT turns compaction off" "idle" "$_ic"
 # Rate limit: CC skips the fire unless the status is "allowed".
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 100 | _ic_run)
-assert_not_contains "idle-compact: a reached rate limit (CC skips: near_limit) stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: a reached rate limit (CC skips: near_limit) shows no compaction" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 100 | sed 's/"five_hour"/"seven_day"/' | _ic_run)
-assert_not_contains "idle-compact: a reached 7d limit stays silent too" "idle" "$_ic"
+assert_not_contains "idle-compact: a reached 7d limit shows no compaction too" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 99.5 | _ic_run)
-assert_contains "idle-compact: below the limit still shows" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: below the limit still shows" " idle $_ic_want" "$_ic"
 # Legacy autoCompactEnabled in .claude.json — the only key read from there.
 _ic_global '' ',"idleCompaction":false'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: .claude.json carries only the legacy autoCompactEnabled" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: .claude.json carries only the legacy autoCompactEnabled" " idle $_ic_want" "$_ic"
 _ic_global '' ',"autoCompactEnabled":false'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: legacy autoCompactEnabled:false in .claude.json turns it off" "idle" "$_ic"
+assert_not_contains "idle-compact: legacy autoCompactEnabled:false in .claude.json turns compaction off" "idle" "$_ic"
 printf '{"autoCompactEnabled":true}' > "$_ic_cfg/cc/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: a settings file overrides the legacy .claude.json value" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: a settings file overrides the legacy .claude.json value" " idle $_ic_want" "$_ic"
 _ic_global
 # Settings files — written WITHOUT a trailing newline, like .claude.json, so a
 # reader that splits on lines cannot glue two files together unnoticed.
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: idleCompaction:false in user settings turns it off (no trailing newline anywhere)" "idle" "$_ic"
+assert_not_contains "idle-compact: idleCompaction:false in user settings turns compaction off (no trailing newline anywhere)" "idle" "$_ic"
 printf 'null' > "$_ic_cfg/proj/.claude/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: a null settings file does not reset the merge" "idle" "$_ic"
@@ -743,35 +794,35 @@ _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: a broken settings file is skipped, not fail-open" "idle" "$_ic"
 printf '{"idleCompaction":true}' > "$_ic_cfg/proj/.claude/settings.local.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: local settings override user settings" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: local settings override user settings" " idle $_ic_want" "$_ic"
 printf '{}' > "$_ic_cfg/cc/settings.json"
 printf '{"broken":,}' > "$_ic_cfg/proj/.claude/settings.local.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: a broken settings file alone does not hide the segment" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: a broken settings file alone does not hide the segment" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/settings.json" "$_ic_cfg/proj/.claude/settings.local.json"
 printf '{"autoCompactEnabled":false}' > "$_ic_cfg/proj/.claude/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: autoCompactEnabled:false in project settings turns it off" "idle" "$_ic"
+assert_not_contains "idle-compact: autoCompactEnabled:false in project settings turns compaction off" "idle" "$_ic"
 printf '{"autoCompactEnabled":true}' > "$_ic_cfg/proj/.claude/settings.local.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: local settings override project settings" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: local settings override project settings" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/proj/.claude/settings.json" "$_ic_cfg/proj/.claude/settings.local.json"
 # Managed policy is read last and wins; drop-ins after the main file.
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
 printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: managed policy wins over user settings" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: managed policy wins over user settings" " idle $_ic_want" "$_ic"
 printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.d/10-off.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: a managed-settings.d drop-in turns it off" "idle" "$_ic"
+assert_not_contains "idle-compact: a managed-settings.d drop-in turns compaction off" "idle" "$_ic"
 printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.d/20-on.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: a later drop-in wins over an earlier one" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: a later drop-in wins over an earlier one" " idle $_ic_want" "$_ic"
 # CC sorts drop-in names by code unit: "A" < "_" < "b", whatever the locale.
 printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.d/A.json"
 printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.d/_z.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run LC_ALL=en_US.UTF-8)
-assert_contains "idle-compact: drop-ins sort in C order even under LC_ALL" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: drop-ins sort in C order even under LC_ALL" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/settings.json" "$_ic_cfg/managed/managed-settings.json" "$_ic_cfg/managed/managed-settings.d/"*.json
 # Project dir = $HOME: ~/.claude/settings.json is both the user and the project
 # file. The same path twice must not change the outcome.
@@ -792,10 +843,10 @@ assert_not_contains "idle-compact: a --settings file is read" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --model opus --settings=$_ic_cfg/flag.json -c")
 assert_not_contains "idle-compact: --settings=<file> form is read" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --resume abc")
-assert_contains "idle-compact: no --settings leaves the files in charge" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: no --settings leaves the files in charge" " idle $_ic_want" "$_ic"
 printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
-assert_contains "idle-compact: managed beats --settings" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: managed beats --settings" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/proj/.claude/settings.local.json" "$_ic_cfg/managed/managed-settings.json"
 # The parsed --settings value is carried in the session cache: a later render
 # without the ancestor's command line (reuse path) still applies it.
@@ -816,7 +867,7 @@ _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: managed file alone applies" "idle" "$_ic"
 printf '{"model":"opus"}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: first-wins — a remote policy key shadows the managed file" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: first-wins — a remote policy key shadows the managed file" " idle $_ic_want" "$_ic"
 printf '{"model":"opus","managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: merge set in the top source layers the managed file in" "idle" "$_ic"
@@ -839,13 +890,13 @@ if command -v plutil >/dev/null 2>&1; then
   _ic_plist() { printf '%s' "$1" > "$_ic_cfg/p.json"; plutil -convert xml1 -o "$2" "$_ic_cfg/p.json"; }
   _ic_plist '{"idleCompaction":true}' "$_ic_cfg/prefs/com.anthropic.claudecode.plist"
   _ic=$(_ic_json 1h 250000 true | _ic_run)
-  assert_contains "idle-compact: first-wins — a device MDM profile shadows the managed file" "⇲idle $_ic_want" "$_ic"
+  assert_contains "idle-compact: first-wins — a device MDM profile shadows the managed file" " idle $_ic_want" "$_ic"
   _ic_plist '{"idleCompaction":false}' "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
   _ic=$(_ic_json 1h 250000 true | _ic_run)
   assert_not_contains "idle-compact: the per-user MDM profile comes before the device one" "idle" "$_ic"
   printf '{"idleCompaction":true}' > "$_ic_cfg/cc/remote-settings.json"
   _ic=$(_ic_json 1h 250000 true | _ic_run)
-  assert_contains "idle-compact: the remote cache ranks above MDM" "⇲idle $_ic_want" "$_ic"
+  assert_contains "idle-compact: the remote cache ranks above MDM" " idle $_ic_want" "$_ic"
   # merge is read from the highest source carrying it, even when that source
   # holds no policy key: remote (merge only) > MDM (unrelated key) > file.
   rm -f "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
@@ -865,27 +916,27 @@ _ic_rl() { printf '{"%s":{"used_percentage":%s,"resets_at":%s}}' "$1" "$2" $(( _
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 92 9000)" | _ic_run)
 assert_not_contains "idle-compact: 5h at 92% halfway through the window is a warning (silent)" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 92 3600)" | _ic_run)
-assert_contains "idle-compact: 5h at 92% late in the window (80% passed) is no warning" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 5h at 92% late in the window (80% passed) is no warning" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 89 9000)" | _ic_run)
-assert_contains "idle-compact: 5h at 89% is under the warning threshold" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 5h at 89% is under the warning threshold" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 561600)" | _ic_run)
 assert_not_contains "idle-compact: 7d at 30% on day one is a warning (25% tier)" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 172800)" | _ic_run)
-assert_contains "idle-compact: 7d at 30% with 5 of 7 days passed is no warning" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 7d at 30% with 5 of 7 days passed is no warning" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 423360)" | _ic_run)
 assert_not_contains "idle-compact: 7d at 60% with 30% passed is a warning (50% tier)" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 362880)" | _ic_run)
-assert_contains "idle-compact: 7d at 60% with 40% passed is no warning" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 7d at 60% with 40% passed is no warning" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 80 272160)" | _ic_run)
 assert_not_contains "idle-compact: 7d at 80% with 55% passed is a warning (75% tier)" "idle" "$_ic"
 # compact_on_return also needs precomputeCompactionEnabled.
 printf '{"precomputeCompactionEnabled":false}' > "$_ic_cfg/cc/settings.json"
 _ic_global '{"mode":"compact_on_return"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: compact_on_return without precompute compaction stays silent" "idle" "$_ic"
+assert_not_contains "idle-compact: compact_on_return without precompute compaction shows no compaction" "idle" "$_ic"
 _ic_global
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: plain compact does not need precompute compaction" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: plain compact does not need precompute compaction" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/settings.json"
 # Server-managed cache: only while the session talks to Anthropic's API.
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/remote-settings.json"
@@ -894,13 +945,13 @@ assert_not_contains "idle-compact: remote cache applies on Anthropic's API" "idl
 _ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=https://api.anthropic.com)
 assert_not_contains "idle-compact: the explicit Anthropic base URL keeps the remote cache" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=http://localhost:8888)
-assert_contains "idle-compact: a foreign ANTHROPIC_BASE_URL ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: a foreign ANTHROPIC_BASE_URL ignores the remote cache" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_BEDROCK=1)
-assert_contains "idle-compact: Bedrock ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: Bedrock ignores the remote cache" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_VERTEX=1)
-assert_contains "idle-compact: Vertex ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: Vertex ignores the remote cache" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_FOUNDRY=1)
-assert_contains "idle-compact: Foundry ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: Foundry ignores the remote cache" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/remote-settings.json"
 # Policy keys need content; $-keys never count. Merge: the higher source wins.
 printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
@@ -912,7 +963,7 @@ _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: a \$-key is no policy key" "idle" "$_ic"
 printf '{"idleCompaction":true,"managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: under merge the higher-ranked source wins a conflict" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: under merge the higher-ranked source wins a conflict" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/managed/managed-settings.json"
 # --settings parsing: relative path against the launch directory (project_dir),
 # not the current cwd; the last occurrence wins; braces inside strings.
@@ -924,7 +975,7 @@ assert_not_contains "idle-compact: a relative --settings path resolves against t
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/on.json --settings=$_ic_cfg/flag.json")
 assert_not_contains "idle-compact: the last --settings wins (= form last)" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings=$_ic_cfg/flag.json --settings $_ic_cfg/on.json")
-assert_contains "idle-compact: the last --settings wins (space form last)" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: the last --settings wins (space form last)" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo }"},"idleCompaction":false}')
 assert_not_contains "idle-compact: a brace inside a JSON string does not cut inline --settings" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo \"}\""},"idleCompaction":false}')
@@ -938,7 +989,7 @@ assert_contains "idle-compact: inline --settings caches only the keys it reads" 
 # --setting-sources drops the files it does not list.
 printf '{"idleCompaction":false}' > "$_ic_cfg/proj/.claude/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,local")
-assert_contains "idle-compact: --setting-sources without project ignores project settings" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: --setting-sources without project ignores project settings" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,project")
 assert_not_contains "idle-compact: --setting-sources with project keeps project settings" "idle" "$_ic"
 rm -f "$_ic_cfg/proj/.claude/settings.json"
@@ -949,14 +1000,14 @@ _ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=https://api.anthropic
 assert_not_contains "idle-compact: a base URL with a path on api.anthropic.com keeps the remote cache" "idle" "$_ic"
 for _ic_v in CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_MANTLE; do
   _ic=$(_ic_json 1h 250000 true | _ic_run "$_ic_v=1")
-  assert_contains "idle-compact: $_ic_v ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+  assert_contains "idle-compact: $_ic_v ignores the remote cache" " idle $_ic_want" "$_ic"
 done
 # Policy content: an array (even []) is content, an object of empty objects
 # is not.
 printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
 printf '{"availableModels":[]}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: an empty array is a policy key (remote wins first-wins)" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: an empty array is a policy key (remote wins first-wins)" " idle $_ic_want" "$_ic"
 printf '{"permissions":{"allow":{}}}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: nested empty objects are no policy key" "idle" "$_ic"
@@ -968,7 +1019,7 @@ assert_not_contains "idle-compact: --setting-sources 'user, project' keeps proje
 rm -f "$_ic_cfg/proj/.claude/settings.json"
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources  --resume abc")
-assert_contains "idle-compact: an empty --setting-sources loads no settings file" "⇲idle $_ic_want" "$_ic"
+assert_contains "idle-compact: an empty --setting-sources loads no settings file" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/settings.json"
 # A relative --settings path in a worktree session: the launch directory is
 # worktree.original_cwd.
@@ -988,7 +1039,7 @@ if command -v plutil >/dev/null 2>&1; then
     '<plist version="1.0"><dict><key>idleCompaction</key><false/><key>stamp</key><date>2026-01-01T00:00:00Z</date></dict></plist>' \
     > "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
   _ic=$(_ic_json 1h 250000 true | _ic_run)
-  assert_contains "idle-compact: an unconvertible per-user profile falls through to the device one" "⇲idle $_ic_want" "$_ic"
+  assert_contains "idle-compact: an unconvertible per-user profile falls through to the device one" " idle $_ic_want" "$_ic"
   printf 'not a plist' > "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
   _ic=$(_ic_json 1h 250000 true | _ic_run)
   assert_not_contains "idle-compact: a corrupt per-user profile stops the MDM search" "idle" "$_ic"
@@ -996,6 +1047,69 @@ if command -v plutil >/dev/null 2>&1; then
 fi
 unset _ic_v
 unset -f _ic_rl; unset _ic_now
+# Animation + cold fallback. Strip colour for the text asserts; colour asserts
+# read the raw SGR. The frame flips per render via ic_frame= in the session cache.
+_ic_global
+_ic_anim() {  # ttl seconds-left [extra env...] → raw segment (session anim0001)
+  local _ttl=$1 _left=$2; shift 2
+  printf '{"session_id":"anim0001-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":250000,"cache_creation_input_tokens":0,"output_tokens":0}},"prompt_cache":{"warm":true,"ttl":"%s","expires_at":%s}}' \
+    "$_ttl" $(( $(date +%s) + _left )) \
+    | env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CC_CMDLINE="" CLAUDII_CACHE_DIR="$_ic_cfg/anim" "$@" bash "$SL" 2>/dev/null
+}
+_ic_plain() { sed 's/\x1b\[[0-9;]*m//g'; }
+mkdir -p "$_ic_cfg/anim"
+_ic=$(_ic_anim 1h 3500 | _ic_plain)
+assert_contains "idle-compact anim: fresh request shows an empty glyph and the time left" "⇲○ idle" "$_ic"
+assert_contains "idle-compact anim: countdown to the compaction" "· 52m" "$_ic"
+_ic=$(_ic_anim 1h 1900 | _ic_plain)
+assert_contains "idle-compact anim: halfway the glyph is half full" "⇲◑ idle" "$_ic"
+_ic=$(_ic_anim 1h 3500)
+assert_contains "idle-compact anim: < 50% of the wait passed is dim" $'\033[2m⇲○' "$_ic"
+_ic=$(_ic_anim 1h 1900)
+assert_contains "idle-compact anim: >= 50% passed is white" $'\033[0;97m⇲◑' "$_ic"
+_ic=$(_ic_anim 1h 1000)
+assert_contains "idle-compact anim: >= 75% passed is yellow" $'\033[0;33m⇲' "$_ic"
+_ic_a=$(_ic_anim 1h 600); _ic_b=$(_ic_anim 1h 600)
+assert_contains "idle-compact anim: the last 10% blink — one frame red full" $'\033[0;31m⇲●' "$_ic_a$_ic_b"
+assert_contains "idle-compact anim: the last 10% blink — the other yellow" $'\033[0;33m⇲◕' "$_ic_a$_ic_b"
+assert_eq "idle-compact anim: consecutive renders differ while blinking" "1" "$([[ "$_ic_a" != "$_ic_b" ]] && echo 1 || echo 0)"
+# Flag off: the segment shows the cache going cold instead, at expires_at.
+_ic_global '{"mode":"off"}'
+_ic_cold_at=$(_ic_at 0)
+_ic=$(_ic_json 1h 250000 true | _ic_run | _ic_plain)
+assert_contains "idle-compact: flag off shows the cache going cold at expires_at" "♨○ cold $_ic_cold_at" "$_ic"
+assert_not_contains "idle-compact: flag off never claims a compaction" "idle" "$_ic"
+_ic=$(_ic_anim 5m 150 | _ic_plain)
+assert_contains "idle-compact: a 5m cache scales the glyph to its own lifetime" "♨◑ cold" "$_ic"
+_ic=$(_ic_json 1h 250000 false | _ic_run | _ic_plain)
+assert_eq "idle-compact: a cold cache shows nothing" "" "$_ic"
+_ic_global
+# The cold fallback appears exactly where no compaction will run …
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run | _ic_plain)
+assert_contains "idle-compact: past the compaction time, a warm cache still shows going cold" " cold " "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
+assert_contains "idle-compact: auto-compact off shows the cache going cold" "♨○ cold $_ic_cold_at" "$_ic"
+_ic=$(_ic_json 5m 250000 true | _ic_run | _ic_plain)
+assert_contains "idle-compact: a 5m cache shows going cold" "cold" "$_ic"
+_ic=$(_ic_json 1h 199989 true | _ic_run | _ic_plain)
+assert_contains "idle-compact: below the threshold shows going cold" "♨○ cold $_ic_cold_at" "$_ic"
+# … but not next to cache-ttl, which already counts down to that moment.
+_ic_cfg2="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ic_cfg2")
+mkdir -p "$_ic_cfg2/claudii"; cp -R "$_ic_cfg/cc" "$_ic_cfg2/cc"
+printf '{"statusline":{"lines":[["idle-compact","cache-ttl"]]}}\n' > "$_ic_cfg2/claudii/config.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run XDG_CONFIG_HOME="$_ic_cfg2" DISABLE_AUTO_COMPACT=1 | _ic_plain)
+assert_not_contains "idle-compact: no cold duplicate when cache-ttl is in the layout" "cold" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run XDG_CONFIG_HOME="$_ic_cfg2" | _ic_plain)
+assert_contains "idle-compact: the compaction still shows next to cache-ttl" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 1700 )) | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
+assert_contains "idle-compact: a 1h cold cache halfway through is half full" "♨◑ cold" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 1700 )) | sed 's/"ttl":"1h",//' | _ic_run | _ic_plain)
+assert_contains "idle-compact: no ttl and > 5 min left scales to a 1h cache" "♨◑ cold" "$_ic"
+# A payload without prompt_cache.ttl: the lifetime is inferred from what is left.
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 150 )) | sed 's/"ttl":"1h",//' | _ic_run | _ic_plain)
+assert_contains "idle-compact: no ttl and <= 5 min left scales to a 5m cache" "♨◑ cold" "$_ic"
+unset _ic_cfg2
+unset -f _ic_anim _ic_plain; unset _ic_a _ic_b _ic_cold_at
 unset -f _ic_json _ic_run _ic_global _ic_at; unset _ic _ic_cfg _ic_exp _ic_want _ic_flag_on
 
 # ── multi-line stdin payload (read -r used to take only the first line) ─────
