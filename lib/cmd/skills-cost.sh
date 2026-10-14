@@ -178,7 +178,7 @@ _cmd_skills_cost() {
   # 2026-10-07 — "sonnet-5-5" differs from "sonnet" in "cr" alone.
   # Haiku 5.5 (CC 2.1.293, now the default Haiku) is the fifth: $0.10/$0.50,
   # cache read $0.01, 5m write $0.125. "haiku" is the 5.5 rate and every
-  # haiku-4* id prices as "haiku-legacy" ($1/$5). Above 100K prompt tokens per
+  # haiku-4* and Claude 3.x haiku id prices as "haiku-legacy" ($1/$5). Above 100K prompt tokens per
   # request Haiku 5.5 bills $0.50/$2.50 (5× every column); that tier is NOT
   # modeled here, so requests over 100K are estimated up to 5× low.
   #

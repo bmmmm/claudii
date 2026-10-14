@@ -673,7 +673,7 @@ Costs are priced per model: each per-model token bucket
 schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
 0.1\(mu input \(em except Opus 5.5 and Sonnet 5.5, 0.05\(mu, and Fable 5.1, a
 flat $0.25/M \(em and cache_create 1.25\(mu input). Version-aware within a tier:
-Sonnet 4.x, Haiku 4.x and Fable 5 keep their own older rates, and Opus 5.5 (now
+Sonnet 4.x / 3.x, Haiku 4.x / 3.x and Fable 5 keep their own older rates, and Opus 5.5 (now
 the default Opus) carries the newer, cheaper rate while older Opus ids keep the
 existing one. Haiku 5.5 is priced at its up-to-100K-prompt rate ($0.10/$0.50/M);
 its higher rate above 100K prompt tokens per request is not modeled.
@@ -1515,21 +1515,33 @@ stay in
 when Claude Code will compact the conversation on its own if you leave it
 alone. Claude Code 2.1.290+ compacts an interactive conversation about 54
 minutes after the last request, shortly before its prompt cache expires, when
-the conversation is on the one-hour cache TTL
+Anthropic has the feature switched on for the account (the cached feature flag
+.I tengu_sunny_locket
+in
+.B ~/.claude.json
+has mode
+.BR compact ;
+absent or
+.B log
+means off, and the segment stays silent), when the conversation is on the
+one-hour cache TTL
 .RI ( prompt_cache.ttl " = 1h)"
 and its context holds at least
 .B CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS
-tokens (default 200000; lower values are raised to 100000). Claude Code
-exposes no field for it, so the time is derived:
+tokens (else the flag's minTokens, else 200000; never below 100000). Claude
+Code exposes no field for it, so the time is derived:
 .I prompt_cache.expires_at
-minus 6 minutes. It is a clock time, not a countdown \(em the statusline does
+minus (1 \- fireAtFraction) \(mu 1 h, i.e. 6 minutes at the default fraction
+0.9 (the flag may set 0.5\(en0.95). It is a clock time, not a countdown \(em the statusline does
 not re-render while the session idles. Context counts the last request's
 input, cache and output tokens. Silent when the cache is cold, when that time
 has passed, when
 .B idleCompaction
 or
 .B autoCompactEnabled
-is false in the user, project or local settings file (or, for
+is false in the user, project or local settings file or the managed policy
+.RB ( managed-settings.json " and " managed-settings.d/*.json ;
+a broken file is skipped) (or, for
 .BR autoCompactEnabled ,
 in
 .B ~/.claude.json
@@ -1537,9 +1549,11 @@ when no settings file sets it), or when
 .B DISABLE_COMPACT
 or
 .B DISABLE_AUTO_COMPACT
-is true. Managed policy settings,
+is true, or when the 5h or 7d rate limit is used up (Claude Code skips the
+compaction then). Not checked:
 .B \-\-settings
-files and a reached rate limit are not checked. Not in the default layout.
+files, and the warning band before a rate limit (the payload carries the used
+percentage, not Claude Code's limit status). Not in the default layout.
 .PP
 .B compact-eta:
 how long the remaining context lasts at the rate you are actually filling it \(em

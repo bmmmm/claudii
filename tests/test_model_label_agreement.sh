@@ -121,6 +121,14 @@ assert_eq "glued: bash label matches the substring" "Opus"    "$(_insights_model
 assert_eq "glued: awk refuses the substring"        "myopusx" "$(_mla_awk myopusx)"
 assert_eq "glued: jq refuses the substring"         "sonnet"  "$(_mla_jq myopusx)"
 
+# Claude 3.x haiku ids put the version BEFORE the family. They keep the old
+# blanket haiku rate instead of falling through to Haiku 5.5's 10x lower one.
+assert_eq "haiku 3.x: jq claude-3-5-haiku is legacy" "haiku-legacy" "$(_mla_jq claude-3-5-haiku-20241022)"
+assert_eq "haiku 3.x: jq claude-3-haiku is legacy"   "haiku-legacy" "$(_mla_jq claude-3-haiku-20240307)"
+assert_eq "haiku 5.5: jq dated/[1m] id stays current" "haiku"       "$(_mla_jq 'claude-haiku-5-5[1m]')"
+assert_eq "sonnet 3.x: jq claude-3-5-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-5-sonnet-20241022)"
+assert_eq "sonnet 3.x: jq claude-3-7-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-7-sonnet-20250219)"
+
 # Case folding: all four resolve a capitalised id. bash used to fold only in
 # _norm_model_short, so _insights_model_label handed "Opus" straight back.
 assert_eq "case: bash label folds"  "Opus 4.8" "$(_insights_model_label Claude-Opus-4-8)"

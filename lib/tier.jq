@@ -29,15 +29,20 @@
 # hypothetical future "opus-5-50" or "opus-5-5-1" from misclassifying as 5.5.
 # Sonnet 5.5 (5% cache read) reuses that tail as "sonnet-5-5"; plain "sonnet"
 # stays Sonnet 5. Haiku 5.5 ($0.10/$0.50) follows the legacy pattern instead:
-# haiku-4* ids are "haiku-legacy" ($1/$5), any other haiku is the current rate.
+# haiku-4* ids and Claude 3.x haiku ids (claude-3-5-haiku-*, claude-3-haiku-*)
+# are "haiku-legacy" ($1/$5 — the old blanket rate, close enough for 3.x);
+# any other haiku is the current rate. Claude 3.x sonnet ids
+# (claude-3-5-sonnet-*) are "sonnet-legacy" ($3/$15).
 def tier($m):
   ($m // "" | ascii_downcase) as $l
   | if   ($l | test("(^|[^a-z])(fable|mythos)[- ]5($|[^0-9.-])")) then "fable-legacy"
     elif ($l | test("(^|[^a-z])(fable|mythos)([^a-z]|$)")) then "fable"
     elif ($l | test("(^|[^a-z])opus[- ]5[- ]5($|[^0-9.-])")) then "opus-5-5"
     elif ($l | test("(^|[^a-z])opus([^a-z]|$)"))           then "opus"
-    elif ($l | test("(^|[^a-z])haiku[- ]4([^0-9]|$)"))     then "haiku-legacy"
+    elif ($l | test("(^|[^a-z])haiku[- ]4([^0-9]|$)") or
+              ($l | test("(^|[^a-z0-9])3([-.][0-9])?[- ]haiku([^a-z]|$)"))) then "haiku-legacy"
     elif ($l | test("(^|[^a-z])haiku([^a-z]|$)"))          then "haiku"
-    elif ($l | test("sonnet[- ]4([^0-9]|$)"))              then "sonnet-legacy"
+    elif ($l | test("sonnet[- ]4([^0-9]|$)") or
+              ($l | test("(^|[^a-z0-9])3([-.][0-9])?[- ]sonnet([^a-z]|$)"))) then "sonnet-legacy"
     elif ($l | test("(^|[^a-z])sonnet[- ]5[- ]5($|[^0-9.-])")) then "sonnet-5-5"
     else "sonnet" end;

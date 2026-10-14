@@ -950,52 +950,83 @@ elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
   fi
 fi
 
-# Idle compaction (CC 2.1.290+, on by default): an interactive conversation on
-# the 1h prompt-cache TTL whose context holds at least
-# CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS (default 200000, values below 100000 are
-# raised to it, garbage is ignored) is compacted about 54 min after the last
-# request, shortly before its cache expires. CC exposes no field for it, so the
-# time is derived from the documented rule: expires_at − 6 min. An absolute
-# clock time, not a countdown — the statusline does not re-render while the
-# session idles. Context = the last request's input + cache + output tokens
-# (CC counts output too). Off when DISABLE_COMPACT or DISABLE_AUTO_COMPACT is
-# truthy, or idleCompaction / autoCompactEnabled is false in the user, project
-# or local settings file (later wins, like CC); autoCompactEnabled falls back to
-# the global config (.claude.json, where the old /config toggle stored it) when
-# no settings file sets it. Layout-gated: the settings read is one jq fork.
+# Idle compaction (CC 2.1.290+): an interactive conversation on the 1h
+# prompt-cache TTL whose context holds at least the threshold is compacted
+# shortly before its cache expires — at fireAtFraction (default 0.9, clamped
+# 0.5–0.95) of the cache lifetime, i.e. ~54 min after the last request. CC
+# exposes no field for it, so the time is derived: expires_at − (1 − fraction)
+# × 1h. An absolute clock time, not a countdown — the statusline does not
+# re-render while the session idles. Read from CC 2.1.299 itself:
+#  - it runs only while the GrowthBook flag tengu_sunny_locket has mode
+#    "compact" ("log" is a dry run, absent = off). The flag is cached in
+#    .claude.json (cachedGrowthBookFeatures), which also carries the optional
+#    minTokens / fireAtFraction overrides;
+#  - threshold: CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS (an invalid value is
+#    ignored), else the flag's minTokens, else 200000; never below 100000
+#    (the ctx_tokens >= 100000 pre-gate below is that floor);
+#  - context = the last request's input + cache + output tokens;
+#  - off when DISABLE_COMPACT / DISABLE_AUTO_COMPACT is truthy, or
+#    idleCompaction / autoCompactEnabled is false in the user, project, local
+#    or managed settings (later wins; a broken file is skipped);
+#    autoCompactEnabled falls back to .claude.json (the old /config toggle);
+#  - skipped unless the rate-limit status is "allowed". The payload carries
+#    used% only: a used-up limit (>= 100%) is visible, the warning band is not.
+# Layout-gated; one jq fork (every file passed as --rawfile, parsed per file).
 _ic_truthy() { case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;; esac; return 1; }
 _seg_idle_compact=""
+_ic_r5=${rate_5h%.*}; _ic_r7=${rate_7d%.*}
+[[ "$_ic_r5" =~ ^[0-9]+$ ]] || _ic_r5=0; [[ "$_ic_r7" =~ ^[0-9]+$ ]] || _ic_r7=0
 if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true" \
-      && "${pc_expires%.*}" =~ ^[0-9]+$ && "$ctx_tokens" =~ ^[0-9]+$ ]] \
+      && "${pc_expires%.*}" =~ ^[0-9]+$ && "$ctx_tokens" =~ ^[0-9]+$ \
+      && "$pc_ttl_left" =~ ^[0-9]+$ ]] \
+   && (( ctx_tokens >= 100000 && _ic_r5 < 100 && _ic_r7 < 100 )) \
    && ! _ic_truthy "${DISABLE_COMPACT:-}" && ! _ic_truthy "${DISABLE_AUTO_COMPACT:-}"; then
-  _ic_min="${CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS:-}"
-  _ic_min="${_ic_min#+}"
-  if [[ "$_ic_min" =~ ^[0-9]{1,15}$ ]] && (( 10#$_ic_min > 0 )); then _ic_min=$(( 10#$_ic_min ))
-  else _ic_min=200000; fi
-  (( _ic_min < 100000 )) && _ic_min=100000
-  _ic_at=$(( ${pc_expires%.*} - 360 ))
-  # pc_ttl_left (expires_at − now, from the jq pass) > 360: the time is still
-  # ahead — a late re-render must not print one that already passed.
-  if (( ctx_tokens >= _ic_min )) && [[ "$pc_ttl_left" =~ ^[0-9]+$ ]] && (( pc_ttl_left > 360 )); then
-    _ic_cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-    _ic_global="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
-    _ic_files=()
-    _ic_proj="${workspace_project_dir:-$cwd}"
-    for _p in "$_ic_global" "$_ic_cfgdir/settings.json" \
+  _ic_cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  _ic_global="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+  _ic_proj="${workspace_project_dir:-$cwd}"
+  _ic_managed="${CLAUDII_MANAGED_SETTINGS_DIR:-}"
+  if [[ -z "$_ic_managed" ]]; then
+    if [[ "$OSTYPE" == darwin* ]]; then _ic_managed="/Library/Application Support/ClaudeCode"
+    else _ic_managed="/etc/claude-code"; fi
+  fi
+  if [[ -f "$_ic_global" && -r "$_ic_global" ]]; then
+    # Lowest precedence first, managed policy last; drop-ins in C order like
+    # CC's sort. A --settings file is invisible from here.
+    _ic_args=(--rawfile g "$_ic_global"); _ic_n=10
+    # LC_ALL overrides LC_COLLATE, so both are pinned for the glob.
+    _ic_lc="${LC_COLLATE-}"; _ic_la="${LC_ALL-}"; LC_COLLATE=C; LC_ALL=C
+    for _p in "$_ic_cfgdir/settings.json" \
               ${_ic_proj:+"$_ic_proj/.claude/settings.json"} \
-              ${_ic_proj:+"$_ic_proj/.claude/settings.local.json"}; do
-      [[ -f "$_p" ]] && _ic_files+=("$_p")
+              ${_ic_proj:+"$_ic_proj/.claude/settings.local.json"} \
+              "$_ic_managed/managed-settings.json" "$_ic_managed/managed-settings.d"/*.json; do
+      [[ -f "$_p" && -r "$_p" ]] || continue
+      _ic_args+=(--rawfile "f$_ic_n" "$_p"); (( ++_ic_n ))
     done
-    _ic_state="on"
-    if (( ${#_ic_files[@]} )); then
-      _ic_state=$(jq -rn --arg g "$_ic_global" 'reduce inputs as $s ({};
-          . * (($s | objects) // {} | if input_filename == $g then {autoCompactEnabled} else . end))
-        | if .idleCompaction == false or .autoCompactEnabled == false then "off" else "on" end' \
-        "${_ic_files[@]}" 2>/dev/null) || _ic_state="on"
-    fi
-    if [[ "$_ic_state" != "off" ]]; then
-      _fmt_abs "$_ic_at" '%H:%M'
-      [[ -n "$_ABS_FMT" ]] && _seg_idle_compact="${DIM}⇲idle ${_ABS_FMT}${RST}"
+    if [[ -n "$_ic_lc" ]]; then LC_COLLATE="$_ic_lc"; else unset LC_COLLATE; fi
+    if [[ -n "$_ic_la" ]]; then LC_ALL="$_ic_la"; else unset LC_ALL; fi
+    # Output: "<offset seconds> <flag minTokens or ->", or "off".
+    _ic_state=$(jq -rn "${_ic_args[@]}" '
+      def obj: (try fromjson catch null) | objects // {};
+      ($ARGS.named.g | obj) as $gc
+      | ($gc.cachedGrowthBookFeatures.tengu_sunny_locket | objects // {}) as $fl
+      | reduce ($ARGS.named | to_entries | map(select(.key != "g")) | .[].value | obj) as $s
+          ({autoCompactEnabled: $gc.autoCompactEnabled}; . * $s)
+      | if $fl.mode != "compact" or .idleCompaction == false or .autoCompactEnabled == false then "off"
+        else (($fl.fireAtFraction | numbers | if . < 0.5 then 0.5 elif . > 0.95 then 0.95 else . end) // 0.9) as $f
+          | "\((1 - $f) * 3600 | round) \((($fl.minTokens | numbers | ceil | if . < 100000 then 100000 elif . > 1e15 then 1e15 else . end | tostring) // "-"))" end' \
+      2>/dev/null) || _ic_state="off"
+    if [[ "$_ic_state" =~ ^([0-9]+)\ (-|[0-9]+)$ ]]; then
+      _ic_off=${BASH_REMATCH[1]}; _ic_min=${BASH_REMATCH[2]}
+      _ic_env="${CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS:-}"; _ic_env="${_ic_env#+}"
+      if [[ "$_ic_env" =~ ^[0-9]{1,15}$ ]] && (( 10#$_ic_env > 0 )); then _ic_min=$(( 10#$_ic_env ))
+      elif [[ "$_ic_min" == "-" ]]; then _ic_min=200000
+      fi
+      # pc_ttl_left > offset: the time is still ahead — a late re-render must
+      # not print one that already passed.
+      if (( ctx_tokens >= _ic_min && pc_ttl_left > _ic_off )); then
+        _fmt_abs $(( ${pc_expires%.*} - _ic_off )) '%H:%M'
+        [[ -n "$_ABS_FMT" ]] && _seg_idle_compact="${DIM}⇲idle ${_ABS_FMT}${RST}"
+      fi
     fi
   fi
 fi

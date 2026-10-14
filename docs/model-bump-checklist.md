@@ -60,7 +60,9 @@ input, cache_create 5m = 1.25× input). That table is the only hardcoded rate se
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
 in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`fable-legacy`
 for fable-5 / mythos-5 ids/`opus`/`opus-5-5` for the newer, cheaper opus-5-5
-id/`haiku`/`sonnet-legacy` for sonnet-4* ids/`sonnet`, unknown → sonnet) —
+id/`haiku` for Haiku 5.5 and later/`haiku-legacy` for haiku-4* and Claude 3.x
+haiku ids/`sonnet-legacy` for sonnet-4* and Claude 3.x sonnet ids/`sonnet-5-5` for the 5% cache read
+of Sonnet 5.5/`sonnet`, unknown → sonnet) —
 keep it in sync with the table. A price
 change WITHIN a tier gets a version-aware `tier()` branch and its own `_rates`
 key rather than overwriting the old rate (Sonnet 5 precedent — old data must
@@ -74,7 +76,12 @@ Opus 5.5 inverted this: it shipped as the new *default* Opus at a new price,
 so the bare `opus` key was left alone (still pricing 5/4.8/4.7/4.6) and the
 new, cheaper, now-default id got the specific `opus-5-5` key instead — a
 future *unnamed* Opus id still falls through to the old $5/$25 rate until it
-gets its own branch, not the new one. Don't assume "bare key = current" or
+gets its own branch, not the new one. Sonnet 5.5 is the narrow case again (cache read only,
+5% vs 10%) with a refined `sonnet-5-5` key, and Haiku 5.5 follows the Sonnet 5
+direction: a 10× cheaper default, so the bare `haiku` key moved to the new price
+and every older id went to `haiku-legacy`. Haiku 5.5 is also the first model
+with a per-request price tier (5× above 100K prompt tokens), which `_rates`
+cannot express — it prices the lower tier and says so in its comment. Don't assume "bare key = current" or
 "specific suffix = legacy" — check Anthropic's docs for which id is actually
 the new default before naming the branch. Also update the two user-facing
 pricing summaries that restate this table in prose: the `meta.pricing` string
