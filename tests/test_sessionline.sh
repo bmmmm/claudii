@@ -614,6 +614,75 @@ assert_contains "se: misses render count + top cause" "1K tok ⚡84% 3 miss·too
 assert_eq "se: zero/absent misses stay silent" "1" "$(printf '%s\n' "$_pm_seg" | grep -c 'miss' || true)"
 unset -f _pm_json _pm_run; unset _pm _pm_cache _pm_now _pm_file _pm_seg
 
+# ── idle-compact: CC 2.1.290+ compacts a 1h-TTL conversation >= 200K tokens
+# about 54 min after the last request, i.e. expires_at − 6 min ──────────────
+_ic_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ic_cfg")
+mkdir -p "$_ic_cfg/claudii" "$_ic_cfg/cc" "$_ic_cfg/proj/.claude"
+printf '{"statusline":{"lines":[["idle-compact"]]}}\n' > "$_ic_cfg/claudii/config.json"
+_ic_exp=$(( $(date +%s) + 3500 ))
+_ic_want=$(LC_ALL=C date -r $(( _ic_exp - 360 )) +%H:%M 2>/dev/null || LC_ALL=C date -d "@$(( _ic_exp - 360 ))" +%H:%M)
+_ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at]
+  printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"prompt_cache":{"warm":%s,"ttl":"%s","expires_at":%s}}' \
+    "$_ic_cfg/proj" "$2" "${4:-0}" "$3" "$1" "${5:-$_ic_exp}"
+}
+_ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: 1h TTL over 200K shows expires_at − 6 min" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 199989 true | _ic_run)
+assert_not_contains "idle-compact: 199999 tokens (one under 200K) stays silent" "idle" "$_ic"
+_ic=$(_ic_json 1h 199990 true | _ic_run)
+assert_contains "idle-compact: exactly 200000 tokens shows" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 5m 250000 true | _ic_run)
+assert_not_contains "idle-compact: 5m TTL stays silent" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 false | _ic_run)
+assert_not_contains "idle-compact: cold cache stays silent" "idle" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120000)
+assert_contains "idle-compact: env threshold lowers the bar" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 90000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1000)
+assert_not_contains "idle-compact: env threshold is floored at 100K" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
+assert_contains "idle-compact: garbage env threshold falls back to 200K" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=1)
+assert_not_contains "idle-compact: DISABLE_AUTO_COMPACT turns it off" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=false)
+assert_contains "idle-compact: DISABLE_AUTO_COMPACT=false is not truthy" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_COMPACT=true)
+assert_not_contains "idle-compact: DISABLE_COMPACT turns it off" "idle" "$_ic"
+_ic=$(_ic_json 1h 195000 true 9000 | _ic_run)
+assert_contains "idle-compact: output tokens count toward the context" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=0300000)
+assert_not_contains "idle-compact: leading-zero threshold parses as decimal" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run)
+assert_not_contains "idle-compact: a time already passed is not shown" "idle" "$_ic"
+printf '{"idleCompaction":false}\n' > "$_ic_cfg/cc/.claude.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: .claude.json carries only the legacy autoCompactEnabled" "⇲idle $_ic_want" "$_ic"
+printf '{"autoCompactEnabled":false}\n' > "$_ic_cfg/cc/.claude.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: legacy autoCompactEnabled:false in .claude.json turns it off" "idle" "$_ic"
+printf '{"autoCompactEnabled":true}\n' > "$_ic_cfg/cc/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: a settings file overrides the legacy .claude.json value" "⇲idle $_ic_want" "$_ic"
+printf 'null\n' > "$_ic_cfg/proj/.claude/settings.json"
+printf '{"autoCompactEnabled":false}\n' > "$_ic_cfg/cc/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a null settings file does not reset the merge" "idle" "$_ic"
+rm -f "$_ic_cfg/cc/.claude.json" "$_ic_cfg/cc/settings.json" "$_ic_cfg/proj/.claude/settings.json"
+printf '{"idleCompaction":false}\n' > "$_ic_cfg/cc/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: idleCompaction:false in user settings turns it off" "idle" "$_ic"
+printf '{"idleCompaction":true}\n' > "$_ic_cfg/proj/.claude/settings.local.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: local settings override user settings" "⇲idle $_ic_want" "$_ic"
+printf '{"autoCompactEnabled":false}\n' > "$_ic_cfg/proj/.claude/settings.json"
+rm -f "$_ic_cfg/cc/settings.json" "$_ic_cfg/proj/.claude/settings.local.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: autoCompactEnabled:false in project settings turns it off" "idle" "$_ic"
+printf '{"autoCompactEnabled":true}\n' > "$_ic_cfg/proj/.claude/settings.local.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: local settings override project settings" "⇲idle $_ic_want" "$_ic"
+unset -f _ic_json _ic_run; unset _ic _ic_cfg _ic_exp _ic_want
+
 # ── multi-line stdin payload (read -r used to take only the first line) ─────
 # A pretty-printed payload must parse like the compact one, not fall through
 # to the empty-field fallback (which renders no model and no context).

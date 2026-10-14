@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **New statusline segment `idle-compact` shows when Claude Code will compact the conversation while you are away** — Claude Code 2.1.290+ compacts an interactive conversation on the one-hour prompt-cache TTL with at least 200K tokens of context about 54 minutes after the last request. The segment shows that clock time (`⇲idle 16:30`, derived as `prompt_cache.expires_at` − 6 min) and stays silent on the 5-minute TTL, a cold cache, below `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` (default 200000, floor 100000), with `idleCompaction` / `autoCompactEnabled` false in a settings file (`autoCompactEnabled` also from `~/.claude.json`), or with `DISABLE_COMPACT` / `DISABLE_AUTO_COMPACT` true. Context counts input, cache and output tokens of the last request. Opt-in: add `idle-compact` to `statusline.lines`. (`bin/claudii-cc-statusline`, `man/man1/claudii.1`, `tests/test_sessionline.sh`)
+
 ### Changed
 - **`clq` / `claudii search` default to Haiku at xhigh effort instead of Sonnet at medium** — Haiku 5.5 xhigh scores what Sonnet 5.5 medium does on the Artificial Analysis index (41 vs 41) at about a quarter of the cost per task. An existing `aliases.clq` or `search.*` in your config still wins. (`config/defaults.json`, `lib/cmd/config.sh`)
 

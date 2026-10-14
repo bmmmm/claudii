@@ -262,7 +262,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   workspace_project_dir worktree_original_cwd \
   repo_host repo_owner repo_name repo_pr cc_version \
   pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache \
-  pc_misses pc_miss_cause pc_miss_causes pc_expires <<< "$(
+  pc_misses pc_miss_cause pc_miss_causes pc_expires pc_cache_ttl ctx_tokens <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -306,8 +306,10 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.prompt_cache.misses // "" | tostring),
     (.prompt_cache.last_miss_cause | if type == "object" then (.causes // [] | map(tostring) | join("+")) else "" end),
     (.prompt_cache.miss_causes | if type == "object" then (to_entries | map("\(.key):\(.value)") | join(",")) else "" end),
-    (.prompt_cache.expires_at // "" | tostring)
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.prompt_cache.expires_at // "" | tostring),
+    (.prompt_cache.ttl // "" | tostring),
+    (.context_window.current_usage | if type == "object" then ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.output_tokens // 0) | tostring) else "" end)
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -945,6 +947,56 @@ elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
   if _isset "$pc_recache"; then
     _tok "$pc_recache"
     [[ -n "$_tok_result" ]] && _seg_cache_ttl="${YELLOW}♨cold·${_tok_result}${RST}"
+  fi
+fi
+
+# Idle compaction (CC 2.1.290+, on by default): an interactive conversation on
+# the 1h prompt-cache TTL whose context holds at least
+# CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS (default 200000, values below 100000 are
+# raised to it, garbage is ignored) is compacted about 54 min after the last
+# request, shortly before its cache expires. CC exposes no field for it, so the
+# time is derived from the documented rule: expires_at − 6 min. An absolute
+# clock time, not a countdown — the statusline does not re-render while the
+# session idles. Context = the last request's input + cache + output tokens
+# (CC counts output too). Off when DISABLE_COMPACT or DISABLE_AUTO_COMPACT is
+# truthy, or idleCompaction / autoCompactEnabled is false in the user, project
+# or local settings file (later wins, like CC); autoCompactEnabled falls back to
+# the global config (.claude.json, where the old /config toggle stored it) when
+# no settings file sets it. Layout-gated: the settings read is one jq fork.
+_ic_truthy() { case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;; esac; return 1; }
+_seg_idle_compact=""
+if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true" \
+      && "${pc_expires%.*}" =~ ^[0-9]+$ && "$ctx_tokens" =~ ^[0-9]+$ ]] \
+   && ! _ic_truthy "${DISABLE_COMPACT:-}" && ! _ic_truthy "${DISABLE_AUTO_COMPACT:-}"; then
+  _ic_min="${CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS:-}"
+  _ic_min="${_ic_min#+}"
+  if [[ "$_ic_min" =~ ^[0-9]{1,15}$ ]] && (( 10#$_ic_min > 0 )); then _ic_min=$(( 10#$_ic_min ))
+  else _ic_min=200000; fi
+  (( _ic_min < 100000 )) && _ic_min=100000
+  _ic_at=$(( ${pc_expires%.*} - 360 ))
+  # pc_ttl_left (expires_at − now, from the jq pass) > 360: the time is still
+  # ahead — a late re-render must not print one that already passed.
+  if (( ctx_tokens >= _ic_min )) && [[ "$pc_ttl_left" =~ ^[0-9]+$ ]] && (( pc_ttl_left > 360 )); then
+    _ic_cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    _ic_global="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+    _ic_files=()
+    _ic_proj="${workspace_project_dir:-$cwd}"
+    for _p in "$_ic_global" "$_ic_cfgdir/settings.json" \
+              ${_ic_proj:+"$_ic_proj/.claude/settings.json"} \
+              ${_ic_proj:+"$_ic_proj/.claude/settings.local.json"}; do
+      [[ -f "$_p" ]] && _ic_files+=("$_p")
+    done
+    _ic_state="on"
+    if (( ${#_ic_files[@]} )); then
+      _ic_state=$(jq -rn --arg g "$_ic_global" 'reduce inputs as $s ({};
+          . * (($s | objects) // {} | if input_filename == $g then {autoCompactEnabled} else . end))
+        | if .idleCompaction == false or .autoCompactEnabled == false then "off" else "on" end' \
+        "${_ic_files[@]}" 2>/dev/null) || _ic_state="on"
+    fi
+    if [[ "$_ic_state" != "off" ]]; then
+      _fmt_abs "$_ic_at" '%H:%M'
+      [[ -n "$_ABS_FMT" ]] && _seg_idle_compact="${DIM}⇲idle ${_ABS_FMT}${RST}"
+    fi
   fi
 fi
 
@@ -1800,6 +1852,7 @@ while IFS= read -r _line_segs; do
       compact-eta)   _val="$_seg_compact_eta" ;;
       cache-hit)     _val="$_seg_cache_hit" ;;
       cache-ttl)     _val="$_seg_cache_ttl" ;;
+      idle-compact)  _val="$_seg_idle_compact" ;;
       response)      _val="$_seg_response" ;;
       cost)          _val="$_seg_cost"     ;;
       rate-5h)       _val="$_seg_rate5h"   ;;
