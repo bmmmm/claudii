@@ -1595,16 +1595,21 @@ and a
 .B \-\-settings
 path that contains a space.
 .IP
-.B \[u2668] cold
+.B \[u2668] warm
+/
+.B cold
 \(em in every other warm-cache case (feature off for the account, context too
 small, compaction switched off, near the rate limit, 5-minute cache, or the
 compaction moment already passed), the moment that matters is the prompt
 cache going cold, after which the next request re-caches the whole context:
-.RB "\[u2668]\[u25D1] cold 16:36 \[u00B7] 18m" .
+.RB "\[u2668]\[u25D1] warm 16:36 \[u00B7] 30m" .
+The label names the state the cache is in: warm while less than 75% of its
+lifetime has passed, cold from then on, together with the colour turning
+yellow.
 Not shown when
 .B cache-ttl
 is in the layout, which already counts down to that moment. Nothing is shown
-while the cache is cold.
+once the cache has actually expired.
 .IP
 Both show the clock time of the moment and the time left. The glyph
 .B \[u25CB]\[u25D4]\[u25D1]\[u25D5]\[u25CF]

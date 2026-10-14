@@ -1077,10 +1077,10 @@ assert_eq "idle-compact anim: consecutive renders differ while blinking" "1" "$(
 _ic_global '{"mode":"off"}'
 _ic_cold_at=$(_ic_at 0)
 _ic=$(_ic_json 1h 250000 true | _ic_run | _ic_plain)
-assert_contains "idle-compact: flag off shows the cache going cold at expires_at" "♨○ cold $_ic_cold_at" "$_ic"
+assert_contains "idle-compact: flag off shows the cache going cold at expires_at" "♨○ warm $_ic_cold_at" "$_ic"
 assert_not_contains "idle-compact: flag off never claims a compaction" "idle" "$_ic"
 _ic=$(_ic_anim 5m 150 | _ic_plain)
-assert_contains "idle-compact: a 5m cache scales the glyph to its own lifetime" "♨◑ cold" "$_ic"
+assert_contains "idle-compact: a 5m cache scales the glyph to its own lifetime" "♨◑ warm" "$_ic"
 _ic=$(_ic_json 1h 250000 false | _ic_run | _ic_plain)
 assert_eq "idle-compact: a cold cache shows nothing" "" "$_ic"
 _ic_global
@@ -1088,26 +1088,34 @@ _ic_global
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run | _ic_plain)
 assert_contains "idle-compact: past the compaction time, a warm cache still shows going cold" " cold " "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
-assert_contains "idle-compact: auto-compact off shows the cache going cold" "♨○ cold $_ic_cold_at" "$_ic"
+assert_contains "idle-compact: auto-compact off shows the cache going cold" "♨○ warm $_ic_cold_at" "$_ic"
 _ic=$(_ic_json 5m 250000 true | _ic_run | _ic_plain)
-assert_contains "idle-compact: a 5m cache shows going cold" "cold" "$_ic"
+assert_contains "idle-compact: a 5m cache shows going cold" "♨○ warm" "$_ic"
 _ic=$(_ic_json 1h 199989 true | _ic_run | _ic_plain)
-assert_contains "idle-compact: below the threshold shows going cold" "♨○ cold $_ic_cold_at" "$_ic"
+assert_contains "idle-compact: below the threshold shows going cold" "♨○ warm $_ic_cold_at" "$_ic"
 # … but not next to cache-ttl, which already counts down to that moment.
 _ic_cfg2="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ic_cfg2")
 mkdir -p "$_ic_cfg2/claudii"; cp -R "$_ic_cfg/cc" "$_ic_cfg2/cc"
 printf '{"statusline":{"lines":[["idle-compact","cache-ttl"]]}}\n' > "$_ic_cfg2/claudii/config.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run XDG_CONFIG_HOME="$_ic_cfg2" DISABLE_AUTO_COMPACT=1 | _ic_plain)
-assert_not_contains "idle-compact: no cold duplicate when cache-ttl is in the layout" "cold" "$_ic"
+assert_not_contains "idle-compact: no cold duplicate when cache-ttl is in the layout" " warm " "$_ic"
+assert_not_contains "idle-compact: no cold duplicate when cache-ttl is in the layout (late)" " cold " "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run XDG_CONFIG_HOME="$_ic_cfg2" | _ic_plain)
 assert_contains "idle-compact: the compaction still shows next to cache-ttl" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 1700 )) | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
-assert_contains "idle-compact: a 1h cold cache halfway through is half full" "♨◑ cold" "$_ic"
+assert_contains "idle-compact: a 1h cold cache halfway through is half full" "♨◑ warm" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 1700 )) | sed 's/"ttl":"1h",//' | _ic_run | _ic_plain)
-assert_contains "idle-compact: no ttl and > 5 min left scales to a 1h cache" "♨◑ cold" "$_ic"
+assert_contains "idle-compact: no ttl and > 5 min left scales to a 1h cache" "♨◑ warm" "$_ic"
 # A payload without prompt_cache.ttl: the lifetime is inferred from what is left.
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 150 )) | sed 's/"ttl":"1h",//' | _ic_run | _ic_plain)
-assert_contains "idle-compact: no ttl and <= 5 min left scales to a 5m cache" "♨◑ cold" "$_ic"
+assert_contains "idle-compact: no ttl and <= 5 min left scales to a 5m cache" "♨◑ warm" "$_ic"
+# The label follows the colour: "warm" below 75% of the lifetime, "cold" from it.
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 1000 )) | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
+assert_contains "idle-compact: a 1h cache at 72% is still warm" " warm " "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 800 )) | _ic_run DISABLE_AUTO_COMPACT=1 | _ic_plain)
+assert_contains "idle-compact: a 1h cache at 77% turns cold" "♨◕ cold" "$_ic"
+_ic=$(_ic_anim 5m 60 | _ic_plain)
+assert_contains "idle-compact: a 5m cache past 75% turns cold" " cold " "$_ic"
 unset _ic_cfg2
 unset -f _ic_anim _ic_plain; unset _ic_a _ic_b _ic_cold_at
 unset -f _ic_json _ic_run _ic_global _ic_at; unset _ic _ic_cfg _ic_exp _ic_want _ic_flag_on

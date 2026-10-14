@@ -1299,7 +1299,13 @@ if [[ -n "$_ic_kind" ]]; then
     _fmt_abs "$_ic_target" '%H:%M'; _ic_at="$_ABS_FMT"
     _fmt_rel "$_ic_left"; _ic_rel="$_REL_FMT"
     if [[ -n "$_ic_at" ]]; then
-      if [[ "$_ic_kind" == idle ]]; then _ic_s="⇲${_ic_g} idle"; else _ic_s="♨${_ic_g} cold"; fi
+      # The cache case names the state it is in, not the one it heads for:
+      # "warm" until the colour turns yellow (75% of its lifetime), then
+      # "cold" — "cold" on a fresh cache read as if it already were.
+      if [[ "$_ic_kind" == idle ]]; then _ic_s="⇲${_ic_g} idle"
+      elif (( _ic_pct < 75 )); then _ic_s="♨${_ic_g} warm"
+      else _ic_s="♨${_ic_g} cold"
+      fi
       _seg_idle_compact="${_ic_c}${_ic_s} ${_ic_at}${_ic_rel:+ · $_ic_rel}${RST}"
     fi
   fi
