@@ -10,6 +10,15 @@ export CLAUDII_INSTALL_BIN_DIR="$TEST_TMP/bin"
 export CLAUDII_INSTALL_ZSHRC="$TEST_TMP/zshrc"
 export CLAUDII_INSTALL_CONFIG_DIR="$TEST_TMP/config/claudii"
 
+# install.sh refuses to run next to a Homebrew install of itself (`brew --prefix`). A
+# developer machine with the formula installed must not turn this test red, so
+# `brew` is stubbed out for the install runs below.
+mkdir -p "$TEST_TMP/nobrew"
+printf '#!/bin/sh\nexit 1\n' > "$TEST_TMP/nobrew/brew"
+chmod +x "$TEST_TMP/nobrew/brew"
+_inst_path="$PATH"
+export PATH="$TEST_TMP/nobrew:$PATH"
+
 # ── install ──
 
 bash "$CLAUDII_HOME/install.sh" >/dev/null 2>&1
@@ -83,4 +92,5 @@ fi
 
 # Cleanup
 rm -rf "$TEST_TMP"
-unset CLAUDII_INSTALL_BIN_DIR CLAUDII_INSTALL_ZSHRC CLAUDII_INSTALL_CONFIG_DIR
+export PATH="$_inst_path"
+unset CLAUDII_INSTALL_BIN_DIR CLAUDII_INSTALL_ZSHRC CLAUDII_INSTALL_CONFIG_DIR _inst_path
