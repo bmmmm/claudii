@@ -1520,7 +1520,13 @@ Anthropic has the feature switched on for the account (the cached feature flag
 in
 .B ~/.claude.json
 has mode
-.BR compact ;
+.B compact
+or, since 2.1.300,
+.B compact_on_return
+\(em the summary is written at that time and swapped in when you come back,
+which also needs
+.B precomputeCompactionEnabled
+(default true);
 absent or
 .B log
 means off, and the segment stays silent), when the conversation is on the
@@ -1539,9 +1545,7 @@ has passed, when
 .B idleCompaction
 or
 .B autoCompactEnabled
-is false in the user, project or local settings file or the managed policy
-.RB ( managed-settings.json " and " managed-settings.d/*.json ;
-a broken file is skipped) (or, for
+is false in the settings Claude Code applies (or, for
 .BR autoCompactEnabled ,
 in
 .B ~/.claude.json
@@ -1549,11 +1553,47 @@ when no settings file sets it), or when
 .B DISABLE_COMPACT
 or
 .B DISABLE_AUTO_COMPACT
-is true, or when the 5h or 7d rate limit is used up (Claude Code skips the
-compaction then). Not checked:
+is true, or when Claude Code would skip it for the rate limit: a used-up 5h
+or 7d limit, or the warning band Claude Code derives from the same used
+percentage and reset time (5h: 90% used while at most 72% of the window has
+passed; 7d: 75%, 50% or 25% while at most 60%, 35% or 15% has passed; the
+payload rounds to one decimal, so a value within 0.05 points of a threshold
+may tip either way). The
+settings follow Claude Code's order, later wins: user, project, local,
+.B claude \-\-settings
+(file or inline JSON; the last one given; a relative file against the launch
+directory, in a worktree session its original directory; read once per session
+from the
+.B claude
+process's command line, together with
+.BR \-\-setting-sources ,
+which drops the files it does not list), then managed. Managed is the highest
+admin source that carries a policy key \(em the server-managed cache
+.RB ( remote-settings.json ,
+only while the session talks to Anthropic's API: not with
+.BR CLAUDE_CODE_USE_BEDROCK ,
+.BR _VERTEX ,
+.BR _FOUNDRY ,
+.BR _ANTHROPIC_AWS ,
+.B _ANTHROPIC_GOOGLE_CLOUD
+or
+.B _MANTLE
+set, nor with an
+.B ANTHROPIC_BASE_URL
+whose host is not api.anthropic.com),
+the macOS MDM profile
+.RB ( com.anthropic.claudecode ,
+per-user before device), the managed settings files
+.RB ( managed-settings.json " and " managed-settings.d/*.json )
+\(em or all of them layered when
+.B "managedSourcesBehavior: merge"
+is set in the highest source that carries it or a policy key.
+A broken file is skipped. Not visible to the segment: a warning the server
+sends on its own (surpassed-threshold header), a
+.BR policyHelper ,
+and a
 .B \-\-settings
-files, and the warning band before a rate limit (the payload carries the used
-percentage, not Claude Code's limit status). Not in the default layout.
+path that contains a space. Not in the default layout.
 .PP
 .B compact-eta:
 how long the remaining context lasts at the rate you are actually filling it \(em

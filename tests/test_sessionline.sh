@@ -618,7 +618,7 @@ unset -f _pm_json _pm_run; unset _pm _pm_cache _pm_now _pm_file _pm_seg
 # at fireAtFraction (0.9) of the cache lifetime, i.e. expires_at − 6 min, but
 # only while the cached GrowthBook flag tengu_sunny_locket says "compact" ─────
 _ic_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ic_cfg")
-mkdir -p "$_ic_cfg/claudii" "$_ic_cfg/cc" "$_ic_cfg/proj/.claude" "$_ic_cfg/managed/managed-settings.d" "$_ic_cfg/home/.claude"
+mkdir -p "$_ic_cfg/claudii" "$_ic_cfg/cc" "$_ic_cfg/proj/.claude" "$_ic_cfg/managed/managed-settings.d" "$_ic_cfg/home/.claude" "$_ic_cfg/prefs/$(id -un)"
 printf '{"statusline":{"lines":[["idle-compact"]]}}\n' > "$_ic_cfg/claudii/config.json"
 # expires_at − 360 lands on second :59, so an off-by-one offset (359 from a
 # float floor of (1 − 0.9) × 3600) flips the rendered minute.
@@ -631,11 +631,15 @@ _ic_want=$(_ic_at 360)
 # differently under /bin/bash 3.2.
 _ic_flag_on='{"mode":"compact"}'
 _ic_global() { printf '{"cachedGrowthBookFeatures":{"tengu_sunny_locket":%s}%s}' "${1:-$_ic_flag_on}" "${2:-}" > "${3:-$_ic_cfg/cc}/.claude.json"; }
-_ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at] [5h used%]
-  printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"prompt_cache":{"warm":%s,"ttl":"%s","expires_at":%s},"rate_limits":{"five_hour":{"used_percentage":%s}}}' \
-    "$_ic_cfg/proj" "$2" "${4:-0}" "$3" "$1" "${5:-$_ic_exp}" "${6:-10}"
+_ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at] [5h used%] [rate_limits json]
+  # Brace-bearing defaults go through a variable: ${7:-{...}} expands
+  # differently under /bin/bash 3.2.
+  local _rl="${7:-}"
+  [[ -n "$_rl" ]] || _rl='{"five_hour":{"used_percentage":'"${6:-10}"'}}'
+  printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"prompt_cache":{"warm":%s,"ttl":"%s","expires_at":%s},"rate_limits":%s}' \
+    "$_ic_cfg/proj" "$2" "${4:-0}" "$3" "$1" "${5:-$_ic_exp}" "$_rl"
 }
-_ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
+_ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CC_CMDLINE="" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
 _ic_global
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_contains "idle-compact: 1h TTL over 200K shows expires_at − 6 min" "⇲idle $_ic_want" "$_ic"
@@ -664,6 +668,9 @@ assert_not_contains "idle-compact: flag mode log (dry run) stays silent" "idle" 
 _ic_global '{"mode":"off"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: flag mode off stays silent" "idle" "$_ic"
+_ic_global '{"mode":"compact_on_return"}'
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: flag mode compact_on_return (CC 2.1.300) shows too" "⇲idle $_ic_want" "$_ic"
 _ic_global '{"mode":"compact","fireAtFraction":0.5}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_contains "idle-compact: flag fireAtFraction moves the time" "⇲idle $(_ic_at 1800)" "$_ic"
@@ -772,6 +779,223 @@ _ic_global '' '' "$_ic_cfg/home/.claude"
 printf '{"idleCompaction":false}' > "$_ic_cfg/home/.claude/settings.json"
 _ic=$(_ic_json 1h 250000 true | sed "s|$_ic_cfg/proj|$_ic_cfg/home|" | _ic_run CLAUDE_CONFIG_DIR="$_ic_cfg/home/.claude")
 assert_not_contains "idle-compact: user file = project file keeps its value" "idle" "$_ic"
+_ic_global
+rm -f "$_ic_cfg/home/.claude/settings.json"
+# --settings (flagSettings): above local, below managed. The command line is
+# the claude ancestor's, stood in for by CLAUDII_CC_CMDLINE.
+printf '{"idleCompaction":true}' > "$_ic_cfg/proj/.claude/settings.local.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"env":{"A":"1"},"idleCompaction":false} --resume abc')
+assert_not_contains "idle-compact: inline --settings JSON (nested braces) beats local settings" "idle" "$_ic"
+printf '{"idleCompaction":false}' > "$_ic_cfg/flag.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
+assert_not_contains "idle-compact: a --settings file is read" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --model opus --settings=$_ic_cfg/flag.json -c")
+assert_not_contains "idle-compact: --settings=<file> form is read" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --resume abc")
+assert_contains "idle-compact: no --settings leaves the files in charge" "⇲idle $_ic_want" "$_ic"
+printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
+assert_contains "idle-compact: managed beats --settings" "⇲idle $_ic_want" "$_ic"
+rm -f "$_ic_cfg/proj/.claude/settings.local.json" "$_ic_cfg/managed/managed-settings.json"
+# The parsed --settings value is carried in the session cache: a later render
+# without the ancestor's command line (reuse path) still applies it.
+mkdir -p "$_ic_cfg/cache"
+_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
+  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
+assert_contains "idle-compact: session cache persists cc_settings=" "cc_settings=$_ic_cfg/flag.json" "$(cat "$_ic_cfg/cache/session-icsess01" 2>/dev/null)"
+_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
+  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" env -u CLAUDII_CC_CMDLINE)
+assert_not_contains "idle-compact: cached --settings applies on a later render" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
+  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE="claude")
+assert_contains "idle-compact: no --settings is cached as none" "cc_settings=-" "$(cat "$_ic_cfg/cache/session-icsess01" 2>/dev/null)"
+# Managed sources: remote cache > MDM plist > files. "first-wins" (default)
+# takes the highest source carrying any policy key — even an unrelated one.
+printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: managed file alone applies" "idle" "$_ic"
+printf '{"model":"opus"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: first-wins — a remote policy key shadows the managed file" "⇲idle $_ic_want" "$_ic"
+printf '{"model":"opus","managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: merge set in the top source layers the managed file in" "idle" "$_ic"
+printf '{"managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a control-key-only source sets merge but is no policy" "idle" "$_ic"
+printf '{"managedSourcesBehavior":"first-wins"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a managedSourcesBehavior-only source is not selected as the policy" "idle" "$_ic"
+printf '{"wslInheritsWindowsSettings":true}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a control-key-only source does not shadow the next one" "idle" "$_ic"
+printf '{"idleCompaction":null}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a null value is no policy key" "idle" "$_ic"
+rm -f "$_ic_cfg/cc/remote-settings.json"
+# MDM plist (macOS configuration profile): same keys as the JSON, per-user
+# profile before the device one. Needs plutil to build the fixture.
+if command -v plutil >/dev/null 2>&1; then
+  _ic_plist() { printf '%s' "$1" > "$_ic_cfg/p.json"; plutil -convert xml1 -o "$2" "$_ic_cfg/p.json"; }
+  _ic_plist '{"idleCompaction":true}' "$_ic_cfg/prefs/com.anthropic.claudecode.plist"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_contains "idle-compact: first-wins — a device MDM profile shadows the managed file" "⇲idle $_ic_want" "$_ic"
+  _ic_plist '{"idleCompaction":false}' "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_not_contains "idle-compact: the per-user MDM profile comes before the device one" "idle" "$_ic"
+  printf '{"idleCompaction":true}' > "$_ic_cfg/cc/remote-settings.json"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_contains "idle-compact: the remote cache ranks above MDM" "⇲idle $_ic_want" "$_ic"
+  # merge is read from the highest source carrying it, even when that source
+  # holds no policy key: remote (merge only) > MDM (unrelated key) > file.
+  rm -f "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
+  _ic_plist '{"model":"opus"}' "$_ic_cfg/prefs/com.anthropic.claudecode.plist"
+  printf '{"managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_not_contains "idle-compact: merge from a control-only top source still layers MDM and file" "idle" "$_ic"
+  rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/prefs/com.anthropic.claudecode.plist" "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
+  unset -f _ic_plist
+fi
+rm -f "$_ic_cfg/managed/managed-settings.json"
+# Rate-limit warning band — CC 2.1.300 derives allowed_warning itself from
+# utilization + resets_at (5h: >= 90% while <= 72% of the window passed; 7d:
+# >= 75/50/25% while <= 60/35/15% passed) and then skips the fire.
+_ic_now=$(date +%s)
+_ic_rl() { printf '{"%s":{"used_percentage":%s,"resets_at":%s}}' "$1" "$2" $(( _ic_now + $3 )); }
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 92 9000)" | _ic_run)
+assert_not_contains "idle-compact: 5h at 92% halfway through the window is a warning (silent)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 92 3600)" | _ic_run)
+assert_contains "idle-compact: 5h at 92% late in the window (80% passed) is no warning" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 89 9000)" | _ic_run)
+assert_contains "idle-compact: 5h at 89% is under the warning threshold" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 561600)" | _ic_run)
+assert_not_contains "idle-compact: 7d at 30% on day one is a warning (25% tier)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 172800)" | _ic_run)
+assert_contains "idle-compact: 7d at 30% with 5 of 7 days passed is no warning" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 423360)" | _ic_run)
+assert_not_contains "idle-compact: 7d at 60% with 30% passed is a warning (50% tier)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 362880)" | _ic_run)
+assert_contains "idle-compact: 7d at 60% with 40% passed is no warning" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 80 272160)" | _ic_run)
+assert_not_contains "idle-compact: 7d at 80% with 55% passed is a warning (75% tier)" "idle" "$_ic"
+# compact_on_return also needs precomputeCompactionEnabled.
+printf '{"precomputeCompactionEnabled":false}' > "$_ic_cfg/cc/settings.json"
+_ic_global '{"mode":"compact_on_return"}'
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: compact_on_return without precompute compaction stays silent" "idle" "$_ic"
+_ic_global
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: plain compact does not need precompute compaction" "⇲idle $_ic_want" "$_ic"
+rm -f "$_ic_cfg/cc/settings.json"
+# Server-managed cache: only while the session talks to Anthropic's API.
+printf '{"idleCompaction":false}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: remote cache applies on Anthropic's API" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=https://api.anthropic.com)
+assert_not_contains "idle-compact: the explicit Anthropic base URL keeps the remote cache" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=http://localhost:8888)
+assert_contains "idle-compact: a foreign ANTHROPIC_BASE_URL ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_BEDROCK=1)
+assert_contains "idle-compact: Bedrock ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_VERTEX=1)
+assert_contains "idle-compact: Vertex ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_USE_FOUNDRY=1)
+assert_contains "idle-compact: Foundry ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+rm -f "$_ic_cfg/cc/remote-settings.json"
+# Policy keys need content; $-keys never count. Merge: the higher source wins.
+printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
+printf '{"env":{}}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: an empty-object value is no policy key" "idle" "$_ic"
+printf '{"$schema":"https://json.schemastore.org/claude-code-settings.json"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: a \$-key is no policy key" "idle" "$_ic"
+printf '{"idleCompaction":true,"managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: under merge the higher-ranked source wins a conflict" "⇲idle $_ic_want" "$_ic"
+rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/managed/managed-settings.json"
+# --settings parsing: relative path against the launch directory (project_dir),
+# not the current cwd; the last occurrence wins; braces inside strings.
+printf '{"idleCompaction":false}' > "$_ic_cfg/proj/rel.json"
+printf '{"idleCompaction":true}' > "$_ic_cfg/on.json"
+_ic=$(_ic_json 1h 250000 true | sed "s|\"workspace\":{|\"workspace\":{\"current_dir\":\"$_ic_cfg/proj/sub\",|" \
+  | _ic_run CLAUDII_CC_CMDLINE="claude --settings rel.json")
+assert_not_contains "idle-compact: a relative --settings path resolves against the launch directory" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/on.json --settings=$_ic_cfg/flag.json")
+assert_not_contains "idle-compact: the last --settings wins (= form last)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings=$_ic_cfg/flag.json --settings $_ic_cfg/on.json")
+assert_contains "idle-compact: the last --settings wins (space form last)" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo }"},"idleCompaction":false}')
+assert_not_contains "idle-compact: a brace inside a JSON string does not cut inline --settings" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo \"}\""},"idleCompaction":false}')
+assert_not_contains "idle-compact: an escaped quote does not end the JSON string early" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings=$_ic_cfg/on.json --settings $_ic_cfg/on.json --settings=$_ic_cfg/flag.json")
+assert_not_contains "idle-compact: the last of three mixed --settings wins" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess02-0000",/' \
+  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE='claude --settings {"env":{"SOME_TOKEN":"s3cr3t"},"idleCompaction":false}')
+assert_not_contains "idle-compact: inline --settings env values stay out of the session cache" "s3cr3t" "$(cat "$_ic_cfg/cache/session-icsess02" 2>/dev/null)"
+assert_contains "idle-compact: inline --settings caches only the keys it reads" 'cc_settings={"idleCompaction":false}' "$(cat "$_ic_cfg/cache/session-icsess02" 2>/dev/null)"
+# --setting-sources drops the files it does not list.
+printf '{"idleCompaction":false}' > "$_ic_cfg/proj/.claude/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,local")
+assert_contains "idle-compact: --setting-sources without project ignores project settings" "⇲idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,project")
+assert_not_contains "idle-compact: --setting-sources with project keeps project settings" "idle" "$_ic"
+rm -f "$_ic_cfg/proj/.claude/settings.json"
+# Remote eligibility: CC compares the base URL's host only; three more
+# third-party providers skip the remote cache too.
+printf '{"idleCompaction":false}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run ANTHROPIC_BASE_URL=https://api.anthropic.com/v1)
+assert_not_contains "idle-compact: a base URL with a path on api.anthropic.com keeps the remote cache" "idle" "$_ic"
+for _ic_v in CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_MANTLE; do
+  _ic=$(_ic_json 1h 250000 true | _ic_run "$_ic_v=1")
+  assert_contains "idle-compact: $_ic_v ignores the remote cache" "⇲idle $_ic_want" "$_ic"
+done
+# Policy content: an array (even []) is content, an object of empty objects
+# is not.
+printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
+printf '{"availableModels":[]}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_contains "idle-compact: an empty array is a policy key (remote wins first-wins)" "⇲idle $_ic_want" "$_ic"
+printf '{"permissions":{"allow":{}}}' > "$_ic_cfg/cc/remote-settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run)
+assert_not_contains "idle-compact: nested empty objects are no policy key" "idle" "$_ic"
+rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/managed/managed-settings.json"
+# --setting-sources: trimmed names across a ps-joined space; empty = no files.
+printf '{"idleCompaction":false}' > "$_ic_cfg/proj/.claude/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user, project --resume abc")
+assert_not_contains "idle-compact: --setting-sources 'user, project' keeps project" "idle" "$_ic"
+rm -f "$_ic_cfg/proj/.claude/settings.json"
+printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources  --resume abc")
+assert_contains "idle-compact: an empty --setting-sources loads no settings file" "⇲idle $_ic_want" "$_ic"
+rm -f "$_ic_cfg/cc/settings.json"
+# A relative --settings path in a worktree session: the launch directory is
+# worktree.original_cwd.
+mkdir -p "$_ic_cfg/launch"
+printf '{"idleCompaction":false}' > "$_ic_cfg/launch/wt.json"
+_ic=$(_ic_json 1h 250000 true | sed "s|^{|{\"worktree\":{\"original_cwd\":\"$_ic_cfg/launch\"},|" \
+  | _ic_run CLAUDII_CC_CMDLINE="claude --worktree x --settings wt.json")
+assert_not_contains "idle-compact: a relative --settings path in a worktree resolves against original_cwd" "idle" "$_ic"
+# MDM: a per-user profile that lints but will not convert (a date value)
+# falls through to the device profile; a corrupt one stops the search.
+if command -v plutil >/dev/null 2>&1; then
+  printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
+  printf '{"idleCompaction":true}' > "$_ic_cfg/p.json"
+  plutil -convert xml1 -o "$_ic_cfg/prefs/com.anthropic.claudecode.plist" "$_ic_cfg/p.json"
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0"><dict><key>idleCompaction</key><false/><key>stamp</key><date>2026-01-01T00:00:00Z</date></dict></plist>' \
+    > "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_contains "idle-compact: an unconvertible per-user profile falls through to the device one" "⇲idle $_ic_want" "$_ic"
+  printf 'not a plist' > "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist"
+  _ic=$(_ic_json 1h 250000 true | _ic_run)
+  assert_not_contains "idle-compact: a corrupt per-user profile stops the MDM search" "idle" "$_ic"
+  rm -f "$_ic_cfg/prefs/com.anthropic.claudecode.plist" "$_ic_cfg/prefs/$(id -un)/com.anthropic.claudecode.plist" "$_ic_cfg/managed/managed-settings.json"
+fi
+unset _ic_v
+unset -f _ic_rl; unset _ic_now
 unset -f _ic_json _ic_run _ic_global _ic_at; unset _ic _ic_cfg _ic_exp _ic_want _ic_flag_on
 
 # ── multi-line stdin payload (read -r used to take only the first line) ─────
