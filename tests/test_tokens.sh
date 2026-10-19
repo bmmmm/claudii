@@ -178,6 +178,34 @@ assert_eq "tokens (CLAUDII_NOW pinned): sees a fixture the live clock would excl
   "$(printf '%s' "$_TOK_NOW_JSON" | jq -r '.by_type.input')"
 unset _TOK_NOW_PROJ _TOK_NOW_CACHE _TOK_NOW_SID _TOK_NOW _TOK_NOW_JSON
 
+# ── One API response, several records (insights schema v12) ──
+# Claude Code writes an assistant message as one record per content block, all
+# sharing message.id. msg_1 repeats its usage on 3 records; msg_2 was written
+# mid-stream (output 8, then the final 120). Each response counts once, at its
+# final usage: input 30+5, output 400+120 — per record it was 95 / 1328.
+_TOK_MR_PROJ="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_MR_PROJ")
+_TOK_MR_CACHE="$(mktemp -d)"; _TOK_TMPDIRS+=("$_TOK_MR_CACHE")
+mkdir -p "$_TOK_MR_PROJ/-test-project-mr"
+_TOK_MR_SID="66666666-7777-8888-9999-000000000000"
+_tok_mr_rec() {  # <msg id> <in> <out> <cache read> <cache write> <content block JSON>
+  printf '{"type":"assistant","timestamp":"%s","sessionId":"%s","requestId":"req-%s","message":{"id":"%s","role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":%s,"output_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s},"content":[%s]}}\n' \
+    "$_TS" "$_TOK_MR_SID" "$1" "$1" "$2" "$3" "$4" "$5" "$6"
+}
+{
+  _tok_mr_rec msg_1 30 400 9000 600 '{"type":"thinking","thinking":""}'
+  _tok_mr_rec msg_1 30 400 9000 600 '{"type":"text","text":"x"}'
+  _tok_mr_rec msg_1 30 400 9000 600 '{"type":"tool_use","id":"t1","name":"Bash","input":{}}'
+  _tok_mr_rec msg_2 5 8 1000 0 '{"type":"thinking","thinking":""}'
+  _tok_mr_rec msg_2 5 120 1000 0 '{"type":"text","text":"y"}'
+} > "$_TOK_MR_PROJ/-test-project-mr/$_TOK_MR_SID.jsonl"
+_TOK_MR_JSON=$(CLAUDE_PROJECTS_DIR="$_TOK_MR_PROJ" CLAUDII_CACHE_DIR="$_TOK_MR_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" tokens --json 2>&1)
+assert_eq "tokens --json: each response counted once, at its final usage" \
+  '{"cache read":10000,"input":35,"cache write":600,"output":520}' \
+  "$(printf '%s' "$_TOK_MR_JSON" | jq -c '.by_type')"
+unset -f _tok_mr_rec
+unset _TOK_MR_PROJ _TOK_MR_CACHE _TOK_MR_SID _TOK_MR_JSON
+
 unset _SID _TS _JSONL _TOK_OUT _TOK_RC _TOK_OUT_30 _TOK_EOUT _TOK_DV _TOK_HELP
 unset _TOK_TODAY _TOK_30D _TOK_MONTH _TOK_YEAR _TOK_BAD
 unset _TOK_JSON _TOK_TSV _TOK_JSON_E

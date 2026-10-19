@@ -5,8 +5,24 @@
 # lines stream in.
 # Output: single JSON object with per-day, per-model and global counters
 #
-# Reads streaming via `inputs | fromjson?` so it handles multi-MB files in
-# constant memory and silently skips malformed JSON lines.
+# Reads streaming via `inputs | fromjson?` — records are never slurped, the
+# state grows only by small per-record/per-message maps (seen_ts, msgs) — and
+# silently skips malformed JSON lines.
+#
+# One API response, several records: Claude Code writes an assistant message
+# as one record per content block (thinking, text, each tool_use), each
+# carrying the same message.id and a usage object. Summed per record, every
+# response counted 2-3× (one machine: 7982 records, 3617 responses). Usage is
+# therefore folded per message.id into the transient `msgs` map and charged
+# once, after the last record: token counters, latency sample, stop reason,
+# service tier and the attribution blocks. Each usage counter takes the
+# largest value seen across the message's records — main-thread records
+# repeat the final usage, subagent records written mid-stream carry the
+# message_start usage (output_tokens 1-8) and only the last one the final
+# count; the counters only grow, so the maximum is the final value in any
+# record order. A record without message.id counts as its own message.
+# Content blocks (tools, thinking_blocks, subagent_types) stay per record —
+# each block lives in exactly one record.
 #
 # Tool error tracking is in-band: `pending_tools[id] = name` is set on every
 # `tool_use`, looked up on the matching `tool_result`, then deleted.
@@ -38,18 +54,30 @@ def reponame($cwd):
      elif $c != null and $c > 0 and $p[$c+1] == "worktrees" then $p[$c-1]
      else ($p | last) end) // "";
 
+# Charge one message's folded usage $m to an attribution bucket {calls,
+# in_tok, out_tok, cache_read, cache_create, cache_create_1h}: one call, the
+# tokens divided by $n — 1 for a skill or plugin, the number of the message's
+# MCP tool_use entries for the MCP split (values may go fractional).
+def charge($m; $n):
+  .calls             = ((.calls             // 0) + 1)
+  | .in_tok          = ((.in_tok          // 0) + $m.in   / $n)
+  | .out_tok         = ((.out_tok         // 0) + $m.out  / $n)
+  | .cache_read      = ((.cache_read      // 0) + $m.cr   / $n)
+  | .cache_create    = ((.cache_create    // 0) + $m.cc   / $n)
+  | .cache_create_1h = ((.cache_create_1h // 0) + $m.cc1h / $n);
+
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 11,
+  schema_version: 12,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
   last_seen: null,
   active_by_day: {},       # "YYYY-MM-DD" -> active seconds (gap-capped main-thread deltas; gaps > 600s count as idle, matching the latency cap). last_seen - first_seen is wall clock incl. idle/resume — this is the "real" working time.
-  messages: 0,
-  assistant_messages: 0,
-  days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create}
+  messages: 0,             # transcript records of every type
+  assistant_messages: 0,   # API responses with usage (distinct message.id — schema v12; earlier caches counted records)
+  days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create} (each message once, on its first record's day)
   models: {},              # model -> {in_tok, cache_read, cache_create}
-  attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
+  attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (calls = messages)
   attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
   attribution_mcp: {},     # mcp_tool_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (cost split evenly across the message's MCP tools — values may be fractional)
   attribution_models: {},  # "kind|name|model" -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (kind: skill|plugin|mcp; mcp tokens split evenly across the message's MCP tools, may be fractional) — schema v5; pre-v5 caches stored a bare calls count here. cache_create is every cache write, cache_create_1h (schema v11) the part of it written to the 1-hour cache
@@ -62,8 +90,9 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   sidechain_msgs: 0,
   thinking_blocks: 0,
   limit_hits: [],          # [{timestamp, model}]
-  latency: [],             # [{day, model, dt_ms, out, ctx}] main-thread response deltas (assistant.ts - parent.ts); sidechains excluded. ctx = context-window occupancy (input + cache_read + cache_creation tokens)
+  latency: [],             # [{day, model, dt_ms, out, ctx}] one per main-thread response: its last record's ts - the ts of the record it answers (its first record's parent); sidechains excluded. ctx = context-window occupancy (input + cache_read + cache_creation tokens)
   snapshots: 0,
+  msgs: {},                # transient: message.id (else "rec:<record ordinal>") -> {day, model, skill, plugin, t0, t1, in, out, cr, cc, cc1h, mcp, tier, stop} — one API response folded across its records, charged once after the last one
   pending_tools: {},       # transient: tool_use_id -> tool_name
   pending_agent_skill: {}, # transient: tool_use_id -> attributionSkill at Agent spawn
   agent_skill_map: {},     # transient: agentId -> attributionSkill at spawn
@@ -100,8 +129,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   | (if ($r.isSnapshotUpdate // false) then .snapshots += 1 else . end)
   | (if $r.permissionMode then .permission_modes[$r.permissionMode] = ((.permission_modes[$r.permissionMode] // 0) + 1) else . end)
   | (if ($r.message.role // "") == "assistant" and ($r.message.usage // null) != null then
-      .assistant_messages += 1
-      | (($r.timestamp // "")[:10]) as $day
+      (($r.timestamp // "")[:10]) as $day
       | ($r.message.model // "unknown") as $model
       # 5h session-limit hits arrive as synthetic assistant messages
       # (model: "<synthetic>", isApiErrorMessage:true, error:"rate_limit"),
@@ -117,7 +145,6 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           .limit_hits += [{timestamp: ($r.timestamp // ""), model: (.last_assistant_model // "unknown")}]
         else . end)
       | .last_assistant_model = $model
-      | ($day + "|" + $model) as $key
       # Effective skill: the record's own attributionSkill wins; subagent
       # records (top-level .agentId) fall back to the skill active when the
       # Agent tool spawned them. "" (spawned outside any skill) → null.
@@ -126,81 +153,39 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       # cache_creation_input_tokens by TTL, and a 1h write bills 2× input where
       # a 5m write bills 1.25× — Claude Code writes the main conversation to
       # the 1h cache, subagents to the 5m one. Only the attribution blocks carry
-      # it: skills-cost is the one consumer that prices tokens. A record without
+      # it: skills-cost is the one consumer that prices tokens. A message without
       # the split adds 0 here, so its writes keep the 5m price every write had
       # before schema v11 rather than a guessed TTL.
       | ($r.message.usage.cache_creation // null | if type == "object" then (.ephemeral_1h_input_tokens // 0) else 0 end) as $cc1h
-      | .days[$key].in_tok       = ((.days[$key].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
-      | .days[$key].out_tok      = ((.days[$key].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
-      | .days[$key].cache_read   = ((.days[$key].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-      | .days[$key].cache_create = ((.days[$key].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-      | .models[$model].in_tok       = ((.models[$model].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
-      | .models[$model].cache_read   = ((.models[$model].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-      | .models[$model].cache_create = ((.models[$model].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-      # Response latency (main thread only): assistant.ts - parent.ts. Sidechain
-      # records interleave concurrently, so their deltas are meaningless -> excluded.
-      # The 600s cap drops resume gaps (parent from a prior day). OTEL (phase 2)
-      # replaces this estimate with exact api_request.duration_ms.
-      | (if (($r.isSidechain // false) | not) and $r.parentUuid and (.seen_ts[$r.parentUuid] != null) and $r.timestamp then
-          ((($r.timestamp | ts) - (.seen_ts[$r.parentUuid] | ts)) * 1000 | round) as $dt
-          | (if $dt >= 0 and $dt <= 600000 then
-              .latency += [{day: $day, model: $model, dt_ms: $dt, out: ($r.message.usage.output_tokens // 0), ctx: (($r.message.usage.input_tokens // 0) + ($r.message.usage.cache_read_input_tokens // 0) + ($r.message.usage.cache_creation_input_tokens // 0))}]
-            else . end)
+      # Fold this record into its message (see the header). message.id alone
+      # is the key: on the transcripts checked it never spanned two requestIds
+      # nor two files. The day, model and latency start come from the first
+      # record; the start (t0) is the record the response answers, main thread
+      # only — sidechain records interleave concurrently, so their deltas are
+      # meaningless. t1 runs to the message's last record: the response ends
+      # with its last block, which can stream for a while after the first.
+      | (($r.message.id // "") | tostring) as $mid
+      | (if $mid != "" then $mid else "rec:" + (.messages | tostring) end) as $mk
+      | (if .msgs[$mk] == null then
+          .msgs[$mk] = {day: $day, model: $model, skill: null, plugin: null,
+            t0: (if (($r.isSidechain // false) | not) and $r.parentUuid and (.seen_ts[$r.parentUuid] != null)
+                 then (try (.seen_ts[$r.parentUuid] | ts) catch null) else null end),
+            t1: null, in: 0, out: 0, cr: 0, cc: 0, cc1h: 0, mcp: [], tier: null, stop: null}
         else . end)
-      | (if $skill != null then
-          .attribution_skills[$skill].calls       = ((.attribution_skills[$skill].calls       // 0) + 1)
-          | .attribution_skills[$skill].in_tok     = ((.attribution_skills[$skill].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
-          | .attribution_skills[$skill].out_tok    = ((.attribution_skills[$skill].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
-          | .attribution_skills[$skill].cache_read = ((.attribution_skills[$skill].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-          | .attribution_skills[$skill].cache_create = ((.attribution_skills[$skill].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-          | .attribution_skills[$skill].cache_create_1h = ((.attribution_skills[$skill].cache_create_1h // 0) + $cc1h)
-          | ("skill|" + $skill + "|" + $model) as $amk
-          | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
-          | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
-          | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
-          | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-          | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-          | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + $cc1h)
-        else . end)
-      | (if ($r.attributionPlugin // null) != null then
-          .attribution_plugins[$r.attributionPlugin].calls       = ((.attribution_plugins[$r.attributionPlugin].calls       // 0) + 1)
-          | .attribution_plugins[$r.attributionPlugin].in_tok     = ((.attribution_plugins[$r.attributionPlugin].in_tok     // 0) + ($r.message.usage.input_tokens               // 0))
-          | .attribution_plugins[$r.attributionPlugin].out_tok    = ((.attribution_plugins[$r.attributionPlugin].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
-          | .attribution_plugins[$r.attributionPlugin].cache_read = ((.attribution_plugins[$r.attributionPlugin].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-          | .attribution_plugins[$r.attributionPlugin].cache_create = ((.attribution_plugins[$r.attributionPlugin].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-          | .attribution_plugins[$r.attributionPlugin].cache_create_1h = ((.attribution_plugins[$r.attributionPlugin].cache_create_1h // 0) + $cc1h)
-          | ("plugin|" + $r.attributionPlugin + "|" + $model) as $amk
-          | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
-          | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
-          | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
-          | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
-          | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
-          | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + $cc1h)
-        else . end)
-      # MCP attribution: the message's usage is split evenly across all MCP
-      # tool_use entries in it (values may be fractional). calls counts whole
-      # invocations per tool.
-      | ([$r.message.content[]? | select(.type == "tool_use" and ((.name // "") | startswith("mcp__"))) | .name]) as $mcp
-      | (if ($mcp | length) > 0 then
-          ($mcp | length) as $n
-          | reduce $mcp[] as $mt (.;
-              .attribution_mcp[$mt].calls       = ((.attribution_mcp[$mt].calls       // 0) + 1)
-              | .attribution_mcp[$mt].in_tok     = ((.attribution_mcp[$mt].in_tok     // 0) + (($r.message.usage.input_tokens               // 0) / $n))
-              | .attribution_mcp[$mt].out_tok    = ((.attribution_mcp[$mt].out_tok    // 0) + (($r.message.usage.output_tokens              // 0) / $n))
-              | .attribution_mcp[$mt].cache_read = ((.attribution_mcp[$mt].cache_read // 0) + (($r.message.usage.cache_read_input_tokens    // 0) / $n))
-              | .attribution_mcp[$mt].cache_create = ((.attribution_mcp[$mt].cache_create // 0) + (($r.message.usage.cache_creation_input_tokens // 0) / $n))
-              | .attribution_mcp[$mt].cache_create_1h = ((.attribution_mcp[$mt].cache_create_1h // 0) + ($cc1h / $n))
-              | ("mcp|" + $mt + "|" + $model) as $amk
-              | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
-              | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + (($r.message.usage.input_tokens               // 0) / $n))
-              | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + (($r.message.usage.output_tokens              // 0) / $n))
-              | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + (($r.message.usage.cache_read_input_tokens    // 0) / $n))
-              | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + (($r.message.usage.cache_creation_input_tokens // 0) / $n))
-              | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + ($cc1h / $n))
-            )
-        else . end)
-      | (if $r.message.usage.service_tier then .service_tier[$r.message.usage.service_tier] = ((.service_tier[$r.message.usage.service_tier] // 0) + 1) else . end)
-      | (if $r.message.stop_reason then .stop_reasons[$r.message.stop_reason] = ((.stop_reasons[$r.message.stop_reason] // 0) + 1) else . end)
+      | ($r.message.usage) as $u
+      | .msgs[$mk] |= (
+          .skill    = (.skill  // $skill)
+          | .plugin = (.plugin // $r.attributionPlugin)
+          | .t1     = ([.t1, (try ($r.timestamp | ts) catch null)] | max)
+          | .in     = ([.in,   ($u.input_tokens                // 0)] | max)
+          | .out    = ([.out,  ($u.output_tokens               // 0)] | max)
+          | .cr     = ([.cr,   ($u.cache_read_input_tokens     // 0)] | max)
+          | .cc     = ([.cc,   ($u.cache_creation_input_tokens // 0)] | max)
+          | .cc1h   = ([.cc1h, $cc1h] | max)
+          # every MCP tool_use of the message, whichever record carries it
+          | .mcp   += [$r.message.content[]? | select(.type == "tool_use" and ((.name // "") | startswith("mcp__"))) | .name]
+          | .tier   = (.tier // $u.service_tier)
+          | .stop   = ($r.message.stop_reason // .stop))
       | (if (($r.message.content // null) | type) == "array" then
           reduce ($r.message.content[]?) as $c (.;
             (if $c.type == "thinking" then .thinking_blocks += 1 else . end)
@@ -235,6 +220,49 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       )
     else . end)
 )
+# Charge every message once (see the header) — after the last record, so the
+# MCP split and the latency end see all of a message's records, even where a
+# tool_result was written between two of them.
+| .msgs as $msgs
+| del(.msgs)
+| reduce $msgs[] as $m (.;
+    .assistant_messages += 1
+    | ($m.day + "|" + $m.model) as $key
+    | .days[$key].in_tok       = ((.days[$key].in_tok       // 0) + $m.in)
+    | .days[$key].out_tok      = ((.days[$key].out_tok      // 0) + $m.out)
+    | .days[$key].cache_read   = ((.days[$key].cache_read   // 0) + $m.cr)
+    | .days[$key].cache_create = ((.days[$key].cache_create // 0) + $m.cc)
+    | .models[$m.model].in_tok       = ((.models[$m.model].in_tok       // 0) + $m.in)
+    | .models[$m.model].cache_read   = ((.models[$m.model].cache_read   // 0) + $m.cr)
+    | .models[$m.model].cache_create = ((.models[$m.model].cache_create // 0) + $m.cc)
+    # Response latency (main thread only): the response's last record minus
+    # the record it answers. The 600s cap drops resume gaps (parent from a
+    # prior day). OTEL (phase 2) replaces this estimate with exact
+    # api_request.duration_ms.
+    | (if $m.t0 != null and $m.t1 != null then
+        (($m.t1 - $m.t0) * 1000 | round) as $dt
+        | (if $dt >= 0 and $dt <= 600000 then
+            .latency += [{day: $m.day, model: $m.model, dt_ms: $dt, out: $m.out, ctx: ($m.in + $m.cr + $m.cc)}]
+          else . end)
+      else . end)
+    | (if $m.skill != null then
+        .attribution_skills[$m.skill] |= charge($m; 1)
+        | .attribution_models["skill|" + $m.skill + "|" + $m.model] |= charge($m; 1)
+      else . end)
+    | (if $m.plugin != null then
+        .attribution_plugins[$m.plugin] |= charge($m; 1)
+        | .attribution_models["plugin|" + $m.plugin + "|" + $m.model] |= charge($m; 1)
+      else . end)
+    # MCP attribution: the message's usage is split evenly across all MCP
+    # tool_use entries in it (values may be fractional). calls counts whole
+    # invocations per tool.
+    | ($m.mcp | length) as $n
+    | reduce $m.mcp[] as $mt (.;
+        .attribution_mcp[$mt] |= charge($m; $n)
+        | .attribution_models["mcp|" + $mt + "|" + $m.model] |= charge($m; $n))
+    | (if $m.tier then .service_tier[$m.tier] = ((.service_tier[$m.tier] // 0) + 1) else . end)
+    | (if $m.stop then .stop_reasons[$m.stop] = ((.stop_reasons[$m.stop] // 0) + 1) else . end)
+  )
 | del(.pending_tools)
 | del(.pending_agent_skill)
 | del(.agent_skill_map)

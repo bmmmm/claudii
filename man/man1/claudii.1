@@ -612,6 +612,10 @@ Shows calls, total cost, average cost per call, the dominant model
 and an outlier flag
 .RB ( ! )
 when a row's average is \[>=]2\[mu] the median with at least 10 calls.
+A call is one API response \(em counted once, although Claude Code writes it
+as one transcript record per content block \(em or, with
+.BR \-\-mcp ,
+one tool invocation.
 Subagent usage counts toward the skill that spawned the agent.
 .RS
 .TP
@@ -882,7 +886,9 @@ Response-time and throughput dashboard for the rolling window (default: 7 days).
 Latency is estimated from the JSONL transcripts as the wall-clock gap between an
 assistant response and its parent record
 .RB ( assistant.timestamp " \(mi " parent.timestamp ),
-main-thread responses only (sidechains interleave concurrently and are excluded).
+one sample per response: Claude Code writes a response as one record per content
+block, so the gap runs from the first block's parent to the last block.
+Main-thread responses only (sidechains interleave concurrently and are excluded).
 Sections:
 .B By model
 (response-time
