@@ -9,8 +9,12 @@ name: CI
 # this is a speed gate, not a coverage replacement: a green run here does
 # not imply the macOS legs are green.
 #
-# `runs-on: docker` matches the runner's registered label →
-# data.forgejo.org/oci/node:20-bullseye (Debian, runs as root, no sudo).
+# `runs-on: docker` matches the runner's registered label, whose default
+# image is data.forgejo.org/oci/node:20-bullseye. Debian bullseye went EOL on
+# 2026-08-31, and its security pool has answered 404 since: `apt-get install`
+# died with exit 100 before a single test ran, on every run (17010…17459).
+# The job pins its own bookworm image instead — the fix dotfiles' CI made for
+# the same failure. Runs as root, no sudo.
 
 on:
   push:
@@ -27,6 +31,8 @@ concurrency:
 jobs:
   test:
     runs-on: docker
+    container:
+      image: data.forgejo.org/oci/node:22-bookworm
     steps:
       - uses: actions/checkout@v4
         with:
