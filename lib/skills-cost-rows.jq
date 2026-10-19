@@ -7,7 +7,9 @@
 #
 # Pricing: every per-model token bucket in attribution_models is priced at its
 # own tier; any residual not covered by per-model data (pre-v5 orphans) is
-# priced at the flat legacy-Sonnet rate (that data predates Sonnet 5).
+# priced at the flat legacy-Sonnet rate (that data predates Sonnet 5). Both go
+# through usd() from lib/tier.jq, which bills cache writes by TTL (schema v11
+# cache_create_1h at the 1h rate, the rest at the 5m rate).
 # The dominant model per row comes from the per-model call counts: the top
 # model needs >=80% of the row's attributed calls, otherwise "mixed".
 include "tier";
@@ -17,34 +19,36 @@ include "tier";
     | map((.key | split("|")) as $p
         | select($p[0] == $kind)
         | {name: ($p[1] // ""), model: ($p[2] // "unknown"),
-           calls:        (.value.calls        // 0),
-           in_tok:       (.value.in_tok       // 0),
-           out_tok:      (.value.out_tok      // 0),
-           cache_read:   (.value.cache_read   // 0),
-           cache_create: (.value.cache_create // 0)})
+           calls:           (.value.calls           // 0),
+           in_tok:          (.value.in_tok          // 0),
+           out_tok:         (.value.out_tok         // 0),
+           cache_read:      (.value.cache_read      // 0),
+           cache_create:    (.value.cache_create    // 0),
+           cache_create_1h: (.value.cache_create_1h // 0)})
   ) as $am
 | .[$k] // {}
 | to_entries
 | map({
-    name:         .key,
-    calls:        (.value.calls        // 0),
-    in_tok:       (.value.in_tok       // 0),
-    out_tok:      (.value.out_tok      // 0),
-    cache_read:   (.value.cache_read   // 0),
-    cache_create: (.value.cache_create // 0)
+    name:            .key,
+    calls:           (.value.calls           // 0),
+    in_tok:          (.value.in_tok          // 0),
+    out_tok:         (.value.out_tok         // 0),
+    cache_read:      (.value.cache_read      // 0),
+    cache_create:    (.value.cache_create    // 0),
+    cache_create_1h: (.value.cache_create_1h // 0)
   })
 | map(. as $row
     | ([$am[] | select(.name == $row.name)]) as $cand
     # per-model priced cost (schema-v5 token attribution)
-    | ($cand | map(($rates[tier(.model)]) as $r
-        | (.in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr + .cache_create * $r.cc)
-      ) | add // 0) as $model_usd
+    | ($cand | map(usd($rates[tier(.model)])) | add // 0) as $model_usd
     # residual = aggregate − per-model-covered tokens (pre-v5 orphans), legacy Sonnet
-    | (([$row.in_tok       - ($cand | map(.in_tok)       | add // 0), 0] | max)) as $res_in
-    | (([$row.out_tok      - ($cand | map(.out_tok)      | add // 0), 0] | max)) as $res_out
-    | (([$row.cache_read   - ($cand | map(.cache_read)   | add // 0), 0] | max)) as $res_cr
-    | (([$row.cache_create - ($cand | map(.cache_create) | add // 0), 0] | max)) as $res_cc
-    | ($res_in * $sonnet.in + $res_out * $sonnet.out + $res_cr * $sonnet.cr + $res_cc * $sonnet.cc) as $res_usd
+    | (([$row.in_tok          - ($cand | map(.in_tok)          | add // 0), 0] | max)) as $res_in
+    | (([$row.out_tok         - ($cand | map(.out_tok)         | add // 0), 0] | max)) as $res_out
+    | (([$row.cache_read      - ($cand | map(.cache_read)      | add // 0), 0] | max)) as $res_cr
+    | (([$row.cache_create    - ($cand | map(.cache_create)    | add // 0), 0] | max)) as $res_cc
+    | (([$row.cache_create_1h - ($cand | map(.cache_create_1h) | add // 0), 0] | max)) as $res_cc1h
+    | ({in_tok: $res_in, out_tok: $res_out, cache_read: $res_cr,
+        cache_create: $res_cc, cache_create_1h: $res_cc1h} | usd($sonnet)) as $res_usd
     | $row + {tot_usd: ($model_usd + $res_usd)}
   )
 | map(. + {avg_usd: (if .calls > 0 then .tot_usd / .calls else 0 end)})

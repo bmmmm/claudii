@@ -46,7 +46,7 @@ lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/
 lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projection
 lib/usage_spark.awk     # overview usage section — 30-day token-per-day sparkline
 lib/epoch_to_date.awk   # epoch→YYYY-MM-DD without date forks (injected)
-lib/tier.jq             # jq module: tier() model→rate-tier mapping
+lib/tier.jq             # jq module: tier() model→rate-tier mapping, usd() token-bucket pricing (cache writes by TTL)
 lib/otel_rows.jq        # jq: flat llm/err event records → one row per perf sample (compacted into otel/rows/)
 lib/otel_doc.jq         # jq module: sample rows + repo map + window → perf-cache shape (`def otel_doc`, every build mode)
 lib/perf_common.jq      # jq module: perf helpers (sort-once percentiles, window/repo filters)

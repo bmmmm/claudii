@@ -672,7 +672,15 @@ Costs are priced per model: each per-model token bucket
 .RB ( attribution_models ", "
 schema v5) bills at its own tier rate (Opus, Sonnet, Haiku, Fable; cache_read
 0.1\(mu input \(em except Opus 5.5 and Sonnet 5.5, 0.05\(mu, and Fable 5.1, a
-flat $0.25/M \(em and cache_create 1.25\(mu input). Version-aware within a tier:
+flat $0.25/M). Cache writes bill by prompt-cache TTL: 1.25\(mu input for the
+5-minute cache, 2\(mu for the 1-hour cache, where Claude Code keeps the main
+conversation (subagents write to the 5-minute one).
+.B cache_create
+counts both; the split comes from the transcript's
+.B usage.cache_creation
+(insights schema v11). Writes without it \(em caches built before v11,
+sessions whose transcript is gone \(em bill at the 5-minute rate.
+Version-aware within a tier:
 Sonnet 4.x / 3.x, Haiku 4.x / 3.x and Fable 5 keep their own older rates, and Opus 5.5 (now
 the default Opus) carries the newer, cheaper rate while older Opus ids keep the
 existing one. Haiku 5.5 is priced at its up-to-100K-prompt rate ($0.10/$0.50/M);

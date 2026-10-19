@@ -1,4 +1,5 @@
-# tier.jq — jq module: map a raw model id to a rate-table tier key.
+# tier.jq — jq module: map a raw model id to a rate-table tier key, and price
+# a token bucket at that tier's rates (usd, at the bottom).
 # Included by lib/skills-cost-rows.jq and lib/skills-cost-compare.jq via
 # `include "tier";` (callers pass -L "$CLAUDII_HOME/lib").
 # Most-specific first; unknown → sonnet (the historical blended default).
@@ -46,3 +47,14 @@ def tier($m):
               ($l | test("(^|[^a-z0-9])3([-.][0-9])?[- ]sonnet([^a-z]|$)"))) then "sonnet-legacy"
     elif ($l | test("(^|[^a-z])sonnet[- ]5[- ]5($|[^0-9.-])")) then "sonnet-5-5"
     else "sonnet" end;
+
+# Price one token bucket {in_tok, out_tok, cache_read, cache_create,
+# cache_create_1h} (all numbers — callers default missing keys to 0) at the
+# _rates row $r. Cache writes bill by TTL: cache_create_1h at "cc1h" (2×
+# input), the rest of cache_create at "cc" (5m, 1.25× input). A bucket without
+# the TTL split (insights caches before schema v11) has cache_create_1h 0, so
+# all its writes stay at the 5m rate — the split is never guessed. One
+# definition for the per-model and the residual cost in both programs.
+def usd($r):
+  .in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr
+  + (.cache_create - .cache_create_1h) * $r.cc + .cache_create_1h * $r.cc1h;
