@@ -39,7 +39,7 @@ def reponame($cwd):
      else ($p | last) end) // "";
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 10,
+  schema_version: 11,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -49,10 +49,10 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   assistant_messages: 0,
   days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create}
   models: {},              # model -> {in_tok, cache_read, cache_create}
-  attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create}
-  attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create}
-  attribution_mcp: {},     # mcp_tool_name -> {calls, in_tok, out_tok, cache_read, cache_create} (cost split evenly across the message's MCP tools — values may be fractional)
-  attribution_models: {},  # "kind|name|model" -> {calls, in_tok, out_tok, cache_read, cache_create} (kind: skill|plugin|mcp; mcp tokens split evenly across the message's MCP tools, may be fractional) — schema v5; pre-v5 caches stored a bare calls count here
+  attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
+  attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
+  attribution_mcp: {},     # mcp_tool_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (cost split evenly across the message's MCP tools — values may be fractional)
+  attribution_models: {},  # "kind|name|model" -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (kind: skill|plugin|mcp; mcp tokens split evenly across the message's MCP tools, may be fractional) — schema v5; pre-v5 caches stored a bare calls count here. cache_create is every cache write, cache_create_1h (schema v11) the part of it written to the 1-hour cache
   tools: {},               # tool_name -> count
   tool_errors: {},         # tool_name -> error count
   stop_reasons: {},        # reason -> count (assistant only)
@@ -122,6 +122,14 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
       # records (top-level .agentId) fall back to the skill active when the
       # Agent tool spawned them. "" (spawned outside any skill) → null.
       | (($r.attributionSkill // .agent_skill_map[$r.agentId // ""] // "") | if . == "" then null else . end) as $skill
+      # 1-hour share of the cache write: usage.cache_creation splits
+      # cache_creation_input_tokens by TTL, and a 1h write bills 2× input where
+      # a 5m write bills 1.25× — Claude Code writes the main conversation to
+      # the 1h cache, subagents to the 5m one. Only the attribution blocks carry
+      # it: skills-cost is the one consumer that prices tokens. A record without
+      # the split adds 0 here, so its writes keep the 5m price every write had
+      # before schema v11 rather than a guessed TTL.
+      | ($r.message.usage.cache_creation // null | if type == "object" then (.ephemeral_1h_input_tokens // 0) else 0 end) as $cc1h
       | .days[$key].in_tok       = ((.days[$key].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
       | .days[$key].out_tok      = ((.days[$key].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
       | .days[$key].cache_read   = ((.days[$key].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
@@ -145,12 +153,14 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           | .attribution_skills[$skill].out_tok    = ((.attribution_skills[$skill].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
           | .attribution_skills[$skill].cache_read = ((.attribution_skills[$skill].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
           | .attribution_skills[$skill].cache_create = ((.attribution_skills[$skill].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_skills[$skill].cache_create_1h = ((.attribution_skills[$skill].cache_create_1h // 0) + $cc1h)
           | ("skill|" + $skill + "|" + $model) as $amk
           | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
           | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
           | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
           | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
           | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + $cc1h)
         else . end)
       | (if ($r.attributionPlugin // null) != null then
           .attribution_plugins[$r.attributionPlugin].calls       = ((.attribution_plugins[$r.attributionPlugin].calls       // 0) + 1)
@@ -158,12 +168,14 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
           | .attribution_plugins[$r.attributionPlugin].out_tok    = ((.attribution_plugins[$r.attributionPlugin].out_tok    // 0) + ($r.message.usage.output_tokens              // 0))
           | .attribution_plugins[$r.attributionPlugin].cache_read = ((.attribution_plugins[$r.attributionPlugin].cache_read // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
           | .attribution_plugins[$r.attributionPlugin].cache_create = ((.attribution_plugins[$r.attributionPlugin].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_plugins[$r.attributionPlugin].cache_create_1h = ((.attribution_plugins[$r.attributionPlugin].cache_create_1h // 0) + $cc1h)
           | ("plugin|" + $r.attributionPlugin + "|" + $model) as $amk
           | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
           | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + ($r.message.usage.input_tokens               // 0))
           | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + ($r.message.usage.output_tokens              // 0))
           | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + ($r.message.usage.cache_read_input_tokens    // 0))
           | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + ($r.message.usage.cache_creation_input_tokens // 0))
+          | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + $cc1h)
         else . end)
       # MCP attribution: the message's usage is split evenly across all MCP
       # tool_use entries in it (values may be fractional). calls counts whole
@@ -177,12 +189,14 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
               | .attribution_mcp[$mt].out_tok    = ((.attribution_mcp[$mt].out_tok    // 0) + (($r.message.usage.output_tokens              // 0) / $n))
               | .attribution_mcp[$mt].cache_read = ((.attribution_mcp[$mt].cache_read // 0) + (($r.message.usage.cache_read_input_tokens    // 0) / $n))
               | .attribution_mcp[$mt].cache_create = ((.attribution_mcp[$mt].cache_create // 0) + (($r.message.usage.cache_creation_input_tokens // 0) / $n))
+              | .attribution_mcp[$mt].cache_create_1h = ((.attribution_mcp[$mt].cache_create_1h // 0) + ($cc1h / $n))
               | ("mcp|" + $mt + "|" + $model) as $amk
               | .attribution_models[$amk].calls        = ((.attribution_models[$amk].calls        // 0) + 1)
               | .attribution_models[$amk].in_tok       = ((.attribution_models[$amk].in_tok       // 0) + (($r.message.usage.input_tokens               // 0) / $n))
               | .attribution_models[$amk].out_tok      = ((.attribution_models[$amk].out_tok      // 0) + (($r.message.usage.output_tokens              // 0) / $n))
               | .attribution_models[$amk].cache_read   = ((.attribution_models[$amk].cache_read   // 0) + (($r.message.usage.cache_read_input_tokens    // 0) / $n))
               | .attribution_models[$amk].cache_create = ((.attribution_models[$amk].cache_create // 0) + (($r.message.usage.cache_creation_input_tokens // 0) / $n))
+              | .attribution_models[$amk].cache_create_1h = ((.attribution_models[$amk].cache_create_1h // 0) + ($cc1h / $n))
             )
         else . end)
       | (if $r.message.usage.service_tier then .service_tier[$r.message.usage.service_tier] = ((.service_tier[$r.message.usage.service_tier] // 0) + 1) else . end)

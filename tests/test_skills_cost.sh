@@ -1,4 +1,4 @@
-# touches: lib/cmd/skills-cost.sh bin/claudii completions/_claudii man/man1/claudii.1 CHANGELOG.md
+# touches: lib/cmd/skills-cost.sh lib/skills-cost-rows.jq lib/skills-cost-compare.jq lib/tier.jq lib/insights.jq bin/claudii-insights bin/claudii completions/_claudii man/man1/claudii.1 CHANGELOG.md
 
 # test_skills_cost.sh — claudii skills-cost command
 #
@@ -369,18 +369,25 @@ unset -f _sc_pm_cell
 # Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
 # a 400K residual with no per-model attribution (the orphaned-v4 case). Cost =
 # 600K×$5/M (opus) + 400K×$3/M (sonnet residual) = $3.00 + $1.20 = $4.20.
+# mixed1h-skill: the same shape for 1-hour cache writes (schema v11
+# cache_create_1h) — 600K on opus at the 1h rate ($10/M) + a 400K 1h residual
+# at the legacy-Sonnet 1h rate ($6/M) = $6.00 + $2.40 = $8.40. Billing the
+# residual at the 5m rate would read $7.50, counting it twice $9.90.
 _SC_RES_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_RES_CACHE")
 mkdir -p "$_SC_RES_CACHE/insights"
 _sc_write_fixture "$_SC_RES_CACHE/insights/sess-res.json" \
-  '{"mixed-skill":{"calls":2,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0}}' \
+  '{"mixed-skill":{"calls":2,"in_tok":1000000,"out_tok":0,"cache_read":0,"cache_create":0},"mixed1h-skill":{"calls":2,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":1000000,"cache_create_1h":1000000}}' \
   '{}' '{}' \
-  '{"skill|mixed-skill|claude-opus-4-8":{"calls":1,"in_tok":600000,"out_tok":0,"cache_read":0,"cache_create":0}}'
+  '{"skill|mixed-skill|claude-opus-4-8":{"calls":1,"in_tok":600000,"out_tok":0,"cache_read":0,"cache_create":0},"skill|mixed1h-skill|claude-opus-4-8":{"calls":1,"in_tok":0,"out_tok":0,"cache_read":0,"cache_create":600000,"cache_create_1h":600000}}'
 
 _sc_res_json=$(CLAUDII_CACHE_DIR="$_SC_RES_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
 _sc_res_tot=$(jq -r '.rows[] | select(.name=="mixed-skill") | .tot_usd' <<< "$_sc_res_json" 2>/dev/null)
 assert_eq "skills-cost residual: 600K opus + 400K sonnet residual == \$4.20" "4.20" \
   "$(LC_ALL=C awk -v v="$_sc_res_tot" 'BEGIN{printf "%.2f", v}')"
+_sc_res_1h=$(jq -r '.rows[] | select(.name=="mixed1h-skill") | .tot_usd' <<< "$_sc_res_json" 2>/dev/null)
+assert_eq "skills-cost residual: 1h writes — 600K opus + 400K sonnet residual, both at 1h rates == \$8.40" "8.40" \
+  "$(LC_ALL=C awk -v v="$_sc_res_1h" 'BEGIN{printf "%.2f", v}')"
 
 # ── Test 13: --compare BEFORE:AFTER trend view (two windows) ──────────────────
 # Prior window [now-60, now-30): explore 10 calls @ 1200 out/call. Recent window
@@ -399,7 +406,11 @@ _sc_now=$(date -u -d "@$_sc_cmp_now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
 _sc_prior_ts=$(date -u -d "@$(( _sc_cmp_now - 45 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -r "$(( _sc_cmp_now - 45 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)
 _sc_cmp_common='schema_version:5,messages:1,assistant_messages:1,sidechain_msgs:0,thinking_blocks:0,limit_hits:[],snapshots:0,days:{},models:{},tools:{},tool_errors:{},stop_reasons:{},subagent_types:{},permission_modes:{},service_tier:{},attribution_plugins:{},attribution_mcp:{}'
-jq -n --arg ls "$_sc_now" "{sessionId:\"r\",last_seen:\$ls,$_sc_cmp_common,attribution_skills:{explore:{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:0}},attribution_models:{\"skill|explore|claude-opus-4-8\":{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:0}}}" \
+# The recent window also writes 1M tokens to the 1-hour cache (schema v11
+# cache_create_1h), so the compare program's pricing is pinned too: 1000 in ×
+# $5/M + 8000 out × $25/M + 1M × $10/M (opus 1h write) = $10.205 over 10
+# calls. At the 5m write rate it would read $0.6455/call.
+jq -n --arg ls "$_sc_now" "{sessionId:\"r\",last_seen:\$ls,$_sc_cmp_common,attribution_skills:{explore:{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:1000000,cache_create_1h:1000000}},attribution_models:{\"skill|explore|claude-opus-4-8\":{calls:10,in_tok:1000,out_tok:8000,cache_read:0,cache_create:1000000,cache_create_1h:1000000}}}" \
   > "$_SC_CMP_CACHE/insights/r.json"
 jq -n --arg ls "$_sc_prior_ts" "{sessionId:\"p\",last_seen:\$ls,$_sc_cmp_common,attribution_skills:{explore:{calls:10,in_tok:1000,out_tok:12000,cache_read:0,cache_create:0}},attribution_models:{\"skill|explore|claude-opus-4-8\":{calls:10,in_tok:1000,out_tok:12000,cache_read:0,cache_create:0}}}" \
   > "$_SC_CMP_CACHE/insights/p.json"
@@ -422,6 +433,8 @@ assert_eq "skills-cost --compare --json: out_per_call_delta == -400" "-400" \
   "$(jq -r '.rows[] | select(.name=="explore") | .out_per_call_delta' <<< "$_sc_cmp_json" 2>/dev/null)"
 assert_eq "skills-cost --compare --json: before_days == 30" "30" \
   "$(jq -r '.compare.before_days' <<< "$_sc_cmp_json" 2>/dev/null)"
+assert_eq "skills-cost --compare --json: 1h cache writes priced at the 1h rate (avg \$1.0205)" "1.0205" \
+  "$(jq -r '.rows[] | select(.name=="explore") | .avg_usd_recent' <<< "$_sc_cmp_json" 2>/dev/null | LC_ALL=C awk '{printf "%.4f", $1}')"
 assert_eq "skills-cost --compare --json: metric documents context-robustness" "0" \
   "$(jq -e '.metric | test("context-robust")' <<< "$_sc_cmp_json" >/dev/null 2>&1; echo $?)"
 
@@ -446,6 +459,57 @@ assert_eq "skills-cost --compare --json empty: rows is []" "0" \
 _sc_cmpe_txt=$(CLAUDII_CACHE_DIR="$_SC_CMPE_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 2>&1)
 assert_contains "skills-cost --compare empty: no-comparable-activity line" "No comparable" "$_sc_cmpe_txt"
 
+# ── Test 14: cache writes priced by TTL (insights schema v11), end to end ─────
+# Claude Code writes the main conversation to the 1-hour prompt cache (2×
+# input) and subagents to the 5-minute one (1.25×); usage.cache_creation
+# carries the split. Transcript → claudii-insights aggregate → merge →
+# skills-cost, so the split has to survive every stage. Opus 5.5 ($4/M in →
+# 5m $5/M, 1h $8/M); each skill only writes 1M cache tokens, so its tot_usd
+# is the write price alone:
+#   ttl1h    1M to the 1h cache                → $8.00 (2×)
+#   ttl5m    1M to the 5m cache                → $5.00 (1.25×)
+#   ttlmix   250K 5m + 750K 1h                 → $1.25 + $6.00 = $7.25
+#   ttlbare  1M total, no cache_creation split → $5.00 (5m rate, as before v11)
+_SC_TTL="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_TTL")
+mkdir -p "$_SC_TTL/proj/p" "$_SC_TTL/cache"
+_sc_ttl_rec() {  # <skill> [cache_creation JSON] → one assistant record
+  jq -cn --arg s "$1" --arg ts "$_SC_LAST_SEEN" --argjson cc "${2:-null}" \
+    '{type:"assistant", timestamp:$ts, sessionId:"ttl-sess", attributionSkill:$s,
+      message:{role:"assistant", model:"claude-opus-5-5", content:[],
+        usage:({input_tokens:0, output_tokens:0, cache_read_input_tokens:0,
+                cache_creation_input_tokens:1000000}
+               + (if $cc == null then {} else {cache_creation:$cc} end))}}'
+}
+{
+  _sc_ttl_rec ttl1h-skill   '{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000000}'
+  _sc_ttl_rec ttl5m-skill   '{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":0}'
+  _sc_ttl_rec ttlmix-skill  '{"ephemeral_5m_input_tokens":250000,"ephemeral_1h_input_tokens":750000}'
+  _sc_ttl_rec ttlbare-skill
+} > "$_SC_TTL/proj/p/ttl-sess.jsonl"
+CLAUDE_PROJECTS_DIR="$_SC_TTL/proj" CLAUDII_CACHE_DIR="$_SC_TTL/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+_sc_ttl_json=$(CLAUDII_CACHE_DIR="$_SC_TTL/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_ttl_cell() { jq -r --arg n "$1" '.rows[] | select(.name==$n) | .tot_usd' <<< "$_sc_ttl_json" 2>/dev/null | LC_ALL=C awk '{printf "%.4f", $1}'; }
+assert_eq "skills-cost TTL: 1h-only write bills 2x input (\$8/M on Opus 5.5)"         "8.0000" "$(_sc_ttl_cell ttl1h-skill)"
+assert_eq "skills-cost TTL: 5m-only write bills 1.25x input (\$5/M)"                  "5.0000" "$(_sc_ttl_cell ttl5m-skill)"
+assert_eq "skills-cost TTL: mixed split bills each part at its own rate (\$7.25)"     "7.2500" "$(_sc_ttl_cell ttlmix-skill)"
+assert_eq "skills-cost TTL: total without a split falls back to the 5m rate (\$5/M)"  "5.0000" "$(_sc_ttl_cell ttlbare-skill)"
+assert_contains "skills-cost TTL: meta.pricing states the 1h rate" "2x for 1-hour" \
+  "$(jq -r '.meta.pricing' <<< "$_sc_ttl_json" 2>/dev/null)"
+# The write multipliers have no exceptions — Anthropic's pricing table bills
+# 1.25× input (5m) and 2× (1h) on every model; the cache READ is the column
+# that varies. Check them on every _rates row, so a typo in one tier's cc or
+# cc1h goes red even where no bucket above prices that tier.
+_sc_rates=$(sed -n "/local _rates='{/,/^ *}'/p" "$CLAUDII_HOME/lib/cmd/skills-cost.sh" \
+  | sed -e "s/.*local _rates='{/{/" -e "s/^ *}'.*/}/")
+assert_eq "skills-cost _rates: every tier writes at 1.25x (cc) and 2x (cc1h) input" "ok" \
+  "$(jq -r 'if length == 0 then "no rows parsed"
+            else [to_entries[] | select((.value.cc / .value.in - 1.25 | fabs) > 1e-9
+                                        or (.value.cc1h / .value.in - 2 | fabs) > 1e-9) | .key]
+                 | if length == 0 then "ok" else "off: " + join(", ") end end' <<< "$_sc_rates" 2>&1)"
+unset -f _sc_ttl_rec _sc_ttl_cell
+unset _SC_TTL _sc_ttl_json _sc_rates
+
 # ── Flag robustness: a value-flag as the LAST arg must not silently exit ──────
 # `--compare` with no window consumed $@, then the loop's final `shift` tripped
 # exit 1 under set -e — a silent failure with no output. Now: actionable message
@@ -466,7 +530,7 @@ assert_contains "skills-cost --days (no value): exit 2" "rc=2" "$_sc_d_nout"
 unset _sc_cmp_noarg _sc_cmp_narc _sc_d_nout
 
 unset _sc_cmp_now _sc_now _sc_prior_ts _sc_cmp_common _sc_cmp_out _sc_cmp_rc _sc_cmp_json _sc_cmp_bad _sc_cmp_zero _sc_cmpe_json _sc_cmpe_txt
-unset _sc_pm_json _sc_pm_opus _sc_pm_opus55 _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_pm_o55cr _sc_pm_ocr _sc_pm_o55out _sc_pm_o55cc _sc_pm_h55 _sc_pm_h55cr _sc_pm_s55cr _sc_pm_s5cr _sc_res_json _sc_res_tot
+unset _sc_pm_json _sc_pm_opus _sc_pm_opus55 _sc_pm_sonnet _sc_pm_sonnet5 _sc_pm_haiku _sc_pm_fable _sc_pm_f51cr _sc_pm_f5cr _sc_pm_o55cr _sc_pm_ocr _sc_pm_o55out _sc_pm_o55cc _sc_pm_h55 _sc_pm_h55cr _sc_pm_s55cr _sc_pm_s5cr _sc_res_json _sc_res_tot _sc_res_1h
 unset _SC_TMPDIRS _sc_empty_out _sc_empty_rc _sc_out _sc_rc _sc_outlier_out _sc_outlier_rc \
       _sc_flag_count _sc_no_skills _sc_plugins_out _sc_plugins_rc _sc_json_out _sc_json_rc \
       _sc_jq_rc _sc_has_median _sc_has_days _sc_json_7d _sc_days_val _sc_dispatch_out _sc_dispatch_rc _sc_d_narc \

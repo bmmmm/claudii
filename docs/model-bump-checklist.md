@@ -55,8 +55,10 @@ display + docs sweep, not a config rename. Older versions stay selectable via
 ## Pricing changes
 
 If the new model also changes **pricing**, update the per-model `_rates` table in
-`lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc; cache_read = 0.1×
-input, cache_create 5m = 1.25× input). That table is the only hardcoded rate set
+`lib/cmd/skills-cost.sh` (per-token USD per tier: in/out/cr/cc/cc1h; cache_read =
+0.1× input, cache writes `cc` = 5-minute cache at 1.25× input, `cc1h` = 1-hour
+cache at 2× input — `usd()` in `lib/tier.jq` bills the schema-v11
+`cache_create_1h` part at `cc1h`, the rest at `cc`). That table is the only hardcoded rate set
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
 in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`fable-legacy`
 for fable-5 / mythos-5 ids/`opus`/`opus-5-5` for the newer, cheaper opus-5-5
@@ -66,7 +68,7 @@ of Sonnet 5.5/`sonnet`, unknown → sonnet) —
 keep it in sync with the table. A price
 change WITHIN a tier gets a version-aware `tier()` branch and its own `_rates`
 key rather than overwriting the old rate (Sonnet 5 precedent — old data must
-keep its old price). Compare all four rate columns, not just in/out: Fable 5.1
+keep its old price). Compare all five rate columns, not just in/out: Fable 5.1
 moved the cache read alone, so pin an in-tier price change with a token bucket
 that actually differs. **Direction isn't fixed — check which side is "new"
 before picking the bare key.** Sonnet 5 and Fable 5.1 both made the bare tier

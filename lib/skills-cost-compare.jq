@@ -8,26 +8,29 @@
 include "tier";
 
 # Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
-# pricing + legacy-Sonnet residual as the single-window view in skills-cost-rows.jq).
+# pricing + legacy-Sonnet residual as the single-window view in skills-cost-rows.jq,
+# both priced by usd() from lib/tier.jq).
 def rows($m):
   ($m.attribution_models // {} | to_entries
     | map((.key | split("|")) as $p | select($p[0] == $kind)
         | {name:($p[1]//""), model:($p[2]//"unknown"),
            in_tok:(.value.in_tok//0), out_tok:(.value.out_tok//0),
-           cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)})) as $am
+           cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
+           cache_create_1h:(.value.cache_create_1h//0)})) as $am
   | ($m[$k] // {} | to_entries
       | map({name:.key, calls:(.value.calls//0), in_tok:(.value.in_tok//0),
-             out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0)}))
+             out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
+             cache_create_1h:(.value.cache_create_1h//0)}))
   | map(. as $row
       | ([$am[] | select(.name == $row.name)]) as $cand
-      | ($cand | map(($rates[tier(.model)]) as $r
-          | (.in_tok*$r.in + .out_tok*$r.out + .cache_read*$r.cr + .cache_create*$r.cc)) | add // 0) as $musd
-      | (([$row.in_tok       - ($cand|map(.in_tok)|add//0),       0]|max)) as $ri
-      | (([$row.out_tok      - ($cand|map(.out_tok)|add//0),      0]|max)) as $ro
-      | (([$row.cache_read   - ($cand|map(.cache_read)|add//0),   0]|max)) as $rcr
-      | (([$row.cache_create - ($cand|map(.cache_create)|add//0), 0]|max)) as $rcc
-      | ($rates["sonnet-legacy"]) as $rsl
-      | ($ri*$rsl.in + $ro*$rsl.out + $rcr*$rsl.cr + $rcc*$rsl.cc) as $rusd
+      | ($cand | map(usd($rates[tier(.model)])) | add // 0) as $musd
+      | (([$row.in_tok          - ($cand|map(.in_tok)|add//0),          0]|max)) as $ri
+      | (([$row.out_tok         - ($cand|map(.out_tok)|add//0),         0]|max)) as $ro
+      | (([$row.cache_read      - ($cand|map(.cache_read)|add//0),      0]|max)) as $rcr
+      | (([$row.cache_create    - ($cand|map(.cache_create)|add//0),    0]|max)) as $rcc
+      | (([$row.cache_create_1h - ($cand|map(.cache_create_1h)|add//0), 0]|max)) as $rcc1h
+      | ({in_tok:$ri, out_tok:$ro, cache_read:$rcr, cache_create:$rcc, cache_create_1h:$rcc1h}
+         | usd($rates["sonnet-legacy"])) as $rusd
       | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
 
 (rows($prior)) as $P

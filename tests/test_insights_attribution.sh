@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 10" "10" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 11" "11" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -171,7 +171,39 @@ assert_eq "insights attribution: total messages == 8" "8" "$_TOTAL_MSGS"
 _ASST_MSGS=$(echo "$_RESULT" | jq '.assistant_messages' 2>/dev/null)
 assert_eq "insights attribution: assistant_messages == 6" "6" "$_ASST_MSGS"
 
+# ── Cache-write TTL split (schema v11) ───────────────────────────────────────
+# usage.cache_creation splits cache_creation_input_tokens by TTL; the 1h part
+# lands in cache_create_1h next to the unchanged total, so skills-cost can bill
+# it at 2× input instead of the 5m rate's 1.25×. A record without the split
+# adds 0 — none of the fixture rows above carries one.
+_TTL_JSONL=$(mktemp)
+cat > "$_TTL_JSONL" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-27T11:00:00Z","attributionSkill":"ttl","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000}},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T11:01:00Z","attributionSkill":"ttl","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":400,"cache_creation":{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":0}},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T11:02:00Z","attributionSkill":"ttl","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":300},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T11:03:00Z","attributionPlugin":"pl","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_5m_input_tokens":50,"ephemeral_1h_input_tokens":150}},"content":[{"type":"tool_use","id":"m1","name":"mcp__srv__alpha","input":{}},{"type":"tool_use","id":"m2","name":"mcp__srv__beta","input":{}}]}}
+JSONL
+_TTL=$(jq -R -n --arg sid "ttl-sid" -f "$CLAUDII_HOME/lib/insights.jq" "$_TTL_JSONL" 2>&1)
+rm -f "$_TTL_JSONL"
+# ttl: 1000 (1h) + 400 (5m) + 300 (no split) → total 1700, 1h part 1000
+assert_eq "insights TTL: skill cache_create keeps the total (1700)" "1700" \
+  "$(jq '.attribution_skills.ttl.cache_create' <<< "$_TTL" 2>/dev/null)"
+assert_eq "insights TTL: skill cache_create_1h counts only 1h writes (1000)" "1000" \
+  "$(jq '.attribution_skills.ttl.cache_create_1h' <<< "$_TTL" 2>/dev/null)"
+assert_eq "insights TTL: per-model bucket carries the 1h part (1000)" "1000" \
+  "$(jq '.attribution_models["skill|ttl|claude-opus-5-5"].cache_create_1h' <<< "$_TTL" 2>/dev/null)"
+assert_eq "insights TTL: plugin cache_create_1h == 150" "150" \
+  "$(jq '.attribution_plugins.pl.cache_create_1h' <<< "$_TTL" 2>/dev/null)"
+# MCP splits usage evenly across the message's tools: 150 / 2 each
+assert_eq "insights TTL: mcp cache_create_1h split evenly (75)" "75" \
+  "$(jq '.attribution_mcp["mcp__srv__alpha"].cache_create_1h' <<< "$_TTL" 2>/dev/null)"
+assert_eq "insights TTL: mcp per-model cache_create_1h split evenly (75)" "75" \
+  "$(jq '.attribution_models["mcp|mcp__srv__beta|claude-opus-5-5"].cache_create_1h' <<< "$_TTL" 2>/dev/null)"
+assert_eq "insights TTL: records without the split add 0 (explore)" "0" \
+  "$(jq '.attribution_skills.explore.cache_create_1h' <<< "$_RESULT" 2>/dev/null)"
+
 # Cleanup
+unset _TTL_JSONL _TTL
 unset _FIXTURE _SID _RESULT _RC _SCHEMA _SESSION
 unset _EXPLORE_CALLS _EXPLORE_IN _EXPLORE_OUT _EXPLORE_CACHE_READ _EXPLORE_CACHE_CREATE
 unset _COMMIT_CALLS _COMMIT_IN _COMMIT_OUT _COMMIT_CACHE_READ _COMMIT_CACHE_CREATE
