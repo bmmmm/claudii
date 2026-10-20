@@ -1,12 +1,12 @@
 # Release runbook
 
-Referenced from CLAUDE.md § "When releasing". `scripts/release.sh <version>` is
+Referenced from AGENTS.md § "When releasing". `scripts/release.sh <version>` is
 the only entry point.
 
 ## Always `--dry-run` first
 
 `scripts/release.sh <version> --dry-run` walks every gate and prints what it
-would do, without touching a file. CLAUDE.md requires it; it is also the only
+would do, without touching a file. AGENTS.md requires it; it is also the only
 way to see the SemVer verdict before it is a commit.
 
 ## Pre-flight gates, in order

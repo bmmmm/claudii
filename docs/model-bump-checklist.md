@@ -1,6 +1,6 @@
 # Model-bump checklist
 
-Referenced from CLAUDE.md § "When a new Claude model ships". Trigger this when
+Referenced from AGENTS.md § "When a new Claude model ships". Trigger this when
 Anthropic releases a new versioned model (e.g. Opus 4.9).
 
 Background: claudii does **not** pick the model for Claude Code — `/model` does.

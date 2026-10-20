@@ -13,9 +13,9 @@ Find stale references and cross-file drift, root-cause them, report. Static chec
 
 Read each source below and cross-check every reference it makes against what actually exists in `bin/`, `lib/`, `scripts/`, `config/`. A pointer to a removed command/script/file is the typical finding.
 
-- **CLAUDE.md** — rules and naming still match the code? (The architecture map and the command-role table moved to `docs/architecture.md` on 2026-08-31 — check them there.)
+- **AGENTS.md** — rules and naming still match the code? (The architecture map and the command-role table moved to `docs/architecture.md` on 2026-08-31 — check them there.)
 - **`docs/architecture.md`** — file map and what-shows-where table still current?
-- **`config/defaults.json`** — agent aliases/descriptions current? A description naming an old model version is drift (see CLAUDE.md "When a new Claude model ships").
+- **`config/defaults.json`** — agent aliases/descriptions current? A description naming an old model version is drift (see AGENTS.md "When a new Claude model ships").
 - **Memories** — read `MEMORY.md` index first (`~/.claude/projects/-Users-bma-offline-coding-claudii/memory/`); stale entries, contradictions, wrong file/flag names?
 - **Skills** (`.claude/skills/`) — dead references? overlaps? model frontmatter sane (main-thread skill → `opus`/`inherit`, never `sonnet`)?
 - **TODO.md / ROADMAP.md** — bloated, duplicated, or already-shipped items?

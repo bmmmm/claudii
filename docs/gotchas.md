@@ -1,6 +1,6 @@
 # Gotchas
 
-Referenced from CLAUDE.md § "Rules" — one-line triggers live there, the
+Referenced from AGENTS.md § "Rules" — one-line triggers live there, the
 incident detail and recovery mechanics live here.
 
 ## `/bin/bash` 3.2 vs Homebrew bash 5.x (CI)

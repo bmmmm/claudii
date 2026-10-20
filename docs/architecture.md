@@ -3,7 +3,7 @@
 Moved out of `CLAUDE.md` (2026-08-31) so the every-turn context stays under its
 word gate; this file is the navigation reference — read it before working in
 `lib/cmd/*`, adding a command, or touching a statusline segment. The behavioural
-rules stay in `CLAUDE.md`.
+rules stay in `AGENTS.md`.
 
 ## Architecture
 
