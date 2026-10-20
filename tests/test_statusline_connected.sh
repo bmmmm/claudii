@@ -82,16 +82,24 @@ assert_contains "doctor: wrapper chain recognized" "CC-Statusline configured" "$
 
 # ── ClaudeStatus self-refresh: stale cache triggers a background fetch ──
 
-# Unreachable URLs → claudii-status fails fast and writes the all-ok +
-# _api=unreachable fallback. That write (mtime bump) proves the spawn happened.
+# Offline curl shim (same as test_status.sh) → the spawned claudii-status fails
+# both fetches at once and writes the all-ok + _api=unreachable fallback. That
+# write proves the spawn happened. Unreachable https URLs were not enough: each
+# curl may take its full --max-time 5, twice, past the 8 s wait below (runner
+# 10561, 2026-10-20). The URLs stay unreachable as a second net.
 export CLAUDII_UNRESOLVED_URL="https://127.0.0.1:1/unresolved.json"
 export CLAUDII_RSS_URL="https://127.0.0.1:1/history.rss"
+_sl_off_dir="$TEST_TMP/offline-bin"
+mkdir -p "$_sl_off_dir"
+printf '#!/bin/bash\nexit 22\n' > "$_sl_off_dir/curl"
+chmod +x "$_sl_off_dir/curl"
 SL_CACHE="$TEST_TMP/cache"
 printf 'opus=ok\nsonnet=ok\nhaiku=ok\n' > "$SL_CACHE/status-models"
 touch -t 202601010000 "$SL_CACHE/status-models"  # far in the past → stale
 
 printf '{"model":{"display_name":"Opus"},"session_id":"slconn00-0000"}\n' | \
-  CLAUDII_CACHE_DIR="$SL_CACHE" bash "$CLAUDII_HOME/bin/claudii-cc-statusline" >/dev/null 2>&1
+  PATH="$_sl_off_dir:$PATH" CLAUDII_CACHE_DIR="$SL_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii-cc-statusline" >/dev/null 2>&1
 
 # Background fetch is async — wait up to 8s for the cache rewrite.
 refreshed=no
