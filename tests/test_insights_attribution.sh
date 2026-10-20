@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 11" "11" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 12" "12" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -159,7 +159,7 @@ _HAIKU_TOTAL=$(echo "$_RESULT_SUB" | jq '.models["claude-haiku-4-5"].in_tok // e
 assert_eq "insights subagent: haiku in_tok in session models == 65" "65" "$_HAIKU_TOTAL"
 
 # Transient bookkeeping is stripped
-_TRANSIENT=$(echo "$_RESULT_SUB" | jq 'has("pending_agent_skill") or has("agent_skill_map") or has("pending_tools") or has("seen_ts")' 2>/dev/null)
+_TRANSIENT=$(echo "$_RESULT_SUB" | jq 'has("pending_agent_skill") or has("agent_skill_map") or has("pending_tools") or has("seen_ts") or has("msgs")' 2>/dev/null)
 assert_eq "insights subagent: transient maps stripped" "false" "$_TRANSIENT"
 
 # ── Message count sanity checks ──────────────────────────────────────────────
@@ -202,7 +202,85 @@ assert_eq "insights TTL: mcp per-model cache_create_1h split evenly (75)" "75" \
 assert_eq "insights TTL: records without the split add 0 (explore)" "0" \
   "$(jq '.attribution_skills.explore.cache_create_1h' <<< "$_RESULT" 2>/dev/null)"
 
+# ── One API response, several records (schema v12) ───────────────────────────
+# Claude Code writes an assistant message as one record per content block, all
+# sharing message.id; summed per record, every response counted 2-3×. The
+# message's usage is charged once, each counter at the largest value seen.
+#   msg_A  main thread, 3 records (thinking/text/Bash), usage repeated on each
+#          — in 10, out 300, cr 5000, cc 700 (1h), skill "split"
+#   msg_B  subagent, written mid-stream: out 8, 8, then the final 440; its two
+#          MCP tool_use blocks sit in different records, a tool_result between
+#   msg_C  the final usage (out 90) on the FIRST record — max, not "last wins"
+#   (none) two records without message.id still count as two messages
+_MR_JSONL=$(mktemp)
+cat > "$_MR_JSONL" <<'JSONL'
+{"type":"user","uuid":"u1","timestamp":"2026-05-27T12:00:00Z","message":{"role":"user","content":"go"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-05-27T12:00:04Z","requestId":"req_A","attributionSkill":"split","message":{"id":"msg_A","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":700},"service_tier":"standard"},"content":[{"type":"thinking","thinking":""}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-05-27T12:00:04Z","requestId":"req_A","attributionSkill":"split","message":{"id":"msg_A","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":700},"service_tier":"standard"},"content":[{"type":"text","text":"running"}]}}
+{"type":"assistant","uuid":"a3","parentUuid":"a2","timestamp":"2026-05-27T12:00:10Z","requestId":"req_A","attributionSkill":"split","message":{"id":"msg_A","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":300,"cache_read_input_tokens":5000,"cache_creation_input_tokens":700,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":700},"service_tier":"standard"},"content":[{"type":"tool_use","id":"t-bash","name":"Bash","input":{}}]}}
+{"type":"user","uuid":"u2","parentUuid":"a3","timestamp":"2026-05-27T12:00:12Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-bash","content":"ok"}]}}
+{"type":"assistant","uuid":"b1","parentUuid":"s0","isSidechain":true,"agentId":"subB","timestamp":"2026-05-27T12:01:00Z","requestId":"req_B","message":{"id":"msg_B","role":"assistant","model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":2,"output_tokens":8,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100,"service_tier":"standard"},"content":[{"type":"thinking","thinking":""}]}}
+{"type":"assistant","uuid":"b2","parentUuid":"b1","isSidechain":true,"agentId":"subB","timestamp":"2026-05-27T12:01:02Z","requestId":"req_B","message":{"id":"msg_B","role":"assistant","model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":2,"output_tokens":8,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100,"service_tier":"standard"},"content":[{"type":"tool_use","id":"t-alpha","name":"mcp__srv__alpha","input":{}}]}}
+{"type":"user","uuid":"r1","parentUuid":"b2","isSidechain":true,"agentId":"subB","timestamp":"2026-05-27T12:01:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-alpha","content":"ok"}]}}
+{"type":"assistant","uuid":"b3","parentUuid":"r1","isSidechain":true,"agentId":"subB","timestamp":"2026-05-27T12:01:09Z","requestId":"req_B","message":{"id":"msg_B","role":"assistant","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":440,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100,"service_tier":"standard"},"content":[{"type":"tool_use","id":"t-beta","name":"mcp__srv__beta","input":{}}]}}
+{"type":"assistant","uuid":"c1","timestamp":"2026-05-27T12:02:00Z","requestId":"req_C","message":{"id":"msg_C","role":"assistant","model":"claude-opus-5-5","stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":90,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"final"}]}}
+{"type":"assistant","uuid":"c2","timestamp":"2026-05-27T12:02:00Z","requestId":"req_C","message":{"id":"msg_C","role":"assistant","model":"claude-opus-5-5","stop_reason":null,"usage":{"input_tokens":4,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"placeholder"}]}}
+{"type":"assistant","timestamp":"2026-05-27T12:03:00Z","message":{"role":"assistant","model":"claude-haiku-4-5","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T12:03:01Z","message":{"role":"assistant","model":"claude-haiku-4-5","usage":{"input_tokens":7,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}
+JSONL
+_MR=$(jq -R -n --arg sid "mr-sid" -f "$CLAUDII_HOME/lib/insights.jq" "$_MR_JSONL" 2>&1)
+rm -f "$_MR_JSONL"
+_mr() { jq -c "$1" <<< "$_MR" 2>/dev/null; }
+
+assert_eq "insights per-message: 13 records, 5 responses (A, B, C + 2 without id)" "13 5" \
+  "$(_mr '.messages') $(_mr '.assistant_messages')"
+# Opus day: in 10+2+4, out 300+440+90, cr 5000+1000, cc 700+100 — per record
+# it was 44 / 1451 / 18000 / 2400
+assert_eq "insights per-message: each response's usage counted once" \
+  '{"in_tok":16,"out_tok":830,"cache_read":6000,"cache_create":800}' \
+  "$(_mr '.days["2026-05-27|claude-opus-5-5"]')"
+assert_eq "insights per-message: models{} counted once too" \
+  '{"in_tok":16,"cache_read":6000,"cache_create":800}' "$(_mr '.models["claude-opus-5-5"]')"
+assert_eq "insights per-message: records without message.id stay separate (7+7)" "14" \
+  "$(_mr '.days["2026-05-27|claude-haiku-4-5"].in_tok')"
+# One stop reason and one service tier per response; msg_B's placeholder
+# records carry stop_reason null, msg_C's final record comes first
+assert_eq "insights per-message: stop_reasons per response" '{"tool_use":2,"end_turn":1}' "$(_mr '.stop_reasons')"
+assert_eq "insights per-message: service_tier per response" '{"standard":2}' "$(_mr '.service_tier')"
+# Content blocks are per record — every block lives in exactly one
+assert_eq "insights per-message: blocks still counted once each" \
+  '{"thinking":2,"tools":{"Bash":1,"mcp__srv__alpha":1,"mcp__srv__beta":1}}' \
+  "$(_mr '{thinking: .thinking_blocks, tools}')"
+
+# Skill attribution: one call, the usage once (incl. the 1h write share)
+assert_eq "insights per-message: skill charged once per response" \
+  '{"calls":1,"in_tok":10,"out_tok":300,"cache_read":5000,"cache_create":700,"cache_create_1h":700}' \
+  "$(_mr '.attribution_skills.split')"
+assert_eq "insights per-message: per-model skill bucket matches" "1 300" \
+  "$(_mr '.attribution_models["skill|split|claude-opus-5-5"] | "\(.calls) \(.out_tok)"' | tr -d '"')"
+
+# msg_B: the final usage (out 440, not 8 or 456) split across BOTH MCP tools,
+# though each sits in its own record — half each, one call each
+assert_eq "insights per-message: MCP split sees every tool_use of the message (alpha)" \
+  '{"calls":1,"in_tok":1,"out_tok":220,"cache_read":500,"cache_create":50,"cache_create_1h":0}' \
+  "$(_mr '.attribution_mcp["mcp__srv__alpha"]')"
+assert_eq "insights per-message: MCP split sees every tool_use of the message (beta)" \
+  '{"calls":1,"in_tok":1,"out_tok":220,"cache_read":500,"cache_create":50,"cache_create_1h":0}' \
+  "$(_mr '.attribution_mcp["mcp__srv__beta"]')"
+assert_eq "insights per-message: per-model MCP bucket carries the split" "220" \
+  "$(_mr '.attribution_models["mcp|mcp__srv__alpha|claude-opus-5-5"].out_tok')"
+
+# Latency: one sample per main-thread response, u1 → msg_A's last block
+# (12:00:00 → 12:00:10). Per record it was three: 4s, 0s and 6s, each with
+# the full output count. msg_B is a sidechain; msg_C has no parent.
+assert_eq "insights per-message: one latency sample, prompt to last block" \
+  '[{"day":"2026-05-27","model":"claude-opus-5-5","dt_ms":10000,"out":300,"ctx":5710}]' \
+  "$(_mr '.latency')"
+assert_eq "insights per-message: transient msgs map stripped" "false" "$(_mr 'has("msgs")')"
+unset -f _mr
+
 # Cleanup
+unset _MR_JSONL _MR
 unset _TTL_JSONL _TTL
 unset _FIXTURE _SID _RESULT _RC _SCHEMA _SESSION
 unset _EXPLORE_CALLS _EXPLORE_IN _EXPLORE_OUT _EXPLORE_CACHE_READ _EXPLORE_CACHE_CREATE

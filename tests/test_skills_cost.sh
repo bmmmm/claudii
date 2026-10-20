@@ -510,6 +510,48 @@ assert_eq "skills-cost _rates: every tier writes at 1.25x (cc) and 2x (cc1h) inp
 unset -f _sc_ttl_rec _sc_ttl_cell
 unset _SC_TTL _sc_ttl_json _sc_rates
 
+# ── Test 15: one API response over several records bills once (schema v12) ──
+# Claude Code writes an assistant message as one record per content block, all
+# sharing message.id. Transcript → aggregate → merge → skills-cost, Opus 5.5
+# ($4/M in, $20/M out):
+#   multi-skill  msg_1, 3 records repeating input 1M → 1 call, $4 (was 3, $12)
+#   alpha, beta  msg_2, output 8 then the final 1M, each MCP call in its own
+#                record → $20 split in half, $10 each (was $0.00016 and $20)
+_SC_MR="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_MR")
+mkdir -p "$_SC_MR/proj/p" "$_SC_MR/cache"
+_sc_mr_rec() {  # <msg id> <skill or ""> <in> <out> <content JSON> → one assistant record
+  jq -cn --arg id "$1" --arg s "$2" --argjson in "$3" --argjson out "$4" --argjson c "$5" \
+    --arg ts "$_SC_LAST_SEEN" \
+    '{type:"assistant", timestamp:$ts, sessionId:"mr-sess", requestId:("req-" + $id)}
+     + (if $s == "" then {} else {attributionSkill:$s} end)
+     + {message:{id:$id, role:"assistant", model:"claude-opus-5-5", content:$c,
+         usage:{input_tokens:$in, output_tokens:$out, cache_read_input_tokens:0,
+                cache_creation_input_tokens:0}}}'
+}
+{
+  _sc_mr_rec msg_1 multi-skill 1000000 0 '[{"type":"thinking","thinking":""}]'
+  _sc_mr_rec msg_1 multi-skill 1000000 0 '[{"type":"text","text":"x"}]'
+  _sc_mr_rec msg_1 multi-skill 1000000 0 '[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]'
+  _sc_mr_rec msg_2 "" 0 8       '[{"type":"tool_use","id":"t2","name":"mcp__srv__alpha","input":{}}]'
+  _sc_mr_rec msg_2 "" 0 1000000 '[{"type":"tool_use","id":"t3","name":"mcp__srv__beta","input":{}}]'
+} > "$_SC_MR/proj/p/mr-sess.jsonl"
+CLAUDE_PROJECTS_DIR="$_SC_MR/proj" CLAUDII_CACHE_DIR="$_SC_MR/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+_sc_mr_json=$(CLAUDII_CACHE_DIR="$_SC_MR/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_mr_mcp=$(CLAUDII_CACHE_DIR="$_SC_MR/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --mcp --json 2>&1)
+_sc_mr_cell() {  # <row name> <skills-cost JSON> → "calls usd"
+  jq -r --arg n "$1" '.rows[] | select(.name==$n) | "\(.calls) \(.tot_usd)"' <<< "$2" 2>/dev/null \
+    | LC_ALL=C awk '{printf "%d %.4f", $1, $2}'
+}
+assert_eq "skills-cost: a response over 3 records is 1 call, billed once (\$4)" "1 4.0000" \
+  "$(_sc_mr_cell multi-skill "$_sc_mr_json")"
+assert_eq "skills-cost --mcp: the final usage splits across the response's MCP calls (alpha \$10)" "1 10.0000" \
+  "$(_sc_mr_cell mcp__srv__alpha "$_sc_mr_mcp")"
+assert_eq "skills-cost --mcp: the final usage splits across the response's MCP calls (beta \$10)" "1 10.0000" \
+  "$(_sc_mr_cell mcp__srv__beta "$_sc_mr_mcp")"
+unset -f _sc_mr_rec _sc_mr_cell
+unset _SC_MR _sc_mr_json _sc_mr_mcp
+
 # ── Flag robustness: a value-flag as the LAST arg must not silently exit ──────
 # `--compare` with no window consumed $@, then the loop's final `shift` tripped
 # exit 1 under set -e — a silent failure with no output. Now: actionable message
