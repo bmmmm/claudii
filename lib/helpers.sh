@@ -151,10 +151,25 @@ _cfgget() {
 # monthly history-*.tsv glob is lexical == chronological (legacy history.tsv,
 # pre-rotation, sorts first). A future change to how these files are merged or
 # collected must preserve that ordering or add an explicit sort.
+#
+# Host mirrors (`claudii sync`, lib/cmd/sync.sh) follow the local files, one
+# host after another, each in the same legacy-then-monthly order. Every session
+# lives on exactly one host, so its rows stay in order. CLAUDII_LOCAL_ONLY=1
+# collects the local files only.
 _HIST_FILES=()
 _collect_history_files() {
-  local _dir="$1" _since="${2:-0}"
+  local _dir="$1" _since="${2:-0}" _h
   _HIST_FILES=()
+  _collect_history_dir "$_dir" "$_since"
+  [[ "${CLAUDII_LOCAL_ONLY:-0}" == "1" ]] && return 0
+  for _h in "$_dir"/hosts/*/; do
+    [[ -d "$_h" ]] && _collect_history_dir "${_h%/}" "$_since"
+  done
+  return 0
+}
+
+_collect_history_dir() {
+  local _dir="$1" _since="${2:-0}"
   local _f _mt
   # Optional mtime gate ($2): history files are append-only, so a file's mtime
   # equals the timestamp of its newest row. When the caller passes a window

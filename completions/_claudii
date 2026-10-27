@@ -54,6 +54,7 @@ _claudii() {
         'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
+        'sync:Merge sessions from other hosts and accounts over ssh — status / add / rm'
         'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
         'resume:Resume a session by ID'
         'insomnii:Bedtime statusline plugin (on/off/auto/status/install)'
@@ -249,6 +250,22 @@ _claudii() {
             'test:Render the statusline against a synthetic active.json'
           )
           _describe 'omlx command' omlx_opts
+          ;;
+
+        sync)
+          local -a sync_opts sync_hosts
+          sync_opts=(
+            'status:Hosts, last sync, sessions and live sessions per host (--json)'
+            'add:Add a host — claudii sync add <name> <ssh-target> [--cmd PATH] [--pull|--push|--both]'
+            'rm:Forget a host and drop its mirrored data'
+            'export:Plumbing — write a bundle to stdout (request on stdin)'
+            'import:Plumbing — apply a bundle from stdin as <name>'
+            'state:Plumbing — print the request for <name>'"'"'s mirror'
+            '--quiet:No output on success (for cron / launchd)'
+          )
+          sync_hosts=(${(f)"$(jq -r '(.sync.hosts // {}) | keys[]' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null)"})
+          _describe 'sync command' sync_opts
+          (( ${#sync_hosts} )) && _describe 'configured host' sync_hosts
           ;;
 
         vpnii)

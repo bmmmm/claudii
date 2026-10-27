@@ -166,7 +166,7 @@ spec. Reported as
 .RB \(lq "claudii " cmd ": unknown option: " arg \(rq
 on standard error, never on standard output.
 .PP
-28 of the 45 dispatched commands are under this contract. The others
+29 of the 46 dispatched commands are under this contract. The others
 .RB ( cc-statusline ", " claudestatus ", " config ", " dashboard ", " gc ,
 .BR insomnii ", " omlx ", " pin ", " search ", " session ,
 .BR session-dashboard ", " sessionline ", " sessions ", " status ,
@@ -1162,6 +1162,99 @@ Tailscale is detected separately via interface scan
 statusline segment, independent of
 .BR vpn .
 .
+.SS Several Hosts and Accounts (sync)
+Puts the sessions of other machines and accounts into this claudii's numbers.
+.BR tokens ", " cost ", " trends ", " week ", " tools ", " limits ", " cache ", " repos ", " skills-cost
+and
+.B session
+then count every synced host as if its sessions had run here.
+.PP
+What travels is claudii's own condensed data, never a transcript: the
+per-session insights caches, the Flight Recorder history and the live-session
+caches. One host's 635\ MB of transcripts are 2\ MB of insights caches, 166\ KB
+on the wire; every sync after the first carries only what changed \(em new or
+updated sessions whole, history files as the bytes past what this side
+already has.
+.PP
+The transport is one
+.B ssh
+round trip per host. The source keeps no state: the receiver sends what it
+has, the source answers with a gzip'd tar bundle. Any number of receivers can
+pull from the same source (multi-destination), and a source that can reach
+the receiver but not the other way round (a fenced account, a laptop behind
+NAT) pushes instead. The other side needs claudii and jq; set
+.B \-\-cmd
+when claudii is not on its non-interactive ssh
+.BR PATH .
+.PP
+.RS
+.EX
+claudii sync add server server.example         # pull its sessions here
+claudii sync add agent agent@server.example \e
+    --cmd src/claudii/bin/claudii               # path relative to its home
+claudii sync add laptop laptop --push          # or send ours to it
+claudii sync                                   # run every configured host
+.EE
+.RE
+.TP
+.BI "sync " "[name ...] " [\-\-quiet]
+Sync every configured host, or the named ones, then show the status.
+.B \-\-quiet
+prints nothing on success (cron, launchd).
+Exits 1 if any host failed.
+.TP
+.BR "sync status" " [" \-\-json ]
+This claudii's name and id; per host the transport, last sync, origin
+(user@host), session and history-row counts, last activity, and the sessions
+running there right now (model, context %, project). Hosts that push to this
+machine are listed too.
+Alias:
+.BR "sync ls" .
+.TP
+.BI "sync add " "name ssh-target " "[\-\-cmd " path "] [\-\-pull|\-\-push|\-\-both]"
+Store a host under
+.BR sync.hosts. \fIname\fR.
+.I ssh-target
+is anything
+.B ssh
+accepts (a
+.I ~/.ssh/config
+alias, user@host).
+Pull is the default.
+.TP
+.BI "sync rm " name
+Forget the host and delete its mirrored data.
+.TP
+.BI "sync export " "[\-\-full] [\-\-no-refresh]"
+Plumbing: write a bundle to standard output. Reads the receiver's request
+.RB ( "sync state" )
+on standard input; without one (a terminal, or
+.BR \-\-full )
+everything goes. Refreshes the insights caches first unless
+.BR \-\-no-refresh .
+.TP
+.BI "sync import " name
+Plumbing: apply a bundle from standard input as host
+.IR name .
+With
+.B export
+and
+.B state
+any byte pipe works \(em a file carried by hand, a shared folder.
+.TP
+.BI "sync state " name
+Plumbing: print the request for
+.IR name 's
+mirror (cursor and history sizes).
+.PP
+Two guards keep a session from being counted twice: a bundle from this
+claudii itself is refused, and so is a source already synced under another
+name (every claudii mints a random id into
+.IR host-id ).
+A source whose id changed (its cache was wiped) replaces its mirror.
+.B CLAUDII_LOCAL_ONLY=1
+shows the local data alone.
+.
 .SS Activity Heatmap (vibemap)
 Opt-in prompt-timing tracker, rendered as an ASCII heatmap.
 Default
@@ -1918,6 +2011,10 @@ perf.otel.endpoint	http://127.0.0.1:4318	OTLP/HTTP receiver bind address
 perf.otel.beta_traces	true	Capture the claude_code.llm_request span (TTFT)
 perf.otel.forward	(empty)	Mirror OTLP batches to a central collector URL; empty = local only
 overview.sections	account…commands	Overview section order + selection (array)
+sync.name	(empty)	Name this claudii pushes under; empty = user@host
+sync.hosts.\fIname\fR.ssh	\(em	ssh target of a synced host (\fBclaudii sync add\fR)
+sync.hosts.\fIname\fR.cmd	claudii	claudii on that host, if not on its ssh PATH
+sync.hosts.\fIname\fR.mode	pull	\fBpull\fR, \fBpush\fR or \fBboth\fR
 .TE
 .
 .SH STATUS CACHE
@@ -1962,6 +2059,11 @@ Set to 1 to keep ANSI colors when stdout is not a terminal (e.g.\&
 .BR "claudii se | less -R" ).
 By default piped or redirected output is plain text.
 .TP
+.B CLAUDII_LOCAL_ONLY
+Set to 1 to leave the hosts mirrored by
+.B claudii sync
+out of every view.
+.TP
 .B CLAUDII_LOG_LEVEL
 Override the debug log level (off, error, warn, info, debug).
 .TP
@@ -1972,6 +2074,15 @@ month projection and for every rolling
 .B --days
 window (limits, cache, tokens, tools, repos, perf). Used when set;
 otherwise the live clock wins.
+.TP
+.B CLAUDII_SSH
+Command
+.B claudii sync
+runs instead of
+.B ssh
+(a wrapper with its own
+.BR -F ,
+or a test stub).
 .TP
 .B CLAUDII_SPINNER_MODE
 Override the spinner animation (takes precedence over
@@ -2007,6 +2118,18 @@ One TSV line per CC-Statusline update: timestamp, model, cost, context %,
 5h rate, session_id, input_tok, output_tok, api_duration_ms.
 Read by
 .BR "claudii trends" " and " "claudii cost" .
+.TP
+.I ~/.cache/claudii/hosts/<name>/
+Mirror of a synced host:
+.IR insights/ ", " history-*.tsv ", " sessions/ ,
+.I live
+(its running sessions) and
+.I state
+(origin, cursor, last sync). Written by
+.BR "claudii sync" .
+.TP
+.I ~/.cache/claudii/host-id
+This claudii's random sync identity.
 .TP
 .I ~/.cache/claudii/vibemap.tsv
 Opt-in activity log (written only when

@@ -610,7 +610,7 @@ _ov_render_commands() {
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "cost"     "cost · week · trends · skills-cost"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "insights" "tokens · perf · tools · limits · cache · vibemap · repos"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "display"  "on · off · claudestatus · session-dashboard · cc-statusline · insomnii"
-  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "config"   "config · agents · omlx · vpnii · search"
+  printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "config"   "config · agents · omlx · vpnii · search · sync"
   printf "    ${CLAUDII_CLR_DIM}%-10s${CLAUDII_CLR_RESET} %s\n" "system"   "status · doctor · explain · update · version · changelog · restart"
   _ov_hint "claudii help" "man claudii"
 }

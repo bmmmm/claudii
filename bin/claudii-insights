@@ -258,10 +258,8 @@ _cmd_merge() {
     exit 1
   fi
 
-  shopt -s nullglob
-  local files=("$CACHE_DIR"/*.json)
-  shopt -u nullglob
-  if (( ${#files[@]} == 0 )); then
+  # Local caches or a host mirror's (claudii sync) — either is data.
+  if ! _insights_any "$CACHE_DIR"; then
     printf '{}\n'
     return 0
   fi
