@@ -4,7 +4,7 @@
 #
 # Usage: _insights_stream DIR [DAYS]
 #
-# Two things every consumer needs, kept in one place:
+# Three things every consumer needs, kept in one place:
 #
 # 1. Never argv. The cache keeps orphans forever; at ~12k files the path list
 #    outgrew macOS's 1 MiB ARG_MAX and jq died with "Argument list too long"
@@ -20,18 +20,56 @@
 #    _collect_history_files (lib/helpers.sh). Skipped when CLAUDII_NOW pins the
 #    clock: a pinned "now" is not comparable to real file mtimes.
 #
-# Output order is lexical by file name, like the glob it replaces. A file that
+# 3. Other hosts. `claudii sync` mirrors their caches into
+#    <cache>/hosts/<name>/insights (lib/cmd/sync.sh); when DIR is a cache's
+#    insights dir, those mirrors stream with it, so every consumer sums all
+#    hosts. Session ids are UUIDs — a mirror never repeats a local session.
+#    CLAUDII_LOCAL_ONLY=1 streams DIR alone.
+#
+# Output order is lexical by path, like the glob it replaces. A file that
 # vanishes mid-read (concurrent `gc --yes`) is skipped silently; the consumer's
 # jq exit status stays the pipeline's status via the `|| true`.
 _insights_stream() {
   local dir="$1" days="${2:-}"
-  [[ -d "$dir" ]] || return 0
-  local -a age=()
+  local -a dirs=() age=()
+  _insights_dirs "$dir"
+  dirs=(${_INSIGHTS_DIRS[@]+"${_INSIGHTS_DIRS[@]}"})
+  (( ${#dirs[@]} )) || return 0
   if [[ "$days" =~ ^[0-9]+$ && -z "${CLAUDII_NOW:-}" ]]; then
     age=(-mmin "-$(( 10#$days * 1440 + 1440 ))")   # 10#: "08" is not octal
   fi
   # -H: follow DIR itself if it is a symlink, as the old glob did.
-  find -H "$dir" -maxdepth 1 -type f -name '*.json' ${age[@]+"${age[@]}"} -print0 \
+  find -H "${dirs[@]}" -maxdepth 1 -type f -name '*.json' ${age[@]+"${age[@]}"} -print0 \
     | LC_ALL=C sort -z \
     | { xargs -0 cat 2>/dev/null || true; }
+}
+
+# _insights_dirs DIR → _INSIGHTS_DIRS: DIR (if it exists) plus the host
+# mirrors next to it (see 3. above).
+_INSIGHTS_DIRS=()
+_insights_dirs() {
+  local dir="$1" h
+  _INSIGHTS_DIRS=()
+  [[ -d "$dir" ]] && _INSIGHTS_DIRS+=("$dir")
+  if [[ "${dir##*/}" == "insights" && "${CLAUDII_LOCAL_ONLY:-0}" != "1" ]]; then
+    for h in "${dir%/*}"/hosts/*/insights; do
+      [[ -d "$h" ]] && _INSIGHTS_DIRS+=("$h")
+    done
+  fi
+  return 0
+}
+
+# _insights_any DIR — 0 when DIR or one of its host mirrors holds a cache.
+# The commands' "no data yet" early return asks this instead of globbing DIR,
+# so a machine that only mirrors other hosts still has data.
+_insights_any() {
+  local d f
+  _insights_dirs "$1"
+  for d in ${_INSIGHTS_DIRS[@]+"${_INSIGHTS_DIRS[@]}"}; do
+    for f in "$d"/*.json; do
+      [[ -f "$f" ]] && return 0
+      break
+    done
+  done
+  return 1
 }

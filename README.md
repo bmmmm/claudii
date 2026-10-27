@@ -124,6 +124,21 @@ claudii vpnii [set <name>|clear|show]
                                  # (call from wg-quick PostUp/PreDown)
 claudii vibemap [strip|grid|status|clear|path]
                                  # opt-in activity heatmap, last 30 days (default off)
+claudii sync [NAME|status|add|rm]
+                                 # merge sessions from other hosts/accounts over ssh
+```
+
+### Several machines
+
+`claudii sync` pulls the condensed session data of other claudii installs
+(insights caches, history, live sessions — never transcripts) over one ssh
+round trip, and every report then counts them too:
+
+```bash
+claudii sync add server server.example         # any ssh target: alias, user@host
+claudii sync add laptop laptop --push          # it cannot reach us: we send instead
+claudii sync                                   # run all; cron it with --quiet
+claudii sync status                            # who, when, what's running there
 ```
 
 Most data commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`

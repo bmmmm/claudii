@@ -762,11 +762,15 @@ _cmd_session() {
   local cdir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   local idir="$cdir/insights"
 
-  # Match insights cache by sessionId substring (first wins).
-  local jf="" sid="" f
-  for f in "$idir"/*"$needle"*.json; do
-    [[ -e "$f" ]] || continue
-    jf="$f"; sid="${f##*/}"; sid="${sid%.json}"; break
+  # Match insights cache by sessionId substring (first wins) — local caches
+  # first, then the host mirrors of `claudii sync`.
+  local jf="" sid="" f d
+  _insights_dirs "$idir"
+  for d in ${_INSIGHTS_DIRS[@]+"${_INSIGHTS_DIRS[@]}"}; do
+    for f in "$d"/*"$needle"*.json; do
+      [[ -e "$f" ]] || continue
+      jf="$f"; sid="${f##*/}"; sid="${sid%.json}"; break 2
+    done
   done
   if [[ -z "$jf" ]]; then
     printf 'claudii: no session matching %s — list ids with: claudii se\n' "$needle" >&2
@@ -1338,10 +1342,7 @@ _cmd_repos() {
   local RW=66
 
   local idir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/insights"
-  shopt -s nullglob
-  local files=("$idir"/*.json)
-  shopt -u nullglob
-  if (( ${#files[@]} == 0 )); then
+  if ! _insights_any "$idir"; then
     if [[ "$fmt" == "json" ]]; then
       jq -n --argjson days "$days" \
         '{window_days: $days, by_repo: [], headless: {n: 0, total_active: 0}, by_day: [], sessions: []}'

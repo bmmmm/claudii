@@ -32,6 +32,7 @@ lib/cmd/perf.sh         # Command: perf (response-time p50/p90/p99, tok/s, laten
 lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
 lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
+lib/cmd/sync.sh         # Command: sync (other hosts' insights/history/live sessions → cache/hosts/<name>/, over ssh)
 lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
 lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _sparkline, _cache_hit_pct)
 lib/fmt.awk             # Shared awk formatters (fmt_tok/fmt_usd/rep/bar — locale-immune)
@@ -54,7 +55,7 @@ lib/perf_rows.jq        # jq module: merged shape → claudii perf's tagged TSV 
 lib/perf_json.jq        # jq module: merged shape → claudii perf --json
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
-lib/insights_stream.sh  # _insights_stream: insights caches → stdout, window-bounded, never argv
+lib/insights_stream.sh  # _insights_stream: insights caches (+ synced host mirrors) → stdout, window-bounded, never argv
 lib/search_dir.sh       # _claudii_search_dir: search/clq workspace, default ~/search (bash + zsh), created on use
 lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
 lib/skills-cost-rows.jq    # skills-cost pricing program (per-model rates + residual)

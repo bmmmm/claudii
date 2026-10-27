@@ -95,6 +95,7 @@ usage() {
   printf "    %-33s $d %s\n" "omlx [status|connect|test|disconnect]" "local-LLM (gateii/oMLX) integration"
   printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
+  printf "    %-33s $d %s\n" "sync [NAME|status|add|rm]"       "merge sessions from other hosts and accounts (ssh)"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
@@ -139,6 +140,7 @@ source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/insights.sh"
 source "$CLAUDII_HOME/lib/cmd/perf.sh"
 source "$CLAUDII_HOME/lib/cmd/week.sh"
+source "$CLAUDII_HOME/lib/cmd/sync.sh"
 
 # Centralized config+theme boot — every command needs CLAUDII_CLR_* painted
 # with the user's theme.name before it prints a single line, but nine
@@ -282,6 +284,7 @@ case "${1:-}" in
   omlx)                _cmd_omlx "$@"         ;;
   vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;
+  sync)                _cmd_sync "${@:2}"     ;;
 
   restart)
     # Shell-only by nature: reloading means re-sourcing ~/.zshrc in the CALLING
