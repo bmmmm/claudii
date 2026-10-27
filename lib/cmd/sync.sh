@@ -450,6 +450,19 @@ _sync_tmpfile() {
   mktemp "$hosts/.bundle.XXXXXX"
 }
 
+# Why an ssh call failed, in terms the user can act on. ssh passes the remote
+# command's exit status through: 127 is the remote shell not finding the
+# claudii path, 255 is ssh itself (unreachable, auth, unknown host).
+_sync_ssh_fail() {
+  local name="$1" target="$2" rcmd="$3" step="$4" rc="$5"
+  case "$rc" in
+    127) printf 'claudii sync: %s: "%s" not found on %s — fix: claudii config set sync.hosts.%s.cmd PATH\n' \
+           "$name" "$rcmd" "$target" "$name" >&2 ;;
+    255) printf 'claudii sync: %s: ssh to %s failed — check: ssh %s true\n' "$name" "$target" "$target" >&2 ;;
+    *)   printf 'claudii sync: %s: ssh %s "%s sync %s" failed (exit %s)\n' "$name" "$target" "$rcmd" "$step" "$rc" >&2 ;;
+  esac
+}
+
 _SYNC_BYTES=0
 _sync_pull() {
   local name="$1" target="$2" rcmd="$3"
@@ -458,9 +471,11 @@ _sync_pull() {
   for try in 1 2; do
     req=$(_sync_request "$cdir/hosts/$name")
     bundle=$(_sync_tmpfile) || return 1
-    if ! printf '%s\n' "$req" | _sync_ssh "$target" "$rcmd sync export" > "$bundle"; then
+    rc=0
+    _sync_ssh "$target" "$rcmd sync export" <<< "$req" > "$bundle" || rc=$?
+    if (( rc != 0 )); then
       rm -f "$bundle"
-      printf 'claudii sync: %s: ssh %s "%s sync export" failed\n' "$name" "$target" "$rcmd" >&2
+      _sync_ssh_fail "$name" "$target" "$rcmd" export "$rc"
       return 1
     fi
     _SYNC_BYTES=$(_sync_size "$bundle")
@@ -483,8 +498,10 @@ _sync_push() {
     return 2
   fi
   for try in 1 2; do
-    if ! req=$(_sync_ssh "$target" "$rcmd sync state $as" < /dev/null); then
-      printf 'claudii sync: %s: ssh %s "%s sync state" failed\n' "$name" "$target" "$rcmd" >&2
+    rc=0
+    req=$(_sync_ssh "$target" "$rcmd sync state $as" < /dev/null) || rc=$?
+    if (( rc != 0 )); then
+      _sync_ssh_fail "$name" "$target" "$rcmd" state "$rc"
       return 1
     fi
     bundle=$(_sync_tmpfile) || return 1
@@ -497,7 +514,7 @@ _sync_push() {
     (( rc == 3 )) && continue
     break
   done
-  (( rc == 0 )) || printf 'claudii sync: %s: ssh %s "%s sync import" failed\n' "$name" "$target" "$rcmd" >&2
+  (( rc == 0 )) || _sync_ssh_fail "$name" "$target" "$rcmd" import "$rc"
   return $rc
 }
 

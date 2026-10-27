@@ -164,8 +164,16 @@ _sy dst sync rm me >/dev/null
 _sy dst sync add gone nowhere --cmd "$_SY_CMD" >/dev/null
 _err=$(_sy dst sync gone 2>&1 >/dev/null); _rc=$?
 assert_eq "unreachable host: exit 1" "1" "$_rc"
-assert_contains "unreachable host: names the failing ssh" "ssh nowhere" "$_err"
+assert_contains "unreachable host (ssh exit 255): says how to check" "ssh to nowhere failed — check: ssh nowhere true" "$_err"
 _sy dst sync rm gone >/dev/null
+
+# A wrong --cmd: the remote shell exits 127, and the message says which key to fix.
+_sy dst sync add typo src --cmd /nonexistent/claudi >/dev/null
+_err=$(_sy dst sync typo 2>&1 >/dev/null); _rc=$?
+assert_eq "wrong --cmd: exit 1" "1" "$_rc"
+assert_contains "wrong --cmd (exit 127): names the path and the fix" \
+  '"/nonexistent/claudi" not found on src — fix: claudii config set sync.hosts.typo.cmd PATH' "$_err"
+_sy dst sync rm typo >/dev/null
 
 # The source starts over (new cache → new id): its mirror is replaced whole.
 rm -f "$_SY_SRC_C/host-id"
