@@ -157,10 +157,11 @@ _out=$(_sy dst tokens --days 7 2>/dev/null)
 assert_contains "tokens: By host section once a mirror contributes" "By host" "$_out"
 _j=$(_sy dst cost --json 2>/dev/null)
 assert_eq "cost --json: the mirror is a host row" "box" "$(jq -r '.hosts[0].host' <<< "$_j")"
-assert_eq "cost --json: history session + token-priced session, none twice" "2.5060" \
-  "$(jq -r '.hosts[0].alltime | tostring | .[0:6]' <<< "$_j")"
-assert_eq "cost --json: the token-priced part is reported" "0.006" \
-  "$(jq -r '.estimated | tostring | .[0:5]' <<< "$_j")"
+# In 1/10000 dollars — jq 1.6 and 1.7 print the same number differently.
+assert_eq "cost --json: history session + token-priced session, none twice" "25060" \
+  "$(jq -r '.hosts[0].alltime * 10000 | round' <<< "$_j")"
+assert_eq "cost --json: the token-priced part is reported" "60" \
+  "$(jq -r '.estimated * 10000 | round' <<< "$_j")"
 _out=$(_sy dst cost 2>/dev/null)
 assert_contains "cost: By host section once a mirror contributes" "By host" "$_out"
 assert_contains "cost: a host with history and token-priced sessions is mixed" "mixed" "$_out"

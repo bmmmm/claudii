@@ -408,10 +408,12 @@ for _sid in ins-only both; do
 done
 hist_row "$_COST_INS_TMP/history.tsv" "$_now_ts" "Opus 5.5" "1.00" "10" "0" "both" "500" "500" "0"
 _ins_json=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>/dev/null)
-assert_eq "cost (insights): history session + token-priced session, none twice" "1.0540" \
-  "$(jq -r '[.years[] | .Opus] | add | . * 10000 | round / 10000 | tostring | . + "0000" | .[0:6]' <<< "$_ins_json")"
-assert_eq "cost (insights): the token-priced part is reported as estimated" "0.0540" \
-  "$(jq -r '.estimated | tostring' <<< "$_ins_json")"
+# Compared in 1/10000 dollars: jq 1.7 prints a number as written ("0.0540"),
+# jq 1.6 (the Forgejo runner's bookworm) normalizes it ("0.054").
+assert_eq "cost (insights): history session + token-priced session, none twice" "10540" \
+  "$(jq -r '[.years[] | .Opus] | add | . * 10000 | round' <<< "$_ins_json")"
+assert_eq "cost (insights): the token-priced part is reported as estimated" "540" \
+  "$(jq -r '.estimated * 10000 | round' <<< "$_ins_json")"
 assert_eq "cost (insights): one local host row" "1 true" \
   "$(jq -r '"\(.hosts | length) \(.hosts[0].local)"' <<< "$_ins_json")"
 _ins_out=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
