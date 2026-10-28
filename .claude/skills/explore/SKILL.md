@@ -169,8 +169,8 @@ What we do better: {claudii-exclusive features they lack}
 
 1. If the scan revealed **new feature ideas**: suggest adding them to `TODO.md`
 2. If a competitor shipped something relevant: update `~/.claude/projects/-Users-bma-offline-coding-claudii/memory/watchlist.md` with new "last checked" date and a note
-3. If Anthropic docs changed: flag new JSON fields as potential claudii features
-4. If a feature listed in Key Insights is now implemented: remove or update that entry
+3. If Anthropic docs changed: flag new JSON fields as potential claudii features, and note open or rejected ones in `~/.claude/projects/-Users-bma-offline-coding-claudii/memory/watchlist_insights.md`
+4. If a feature listed in watchlist_insights.md is now implemented: move it to its "Erledigt" line
 5. Do NOT auto-edit files — present findings and let the user decide what to persist
 
 ## Rules
