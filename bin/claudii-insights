@@ -186,6 +186,10 @@ _cmd_aggregate() {
   _AGG_FORCE="$force"
   # Touch marker BEFORE scan so any writes during scan get picked up next time.
   : > "$marker.next"
+  # A killed run (worker, Ctrl-C) leaves _aggregate_one's mktemp file behind;
+  # no *.json glob reads it, so nothing else ever removes it. The age guard
+  # spares a concurrent run's file that is still being written.
+  find "$CACHE_DIR" -maxdepth 1 -name '*.json.??????' -type f -mmin +60 -delete 2>/dev/null
 
   local processed=0 failed=0 parallel=0 incomplete=0
   local pending=()

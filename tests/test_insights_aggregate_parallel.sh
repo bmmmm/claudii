@@ -60,3 +60,12 @@ assert_eq "parallel rebuilds the complete repo map including orphans" \
   "$(cat "$_PAR_DIR/expected.sorted")" "$(cat "$_PAR_DIR/actual.sorted")"
 _PAR_OUT=$(_par_run 2>&1)
 assert_contains "warm incremental run retains all caches" '0 processed · 66 cached · 0 failed' "$_PAR_OUT"
+# Leftover mktemp files from a killed run: swept once stale, spared while fresh.
+: > "$_PAR_DIR/cache/insights/dead.json.AbC123"
+touch -t 202001010000 "$_PAR_DIR/cache/insights/dead.json.AbC123"
+: > "$_PAR_DIR/cache/insights/live.json.XyZ789"
+_par_run >/dev/null 2>&1
+assert_eq "a stale aggregate tmp file is swept" no \
+  "$(test -f "$_PAR_DIR/cache/insights/dead.json.AbC123" && echo yes || echo no)"
+assert_eq "a fresh aggregate tmp file is spared" yes \
+  "$(test -f "$_PAR_DIR/cache/insights/live.json.XyZ789" && echo yes || echo no)"
