@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 12" "12" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 13" "13" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -235,9 +235,10 @@ _mr() { jq -c "$1" <<< "$_MR" 2>/dev/null; }
 assert_eq "insights per-message: 13 records, 5 responses (A, B, C + 2 without id)" "13 5" \
   "$(_mr '.messages') $(_mr '.assistant_messages')"
 # Opus day: in 10+2+4, out 300+440+90, cr 5000+1000, cc 700+100 — per record
-# it was 44 / 1451 / 18000 / 2400
+# it was 44 / 1451 / 18000 / 2400. cache_create_1h (schema v13, what `cost`
+# prices insights-only sessions from) is the 1h part of the 700 write.
 assert_eq "insights per-message: each response's usage counted once" \
-  '{"in_tok":16,"out_tok":830,"cache_read":6000,"cache_create":800}' \
+  '{"in_tok":16,"out_tok":830,"cache_read":6000,"cache_create":800,"cache_create_1h":700}' \
   "$(_mr '.days["2026-05-27|claude-opus-5-5"]')"
 assert_eq "insights per-message: models{} counted once too" \
   '{"in_tok":16,"cache_read":6000,"cache_create":800}' "$(_mr '.models["claude-opus-5-5"]')"

@@ -96,7 +96,7 @@ _RP_A_JSON="$_RP_CACHE/insights/$_RP_SID_A.json"
 assert_eq "repos: session A cache exists" "1" "$([ -s "$_RP_A_JSON" ] && echo 1 || echo 0)"
 assert_eq "repos: A active total == 240 (gap>600s skipped, sidechain excluded)" "240" \
   "$(jq '[.active_by_day[]] | add' "$_RP_A_JSON")"
-assert_eq "repos: A schema_version == 12" "12" "$(jq '.schema_version' "$_RP_A_JSON")"
+assert_eq "repos: A schema_version == 13" "13" "$(jq '.schema_version' "$_RP_A_JSON")"
 
 # ── F1: empty-timestamp record neither crashes aggregation nor moves baseline ──
 _RP_E_JSON="$_RP_CACHE/insights/$_RP_SID_E.json"

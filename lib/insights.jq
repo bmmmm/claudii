@@ -67,7 +67,7 @@ def charge($m; $n):
   | .cache_create_1h = ((.cache_create_1h // 0) + $m.cc1h / $n);
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 12,
+  schema_version: 13,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -75,7 +75,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   active_by_day: {},       # "YYYY-MM-DD" -> active seconds (gap-capped main-thread deltas; gaps > 600s count as idle, matching the latency cap). last_seen - first_seen is wall clock incl. idle/resume — this is the "real" working time.
   messages: 0,             # transcript records of every type
   assistant_messages: 0,   # API responses with usage (distinct message.id — schema v12; earlier caches counted records)
-  days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create} (each message once, on its first record's day)
+  days: {},                # "YYYY-MM-DD|model" -> {in_tok, out_tok, cache_read, cache_create, cache_create_1h} (each message once, on its first record's day; cache_create_1h since schema v13 — `claudii cost` prices insights-only sessions from it)
   models: {},              # model -> {in_tok, cache_read, cache_create}
   attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (calls = messages)
   attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
@@ -232,6 +232,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
     | .days[$key].out_tok      = ((.days[$key].out_tok      // 0) + $m.out)
     | .days[$key].cache_read   = ((.days[$key].cache_read   // 0) + $m.cr)
     | .days[$key].cache_create = ((.days[$key].cache_create // 0) + $m.cc)
+    | .days[$key].cache_create_1h = ((.days[$key].cache_create_1h // 0) + $m.cc1h)
     | .models[$m.model].in_tok       = ((.models[$m.model].in_tok       // 0) + $m.in)
     | .models[$m.model].cache_read   = ((.models[$m.model].cache_read   // 0) + $m.cr)
     | .models[$m.model].cache_create = ((.models[$m.model].cache_create // 0) + $m.cc)

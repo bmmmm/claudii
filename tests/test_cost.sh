@@ -1,4 +1,4 @@
-# touches: lib/cmd/cost.sh lib/cmd/display.sh
+# touches: lib/cmd/cost.sh lib/cmd/display.sh lib/insights-cost-rows.jq lib/history_rows.awk lib/insights_stream.sh lib/cmd/skills-cost.sh lib/tier.jq
 
 # test_cost.sh — claudii cost token-tracking tests (v0.9.0+)
 # Verifies that history.tsv with token columns (input_tok, output_tok)
@@ -390,3 +390,40 @@ cost_grid_narrow=$(COLUMNS=20 CLAUDII_CACHE_DIR="$_COST_GRID_TMP" bash "$CLAUDII
 assert_contains "cost (D-grid): narrow terminal still shows Months" "Months" "$cost_grid_narrow"
 
 unset _COST_GRID_TMP _now_ts cost_grid_out _grid_plain _grid_month_rows cost_grid_narrow
+
+# ── cost: sessions with no history are priced from their insights tokens ─────
+# A session that never rendered a statusline (T3 Code, the Agent SDK) has an
+# insights cache and no history row. "ins-only" is priced from its tokens at
+# the Opus 5.5 list rate: 1000 in × $4/M + 2000 out × $20/M + 10000 cache read
+# × $0.20/M + 1000 1h-cache write × $8/M = $0.004 + $0.04 + $0.002 + $0.008 =
+# $0.054. "both" has a history row ($1.00) AND an insights cache: history wins,
+# the insights side of it is never added.
+_COST_INS_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_INS_TMP")
+mkdir -p "$_COST_INS_TMP/insights"
+_now_ts=$(date +%s)
+_ins_day=$(date -u +%Y-%m-%d)
+for _sid in ins-only both; do
+  printf '{"schema_version":13,"sessionId":"%s","last_seen":"%sT10:00:00Z","days":{"%s|claude-opus-5-5":{"in_tok":1000,"out_tok":2000,"cache_read":10000,"cache_create":1000,"cache_create_1h":1000}}}\n' \
+    "$_sid" "$_ins_day" "$_ins_day" > "$_COST_INS_TMP/insights/$_sid.json"
+done
+hist_row "$_COST_INS_TMP/history.tsv" "$_now_ts" "Opus 5.5" "1.00" "10" "0" "both" "500" "500" "0"
+_ins_json=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>/dev/null)
+# Compared in 1/10000 dollars: jq 1.7 prints a number as written ("0.0540"),
+# jq 1.6 (the Forgejo runner's bookworm) normalizes it ("0.054").
+assert_eq "cost (insights): history session + token-priced session, none twice" "10540" \
+  "$(jq -r '[.years[] | .Opus] | add | . * 10000 | round' <<< "$_ins_json")"
+assert_eq "cost (insights): the token-priced part is reported as estimated" "540" \
+  "$(jq -r '.estimated * 10000 | round' <<< "$_ins_json")"
+assert_eq "cost (insights): one local host row" "1 true" \
+  "$(jq -r '"\(.hosts | length) \(.hosts[0].local)"' <<< "$_ins_json")"
+_ins_out=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
+assert_contains "cost (insights): says how much was priced from tokens" "priced from tokens" "$_ins_out"
+assert_not_contains "cost (insights): no By host table without a mirror" "By host" "$_ins_out"
+
+# Insights only, no history file at all: still a cost view, not the onboarding line.
+rm -f "$_COST_INS_TMP/history.tsv"
+_ins_out=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost 2>/dev/null)
+assert_not_contains "cost (insights only): no 'No cost history yet'" "No cost history yet" "$_ins_out"
+assert_contains "cost (insights only): renders Today" "Today" "$_ins_out"
+
+unset _COST_INS_TMP _now_ts _ins_day _sid _ins_json _ins_out

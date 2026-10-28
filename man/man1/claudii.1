@@ -457,12 +457,43 @@ with a per-tier breakdown: Today and Week show share bars sorted by amount plus
 the period token total; Months and Years render as a column matrix (model tiers
 \(mu periods) with row and column totals. Reads from
 .I ~/.cache/claudii/history-YYYY-MM.tsv
-(written by the CC-Statusline handler).
+(written by the CC-Statusline handler). A session with no history row \(em
+one that never rendered a statusline: T3 Code, the Agent SDK,
+.BR "claude \-p" ,
+or a synced host of that kind \(em is priced from its insights tokens at the
+list rates
+.B skills-cost
+uses; a session history covers is never priced twice. A dim line under the
+tables says how much of the total was priced that way.
 Supports
 .BR \-\-json " and " \-\-tsv .
 Alias:
 .BR c .
 .RS
+.PP
+Once
+.B sync
+mirrors contribute, a
+.B By host
+matrix follows: one row per source (this claudii under its
+.IR sync.name ,
+then each mirror) with Today, Week, this Month and Total, and a
+.I basis
+column \(em
+.I history
+(the cost Claude Code reported),
+.I tokens
+(priced from the insights caches) or
+.IR mixed .
+.B \-\-json
+always carries
+.I hosts
+(the same rows, with
+.I local
+and
+.IR estimated )
+and the top-level
+.IR estimated .
 .PP
 With
 .B \-\-window
@@ -723,7 +754,19 @@ bars),
 (in+output per calendar day, bars normalized to the busiest day, with the
 day-level hit rate). All three are floored to exactly
 .I N
-calendar days so the window matches the header.
+calendar days so the window matches the header. Once
+.B sync
+mirrors contribute,
+.B By host
+sits between model and day: in+output, cache read/write, hit rate, sessions
+and share per source, this claudii first under its
+.IR sync.name .
+.B \-\-json
+carries the same as
+.I by_host
+(with a
+.I local
+flag).
 .RS
 .TP
 .B today | 7d | 30d | 90d | year
@@ -1254,6 +1297,16 @@ name (every claudii mints a random id into
 A source whose id changed (its cache was wiped) replaces its mirror.
 .B CLAUDII_LOCAL_ONLY=1
 shows the local data alone.
+.PP
+.BR tokens " and " cost
+mark where the numbers come from: a
+.B By host
+section with one row per source once a mirror contributes. A host that writes
+no history (no statusline \(em T3 Code, the Agent SDK) still shows up in
+.BR cost :
+its sessions are priced from their insights tokens.
+.BR trends " and " week
+read history alone and leave such a host out.
 .
 .SS Activity Heatmap (vibemap)
 Opt-in prompt-timing tracker, rendered as an ASCII heatmap.

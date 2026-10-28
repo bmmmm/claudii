@@ -13,7 +13,7 @@
 #   claudii-insights aggregate --force # rebuild every cache
 #   claudii-insights aggregate <jsonl> # refresh one specific file
 #   claudii-insights cache-dir         # print insights cache directory
-#   claudii-insights merge [--days N] [--until-days M]
+#   claudii-insights merge [--days N] [--until-days M] [--by-host]
 #                                      # stream merged stats to stdout (jq-able)
 #                                      # includes per-skill, per-plugin and per-MCP-tool attribution
 #   claudii-insights gc --older-than DAYS [--yes]
@@ -108,7 +108,7 @@ _is_stale() {
 
 # Must match `schema_version` in lib/insights.jq — bump both together on any
 # breaking change to the per-session cache shape (drives the rebuild gate below).
-SCHEMA_VERSION=12
+SCHEMA_VERSION=13
 
 # Schema gate: compare the .schema marker written after the last successful
 # rebuild. The previous approach (min schema_version across ALL cache files)
@@ -220,14 +220,15 @@ _cmd_aggregate() {
 # filter anything. Removed rather than silently no-op'ing; needs a schema bump
 # to implement for real.)
 _cmd_merge() {
-  local days="" until_days="" wl=false
+  local days="" until_days="" wl=false bh=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --days)         shift; days="${1:-}" ;;
       --until-days)   shift; until_days="${1:-}" ;;
       --with-latency) wl=true ;;
+      --by-host)      bh=true ;;
       *) printf 'merge: unknown option: %s\n' "$1" >&2
-         printf 'Usage: claudii-insights merge [--days N] [--until-days M] [--with-latency]\n' >&2; exit 1 ;;
+         printf 'Usage: claudii-insights merge [--days N] [--until-days M] [--with-latency] [--by-host]\n' >&2; exit 1 ;;
     esac
     shift
   done
@@ -297,11 +298,13 @@ _cmd_merge() {
 
   # Merge program lives in lib/insights-merge.jq (window filters + tolerant
   # attribution_models summing). The caches arrive on stdin, bounded by the
-  # window — never as jq arguments (see lib/insights_stream.sh).
-  _insights_stream "$CACHE_DIR" "$days" | jq -n \
+  # window — never as jq arguments (see lib/insights_stream.sh). Tagged by
+  # source, so --by-host can keep this claudii and each sync mirror apart.
+  _insights_stream_tagged "$CACHE_DIR" "$days" | jq -n \
     --arg cutoff "$cutoff_iso" \
     --arg until "$until_iso" \
     --argjson with_latency "$wl" \
+    --argjson by_host "$bh" \
     -f "$CLAUDII_HOME/lib/insights-merge.jq"
 }
 
@@ -401,8 +404,9 @@ claudii-insights — aggregate JSONL transcripts to JSON cache
 
 Usage:
   claudii-insights aggregate [--force | <jsonl>]
-  claudii-insights merge [--days N] [--until-days M]
-                         # includes per-skill, per-plugin and per-MCP-tool attribution
+  claudii-insights merge [--days N] [--until-days M] [--by-host]
+                         # includes per-skill, per-plugin and per-MCP-tool attribution;
+                         # --by-host adds .hosts{NAME: {sessions, days}} ("" = this host)
   claudii-insights gc --older-than DAYS [--yes]
                          # prune orphaned caches (source JSONL gone); dry-run without --yes
   claudii-insights cache-dir
