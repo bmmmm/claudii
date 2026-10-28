@@ -137,6 +137,30 @@ _repomap_rebuild() {
   fi
 }
 
+# Usable CPUs (nproc honours a Linux cpuset; macOS has only getconf), capped by
+# the CPU quota of this process's cgroup (v2 cpu.max, v1 CFS quota): a
+# container limited to 2 CPUs on a 64-core host gets 2 workers, not 64.
+# CLAUDII_CGROUP_ROOT / CLAUDII_CGROUP_SELF are test seams.
+_cpu_jobs() {
+  local n q="" p="" own="" root="${CLAUDII_CGROUP_ROOT:-/sys/fs/cgroup}"
+  local self="${CLAUDII_CGROUP_SELF:-/proc/self/cgroup}"
+  n=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n=4
+  [[ -r "$self" ]] && own=$(sed -n 's/^0:://p' "$self")
+  if [[ -n "$own" && "$own" != / && -r "$root$own/cpu.max" ]]; then
+    read -r q p < "$root$own/cpu.max"
+  elif [[ -r "$root/cpu.max" ]]; then
+    read -r q p < "$root/cpu.max"
+  elif [[ -r "$root/cpu/cpu.cfs_quota_us" && -r "$root/cpu/cpu.cfs_period_us" ]]; then
+    q=$(cat "$root/cpu/cpu.cfs_quota_us"); p=$(cat "$root/cpu/cpu.cfs_period_us")
+  fi
+  if [[ "$q" =~ ^[1-9][0-9]*$ && "$p" =~ ^[1-9][0-9]*$ ]]; then
+    q=$(( (q + p - 1) / p ))
+    (( q < n )) && n=$q
+  fi
+  printf '%s\n' "$n"
+}
+
 # Internal xargs worker: the parent rebuilds the repo map after all batches.
 _aggregate_batch() {
   _AGG_FORCE=1
@@ -167,9 +191,10 @@ _cmd_aggregate() {
   fi
 
   # Schema bump → force a full rebuild so commands never read stale shapes.
+  local bump=0
   if (( ! force )) && ! _schema_ok; then
     printf 'insights: schema bump → rebuilding all caches\n' >&2
-    force=1
+    force=1; bump=1
   fi
 
   # Use a marker file to skip the per-file stat loop. find -newer is O(1) for
@@ -191,6 +216,31 @@ _cmd_aggregate() {
   # spares a concurrent run's file that is still being written.
   find "$CACHE_DIR" -maxdepth 1 -name '*.json.??????' -type f -mmin +60 -delete 2>/dev/null
 
+  # A schema-bump rebuild stamps .rebuild with the code that runs it. When that
+  # run dies, the next one (still a bump: .schema was not written) keeps every
+  # cache it already wrote — except for sessions whose transcript changed
+  # since. Other code (schema, insights.jq, this script, jq) does not match the
+  # stamp, so everything is rebuilt. A typed --force never resumes: it means
+  # "rebuild every cache", and it drops the stamp once it completes.
+  local rebuild="$CACHE_DIR/.rebuild" rebuilt="" kept=0
+  if (( bump )); then
+    local key; key="$SCHEMA_VERSION $(cksum < "$JQ_PROGRAM") $(cksum < "$0") $(jq --version 2>&1)"
+    if [[ -f "$rebuild" && "$(cat "$rebuild" 2>/dev/null)" == "$key" ]]; then
+      rebuilt=$(mktemp) || return 1
+      { find "$PROJECTS_DIR" -maxdepth 4 -name '*.jsonl' -type f -newer "$rebuild" 2>/dev/null \
+          | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|; s|.*/||; s|\.jsonl$||; s|^|-|'
+        find "$CACHE_DIR" -maxdepth 1 -name '*.json' -type f -newer "$rebuild" 2>/dev/null \
+          | sed 's|.*/||; s|\.json$||; s|^|+|'
+      } | awk '/^-/ { dirty[substr($0, 2)] = 1; next }
+               { done_[substr($0, 2)] = 1 }
+               END { for (s in done_) if (!(s in dirty)) print s }' > "$rebuilt"
+      kept=$(wc -l < "$rebuilt" | tr -d ' ')
+      printf 'insights: resuming an interrupted rebuild — %d caches already current\n' "$kept" >&2
+    else
+      printf '%s\n' "$key" > "$rebuild"
+    fi
+  fi
+
   local processed=0 failed=0 parallel=0 incomplete=0
   local pending=()
   while IFS= read -r jsonl; do
@@ -203,11 +253,15 @@ _cmd_aggregate() {
       pending+=("$jsonl")
     fi
   done < <(find "${find_args[@]}" 2>/dev/null \
-             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u)
+             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u \
+             | awk -v kept="$rebuilt" '
+                 BEGIN { if (kept != "") while ((getline s < kept) > 0) skip[s] = 1 }
+                 { s = $0; sub(/.*\//, "", s); sub(/\.jsonl$/, "", s); if (!(s in skip)) print }')
+  [[ -n "$rebuilt" ]] && rm -f "$rebuilt"
 
   if (( ${#pending[@]} >= 32 )); then
     parallel=1
-    local jobs="${CLAUDII_INSIGHTS_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null)}"
+    local jobs="${CLAUDII_INSIGHTS_JOBS:-$(_cpu_jobs)}"
     [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || jobs=4
     # Spread the sessions over every job, at most 32 per worker call.
     local batch=$(( (${#pending[@]} + jobs - 1) / jobs ))
@@ -252,6 +306,7 @@ _cmd_aggregate() {
   else
     mv -f "$marker.next" "$marker"
     printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
+    (( force )) && rm -f "$rebuild"
   fi
   shopt -s nullglob
   local cached_total=("$CACHE_DIR"/*.json)
