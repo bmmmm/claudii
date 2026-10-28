@@ -427,14 +427,25 @@ assert_not_contains "cost (insights only): no 'No cost history yet'" "No cost hi
 assert_contains "cost (insights only): renders Today" "Today" "$_ins_out"
 
 # Haiku 5.5 bills a request over 100K prompt tokens at 5× every column; the
-# day bucket's long_* share (insights schema v14) prices at "haiku-long":
+# day bucket's long_* share (insights schema v15) prices at "haiku-long":
 #   short  500 in × $0.10/M + 500 out × $0.50/M + 100000 cr × $0.01/M = $0.0013
 #   long   500 in × $0.50/M + 500 out × $2.50/M + 200000 cr × $0.05/M = $0.0115
-# = $0.0128 (all at the lower row it would be $0.0036).
-printf '{"schema_version":14,"sessionId":"haiku-long","last_seen":"%sT10:00:00Z","days":{"%s|claude-haiku-5-5":{"in_tok":1000,"out_tok":1000,"cache_read":300000,"cache_create":0,"cache_create_1h":0,"long_in_tok":500,"long_out_tok":500,"long_cache_read":200000}}}\n' \
-  "$_ins_day" "$_ins_day" > "$_COST_INS_TMP/insights/haiku-long.json"
-_ins_json=$(CLAUDII_CACHE_DIR="$_COST_INS_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>/dev/null)
+# = $0.0128 (all at the lower row it would be $0.0036). Own cache dir, so the
+# Opus fixtures above cannot leak into the sums.
+_COST_LG_TMP="$(mktemp -d)"; _COST_TMPDIRS+=("$_COST_LG_TMP")
+mkdir -p "$_COST_LG_TMP/insights"
+printf '{"schema_version":15,"sessionId":"haiku-long","last_seen":"%sT10:00:00Z","days":{"%s|claude-haiku-5-5":{"in_tok":1000,"out_tok":1000,"cache_read":300000,"cache_create":0,"cache_create_1h":0,"long_in_tok":500,"long_out_tok":500,"long_cache_read":200000}}}\n' \
+  "$_ins_day" "$_ins_day" > "$_COST_LG_TMP/insights/haiku-long.json"
+# An older cache whose bucket lacks fields (no cache_create_1h before v13, no
+# out_tok here) prices the fields it has: 1M in × $4/M (Opus 5.5) = $4.00 —
+# and does not abort the stream for the session after it.
+printf '{"schema_version":12,"sessionId":"a-sparse","last_seen":"%sT10:00:00Z","days":{"%s|claude-opus-5-5":{"in_tok":1000000}}}\n' \
+  "$_ins_day" "$_ins_day" > "$_COST_LG_TMP/insights/a-sparse.json"
+_ins_json=$(CLAUDII_CACHE_DIR="$_COST_LG_TMP" bash "$CLAUDII_HOME/bin/claudii" cost --json 2>/dev/null)
 assert_eq "cost (insights): Haiku 5.5 long requests bill at the haiku-long row" "128" \
   "$(jq -r '[.years[] | .Haiku // 0] | add | . * 10000 | round' <<< "$_ins_json")"
+assert_eq "cost (insights): a bucket with missing fields prices the ones it has" "40000" \
+  "$(jq -r '[.years[] | .Opus // 0] | add | . * 10000 | round' <<< "$_ins_json")"
+unset _COST_LG_TMP
 
 unset _COST_INS_TMP _now_ts _ins_day _sid _ins_json _ins_out
