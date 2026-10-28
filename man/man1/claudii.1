@@ -2115,6 +2115,11 @@ Set to 1 to keep ANSI colors when stdout is not a terminal (e.g.\&
 .BR "claudii se | less -R" ).
 By default piped or redirected output is plain text.
 .TP
+.B CLAUDII_INSIGHTS_JOBS
+Number of parallel workers when the insights cache rebuilds 32 or more
+sessions at once (a schema bump, a first run). Default: the number of
+online CPUs.
+.TP
 .B CLAUDII_LOCAL_ONLY
 Set to 1 to leave the hosts mirrored by
 .B claudii sync

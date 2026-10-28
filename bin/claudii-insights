@@ -67,7 +67,7 @@ _subagent_files() {
 # the agentId→skill map complete before subagent lines stream in.
 _aggregate_one() {
   local jsonl="$1"
-  local sid; sid="$(basename "$jsonl" .jsonl)"
+  local sid="${jsonl##*/}"; sid="${sid%.jsonl}"
   local out="$CACHE_DIR/$sid.json"
   _subagent_files "$jsonl"
   local files=("$jsonl" ${_SUBAGENT_FILES[@]+"${_SUBAGENT_FILES[@]}"})
@@ -137,6 +137,19 @@ _repomap_rebuild() {
   fi
 }
 
+# Internal xargs worker: the parent rebuilds the repo map after all batches.
+_aggregate_batch() {
+  _AGG_FORCE=1
+  local jsonl
+  for jsonl in "$@"; do
+    if _aggregate_one "$jsonl"; then
+      printf 'ok\n'
+    else
+      printf 'fail\n'
+    fi
+  done
+}
+
 _cmd_aggregate() {
   local force=0 target=""
   while [[ $# -gt 0 ]]; do
@@ -174,35 +187,79 @@ _cmd_aggregate() {
   # Touch marker BEFORE scan so any writes during scan get picked up next time.
   : > "$marker.next"
 
-  local processed=0 failed=0
+  local processed=0 failed=0 parallel=0 incomplete=0
+  local pending=()
   while IFS= read -r jsonl; do
     [[ -z "$jsonl" ]] && continue
     [[ -f "$jsonl" ]] || continue   # mapped parent of orphaned subagent dir
     # When using -newer the file is by definition stale — still check cache
     # absence for the first-run case (no marker yet, every file is "new").
-    local sid; sid="$(basename "$jsonl" .jsonl)"
+    local sid="${jsonl##*/}"; sid="${sid%.jsonl}"
     if [[ "$force" == "1" || ! -s "$CACHE_DIR/$sid.json" ]] || _is_stale "$jsonl" "$force"; then
+      pending+=("$jsonl")
+    fi
+  done < <(find "${find_args[@]}" 2>/dev/null \
+             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u)
+
+  if (( ${#pending[@]} >= 32 )); then
+    parallel=1
+    local jobs="${CLAUDII_INSIGHTS_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null)}"
+    [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || jobs=4
+    # Spread the sessions over every job, at most 32 per worker call.
+    local batch=$(( (${#pending[@]} + jobs - 1) / jobs ))
+    (( batch > 32 )) && batch=32
+    # Absolute path and the running interpreter: a bare "$0" makes xargs search
+    # PATH, which can run another install's code against this cache.
+    local self; self="$(cd "$(dirname "$0")" && pwd)/${0##*/}"
+    local results xrc=0 result
+    results=$(mktemp) || return 1
+    printf '%s\0' "${pending[@]}" \
+      | xargs -0 -n "$batch" -P "$jobs" "$BASH" "$self" _aggregate-batch > "$results" || xrc=$?
+    while IFS= read -r result; do
+      case "$result" in
+        ok) (( ++processed )) ;;
+        fail) (( ++failed )) ;;
+      esac
+    done < "$results"
+    rm -f "$results"
+    # A worker killed by a signal makes xargs stop launching batches, so its
+    # sessions never report back. Count them as failed and keep the old scan
+    # marker and schema stamp — advancing either would hide those sessions
+    # until --force; this way the next run retries them.
+    local unreported=$(( ${#pending[@]} - processed - failed ))
+    if (( xrc != 0 || unreported > 0 )); then
+      incomplete=1
+      (( unreported > 0 )) && failed=$(( failed + unreported ))
+      printf 'insights: parallel aggregation incomplete (xargs exit %d, %d unreported) — next run retries\n' \
+        "$xrc" "$unreported" >&2
+    fi
+  elif (( ${#pending[@]} > 0 )); then
+    for jsonl in "${pending[@]}"; do
       if _aggregate_one "$jsonl"; then
         (( ++processed ))
       else
         (( ++failed ))
       fi
-    fi
-  done < <(find "${find_args[@]}" 2>/dev/null \
-             | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u)
+    done
+  fi
 
-  mv -f "$marker.next" "$marker"
-  printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
+  if (( incomplete )); then
+    rm -f "$marker.next"
+  else
+    mv -f "$marker.next" "$marker"
+    printf '%s\n' "$SCHEMA_VERSION" > "$CACHE_DIR/.schema"
+  fi
   shopt -s nullglob
   local cached_total=("$CACHE_DIR"/*.json)
   shopt -u nullglob
-  # Rebuild the session→repo log whole when it is missing, after a forced run
+  # Rebuild the session→repo log whole when it is missing, after a parallel run
+  # (workers skip appends), after a forced run
   # (orphans must be in it too — no run would ever append them again), and
   # when re-aggregations of active sessions have piled up duplicate lines past
   # twice the number of caches (each one appends; readers keep the last).
   local log_lines=0
   [[ -f "$REPOMAP_LOG" ]] && log_lines=$(wc -l < "$REPOMAP_LOG" | tr -d ' ')
-  if (( force )) || [[ ! -f "$REPOMAP_LOG" ]] || (( log_lines > 2 * ${#cached_total[@]} + 100 )); then
+  if (( force || parallel )) || [[ ! -f "$REPOMAP_LOG" ]] || (( log_lines > 2 * ${#cached_total[@]} + 100 )); then
     _repomap_rebuild
   fi
 
@@ -394,6 +451,7 @@ _cmd_gc() {
 
 cmd="${1:-aggregate}"; shift || true
 case "$cmd" in
+  _aggregate-batch) _aggregate_batch "$@" ;;
   aggregate) _cmd_aggregate "$@" ;;
   merge)     _cmd_merge "$@" ;;
   gc)        _cmd_gc "$@" ;;
