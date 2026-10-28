@@ -23,7 +23,10 @@ exec "$_PAR_REAL_XARGS" "\$@"
 SHIM
 chmod +x "$_PAR_DIR/bin/xargs"; : > "$_PAR_DIR/xargs.log"
 _par_run() {
-  PATH="$_PAR_DIR/bin:$PATH" \
+  # The interrupted-run fixture below selects the first ten paths. GNU sort
+  # under en_US puts session 10.jsonl before session 1.jsonl, unlike C;
+  # pin the fixture's order so it actually rebuilds the sessions we mutate.
+  LC_ALL=C PATH="$_PAR_DIR/bin:$PATH" \
     CLAUDE_PROJECTS_DIR="$_PAR_DIR/projects" CLAUDII_CACHE_DIR="$_PAR_DIR/cache" \
     CLAUDII_INSIGHTS_JOBS="${_PAR_JOBS-2}" /bin/bash "$CLAUDII_HOME/bin/claudii-insights" aggregate "$@"
 }
@@ -94,6 +97,10 @@ _par_crash
 assert_contains "a crashed bump rebuild is incomplete" 'parallel aggregation incomplete' "$_PAR_OUT"
 assert_eq "a crashed bump rebuild keeps its stamp" yes "$(test -f "$_PAR_INS/.rebuild" && echo yes || echo no)"
 assert_eq "a crashed bump rebuild keeps the old schema" 0 "$(cat "$_PAR_INS/.schema")"
+for _sid in 'session 0' 'session 1' 'session 10'; do
+  assert_eq "the crash rebuilt $_sid before the resume mutation" yes \
+    "$(test "$_PAR_INS/$_sid.json" -nt "$_PAR_INS/.rebuild" && echo yes || echo no)"
+done
 # session 0 was among the 9 — its transcript grows after the crash; session 1
 # gains a subagent transcript, which must count against its parent too.
 printf '{"cwd":"/work/repo-0"}\n' >> "$_PAR_DIR/projects/project with spaces/session 0.jsonl"
