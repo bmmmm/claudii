@@ -82,8 +82,13 @@ gets its own branch, not the new one. Sonnet 5.5 is the narrow case again (cache
 5% vs 10%) with a refined `sonnet-5-5` key, and Haiku 5.5 follows the Sonnet 5
 direction: a 10× cheaper default, so the bare `haiku` key moved to the new price
 and every older id went to `haiku-legacy`. Haiku 5.5 is also the first model
-with a per-request price tier (5× above 100K prompt tokens), which `_rates`
-cannot express — it prices the lower tier and says so in its comment. Don't assume "bare key = current" or
+with a per-request price tier (5× above 100K prompt tokens, cache reads and
+writes included in the prompt): `_rates` carries the higher row as `haiku-long`,
+which `tier()` never returns — `model_usd()` in `lib/tier.jq` applies any
+`<tier>-long` row to the `long_*` share of a bucket, which `lib/insights.jq`
+(`charge()`, schema v14) records per response. A different threshold or a
+second length-priced model would need that constant in `charge()` made
+per-model. Don't assume "bare key = current" or
 "specific suffix = legacy" — check Anthropic's docs for which id is actually
 the new default before naming the branch. Also update the two user-facing
 pricing summaries that restate this table in prose: the `meta.pricing` string

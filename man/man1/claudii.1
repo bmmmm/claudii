@@ -718,8 +718,11 @@ sessions whose transcript is gone \(em bill at the 5-minute rate.
 Version-aware within a tier:
 Sonnet 4.x / 3.x, Haiku 4.x / 3.x and Fable 5 keep their own older rates, and Opus 5.5 (now
 the default Opus) carries the newer, cheaper rate while older Opus ids keep the
-existing one. Haiku 5.5 is priced at its up-to-100K-prompt rate ($0.10/$0.50/M);
-its higher rate above 100K prompt tokens per request is not modeled.
+existing one. Haiku 5.5 is priced per request: $0.10/$0.50/M, and 5\(mu that
+($0.50/$2.50/M, every column) for a request whose prompt \(em input plus cache
+reads and cache writes \(em is over 100,000 tokens. The split is taken per
+response when the cache is built (insights schema v14); caches from before it
+bill every Haiku 5.5 request at the lower rate.
 Pre-v5 / orphaned caches carry no
 per-model split \(em their residual tokens fall back to the flat Sonnet 4.x rate.
 .B meta.pricing

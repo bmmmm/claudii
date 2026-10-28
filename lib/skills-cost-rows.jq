@@ -9,7 +9,9 @@
 # own tier; any residual not covered by per-model data (pre-v5 orphans) is
 # priced at the flat legacy-Sonnet rate (that data predates Sonnet 5). Both go
 # through usd() from lib/tier.jq, which bills cache writes by TTL (schema v11
-# cache_create_1h at the 1h rate, the rest at the 5m rate).
+# cache_create_1h at the 1h rate, the rest at the 5m rate) and, for a tier with
+# a "-long" row (Haiku 5.5), bills the long_* share — requests over 100K prompt
+# tokens — at that row (model_usd).
 # The dominant model per row comes from the per-model call counts: the top
 # model needs >=80% of the row's attributed calls, otherwise "mixed".
 include "tier";
@@ -24,7 +26,12 @@ include "tier";
            out_tok:         (.value.out_tok         // 0),
            cache_read:      (.value.cache_read      // 0),
            cache_create:    (.value.cache_create    // 0),
-           cache_create_1h: (.value.cache_create_1h // 0)})
+           cache_create_1h: (.value.cache_create_1h // 0),
+           long_in_tok:          (.value.long_in_tok          // 0),
+           long_out_tok:         (.value.long_out_tok         // 0),
+           long_cache_read:      (.value.long_cache_read      // 0),
+           long_cache_create:    (.value.long_cache_create    // 0),
+           long_cache_create_1h: (.value.long_cache_create_1h // 0)})
   ) as $am
 | .[$k] // {}
 | to_entries
@@ -40,7 +47,7 @@ include "tier";
 | map(. as $row
     | ([$am[] | select(.name == $row.name)]) as $cand
     # per-model priced cost (schema-v5 token attribution)
-    | ($cand | map(usd($rates[tier(.model)])) | add // 0) as $model_usd
+    | ($cand | map(model_usd($rates)) | add // 0) as $model_usd
     # residual = aggregate − per-model-covered tokens (pre-v5 orphans), legacy Sonnet
     | (([$row.in_tok          - ($cand | map(.in_tok)          | add // 0), 0] | max)) as $res_in
     | (([$row.out_tok         - ($cand | map(.out_tok)         | add // 0), 0] | max)) as $res_out

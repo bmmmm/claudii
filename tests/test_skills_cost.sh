@@ -552,6 +552,73 @@ assert_eq "skills-cost --mcp: the final usage splits across the response's MCP c
 unset -f _sc_mr_rec _sc_mr_cell
 unset _SC_MR _sc_mr_json _sc_mr_mcp
 
+# ── Test 16: Haiku 5.5 requests over 100K prompt tokens bill at 5× (schema v14) ─
+# A request is priced on its own: prompt = input + cache_read + cache_create
+# (cached tokens count), strictly over 100,000 → every column of THAT request,
+# output included, at the higher row ($0.50 in / $2.50 out / $0.05 read /
+# $0.625 5m write / $1.00 1h write per MTok). Transcript → aggregate → merge →
+# skills-cost, one skill per case:
+#   hlow     in 100000 (exactly)             → $0.01   (lower row, $0.10/M)
+#   hover    in 100001                        → $0.05   ($0.50/M)
+#   hread    cache_read 100001, in 0          → $0.005  (the prompt is all cache: $0.05/M)
+#   hout     in 100001 + 1M output            → $2.55   (not $0.51: output at $2.50/M)
+#   hwrite   1h write 100001                  → $0.10   ($1.00/M, not $0.02)
+#   hmix     two requests, 100000 + 200000    → $0.11   (each at its own row, not $0.03 / $0.15)
+#   hlegacy  Haiku 4.5, in 200000             → $0.20   (no long row for 4.x: $1/M)
+#   oplong   Opus 5.5, in 200000              → $0.80   (no long row: $4/M)
+_SC_LG="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_LG")
+mkdir -p "$_SC_LG/proj/p" "$_SC_LG/cache"
+_sc_lg_rec() {  # <skill> <model> <in> <out> <cache_read> <cache_create> [1h part] → one assistant record
+  jq -cn --arg s "$1" --arg m "$2" --argjson in "$3" --argjson out "$4" --argjson cr "$5" \
+    --argjson cc "$6" --argjson c1h "${7:-0}" --arg ts "$_SC_LAST_SEEN" \
+    '{type:"assistant", timestamp:$ts, sessionId:"lg-sess", attributionSkill:$s,
+      message:{id:("msg_" + $s + "_" + ($in|tostring)), role:"assistant", model:$m, content:[],
+        usage:{input_tokens:$in, output_tokens:$out, cache_read_input_tokens:$cr,
+               cache_creation_input_tokens:$cc,
+               cache_creation:{ephemeral_5m_input_tokens:($cc - $c1h), ephemeral_1h_input_tokens:$c1h}}}}'
+}
+{
+  _sc_lg_rec hlow-skill     claude-haiku-5-5    100000 0       0      0
+  _sc_lg_rec hover-skill    claude-haiku-5-5    100001 0       0      0
+  _sc_lg_rec hread-skill    claude-haiku-5-5    0      0       100001 0
+  _sc_lg_rec hout-skill     claude-haiku-5-5    100001 1000000 0      0
+  _sc_lg_rec hwrite-skill   claude-haiku-5-5    0      0       0      100001 100001
+  _sc_lg_rec hmix-skill     claude-haiku-5-5    100000 0       0      0
+  _sc_lg_rec hmix-skill     claude-haiku-5-5    200000 0       0      0
+  _sc_lg_rec hlegacy-skill  claude-haiku-4-5    200000 0       0      0
+  _sc_lg_rec oplong-skill   claude-opus-5-5     200000 0       0      0
+} > "$_SC_LG/proj/p/lg-sess.jsonl"
+CLAUDE_PROJECTS_DIR="$_SC_LG/proj" CLAUDII_CACHE_DIR="$_SC_LG/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-insights" aggregate >/dev/null 2>&1
+_sc_lg_json=$(CLAUDII_CACHE_DIR="$_SC_LG/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+_sc_lg_cell() { jq -r --arg n "$1" '.rows[] | select(.name==$n) | .tot_usd' <<< "$_sc_lg_json" 2>/dev/null | LC_ALL=C awk '{printf "%.4f", $1}'; }
+assert_eq "skills-cost long: prompt of exactly 100,000 stays at the lower row (\$0.01)"      "0.0100" "$(_sc_lg_cell hlow-skill)"
+assert_eq "skills-cost long: 100,001 prompt tokens bill input at \$0.50/M"                    "0.0500" "$(_sc_lg_cell hover-skill)"
+assert_eq "skills-cost long: cache reads count towards the prompt and bill at \$0.05/M"       "0.0050" "$(_sc_lg_cell hread-skill)"
+assert_eq "skills-cost long: output of an over-100K request bills at \$2.50/M"                "2.5500" "$(_sc_lg_cell hout-skill)"
+assert_eq "skills-cost long: cache writes count towards the prompt, 1h write at \$1.00/M"     "0.1000" "$(_sc_lg_cell hwrite-skill)"
+assert_eq "skills-cost long: each request is priced on its own (\$0.01 + \$0.10)"             "0.1100" "$(_sc_lg_cell hmix-skill)"
+assert_eq "skills-cost long: Haiku 4.5 has no long row (\$1/M)"                               "0.2000" "$(_sc_lg_cell hlegacy-skill)"
+assert_eq "skills-cost long: Opus 5.5 has no long row (\$4/M)"                                "0.8000" "$(_sc_lg_cell oplong-skill)"
+assert_contains "skills-cost long: meta.pricing states the higher Haiku 5.5 rate" '$0.50/$2.50/M' \
+  "$(jq -r '.meta.pricing' <<< "$_sc_lg_json" 2>/dev/null)"
+# --compare prices through the same function: avg_usd_recent = tot_usd / calls
+assert_eq "skills-cost --compare long: prices the over-100K request at the higher row" "0.0500" \
+  "$(CLAUDII_CACHE_DIR="$_SC_LG/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --compare 30:30 --json 2>/dev/null \
+     | jq -r '.rows[] | select(.name=="hover-skill") | .avg_usd_recent' | LC_ALL=C awk '{printf "%.4f", $1}')"
+# A cache from before schema v14 has no long_* counters: the same tokens price
+# at the lower row, exactly as they did (Test 11's haiku55 rows pin that too).
+_sc_lg_old=$(jq 'del(.attribution_models[]?.long_in_tok, .attribution_models[]?.long_out_tok, .attribution_models[]?.long_cache_read, .attribution_models[]?.long_cache_create, .attribution_models[]?.long_cache_create_1h)' \
+  "$_SC_LG/cache/insights/lg-sess.json" 2>/dev/null)
+assert_eq "skills-cost long: the source cache really carries long_* counters" "true" \
+  "$(jq '[.attribution_models[] | has("long_in_tok")] | any' "$_SC_LG/cache/insights/lg-sess.json" 2>/dev/null)"
+printf '%s\n' "$_sc_lg_old" > "$_SC_LG/cache/insights/lg-sess.json"
+_sc_lg_json=$(CLAUDII_CACHE_DIR="$_SC_LG/cache" bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+assert_eq "skills-cost long: without long_* the 100,001-token request prices at the lower row (\$0.01)" "0.0100" "$(_sc_lg_cell hover-skill)"
+assert_eq "skills-cost long: without long_* the two-request skill prices at the lower row (\$0.03)"       "0.0300" "$(_sc_lg_cell hmix-skill)"
+unset -f _sc_lg_rec _sc_lg_cell
+unset _SC_LG _sc_lg_json _sc_lg_old
+
 # ── Flag robustness: a value-flag as the LAST arg must not silently exit ──────
 # `--compare` with no window consumed $@, then the loop's final `shift` tripped
 # exit 1 under set -e — a silent failure with no output. Now: actionable message

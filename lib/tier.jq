@@ -58,3 +58,28 @@ def tier($m):
 def usd($r):
   .in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr
   + (.cache_create - .cache_create_1h) * $r.cc + .cache_create_1h * $r.cc1h;
+
+# Price one per-model attribution bucket {model, in_tok, … cache_create_1h,
+# long_in_tok, … long_cache_create_1h} (callers default missing keys to 0). A
+# tier with a "<tier>-long" row in $rates bills a request whose prompt is over
+# its threshold at that row (Haiku 5.5: "haiku-long", 5× every column, over
+# 100,000 prompt tokens — cache reads and writes count towards the prompt, and
+# the whole request pays the higher price, output included). insights.jq
+# keeps that share in the long_* counters; the rest of the bucket bills at the
+# tier's base row. Buckets without long_* (caches before schema v14, tiers
+# without a -long row) price exactly as usd($rates[tier]) did.
+def model_usd($rates):
+  tier(.model) as $t
+  | ($rates[$t + "-long"] // null) as $lr
+  | if $lr == null then usd($rates[$t])
+    else
+      . as $b
+      | ({in_tok: $b.long_in_tok, out_tok: $b.long_out_tok, cache_read: $b.long_cache_read,
+          cache_create: $b.long_cache_create, cache_create_1h: $b.long_cache_create_1h}
+         | map_values(. // 0)) as $l
+      | ({in_tok: ($b.in_tok - $l.in_tok), out_tok: ($b.out_tok - $l.out_tok),
+          cache_read: ($b.cache_read - $l.cache_read),
+          cache_create: ($b.cache_create - $l.cache_create),
+          cache_create_1h: ($b.cache_create_1h - $l.cache_create_1h)} | usd($rates[$t]))
+        + ($l | usd($lr))
+    end;

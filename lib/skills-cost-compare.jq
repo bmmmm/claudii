@@ -9,21 +9,24 @@ include "tier";
 
 # Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
 # pricing + legacy-Sonnet residual as the single-window view in skills-cost-rows.jq,
-# both priced by usd() from lib/tier.jq).
+# both priced by usd() / model_usd() from lib/tier.jq).
 def rows($m):
   ($m.attribution_models // {} | to_entries
     | map((.key | split("|")) as $p | select($p[0] == $kind)
         | {name:($p[1]//""), model:($p[2]//"unknown"),
            in_tok:(.value.in_tok//0), out_tok:(.value.out_tok//0),
            cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
-           cache_create_1h:(.value.cache_create_1h//0)})) as $am
+           cache_create_1h:(.value.cache_create_1h//0),
+           long_in_tok:(.value.long_in_tok//0), long_out_tok:(.value.long_out_tok//0),
+           long_cache_read:(.value.long_cache_read//0), long_cache_create:(.value.long_cache_create//0),
+           long_cache_create_1h:(.value.long_cache_create_1h//0)})) as $am
   | ($m[$k] // {} | to_entries
       | map({name:.key, calls:(.value.calls//0), in_tok:(.value.in_tok//0),
              out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
              cache_create_1h:(.value.cache_create_1h//0)}))
   | map(. as $row
       | ([$am[] | select(.name == $row.name)]) as $cand
-      | ($cand | map(usd($rates[tier(.model)])) | add // 0) as $musd
+      | ($cand | map(model_usd($rates)) | add // 0) as $musd
       | (([$row.in_tok          - ($cand|map(.in_tok)|add//0),          0]|max)) as $ri
       | (([$row.out_tok         - ($cand|map(.out_tok)|add//0),         0]|max)) as $ro
       | (([$row.cache_read      - ($cand|map(.cache_read)|add//0),      0]|max)) as $rcr

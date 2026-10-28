@@ -58,16 +58,29 @@ def reponame($cwd):
 # in_tok, out_tok, cache_read, cache_create, cache_create_1h}: one call, the
 # tokens divided by $n — 1 for a skill or plugin, the number of the message's
 # MCP tool_use entries for the MCP split (values may go fractional).
+#
+# A request whose prompt (input + cache_read + cache_create, cached tokens
+# included) is over 100,000 tokens also lands in the long_* counters — the
+# part of the totals that Haiku 5.5 bills at its higher per-request rate
+# (strictly over; exactly 100,000 is still the lower tier). The sums above
+# cannot be split afterwards, so the split has to be taken per message here.
 def charge($m; $n):
   .calls             = ((.calls             // 0) + 1)
   | .in_tok          = ((.in_tok          // 0) + $m.in   / $n)
   | .out_tok         = ((.out_tok         // 0) + $m.out  / $n)
   | .cache_read      = ((.cache_read      // 0) + $m.cr   / $n)
   | .cache_create    = ((.cache_create    // 0) + $m.cc   / $n)
-  | .cache_create_1h = ((.cache_create_1h // 0) + $m.cc1h / $n);
+  | .cache_create_1h = ((.cache_create_1h // 0) + $m.cc1h / $n)
+  | (if ($m.in + $m.cr + $m.cc) > 100000 then
+       .long_in_tok          = ((.long_in_tok          // 0) + $m.in   / $n)
+       | .long_out_tok         = ((.long_out_tok         // 0) + $m.out  / $n)
+       | .long_cache_read      = ((.long_cache_read      // 0) + $m.cr   / $n)
+       | .long_cache_create    = ((.long_cache_create    // 0) + $m.cc   / $n)
+       | .long_cache_create_1h = ((.long_cache_create_1h // 0) + $m.cc1h / $n)
+     else . end);
 
 reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
-  schema_version: 13,
+  schema_version: 14,
   sessionId: $sid,
   project: null,           # {path, repo, branch} from cwd/gitBranch (last record wins; constant per session)
   first_seen: null,
@@ -80,7 +93,7 @@ reduce (inputs | fromjson? // empty | select(type == "object")) as $r ({
   attribution_skills: {},  # skill_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (calls = messages)
   attribution_plugins: {}, # plugin_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}
   attribution_mcp: {},     # mcp_tool_name -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (cost split evenly across the message's MCP tools — values may be fractional)
-  attribution_models: {},  # "kind|name|model" -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (kind: skill|plugin|mcp; mcp tokens split evenly across the message's MCP tools, may be fractional) — schema v5; pre-v5 caches stored a bare calls count here. cache_create is every cache write, cache_create_1h (schema v11) the part of it written to the 1-hour cache
+  attribution_models: {},  # "kind|name|model" -> {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h} (kind: skill|plugin|mcp; mcp tokens split evenly across the message's MCP tools, may be fractional) — schema v5; pre-v5 caches stored a bare calls count here. cache_create is every cache write, cache_create_1h (schema v11) the part of it written to the 1-hour cache. long_in_tok/long_out_tok/long_cache_read/long_cache_create/long_cache_create_1h (schema v14, present only once a request qualified) are the part of those totals from requests whose prompt (input + cache_read + cache_create) was over 100,000 tokens
   tools: {},               # tool_name -> count
   tool_errors: {},         # tool_name -> error count
   stop_reasons: {},        # reason -> count (assistant only)

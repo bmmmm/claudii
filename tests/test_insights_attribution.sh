@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 13" "13" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 14" "14" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -279,6 +279,52 @@ assert_eq "insights per-message: one latency sample, prompt to last block" \
   "$(_mr '.latency')"
 assert_eq "insights per-message: transient msgs map stripped" "false" "$(_mr 'has("msgs")')"
 unset -f _mr
+
+# ── Requests over 100K prompt tokens (schema v14) ────────────────────────────
+# Haiku 5.5 bills a whole request at 5× when its prompt — input + cache_read +
+# cache_create, cached tokens included — is over 100,000 tokens. Summed buckets
+# cannot be split afterwards, so each message that qualifies also lands in the
+# bucket's long_* counters. Haiku 5.5, skill "lg":
+#   msg_L1  in 1,   cr 100000        → prompt 100001: long
+#   msg_L2  in 0,   cr 100000        → prompt exactly 100000: NOT long (strict)
+#   msg_L3  in 500, cc 100000 (60000 on the 1h cache) → prompt 100500: long
+#   msg_M   2 records, cr 100001     → long, charged once
+# msg_X (no skill): cr 100002 split over two MCP tools → 50001 each.
+# "opus-lg" is a 200K Opus request: recorded too — the counters are a fact
+# about the request, only the pricing decides which model they matter for.
+_LG_JSONL=$(mktemp)
+cat > "$_LG_JSONL" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-27T13:00:00Z","attributionSkill":"lg","message":{"id":"msg_L1","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":1,"output_tokens":10,"cache_read_input_tokens":100000,"cache_creation_input_tokens":0},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T13:01:00Z","attributionSkill":"lg","message":{"id":"msg_L2","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":20,"cache_read_input_tokens":100000,"cache_creation_input_tokens":0},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T13:02:00Z","attributionSkill":"lg","message":{"id":"msg_L3","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":500,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":100000,"cache_creation":{"ephemeral_5m_input_tokens":40000,"ephemeral_1h_input_tokens":60000}},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T13:03:00Z","attributionSkill":"lg","message":{"id":"msg_M","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":40,"cache_read_input_tokens":100001,"cache_creation_input_tokens":0},"content":[{"type":"thinking","thinking":""}]}}
+{"type":"assistant","timestamp":"2026-05-27T13:03:01Z","attributionSkill":"lg","message":{"id":"msg_M","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":40,"cache_read_input_tokens":100001,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"x"}]}}
+{"type":"assistant","timestamp":"2026-05-27T13:04:00Z","attributionSkill":"opus-lg","message":{"id":"msg_O","role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":200000,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T13:05:00Z","attributionSkill":"edge","message":{"id":"msg_E","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":100000,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[]}}
+{"type":"assistant","timestamp":"2026-05-27T13:06:00Z","message":{"id":"msg_X","role":"assistant","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":8,"cache_read_input_tokens":100002,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","id":"x1","name":"mcp__srv__alpha","input":{}},{"type":"tool_use","id":"x2","name":"mcp__srv__beta","input":{}}]}}
+JSONL
+_LG=$(jq -R -n --arg sid "lg-sid" -f "$CLAUDII_HOME/lib/insights.jq" "$_LG_JSONL" 2>&1)
+rm -f "$_LG_JSONL"
+_lg() { jq -c "$1" <<< "$_LG" 2>/dev/null; }
+_LG_LONG='{long_in_tok, long_out_tok, long_cache_read, long_cache_create, long_cache_create_1h}'
+assert_eq "insights long: schema_version == 14" "14" "$(_lg '.schema_version')"
+assert_eq "insights long: bucket keeps the totals (4 responses)" \
+  '{"calls":4,"in_tok":501,"out_tok":100,"cache_read":300001,"cache_create":100000,"cache_create_1h":60000}' \
+  "$(_lg '.attribution_models["skill|lg|claude-haiku-5-5"] | {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}')"
+# L1 + L3 + M are over; L2 (exactly 100,000) is not; the two records of M count once
+assert_eq "insights long: only responses over 100,000 prompt tokens, cached tokens included" \
+  '{"long_in_tok":501,"long_out_tok":80,"long_cache_read":200001,"long_cache_create":100000,"long_cache_create_1h":60000}' \
+  "$(_lg ".attribution_models[\"skill|lg|claude-haiku-5-5\"] | $_LG_LONG")"
+assert_eq "insights long: the skill-level bucket carries the same split" '501 200001' \
+  "$(_lg '.attribution_skills.lg | "\(.long_in_tok) \(.long_cache_read)"' | tr -d '"')"
+assert_eq "insights long: a prompt of exactly 100,000 leaves no long_* counters" "false" \
+  "$(_lg '.attribution_models["skill|edge|claude-haiku-5-5"] | has("long_in_tok")')"
+assert_eq "insights long: the MCP split divides the long share too (50001 each)" "50001 50001" \
+  "$(_lg '"\(.attribution_models["mcp|mcp__srv__alpha|claude-haiku-5-5"].long_cache_read) \(.attribution_mcp["mcp__srv__beta"].long_cache_read)"' | tr -d '"')"
+assert_eq "insights long: recorded for any model, not only Haiku" '200000' \
+  "$(_lg '.attribution_models["skill|opus-lg|claude-opus-5-5"].long_in_tok')"
+unset -f _lg
+unset _LG_JSONL _LG _LG_LONG
 
 # Cleanup
 unset _MR_JSONL _MR
