@@ -61,14 +61,11 @@ foreach inputs as $i ({h: "", s: null};
     | tier_name($m) as $t
     | select($t != "" and ($p[0] // "") != "")
     | { day: $p[0], model: $m, t: $t,
-        b: { in_tok:          (.value.in_tok          // 0),
-             out_tok:         (.value.out_tok         // 0),
-             cache_read:      (.value.cache_read      // 0),
-             cache_create:    (.value.cache_create    // 0),
-             cache_create_1h: (.value.cache_create_1h // 0) } } ]
+        b: ({ model: $m } + ({ in_tok: 0, out_tok: 0, cache_read: 0, cache_create: 0,
+                               cache_create_1h: 0 } + (.value // {} | map_values(. // 0)))) } ]
 | sort_by(.day, .model)
 | foreach .[] as $r ({c: 0, i: 0, o: 0};
-    .c += ($r.b | usd($rates[tier($r.model)]))
+    .c += ($r.b | model_usd($rates))
     | .i += $r.b.in_tok
     | .o += $r.b.out_tok;
     [ $r.day, $r.t, (.c * 1000000 | round / 1000000), $sid, display($r.model; $r.t),

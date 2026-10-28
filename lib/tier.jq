@@ -59,8 +59,9 @@ def usd($r):
   .in_tok * $r.in + .out_tok * $r.out + .cache_read * $r.cr
   + (.cache_create - .cache_create_1h) * $r.cc + .cache_create_1h * $r.cc1h;
 
-# Price one per-model attribution bucket {model, in_tok, … cache_create_1h,
-# long_in_tok, … long_cache_create_1h} (callers default missing keys to 0). A
+# Price one per-model token bucket — an attribution bucket, or a day bucket in
+# lib/insights-cost-rows.jq — {model, in_tok, … cache_create_1h, long_in_tok,
+# … long_cache_create_1h} (callers default missing keys to 0). A
 # tier with a "<tier>-long" row in $rates bills a request whose prompt is over
 # its threshold at that row (Haiku 5.5: "haiku-long", 5× every column, over
 # 100,000 prompt tokens — cache reads and writes count towards the prompt, and

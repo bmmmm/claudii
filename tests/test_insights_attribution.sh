@@ -15,7 +15,7 @@ assert_eq "insights attribution: produces output" "0" "$([ -z "$_RESULT" ] && ec
 
 # Schema version bump
 _SCHEMA=$(echo "$_RESULT" | jq -r '.schema_version' 2>/dev/null)
-assert_eq "insights attribution: schema_version == 14" "14" "$_SCHEMA"
+assert_eq "insights attribution: schema_version == 15" "15" "$_SCHEMA"
 
 # Session ID preserved
 _SESSION=$(echo "$_RESULT" | jq -r '.sessionId' 2>/dev/null)
@@ -307,7 +307,7 @@ _LG=$(jq -R -n --arg sid "lg-sid" -f "$CLAUDII_HOME/lib/insights.jq" "$_LG_JSONL
 rm -f "$_LG_JSONL"
 _lg() { jq -c "$1" <<< "$_LG" 2>/dev/null; }
 _LG_LONG='{long_in_tok, long_out_tok, long_cache_read, long_cache_create, long_cache_create_1h}'
-assert_eq "insights long: schema_version == 14" "14" "$(_lg '.schema_version')"
+assert_eq "insights long: schema_version == 15" "15" "$(_lg '.schema_version')"
 assert_eq "insights long: bucket keeps the totals (4 responses)" \
   '{"calls":4,"in_tok":501,"out_tok":100,"cache_read":300001,"cache_create":100000,"cache_create_1h":60000}' \
   "$(_lg '.attribution_models["skill|lg|claude-haiku-5-5"] | {calls, in_tok, out_tok, cache_read, cache_create, cache_create_1h}')"
@@ -323,6 +323,11 @@ assert_eq "insights long: the MCP split divides the long share too (50001 each)"
   "$(_lg '"\(.attribution_models["mcp|mcp__srv__alpha|claude-haiku-5-5"].long_cache_read) \(.attribution_mcp["mcp__srv__beta"].long_cache_read)"' | tr -d '"')"
 assert_eq "insights long: recorded for any model, not only Haiku" '200000' \
   "$(_lg '.attribution_models["skill|opus-lg|claude-opus-5-5"].long_in_tok')"
+# The day bucket `claudii cost` prices insights-only sessions from: L1 + L3 + M
+# + X (the unattributed one counts here), not L2 or E
+assert_eq "insights long: the day bucket carries the split, unattributed requests included" \
+  '{"long_in_tok":501,"long_out_tok":88,"long_cache_read":300003,"long_cache_create":100000,"long_cache_create_1h":60000}' \
+  "$(_lg ".days[\"2026-05-27|claude-haiku-5-5\"] | $_LG_LONG")"
 unset -f _lg
 unset _LG_JSONL _LG _LG_LONG
 
