@@ -222,20 +222,24 @@ _cmd_aggregate() {
   # since. Other code (schema, insights.jq, this script, jq) does not match the
   # stamp, so everything is rebuilt. A typed --force never resumes: it means
   # "rebuild every cache", and it drops the stamp once it completes.
-  local rebuild="$CACHE_DIR/.rebuild" rebuilt="" kept=0
+  # Kept caches must also carry this schema: another install sharing the cache
+  # dir may have written an older shape after the stamp. The keep list has a
+  # fixed name, so a killed run leaves nothing behind in $TMPDIR.
+  local rebuild="$CACHE_DIR/.rebuild" rebuilt=""
   if (( bump )); then
     local key; key="$SCHEMA_VERSION $(cksum < "$JQ_PROGRAM") $(cksum < "$0") $(jq --version 2>&1)"
     if [[ -f "$rebuild" && "$(cat "$rebuild" 2>/dev/null)" == "$key" ]]; then
-      rebuilt=$(mktemp) || return 1
+      rebuilt="$rebuild.keep"
       { find "$PROJECTS_DIR" -maxdepth 4 -name '*.jsonl' -type f -newer "$rebuild" 2>/dev/null \
           | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|; s|.*/||; s|\.jsonl$||; s|^|-|'
         find "$CACHE_DIR" -maxdepth 1 -name '*.json' -type f -newer "$rebuild" 2>/dev/null \
           | sed 's|.*/||; s|\.json$||; s|^|+|'
       } | awk '/^-/ { dirty[substr($0, 2)] = 1; next }
                { done_[substr($0, 2)] = 1 }
-               END { for (s in done_) if (!(s in dirty)) print s }' > "$rebuilt"
-      kept=$(wc -l < "$rebuilt" | tr -d ' ')
-      printf 'insights: resuming an interrupted rebuild — %d caches already current\n' "$kept" >&2
+               END { for (s in done_) if (!(s in dirty)) print s }' \
+        | awk -v d="$CACHE_DIR" '{ print d "/" $0 ".json" }' | tr '\n' '\0' \
+        | xargs -0 grep -l -F "\"schema_version\": $SCHEMA_VERSION," 2>/dev/null \
+        | sed 's|.*/||; s|\.json$||' > "$rebuilt"
     else
       printf '%s\n' "$key" > "$rebuild"
     fi
@@ -256,7 +260,11 @@ _cmd_aggregate() {
              | sed 's|/subagents/[^/]*\.jsonl$|.jsonl|' | sort -u \
              | awk -v kept="$rebuilt" '
                  BEGIN { if (kept != "") while ((getline s < kept) > 0) skip[s] = 1 }
-                 { s = $0; sub(/.*\//, "", s); sub(/\.jsonl$/, "", s); if (!(s in skip)) print }')
+                 { s = $0; sub(/.*\//, "", s); sub(/\.jsonl$/, "", s)
+                   if (s in skip) n++; else print }
+                 # Counted here, not from the keep list: only sessions that
+                 # still have a transcript are work the resume saves.
+                 END { if (kept != "") printf "insights: resuming an interrupted rebuild — %d caches already current\n", n > "/dev/stderr" }')
   [[ -n "$rebuilt" ]] && rm -f "$rebuilt"
 
   if (( ${#pending[@]} >= 32 )); then

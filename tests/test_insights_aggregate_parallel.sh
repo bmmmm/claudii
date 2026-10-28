@@ -80,10 +80,15 @@ assert_eq "a fresh aggregate tmp file is spared" yes \
 # bump, .schema was not written — keeps those 9.
 _PAR_INS="$_PAR_DIR/cache/insights"
 _par_bump() { printf '0\n' > "$_PAR_INS/.schema"; }
+# Explicit times instead of sub-second mtimes, so the test holds on 1-s
+# filesystems too: transcripts and old caches 2020, stamp 2021, the caches the
+# crash wrote "now".
 _par_crash() {
+  find "$_PAR_DIR/projects" -name '*.jsonl' -exec touch -t 202001010000 {} +
   find "$_PAR_INS" -name '*.json' -exec touch -t 202001010000 {} +
   _par_bump
   _PAR_OUT=$(_PAR_PARTIAL=10 _par_run 2>&1)
+  touch -t 202101010000 "$_PAR_INS/.rebuild"
 }
 _par_crash
 assert_contains "a crashed bump rebuild is incomplete" 'parallel aggregation incomplete' "$_PAR_OUT"
@@ -94,9 +99,17 @@ assert_eq "a crashed bump rebuild keeps the old schema" 0 "$(cat "$_PAR_INS/.sch
 printf '{"cwd":"/work/repo-0"}\n' >> "$_PAR_DIR/projects/project with spaces/session 0.jsonl"
 mkdir -p "$_PAR_DIR/projects/project with spaces/session 1/subagents"
 printf '{"cwd":"/work/repo-1"}\n' > "$_PAR_DIR/projects/project with spaces/session 1/subagents/agent-a.jsonl"
+# session 10 was among the 9 too, but another install rewrote it in an old shape.
+printf '{\n  "schema_version": 1,\n  "sessionId": "session 10"\n}\n' > "$_PAR_INS/session 10.json"
+# An orphan cache newer than the stamp is no work saved — not counted.
+printf '{\n  "schema_version": %s,\n}\n' "$(sed -n 's/^SCHEMA_VERSION=//p' "$CLAUDII_HOME/bin/claudii-insights")" \
+  > "$_PAR_INS/gone.json"
 _PAR_OUT=$(_par_run 2>&1)
-assert_contains "the next run resumes, minus both grown sessions" '7 caches already current' "$_PAR_OUT"
-assert_contains "the next run rebuilds only the rest" '58 processed · 8 cached · 1 failed' "$_PAR_OUT"
+assert_contains "the next run resumes, minus grown and old-shape sessions" '6 caches already current' "$_PAR_OUT"
+assert_contains "the next run rebuilds only the rest" '59 processed · 8 cached · 1 failed' "$_PAR_OUT"
+assert_eq "an old-shape kept cache is rebuilt" "repo-10" "$(jq -r '.project.repo' "$_PAR_INS/session 10.json" 2>/dev/null)"
+assert_eq "the keep list is removed" no "$(test -f "$_PAR_INS/.rebuild.keep" && echo yes || echo no)"
+rm -f "$_PAR_INS/gone.json"
 assert_eq "a completed rebuild drops its stamp" no "$(test -f "$_PAR_INS/.rebuild" && echo yes || echo no)"
 
 # A typed --force never resumes, even over a matching stamp.
