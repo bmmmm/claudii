@@ -18,13 +18,16 @@
 #               name is a hard error, not a silently empty column.
 #   tz_offset — signed local UTC offset in seconds, consumed by epoch_to_date()
 #               from lib/epoch_to_date.awk. Defaults to 0 (UTC) there.
+#   hosts_dir — OPTIONAL, "<cache>/hosts/". Only the `host` field reads it.
 #
 # Field names: every raw column name declared in HC_SCHEMA
 # (lib/history_cols.awk) — ts model cost ctx rate5h sid in out api rate7d
-# reset7d — plus two derived ones:
+# reset7d — plus three derived ones:
 #   day    the row's LOCAL calendar day, epoch_to_date(ts)
 #   raw    the model column BEFORE the tier collapse ("Opus 4.6"), which the
 #          cost legend needs to show a versioned display name
+#   host   the `claudii sync` mirror the row came from: <name> for a file
+#          under hosts_dir/<name>/, "" for this claudii's own history
 # `model` is always the tier-collapsed label (tier_label(), lib/model_tier.awk).
 # Numeric columns (kind `n` in HC_SCHEMA) read an empty field as 0; string
 # columns pass through untouched.
@@ -46,10 +49,19 @@ BEGIN {
   _hr_n = split(emit, _hr_out, " ")
   for (_hr_j = 1; _hr_j <= _hr_n; _hr_j++) {
     _hr_name = _hr_out[_hr_j]
-    if (_hr_name == "day" || _hr_name == "raw" || (_hr_name in HC)) continue
+    if (_hr_name == "day" || _hr_name == "raw" || _hr_name == "host" || (_hr_name in HC)) continue
     print "history_rows.awk: unknown emit field \"" _hr_name "\"" \
           " — see HC_SCHEMA in lib/history_cols.awk" > "/dev/stderr"
     exit 2
+  }
+}
+
+# The mirror name, once per input file (FILENAME is constant within one).
+FNR == 1 {
+  _hr_host = ""
+  if (hosts_dir != "" && index(FILENAME, hosts_dir) == 1) {
+    _hr_host = substr(FILENAME, length(hosts_dir) + 1)
+    sub(/\/.*/, "", _hr_host)
   }
 }
 
@@ -67,6 +79,7 @@ $HC_TS == "timestamp" || $HC_TS == "" || $HC_SID == "" { next }
     _hr_name = _hr_out[_hr_j]
     if      (_hr_name == "day")   _hr_v = day
     else if (_hr_name == "raw")   _hr_v = $HC_MODEL
+    else if (_hr_name == "host")  _hr_v = _hr_host
     else if (_hr_name == "model") _hr_v = tier_label($HC_MODEL)
     else if (HC_KIND[_hr_name] == "n")
                                   _hr_v = ($(HC[_hr_name]) == "" ? 0 : $(HC[_hr_name]) + 0)

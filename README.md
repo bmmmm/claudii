@@ -141,6 +141,11 @@ claudii sync                                   # run all; cron it with --quiet
 claudii sync status                            # who, when, what's running there
 ```
 
+`claudii tokens` and `claudii cost` then add a **By host** table — one row per
+machine/account — so you can tell whose spend is whose. A host without a
+statusline (T3 Code, the Agent SDK) writes no cost history; `cost` prices its
+sessions from their tokens instead and says how much of the total that is.
+
 Most data commands support `--json` and `--tsv` for scripting. Full reference: `man claudii`
 
 ## Aliases

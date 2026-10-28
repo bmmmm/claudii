@@ -39,8 +39,14 @@ _insights_merged_json() {
   if [[ -n "$until_days" ]]; then
     _insights_run merge --days "$days" --until-days "$until_days" 2>/dev/null
   else
-    _insights_run merge --days "$days" 2>/dev/null
+    _insights_run merge --days "$days" ${_IMJ_BY_HOST:+--by-host} 2>/dev/null
   fi
+}
+
+# Display name of a source key from merge --by-host: "" is this claudii (its
+# sync name, the one other hosts see it under), anything else a mirror name.
+_insights_host_label() {
+  if [[ -z "$1" ]]; then _sync_self_name; else printf '%s' "$1"; fi
 }
 
 # Render a 20-block bar coloured green-up-to-filled, dim-for-empty.
@@ -345,7 +351,8 @@ _cache_json() {
 
 _tokens_json() {
   local merged="$1" days="$2" floor="$3"
-  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" '
+  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" \
+    --arg self "$(_sync_self_name)" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
     [ ($m.days // {}) | to_entries[]
       | (.key | split("|")) as $p
@@ -380,6 +387,22 @@ _tokens_json() {
           | map(select(.in_out > 0))
           | map(. + {hit_pct: hit(.cache_read; (.cache_read + .cache_create + .input))})
           | sort_by(.day) | reverse
+        ),
+        # One row per source (claudii sync): this host first, then the mirrors.
+        by_host: (
+          ($m.hosts // {}) | to_entries
+          | map(.key as $h | .value as $v
+              | [ ($v.days // {}) | to_entries[]
+                  | (.key | split("|")) as $p
+                  | select($p[1] != "<synthetic>" and $p[0] >= $floor) | .value ] as $r
+              | { host: (if $h == "" then $self else $h end), local: ($h == ""),
+                  sessions: ($v.sessions // 0),
+                  input:        ([$r[].in_tok       // 0] | add // 0),
+                  output:       ([$r[].out_tok      // 0] | add // 0),
+                  cache_read:   ([$r[].cache_read   // 0] | add // 0),
+                  cache_create: ([$r[].cache_create // 0] | add // 0) })
+          | map(select((.input + .output + .cache_read + .cache_create) > 0))
+          | sort_by((if .local then 0 else 1 end), .host)
         )
       }'
 }
@@ -597,7 +620,7 @@ _cmd_tokens() {
   local fmt="${_FORMAT:-}"
   [[ "$fmt" == "tsv" ]] && { _insights_reject_tsv tokens; return 1; }
 
-  local merged; merged=$(_insights_merged_json "$days")
+  local merged; merged=$(_IMJ_BY_HOST=1 _insights_merged_json "$days")
   if [[ -z "$merged" || "$merged" == "{}" ]]; then
     [[ "$fmt" == "json" ]] && { _tokens_json "{}" "$days" ""; return 0; }
     printf '  No insight data yet — run a Claude session and try again.\n'
@@ -654,10 +677,23 @@ _cmd_tokens() {
                cr:([.[].v.cache_read//0]|add), inp:([.[].v.in_tok//0]|add), cw:([.[].v.cache_create//0]|add)})
         | map(select(.inout>0)) | sort_by(.day) | reverse
         | .[] | ["D", .day, (.inout|tostring), (.cr|tostring), (.inp|tostring), (.cw|tostring)] | @tsv
+      ),
+      ( (.hosts // {}) | to_entries
+        | map(.key as $h | .value as $v
+            | [ ($v.days // {}) | to_entries[]
+                | (.key | split("|")) as $p
+                | select($p[1] != "<synthetic>" and $p[0] >= $floor) | .value ] as $r
+            | {h: $h, s: ($v.sessions // 0),
+               inout: (([$r[].in_tok//0]|add//0) + ([$r[].out_tok//0]|add//0)),
+               inp: ([$r[].in_tok//0]|add//0),
+               cr: ([$r[].cache_read//0]|add//0), cw: ([$r[].cache_create//0]|add//0)})
+        | map(select((.inout + .cr + .cw) > 0))
+        | sort_by((if .h == "" then 0 else 1 end), .h)
+        | .[] | ["H", .h, (.inout|tostring), (.cr|tostring), (.cw|tostring), (.inp|tostring), (.s|tostring)] | @tsv
       )
   ' <<< "$merged")
 
-  local -a _t_rows=() _m_rows=() _d_rows=()
+  local -a _t_rows=() _m_rows=() _d_rows=() _h_rows=()
   local _ln _tag
   while IFS= read -r _ln; do
     [[ -z "$_ln" ]] && continue
@@ -666,6 +702,7 @@ _cmd_tokens() {
       T) _t_rows+=("${_ln#T$'\t'}") ;;
       M) _m_rows+=("${_ln#M$'\t'}") ;;
       D) _d_rows+=("${_ln#D$'\t'}") ;;
+      H) _h_rows+=("${_ln#H$'\t'}") ;;
     esac
   done <<< "$_rows"
 
@@ -711,6 +748,31 @@ _cmd_tokens() {
     printf '%s' "$rows" | _render_dgrid "Model" $'input\x1foutput\x1fcache rd\x1fcache wr\x1fhit'
   fi
   echo
+
+  # ── By host (claudii sync) — only once a mirror contributes, so a single
+  # machine's view does not grow a one-row table. The local row carries this
+  # claudii's sync name, the label the other hosts list it under. ──
+  local _h_any_mirror=0 _hr
+  if (( ${#_h_rows[@]} > 0 )); then
+    for _hr in "${_h_rows[@]}"; do [[ "${_hr%%$'\t'*}" != "" ]] && _h_any_mirror=1; done
+  fi
+  if (( _h_any_mirror )); then
+    local _htot=0 hk hio hcr hcw hinp hs hrows=""
+    for _hr in "${_h_rows[@]}"; do
+      IFS=$'\t' read -r hio _ <<< "${_hr#*$'\t'}"
+      _htot=$(( _htot + hio ))
+    done
+    printf '  %sBy host%s\n' "${CLAUDII_CLR_ACCENT}" "${CLAUDII_CLR_RESET}"
+    for _hr in "${_h_rows[@]}"; do
+      # IFS=tab collapses an empty leading field (the local key ""), so split
+      # it off by hand before reading the rest.
+      hk="${_hr%%$'\t'*}"
+      IFS=$'\t' read -r hio hcr hcw hinp hs <<< "${_hr#*$'\t'}"
+      hrows+="$(_insights_host_label "$hk")"$'\x1f'"$(_fmt_tok "$hio")"$'\x1f'"$(_fmt_tok "$hcr")"$'\x1f'"$(_fmt_tok "$hcw")"$'\x1f'"$(_cache_hit_pct "$hcr" $(( hinp + hcw )))%"$'\x1f'"${hs}"$'\x1f'"$(( _htot > 0 ? hio * 100 / _htot : 0 ))%"$'\n'
+    done
+    printf '%s' "$hrows" | _render_dgrid "Host" $'in+out\x1fcache rd\x1fcache wr\x1fhit\x1fsessions\x1fshare'
+    echo
+  fi
 
   # ── By day (in+out magnitude, normalised to busiest day) — B-bars ──
   _render_shead "By day" "in+out · cache hit" "$RW"

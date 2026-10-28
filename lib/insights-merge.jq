@@ -1,7 +1,13 @@
 # insights-merge.jq — merge per-session insights caches into one aggregate.
 # Called from _cmd_merge (bin/claudii-insights) with:
-#   jq -n --arg cutoff <iso|""> --arg until <iso|"">
-#      -f lib/insights-merge.jq <cache files...>
+#   jq -n --arg cutoff <iso|""> --arg until <iso|""> --argjson by_host <bool>
+#      -f lib/insights-merge.jq   < tagged cache stream
+# The input is _insights_stream_tagged (lib/insights_stream.sh): the caches,
+# each source's preceded by a {"_claudii_host": NAME} marker ("" = this
+# claudii, else a `claudii sync` mirror). The marker is consumed here; a
+# stream without markers reads as all-local.
+# by_host = true adds .hosts[NAME] = {sessions, days} — the same days{} shape
+# as the total, per source, for the "By host" views of tokens and cost.
 # Window filters: cutoff = include sessions with last_seen >= cutoff;
 # until = include sessions with last_seen < until (bounded window for
 # `skills-cost --compare`'s prior period). Empty string = no bound.
@@ -25,7 +31,14 @@ def add_models(a; b):
       )
   );
 
-[inputs
+[foreach inputs as $i ({h: "", s: null};
+    if ($i | type) == "object" and ($i | has("_claudii_host"))
+    then {h: ($i._claudii_host // ""), s: null}
+    else {h: .h, s: $i} end;
+    select(.s != null) | {h, s})
+  | .h as $h | .s
+  | select(type == "object")
+  | . + {_host: $h}
   | select(($cutoff == "") or ((.last_seen // "") >= $cutoff))
   | select(($until == "")  or ((.last_seen // "") <  $until))
 ] as $all
@@ -78,4 +91,9 @@ def add_models(a; b):
     | .attribution_plugins = add_obj_nested(.attribution_plugins; $s.attribution_plugins)
     | .attribution_mcp = add_obj_nested(.attribution_mcp; $s.attribution_mcp)
     | .attribution_models = add_models(.attribution_models; $s.attribution_models)
+    | (if $by_host then
+        .hosts[$s._host].sessions += 1
+        | .hosts[$s._host].days = add_obj_nested(.hosts[$s._host].days; $s.days)
+      else . end)
   )
+| (if $by_host then .hosts //= {} else del(.hosts) end)

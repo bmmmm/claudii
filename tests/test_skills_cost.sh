@@ -500,8 +500,8 @@ assert_contains "skills-cost TTL: meta.pricing states the 1h rate" "2x for 1-hou
 # 1.25× input (5m) and 2× (1h) on every model; the cache READ is the column
 # that varies. Check them on every _rates row, so a typo in one tier's cc or
 # cc1h goes red even where no bucket above prices that tier.
-_sc_rates=$(sed -n "/local _rates='{/,/^ *}'/p" "$CLAUDII_HOME/lib/cmd/skills-cost.sh" \
-  | sed -e "s/.*local _rates='{/{/" -e "s/^ *}'.*/}/")
+_sc_rates=$(sed -n "/^_CLAUDII_RATES='{/,/^}'/p" "$CLAUDII_HOME/lib/cmd/skills-cost.sh" \
+  | sed -e "s/^_CLAUDII_RATES='{/{/" -e "s/^}'.*/}/")
 assert_eq "skills-cost _rates: every tier writes at 1.25x (cc) and 2x (cc1h) input" "ok" \
   "$(jq -r 'if length == 0 then "no rows parsed"
             else [to_entries[] | select((.value.cc / .value.in - 1.25 | fabs) > 1e-9

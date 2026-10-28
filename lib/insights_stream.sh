@@ -44,6 +44,33 @@ _insights_stream() {
     | { xargs -0 cat 2>/dev/null || true; }
 }
 
+# _insights_stream_tagged DIR [DAYS] — the same stream, one directory at a
+# time, each preceded by a marker object naming its source:
+#   {"_claudii_host":""}        DIR itself (this claudii)
+#   {"_claudii_host":"<name>"}  the mirror <cache>/hosts/<name>/insights
+# Consumers that keep sessions apart by source (merge --by-host, the insights
+# side of `claudii cost`) read the marker and drop it; the plain stream above
+# stays marker-free for everyone else. Mirror names passed _SYNC_NAME_RE
+# (lib/cmd/sync.sh) when they were added, so they need no JSON escaping.
+_insights_stream_tagged() {
+  local dir="$1" days="${2:-}" d name
+  local -a dirs=() age=()
+  _insights_dirs "$dir"
+  dirs=(${_INSIGHTS_DIRS[@]+"${_INSIGHTS_DIRS[@]}"})
+  (( ${#dirs[@]} )) || return 0
+  if [[ "$days" =~ ^[0-9]+$ && -z "${CLAUDII_NOW:-}" ]]; then
+    age=(-mmin "-$(( 10#$days * 1440 + 1440 ))")
+  fi
+  for d in "${dirs[@]}"; do
+    name=""
+    [[ "$d" == "$dir" ]] || { name="${d%/insights}"; name="${name##*/}"; }
+    printf '{"_claudii_host":"%s"}\n' "$name"
+    find -H "$d" -maxdepth 1 -type f -name '*.json' ${age[@]+"${age[@]}"} -print0 \
+      | LC_ALL=C sort -z \
+      | { xargs -0 cat 2>/dev/null || true; }
+  done
+}
+
 # _insights_dirs DIR → _INSIGHTS_DIRS: DIR (if it exists) plus the host
 # mirrors next to it (see 3. above).
 _INSIGHTS_DIRS=()

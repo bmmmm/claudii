@@ -1,4 +1,4 @@
-# touches: lib/cmd/sync.sh lib/insights_stream.sh lib/helpers.sh bin/claudii bin/claudii-insights lib/cmd/insights.sh
+# touches: lib/cmd/sync.sh lib/insights_stream.sh lib/helpers.sh bin/claudii bin/claudii-insights lib/cmd/insights.sh lib/cmd/cost.sh lib/insights-merge.jq lib/insights-cost-rows.jq lib/history_rows.awk
 # test_sync.sh — claudii sync: two (three) claudii installs, one view.
 #
 # Every "host" is a separate HOME in the sandbox. A fake ssh (CLAUDII_SSH)
@@ -145,6 +145,28 @@ _sy dst sync >/dev/null 2>&1
 assert_file_exists "delta: a new source session arrives" "$_SY_MIR/insights/$_SY_SID_B.json"
 _tok=$(_sy dst tokens --days 7 --json 2>/dev/null | jq -r '.by_type.output')
 assert_eq "tokens: both mirrored sessions counted once" "1000" "$_tok"
+
+# By host: tokens and cost name the source. Session A has history ($2.50, the
+# cost Claude Code reported); B has none (a source without a statusline) and
+# is priced from its tokens: 10 in × $4/M + 300 out × $20/M (Opus 5.5) = $0.00604.
+_j=$(_sy dst tokens --days 7 --json 2>/dev/null)
+assert_eq "tokens --json: by_host names the mirror" "box" "$(jq -r '.by_host[0].host' <<< "$_j")"
+assert_eq "tokens --json: by_host output per host" "1000" "$(jq -r '.by_host[0].output' <<< "$_j")"
+assert_eq "tokens --json: a mirror is not local" "false" "$(jq -r '.by_host[0].local' <<< "$_j")"
+_out=$(_sy dst tokens --days 7 2>/dev/null)
+assert_contains "tokens: By host section once a mirror contributes" "By host" "$_out"
+_j=$(_sy dst cost --json 2>/dev/null)
+assert_eq "cost --json: the mirror is a host row" "box" "$(jq -r '.hosts[0].host' <<< "$_j")"
+assert_eq "cost --json: history session + token-priced session, none twice" "2.5060" \
+  "$(jq -r '.hosts[0].alltime | tostring | .[0:6]' <<< "$_j")"
+assert_eq "cost --json: the token-priced part is reported" "0.006" \
+  "$(jq -r '.estimated | tostring | .[0:5]' <<< "$_j")"
+_out=$(_sy dst cost 2>/dev/null)
+assert_contains "cost: By host section once a mirror contributes" "By host" "$_out"
+assert_contains "cost: a host with history and token-priced sessions is mixed" "mixed" "$_out"
+assert_contains "cost: says how much was priced from tokens" "priced from tokens" "$_out"
+_j=$(CLAUDII_LOCAL_ONLY=1 _sy dst cost --json 2>/dev/null)
+assert_eq "cost: CLAUDII_LOCAL_ONLY=1 leaves the mirror out" "0" "$(jq -r '.hosts | length' <<< "$_j" 2>/dev/null || echo 0)"
 
 # ── 3. guards ────────────────────────────────────────────────────────────────
 _sy dst sync add twin src --cmd "$_SY_CMD" >/dev/null

@@ -18,7 +18,12 @@ _cmd_cost_from_history() {
   # these fields in this order; stage 2 is handed the SAME string via -v emit,
   # so lib/history_cols.awk builds HR[] from it and the aggregation reads its
   # input by name. Changing the list is a one-line edit, not a two-sided one.
-  local _emit="day model cost sid raw in out ts"
+  local _emit="day model cost sid raw in out ts host"
+  # Stage 2 reads one more field: `src`, which only the insights rows carry
+  # ("i", lib/insights-cost-rows.jq) — a history row ends one field short, so
+  # its src reads "". Same names, one list, the producer just stops earlier.
+  local _emit2="$_emit src"
+  local _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
   # Compute week start based on configured week_start day (local time)
   local today_dow week_start_str today_mon today_year _week_start_ts _days_back
@@ -59,16 +64,34 @@ _cmd_cost_from_history() {
   # legend; `ts` rides along so stage 2 can bucket on an arbitrary epoch
   # boundary — day strings have no sub-day resolution, and the Anthropic
   # weekly window starts mid-day (--window).
-  LC_ALL=C awk -F'\t' \
-    -v tz_offset="${_tz_offset:-0}" \
-    -v emit="$_emit" \
-    -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
-    -f "$CLAUDII_HOME/lib/model_tier.awk" \
-    -f "$CLAUDII_HOME/lib/history_cols.awk" \
-    -f "$CLAUDII_HOME/lib/history_rows.awk" \
-    "${_history_files[@]}" | LC_ALL=C awk -F'\t' \
-    -v emit="$_emit" \
+  #
+  # The insights rows (sessions priced from their tokens, see
+  # lib/insights-cost-rows.jq) follow AFTER all history rows: stage 2 must know
+  # every session history covers before it decides to keep an insights row.
+  # _COST_INSIGHTS=0 leaves them out (the forecast and the tests that pin the
+  # history-only arithmetic).
+  {
+    if (( ${#_history_files[@]} )); then
+      LC_ALL=C awk -F'\t' \
+        -v tz_offset="${_tz_offset:-0}" \
+        -v emit="$_emit" \
+        -v hosts_dir="$_cache_dir/hosts/" \
+        -f "$CLAUDII_HOME/lib/epoch_to_date.awk" \
+        -f "$CLAUDII_HOME/lib/model_tier.awk" \
+        -f "$CLAUDII_HOME/lib/history_cols.awk" \
+        -f "$CLAUDII_HOME/lib/history_rows.awk" \
+        "${_history_files[@]}"
+    fi
+    if [[ "${_COST_INSIGHTS:-1}" == "1" ]]; then
+      _insights_stream_tagged "$_cache_dir/insights" \
+        | jq -rn -L "$CLAUDII_HOME/lib" --argjson rates "$_CLAUDII_RATES" \
+            -f "$CLAUDII_HOME/lib/insights-cost-rows.jq" 2>/dev/null || true
+    fi
+  } | LC_ALL=C awk -F'\t' \
+    -v emit="$_emit2" \
+    -v self="$(_sync_self_name)" \
     -v today="$today_str" \
+    -v today_mon="$today_mon" \
     -v week_start="${week_start_str:-$today_str}" \
     -v window_start="${_COST_WINDOW_START:-0}" \
     -v window_label="${_COST_WINDOW_LABEL:-}" \
@@ -204,6 +227,44 @@ ${_fmt_awk}
       print row
       printf "\n"
     }
+    # By-host matrix (claudii sync): one row per source, Today / Week / this
+    # Month / Total, plus where the numbers come from — "history" (cost Claude
+    # Code reported to the statusline), "tokens" (priced from the insights
+    # caches) or "mixed". Same │/┼ grammar as render_dgrid.
+    function render_hosts(   i, h, lbl, c, v, ncol, row, rule, basis, lblw) {
+      ncol = split("Today Week Month Total", hc, " ")
+      lblw = length("Host")
+      for (i = 1; i <= n_hosts; i++) {
+        h = host_keys[i]; lbl = (h == "" ? self : h); hl[i] = lbl
+        if (length(lbl) > lblw) lblw = length(lbl)
+        hv[i, 1] = host_today[h] + 0; hv[i, 2] = host_week[h] + 0
+        hv[i, 3] = host_month[h] + 0; hv[i, 4] = host_alltime[h] + 0
+        basis = (host_est[h] > 0 && host_hist[h] > 0) ? "mixed" : (host_est[h] > 0 ? "tokens" : "history")
+        hb[i] = basis
+      }
+      for (c = 1; c <= ncol; c++) {
+        hw[c] = length(hc[c])
+        for (i = 1; i <= n_hosts; i++) { v = fmt_usd(hv[i, c]); if (length(v) > hw[c]) hw[c] = length(v) }
+      }
+      printf "  %sBy host%s\n", pink, reset
+      row = sprintf("  %s%-*s%s ", dim, lblw, "Host", reset)
+      rule = "  " rep("\342\224\200", lblw + 1)
+      for (c = 1; c <= ncol; c++) {
+        row = row dim "\342\224\202" reset sprintf(" %s%*s%s ", pink, hw[c], hc[c], reset)
+        rule = rule "\342\224\274" rep("\342\224\200", hw[c] + 2)
+      }
+      row = row dim "\342\224\202" reset sprintf(" %s%-*s%s", pink, 7, "basis", reset)
+      rule = rule "\342\224\274" rep("\342\224\200", 8)
+      print row; print rule
+      for (i = 1; i <= n_hosts; i++) {
+        row = sprintf("  %s%-*s%s ", dim, lblw, hl[i], reset)
+        for (c = 1; c <= ncol; c++)
+          row = row dim "\342\224\202" reset sprintf(" %s%*s%s ", cyan, hw[c], fmt_usd(hv[i, c]), reset)
+        row = row dim "\342\224\202" reset sprintf(" %s%s%s", dim, hb[i], reset)
+        print row
+      }
+      printf "\n"
+    }
     {
       # Columns by name (HR[] from lib/history_cols.awk, built from the same
       # -v emit string stage 1 was given) — never by position.
@@ -211,7 +272,14 @@ ${_fmt_awk}
       sid = $(HR["sid"]); raw = $(HR["raw"])
       in_tok = $(HR["in"]) + 0; out_tok = $(HR["out"]) + 0; total_tok = in_tok + out_tok
       ts = $(HR["ts"]) + 0
+      host = $(HR["host"]); src = $(HR["src"])
       if (sid == "" || day == "" || model == "") next
+
+      # History first (it carries the cost Claude Code reported). The insights
+      # rows of a session count only where no history row of it exists — they
+      # all arrive after the last history row.
+      if (src == "") hist_sid[sid] = 1
+      else if (sid in hist_sid) next
 
       # Track most informative display name (prefer versioned, e.g. "Opus 4.6" > "Opus")
       if (raw != "" && (!(model in model_display) || \
@@ -241,6 +309,14 @@ ${_fmt_awk}
         if (in_week(day, ts))  { week_cost[model]  += cinc; seen_sid_week[model SUBSEP sid]  = 1 }
         month_cost[model SUBSEP mk] += cinc; seen_sid_month[model SUBSEP mk SUBSEP sid] = 1
         year_cost[model SUBSEP yk]  += cinc; seen_sid_year[model SUBSEP yk SUBSEP sid]  = 1
+        # Per source (claudii sync): this claudii is host "", a mirror its name.
+        all_hosts[host] = 1
+        host_alltime[host] += cinc; host_sid[host SUBSEP sid] = 1
+        if (day == today)     host_today[host] += cinc
+        if (in_week(day, ts)) host_week[host]  += cinc
+        if (mk == today_mon)  host_month[host] += cinc
+        if (src != "") { host_est[host] += cinc; est_total += cinc }
+        else             host_hist[host] += cinc
       }
       if (tinc > 0) {
         alltime_tok += tinc
@@ -269,6 +345,16 @@ ${_fmt_awk}
 
       # Derive session counts from distinct-SID sets (Bug 1 fix: count unique SIDs, not day-entries)
       for (k in seen_sid_alltime) { split(k, _p, SUBSEP); alltime_sessions[_p[1]]++ }
+      for (k in host_sid)         { split(k, _p, SUBSEP); host_sessions[_p[1]]++ }
+      # Host order: this claudii first, then the mirrors by name. Shown (pretty)
+      # only once a mirror contributes — one machine needs no By-host table.
+      n_hosts = 0; any_mirror = 0
+      if ("" in all_hosts) host_keys[++n_hosts] = ""
+      for (h in all_hosts) if (h != "") { host_keys[++n_hosts] = h; any_mirror = 1 }
+      for (i = 2; i <= n_hosts; i++) for (j = i+1; j <= n_hosts; j++)
+        if (host_keys[i] != "" && host_keys[j] != "" && host_keys[j] < host_keys[i]) {
+          tmp = host_keys[i]; host_keys[i] = host_keys[j]; host_keys[j] = tmp
+        }
       for (k in seen_sid_today)   { split(k, _p, SUBSEP); today_sessions[_p[1]]++ }
       for (k in seen_sid_week)    { split(k, _p, SUBSEP); week_sessions[_p[1]]++ }
       for (k in seen_sid_month) {
@@ -340,7 +426,19 @@ ${_fmt_awk}
           printf "}"
           first = 0
         }
-        printf "}}"
+        printf "},"
+        # hosts: one entry per source. "estimated" is the part priced from
+        # insights tokens (no history for those sessions), already included.
+        printf "\"hosts\":["
+        for (i = 1; i <= n_hosts; i++) {
+          h = host_keys[i]
+          if (i > 1) printf ","
+          printf "{\"host\":\"%s\",\"local\":%s,\"today\":%.4f,\"week\":%.4f,\"month\":%.4f,\"alltime\":%.4f,\"estimated\":%.4f,\"sessions\":%d}", \
+            (h == "" ? self : h), (h == "" ? "true" : "false"), \
+            host_today[h] + 0, host_week[h] + 0, host_month[h] + 0, host_alltime[h] + 0, \
+            host_est[h] + 0, host_sessions[h] + 0
+        }
+        printf "],\"estimated\":%.4f}", est_total + 0
         printf "\n"
         exit
       }
@@ -413,6 +511,10 @@ ${_fmt_awk}
       render_dgrid(mon_keys, n_mon, "month", "Month")
       printf "  %sYears%s\n", pink, reset
       render_dgrid(yr_keys, n_yr, "year", "Year")
+      if (any_mirror) render_hosts()
+      if (est_total >= 0.005)
+        printf "  %s%s of this is priced from tokens: sessions with no statusline history.%s\n\n", \
+          dim, fmt_usd(est_total), reset
     }
     '
 }
@@ -587,12 +689,16 @@ _cmd_cost() {
     return 0
   fi
 
-  if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
+  # Sessions without history (no statusline: T3 Code, the Agent SDK, a sync
+  # mirror of such a host) are priced from the insights caches — refresh the
+  # local ones first, as tokens does.
+  _insights_refresh || true
+  if [[ ${#_HIST_FILES[@]} -eq 0 ]] && ! _insights_any "$cache_dir/insights"; then
     echo "No cost history yet — run 'claudii cc-statusline on' and start a Claude session to record costs."
     return 0
   fi
   today_str=$(date '+%Y-%m-%d')  # local time — must match epoch_to_date() with tz_offset
   _spinner_start "${cache_dir/#$HOME/~}/history-*.tsv"
-  _cmd_cost_from_history "${_HIST_FILES[@]}" "$today_str"
+  _cmd_cost_from_history ${_HIST_FILES[@]+"${_HIST_FILES[@]}"} "$today_str"
   _spinner_stop
 }
