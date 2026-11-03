@@ -487,15 +487,23 @@ unset _COST_NOHIST_TMP _cost_nohist_out
 _OV_HIST_TMP="$(mktemp -d)"
 printf 'model=Sonnet\nctx_pct=50\ncost=99.00\ntok=99000000\nrate_5h=30\nrate_7d=20\nsession_id=ovhist-sid\nppid=%s\n' "$$" \
   > "$_OV_HIST_TMP/session-ovhist"
+# The overview buckets "today" by the LOCAL calendar day and does not read
+# CLAUDII_NOW, so pin the wall clock instead: a POSIX TZ whose local time is
+# 12:xx right now. Without it the `now - 120` row lands in "yesterday" for the
+# first two minutes after local midnight (issue #7). Hour offsets -11..+12 are
+# valid on glibc and macOS; POSIX TZ signs are inverted (CLD-5 = UTC+5).
+_ov_off_h=$(( (12 - $(date -u +%s) % 86400 / 3600 + 24) % 24 ))
+(( _ov_off_h > 12 )) && _ov_off_h=$(( _ov_off_h - 24 ))
+_ov_tz="CLD$(( -_ov_off_h ))"
 _ov_now=$(date +%s)
-hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$(( _ov_now - 120 ))" "claude-sonnet-4-6" "1.00" "50" "30" "ovhist-sid" "5000" "1000" "0"
-hist_row "$_OV_HIST_TMP/history-$(date '+%Y-%m').tsv" "$_ov_now"             "claude-sonnet-4-6" "3.00" "50" "30" "ovhist-sid" "6000" "1200" "0"
-_ov_hist_out=$(CLAUDII_CACHE_DIR="$_OV_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" 2>/dev/null \
+hist_row "$_OV_HIST_TMP/history-$(TZ="$_ov_tz" date '+%Y-%m').tsv" "$(( _ov_now - 120 ))" "claude-sonnet-4-6" "1.00" "50" "30" "ovhist-sid" "5000" "1000" "0"
+hist_row "$_OV_HIST_TMP/history-$(TZ="$_ov_tz" date '+%Y-%m').tsv" "$_ov_now"             "claude-sonnet-4-6" "3.00" "50" "30" "ovhist-sid" "6000" "1200" "0"
+_ov_hist_out=$(TZ="$_ov_tz" CLAUDII_CACHE_DIR="$_OV_HIST_TMP" bash "$CLAUDII_HOME/bin/claudii" 2>/dev/null \
   | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "overview (history): today tokens = history delta sum" '7K tok today (1 session)' "$_ov_hist_out"
 assert_not_contains "overview (history): cumulative session-cache tok not used" '99.0M' "$_ov_hist_out"
 rm -rf "$_OV_HIST_TMP"
-unset _OV_HIST_TMP _ov_now _ov_hist_out
+unset _OV_HIST_TMP _ov_now _ov_hist_out _ov_off_h _ov_tz
 
 
 # ── claudii se --resume flag: recognized, no 'Unknown command' ────────────
