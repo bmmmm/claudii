@@ -41,6 +41,10 @@ assert_contains "sessions: cache-hit shown in se detail"        "⚡84%"     "$_
 # Force one tmp file's mtime to 5 minutes ago, leave the other fresh.
 _tf_old_ts=$(date -v-300S +%Y%m%d%H%M.%S 2>/dev/null || date -d "300 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
 [[ -n "$_tf_old_ts" ]] && touch -t "$_tf_old_ts" "$_tf_cache/session-realtest.tmp.11111" "$_tf_cache/session-realtest.tmp.pin.33333"
+# Re-stamp the "fresh" one right before gc: it was written at the top of the
+# file, and on a loaded runner the overview + se runs above took over 60s, so gc
+# rightly swept it and the keep-assertion went red.
+touch "$_tf_cache/session-unknown.tmp.22222"
 CLAUDII_CACHE_DIR="$_tf_cache" bash "$CLAUDII_HOME/bin/claudii" gc >/dev/null 2>&1
 
 if [[ -f "$_tf_cache/session-realtest.tmp.11111" ]]; then
