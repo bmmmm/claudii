@@ -204,7 +204,6 @@ _status_render() {
   _CLAUDII_TZ=$(_cfgget display.timezone)
   printf '\n'
   models_cfg=$(_cfgget statusline.models)
-  models_cfg="${models_cfg:-opus,sonnet,haiku}"
   IFS=',' read -ra _status_models <<< "$models_cfg"
 
   if [[ ! -f "$cache_file" ]]; then
@@ -239,7 +238,6 @@ _status_render() {
       _age_str="$(( _cache_age / 60 ))m ago"
     fi
     _ttl_val=$(_cfgget status.cache_ttl)
-    _ttl_val="${_ttl_val:-900}"
     # Mirror the adaptive RPROMPT TTL (lib/statusline.zsh): healthy → 2×
     # base, degraded/down → base÷5 (min 60s), API unreachable → base.
     # Display the effective interval — the bare config value promised
