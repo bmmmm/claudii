@@ -433,6 +433,13 @@ _cmd_doctor() {
   fi
 }
 
+# Config values go into two files that are not ours to interpret: otel.env is
+# SOURCED by every zsh (claudii.plugin.zsh), the plist is XML. Unquoted, a
+# forward URL like http://gw/?a=1&b=$(cmd) ran cmd in every new shell and
+# broke the plist. jq is required anyway and does both escapes exactly.
+_shq()    { jq -rn --arg v "$1" '$v | @sh'; }     # POSIX single quotes (zsh + bash)
+_xmlesc() { jq -rn --arg v "$1" '$v | @html'; }   # & < > ' " as entities
+
 # Enable the OTEL path: flip the config flag, write the shell env file the plugin
 # sources (fork-free), and generate a launchd plist for a persistent receiver.
 # The plist is written to the cache (not auto-installed) — the user loads it, so
@@ -443,6 +450,11 @@ _cmd_setup() {
   endpoint=$("$cli" config get perf.otel.endpoint 2>/dev/null); [[ -z "$endpoint" ]] && endpoint="http://127.0.0.1:4318"
   beta=$("$cli" config get perf.otel.beta_traces 2>/dev/null)
   forward=$("$cli" config get perf.otel.forward 2>/dev/null)
+  # The receiver POSTs to it with urllib, which also speaks file:// and ftp://.
+  if [[ -n "$forward" && ! "$forward" =~ ^https?://[^[:space:]]+$ ]]; then
+    printf 'claudii-otel: perf.otel.forward must be an http:// or https:// URL without spaces: %s\n' "$forward" >&2
+    return 1
+  fi
   "$cli" config set perf.otel.enabled true >/dev/null 2>&1
 
   mkdir -p "$OTEL_DIR"
@@ -455,9 +467,9 @@ _cmd_setup() {
     printf '%s\n' 'export OTEL_TRACES_EXPORTER=otlp'
     printf '%s\n' 'export OTEL_METRICS_EXPORTER=none'
     printf '%s\n' 'export OTEL_EXPORTER_OTLP_PROTOCOL=http/json'
-    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$endpoint"
+    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$(_shq "$endpoint")"
     [[ "$beta" == "true" ]] && printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
-    [[ -n "$forward" ]] && printf 'export CLAUDII_OTEL_FORWARD=%s\n' "$forward"
+    [[ -n "$forward" ]] && printf 'export CLAUDII_OTEL_FORWARD=%s\n' "$(_shq "$forward")"
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)
@@ -471,7 +483,10 @@ _cmd_setup() {
   # The receiver process needs CLAUDII_OTEL_FORWARD too (it does the teeing), so
   # bake it into the plist env when configured.
   local fwd_xml=""
-  [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$forward"
+  [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$(_xmlesc "$forward")"
+  local x_recv x_path x_dir
+  x_recv=$(_xmlesc "$RECEIVER"); x_path=$(_xmlesc "$py_dir:/usr/bin:/bin:/usr/sbin:/sbin")
+  x_dir=$(_xmlesc "$OTEL_DIR")
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -480,17 +495,17 @@ _cmd_setup() {
   <key>Label</key><string>com.claudii.otel-receiver</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$RECEIVER</string>
+    <string>$x_recv</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>$py_dir:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>CLAUDII_OTEL_DIR</key><string>$OTEL_DIR</string>$fwd_xml
+    <key>PATH</key><string>$x_path</string>
+    <key>CLAUDII_OTEL_DIR</key><string>$x_dir</string>$fwd_xml
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>$OTEL_DIR/receiver.log</string>
-  <key>StandardOutPath</key><string>$OTEL_DIR/receiver.log</string>
+  <key>StandardErrorPath</key><string>$x_dir/receiver.log</string>
+  <key>StandardOutPath</key><string>$x_dir/receiver.log</string>
 </dict>
 </plist>
 PLIST

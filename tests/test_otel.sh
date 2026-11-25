@@ -174,7 +174,7 @@ assert_eq "otel setup: config flag enabled" "true" "$(_ocli config get perf.otel
 assert_eq "otel setup: env file written" "0" "$([ -r "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
 assert_contains "otel setup: env enables telemetry" "CLAUDE_CODE_ENABLE_TELEMETRY=1" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup: env sets http/json" "OTEL_EXPORTER_OTLP_PROTOCOL=http/json" "$(<"$_OTEL_SCACHE/otel.env")"
-assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_eq "otel setup: launchd plist generated" "0" "$([ -s "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" ] && echo 0 || echo 1)"
 # default config carries no forward → env/plist/doctor stay local-only
 assert_not_contains "otel setup (default): env omits CLAUDII_OTEL_FORWARD" \
@@ -195,12 +195,40 @@ assert_eq "otel off: env file removed" "1" "$([ -e "$_OTEL_SCACHE/otel.env" ] &&
 _ocli config set perf.otel.forward "http://nutc.example:4318" >/dev/null 2>&1
 _otel setup >/dev/null 2>&1
 assert_contains "otel setup (forward): env exports CLAUDII_OTEL_FORWARD" \
-  "export CLAUDII_OTEL_FORWARD=http://nutc.example:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+  "export CLAUDII_OTEL_FORWARD='http://nutc.example:4318'" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup (forward): plist bakes forward into receiver env" \
   "<key>CLAUDII_OTEL_FORWARD</key><string>http://nutc.example:4318</string>" \
   "$(<"$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist")"
 assert_contains "otel doctor (forward): reports the gateway" \
   "http://nutc.example:4318" "$(_otel doctor 2>&1)"
+
+# Config values land in a file every zsh SOURCES and in an XML plist: a forward
+# URL carrying shell syntax must stay a literal string (it ran in every new
+# shell when written unquoted) and must not break the plist.
+_OTEL_MARK="$_OTEL_SCACHE/pwned"
+_OTEL_EVIL="http://gw:4318/?a=1&b=\$(touch\${IFS}$_OTEL_MARK)&c='q'<x>"
+_ocli config set perf.otel.forward "$_OTEL_EVIL" >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+_OTEL_SRC=$(env -i PATH="$PATH" bash --norc --noprofile -c '. "$1" && printf %s "$CLAUDII_OTEL_FORWARD"' _ "$_OTEL_SCACHE/otel.env" 2>&1)
+assert_eq "otel setup (shell syntax): bash keeps the forward URL literal" "$_OTEL_EVIL" "$_OTEL_SRC"
+if command -v zsh >/dev/null 2>&1; then
+  _OTEL_SRC=$(env -i PATH="$PATH" zsh -f -c '. "$1" && printf %s "$CLAUDII_OTEL_FORWARD"' _ "$_OTEL_SCACHE/otel.env" 2>&1)
+  assert_eq "otel setup (shell syntax): zsh keeps the forward URL literal" "$_OTEL_EVIL" "$_OTEL_SRC"
+fi
+assert_eq "otel setup (shell syntax): sourcing ran nothing" "1" "$([ -e "$_OTEL_MARK" ] && echo 0 || echo 1)"
+if command -v python3 >/dev/null 2>&1; then
+  _OTEL_PL=$(python3 -I -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["EnvironmentVariables"]["CLAUDII_OTEL_FORWARD"])' \
+    "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" 2>&1)
+  assert_eq "otel setup (shell syntax): plist is XML and keeps the URL" "$_OTEL_EVIL" "$_OTEL_PL"
+fi
+# Not http(s): urllib would read file:// — refused before the flag flips.
+_ocli config set perf.otel.forward "file:///etc/passwd" >/dev/null 2>&1
+_ocli config set perf.otel.enabled false >/dev/null 2>&1
+_OTEL_OUT=$(_otel setup 2>&1); _OTEL_RC=$?
+assert_eq "otel setup (file:// forward): refused" "1" "$_OTEL_RC"
+assert_contains "otel setup (file:// forward): says why" "http:// or https://" "$_OTEL_OUT"
+assert_eq "otel setup (file:// forward): flag untouched" "false" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
+_ocli config set perf.otel.forward "http://nutc.example:4318" >/dev/null 2>&1
 
 # ── event-file layout: compact / rows / window ──
 _OTEL_MCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_MCACHE")
