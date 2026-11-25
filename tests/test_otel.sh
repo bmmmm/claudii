@@ -694,4 +694,60 @@ jq -c --argjson p "$_RS_DEAD" '.pid = $p' "$_OTEL_SDIR/receiver.status" > "$_OTE
 assert_contains "otel doctor: a dead receiver pid is reported as NOT RUNNING" "NOT RUNNING" \
   "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
 
+# ── doctor: flag, otel.env, receiver and launchd job must agree ──
+# Each disagreement leaves perf silently on the transcript estimate. launchctl
+# is a fake (loaded = a marker file), HOME a temp dir for ~/Library/LaunchAgents.
+_OTEL_WCFG="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WCFG")
+_OTEL_WCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WCACHE")
+_OTEL_WHOME="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WHOME")
+_OTEL_WBIN="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WBIN")
+printf '#!/bin/sh\n[ "$1" = list ] && [ "$2" = com.claudii.otel-receiver ] && [ -e "%s/loaded" ]\n' "$_OTEL_WBIN" > "$_OTEL_WBIN/launchctl"
+chmod +x "$_OTEL_WBIN/launchctl"
+_wotel() { PATH="$_OTEL_WBIN:$PATH" HOME="$_OTEL_WHOME" CLAUDII_CACHE_DIR="$_OTEL_WCACHE" XDG_CONFIG_HOME="$_OTEL_WCFG" \
+  bash "$CLAUDII_HOME/bin/claudii-otel" "$@" 2>&1; }
+_wcli() { XDG_CONFIG_HOME="$_OTEL_WCFG" bash "$CLAUDII_HOME/bin/claudii" "$@" >/dev/null 2>&1; }
+_wstatus() { jq -c --argjson p "$1" --arg l "$2" '.pid = $p | .listen = $l' "$_OTEL_SDIR/receiver.status" > "$_OTEL_WCACHE/otel/receiver.status"; }
+_wotel setup >/dev/null
+_OTEL_WENV="$_OTEL_WCACHE/otel.env"; cp "$_OTEL_WENV" "$_OTEL_WCACHE/otel.env.orig"
+_OTEL_WINST="$_OTEL_WHOME/Library/LaunchAgents/com.claudii.otel-receiver.plist"
+_wstatus "$$" "127.0.0.1:4318"
+_WD=$(_wotel doctor)
+assert_not_contains "otel doctor (wired, receiver up): no MISMATCH" "MISMATCH" "$_WD"
+assert_contains "otel doctor: shows the endpoint" "endpoint     http://127.0.0.1:4318" "$_WD"
+assert_contains "otel doctor (launchd): not loaded, plist not installed" "launchd      not loaded · plist not installed" "$_WD"
+mkdir -p "${_OTEL_WINST%/*}"; cp "$_OTEL_WCACHE/otel/com.claudii.otel-receiver.plist" "$_OTEL_WINST"
+assert_contains "otel doctor (launchd): installed plist == generated one" "matches the generated one" "$(_wotel doctor)"
+printf '<!-- edited -->\n' >> "$_OTEL_WINST"
+assert_contains "otel doctor (launchd): an edited/stale installed plist" "installed plist DIFFERS" "$(_wotel doctor)"
+sleep 0 & _RS_DEAD2=$!; wait "$_RS_DEAD2"
+_wstatus "$_RS_DEAD2" "127.0.0.1:4318"; touch "$_OTEL_WBIN/loaded"
+_WD=$(_wotel doctor)
+assert_contains "otel doctor (launchd): loaded" "launchd      loaded" "$_WD"
+assert_contains "otel doctor: loaded job without a running receiver" "the launchd job is loaded but no receiver runs" "$_WD"
+rm -f "$_OTEL_WBIN/loaded" "$_OTEL_WCACHE/otel/receiver.status"
+assert_contains "otel doctor: flag on, no receiver, no job" "perf.otel.enabled is true but no receiver runs" "$(_wotel doctor)"
+_wstatus "$$" "127.0.0.1:9999"
+assert_contains "otel doctor: receiver listening elsewhere than the endpoint" \
+  "receiver listens on 127.0.0.1:9999, perf.otel.endpoint is 127.0.0.1:4318" "$(_wotel doctor)"
+_wstatus "$$" "127.0.0.1:4318"
+grep -v '^export OTEL_EXPORTER_OTLP_ENDPOINT=' "$_OTEL_WCACHE/otel.env.orig" > "$_OTEL_WENV"
+printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:9999\n' >> "$_OTEL_WENV"   # unquoted: written by an older setup
+assert_contains "otel doctor: otel.env exporting elsewhere than the endpoint" \
+  "otel.env exports to http://127.0.0.1:9999, perf.otel.endpoint is http://127.0.0.1:4318" "$(_wotel doctor)"
+grep -v 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA' "$_OTEL_WCACHE/otel.env.orig" > "$_OTEL_WENV"
+assert_contains "otel doctor: otel.env without the beta flag" "lacks CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1" "$(_wotel doctor)"
+cp "$_OTEL_WCACHE/otel.env.orig" "$_OTEL_WENV"
+_wcli config set perf.otel.enabled false
+assert_contains "otel doctor: otel.env sourced, flag off" "perf.otel.enabled is false — perf ignores OTEL" "$(_wotel doctor)"
+_wcli config set perf.otel.enabled true; rm -f "$_OTEL_WENV"
+assert_contains "otel doctor: flag on, otel.env missing" "perf.otel.enabled is true but otel.env is missing" "$(_wotel doctor)"
+_wcli config set perf.otel.forward "file:///etc/passwd"
+assert_contains "otel doctor: a non-http forward is flagged" "forward cfg  INVALID file:///etc/passwd" "$(_wotel doctor)"
+_wcli config set perf.otel.endpoint "http://0.0.0.0:4318"
+assert_contains "otel doctor: an endpoint the receiver cannot bind is flagged" "endpoint     INVALID" "$(_wotel doctor)"
+if ! command -v launchctl >/dev/null 2>&1; then
+  assert_contains "otel doctor (no launchctl): says so" "launchd      n/a (no launchctl)" \
+    "$(HOME="$_OTEL_WHOME" CLAUDII_CACHE_DIR="$_OTEL_WCACHE" XDG_CONFIG_HOME="$_OTEL_WCFG" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+fi
+
 unset _NOW _NANO _OLD _OLDNANO _OB _OE _OBAD _ODOC _PO _POR _POJ _FLAT _LLMREC _TRREC _CSTATS _SRES _DDOC _RROWS _GROWS
