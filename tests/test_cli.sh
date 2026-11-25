@@ -77,7 +77,7 @@ out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard on 2>&1)
 assert_matches "session-dashboard on: success message" "enabled|on|Session Dashboard" "$out"
 
 out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto 2>&1 || true)
-assert_eq "session-dashboard auto: unknown subcommand error" "1" "$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto >/dev/null 2>&1; echo $?)"
+assert_eq "session-dashboard auto: unknown subcommand error (rc 2)" "2" "$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto >/dev/null 2>&1; echo $?)"
 
 # the deprecated 'dashboard' alias is gone
 out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1 || true)

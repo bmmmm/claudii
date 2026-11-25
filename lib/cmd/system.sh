@@ -65,8 +65,11 @@ _cmd_claudestatus() {
         echo -e "ClaudeStatus: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}"
       fi
       ;;
+    -h|--help)
+      echo "Usage: claudii claudestatus [on|off]"
+      ;;
     *)
-      echo "Usage: claudii claudestatus [on|off] — run 'claudii claudestatus on' or 'claudii claudestatus off'" >&2; return 1
+      _cli_unknown_opt claudestatus "$2" '[on|off]' || return $?
       ;;
   esac
 }
@@ -126,8 +129,11 @@ _cmd_insomnii() {
       printf "    ${CLAUDII_CLR_CYAN}claudii insomnii auto${CLAUDII_CLR_RESET}    delegate when installed (default)\n"
       printf "    ${CLAUDII_CLR_CYAN}claudii insomnii install${CLAUDII_CLR_RESET} clone + install the binary from %s\n" "${CC_INSOMNII_REPO:-https://github.com/bmmmm/cc-insomnii}"
       ;;
+    -h|--help)
+      echo "Usage: claudii insomnii [on|off|auto|status|install]"
+      ;;
     *)
-      echo "Usage: claudii insomnii [on|off|auto|status|install]" >&2; return 1
+      _cli_unknown_opt insomnii "$2" '[on|off|auto|status|install]' || return $?
       ;;
   esac
 }
@@ -152,8 +158,11 @@ _cmd_session_dashboard() {
         echo -e "Session Dashboard: ${CLAUDII_CLR_GREEN}on${CLAUDII_CLR_RESET}"
       fi
       ;;
+    -h|--help)
+      echo "Usage: claudii session-dashboard [on|off]"
+      ;;
     *)
-      echo "Unknown subcommand: ${2} — run 'claudii session-dashboard [on|off]'" >&2; return 1
+      _cli_unknown_opt session-dashboard "$2" '[on|off]' || return $?
       ;;
   esac
 }
@@ -398,8 +407,11 @@ _cmd_status() {
     --history)
       _status_history "${3:-}" "${4:-}"
       ;;
+    -h|--help)
+      echo "Usage: claudii status [--json] | [5m|15m|30m] | --history [--days N]"
+      ;;
     *)
-      echo "Unknown status option: ${2} — run 'claudii status [5m|15m|30m]' to set the refresh interval, or '--history [--days N]' for the transition log" >&2; return 1
+      _cli_unknown_opt status "$2" '[5m|15m|30m] | --history [--days N]' || return $?
       ;;
   esac
 }
@@ -531,8 +543,11 @@ _cmd_cc_statusline() {
         fi
       fi
       ;;
+    -h|--help)
+      echo "Usage: claudii cc-statusline [on|off|preset <name>]"
+      ;;
     *)
-      echo "Usage: claudii cc-statusline [on|off|preset <name>]" >&2; return 1
+      _cli_unknown_opt cc-statusline "$2" '[on|off|preset <name>]' || return $?
       ;;
   esac
 }

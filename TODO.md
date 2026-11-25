@@ -10,22 +10,6 @@
 > `t3/repo-audit-dead-code-cleanup`). Was hier steht, ist offen und an
 > aktuellem Code geprüft.
 
-### Die sechs verbleibenden Commands unter den Exit-Code-Vertrag
-
-**Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/system.sh,
-lib/cmd/insights.sh, tests/test_arg_contract.sh, man/man1/claudii.1**
-
-33 von 39 dispatchten Commands liefern bei unbekannter Option rc 2 mit
-`claudii <cmd>: unknown option: <arg>` (Helfer `_cli_unknown_opt`,
-`lib/cmd/insights.sh`) und bei `-h`/`--help` die Usage mit rc 0. Offen sind
-`cc-statusline`, `claudestatus`, `insomnii`, `session-dashboard`, `status`
-(alle `lib/cmd/system.sh`) und `session` (`lib/cmd/insights.sh`) — heute rc 1
-auf `--bogus`. Sie stehen in `_AC_PENDING` (`tests/test_arg_contract.sh`), und
-die Liste ist eine **Ratsche**: der Test verlangt, dass ein Pending-Command den
-Vertrag noch *verfehlt*, geht also rot, wenn jemand einen konvertiert, ohne
-ihn aus der Liste zu nehmen. Mit jedem konvertierten Command die Zählung in
-der Man-Page (EXIT STATUS, „33 of the 39“) mitziehen.
-
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
 **Type: Feature**

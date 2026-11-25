@@ -122,9 +122,9 @@ _cds_noarg_out=$(XDG_CONFIG_HOME="$_cds_xdg" bash "$CLAUDII_HOME/bin/claudii" cl
 assert_matches "claudestatus (no arg): mentions ClaudeStatus" "ClaudeStatus|claudestatus" "$_cds_noarg_out"
 assert_no_literal_ansi "claudestatus (no arg): no literal \\033 in output" "$_cds_noarg_out"
 
-# claudestatus bad-arg → exit 1 + error to stderr
+# claudestatus bad-arg → exit 2 (argument contract) + error to stderr
 _cds_bad_exit=$(XDG_CONFIG_HOME="$_cds_xdg" bash "$CLAUDII_HOME/bin/claudii" claudestatus badarg >/dev/null 2>&1; echo $?)
-assert_eq "claudestatus bad-arg: exit 1" "1" "$_cds_bad_exit"
+assert_eq "claudestatus bad-arg: exit 2" "2" "$_cds_bad_exit"
 
 rm -rf "$_cds_base"
 unset _CDS_BASE _CDS_XDG _cds_xdg _cds_base _cds_exit _cds_out _cds_val _cds_noarg_exit _cds_noarg_out _cds_bad_exit
@@ -526,19 +526,20 @@ _er_out=$(bash -c '
   source "$CLAUDII_HOME/lib/spinner.sh"
   source "$CLAUDII_HOME/lib/helpers.sh"
   source "$CLAUDII_HOME/lib/render.sh"
+  source "$CLAUDII_HOME/lib/cmd/insights.sh"   # _cli_unknown_opt
   source "$CLAUDII_HOME/lib/cmd/system.sh"
   _cmd_claudestatus claudestatus bogus >/dev/null 2>&1
-  printf "SURVIVED rc=%s\\n" "$?"
+  printf "SURVIVED rc=%s.\\n" "$?"
 ' 2>&1)
 assert_contains "sourced handler: a bad subcommand returns instead of killing the shell" \
-  "SURVIVED rc=1" "$_er_out"
+  "SURVIVED rc=2." "$_er_out"
 
 # ...and the failure still reaches the caller as a non-zero exit status: turning
 # `exit 1` into `return 1` is only correct while the dispatcher propagates it.
 _make_cfg_tmp _ER
 HOME="$_ER_BASE" XDG_CONFIG_HOME="$_ER_XDG" CLAUDII_CACHE_DIR="$_ER_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" claudestatus bogus >/dev/null 2>&1
-assert_eq "sourced handler: the dispatcher still exits non-zero on a bad subcommand" "1" "$?"
+assert_eq "sourced handler: the dispatcher still exits non-zero on a bad subcommand" "2" "$?"
 
 rm -rf "$_ER_BASE"
 unset _ER_BASE _ER_XDG _ER_CACHE _er_out

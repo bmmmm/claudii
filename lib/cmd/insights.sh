@@ -775,7 +775,6 @@ _cmd_tokens() {
 
 _cmd_session() {
   _cfg_init
-  _insights_refresh
 
   local needle="${1:-}"
   case "$needle" in
@@ -785,7 +784,11 @@ _cmd_session() {
       printf 'substring (first match wins); list ids with: claudii se\n'
       [[ -z "$needle" ]] && return 1 || return 0
       ;;
+    -*)
+      _cli_unknown_opt session "$needle" '<id>' || return $?
+      ;;
   esac
+  _insights_refresh
 
   local cyan="${CLAUDII_CLR_CYAN}" dim="${CLAUDII_CLR_DIM}" reset="${CLAUDII_CLR_RESET}"
   local accent="${CLAUDII_CLR_ACCENT}" green="${CLAUDII_CLR_GREEN}" yellow="${CLAUDII_CLR_YELLOW}"
