@@ -2195,8 +2195,11 @@ while IFS= read -r _line_segs; do
   [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 
-# Vibemap append — opt-in, fire-and-forget, errors silent.
-if [[ "$_cfg_vibemap_enabled" == "true" ]]; then
+# Vibemap append — opt-in, fire-and-forget, errors silent. Same dedup as the
+# flight recorder: the map counts rows per time bucket, so the idle re-renders
+# of statusLine.refreshInterval (nothing changed) must not count as activity.
+# delta_ms stays "since the previous render".
+if [[ "$_cfg_vibemap_enabled" == "true" ]] && (( _hist_write )); then
   _vm_delta=0
   if [[ "$_last_duration_ms" =~ ^[0-9]+$ && "$duration_ms" =~ ^[0-9]+$ ]]; then
     _vm_delta=$(( duration_ms - _last_duration_ms ))

@@ -669,6 +669,14 @@ printf '{"session_id":"refresh2-0000","model":{"display_name":"Opus"},"context_w
   | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
 assert_eq "refresh: an output-token change alone writes a row" "4" "$(_rf_hist)"
 assert_contains "refresh: the written row carries every column" $'\t41\t1999999999' "$(tail -1 "$_rf_cfg/cache"/history-*.tsv)"
+# vibemap rides the same dedup: idle re-renders are not activity.
+printf '{"statusline":{"lines":[["model"]]},"vibemap":{"enabled":true}}\n' > "$_rf_cfg/claudii/config.json"
+_rf_vm() { grep -c $'\trefresh2\t' "$_rf_cfg/cache/vibemap.tsv" 2>/dev/null || true; }
+_rf2 2.0; _rf2 2.0; _rf2 2.0
+assert_eq "vibemap: identical renders append one row" "1" "$(_rf_vm)"
+_rf2 2.5
+assert_eq "vibemap: a changed render appends at once" "2" "$(_rf_vm)"
+unset -f _rf_vm
 unset -f _rf _rf2 _rf_hist; unset _rf_cfg _rf_i
 
 # ── idle-compact: CC 2.1.332 compacts a 1h-TTL conversation >= 200K tokens at
