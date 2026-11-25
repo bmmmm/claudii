@@ -290,12 +290,17 @@ _insights_reject_tsv() {
 # `// {}` / `// []` defaults yield the same envelope shape with empty arrays.
 # Kept inline alongside the pretty-path jq for the same view (the established
 # convention in this file) rather than re-aggregating in a shared .jq module.
+#
+# The merged JSON goes in on stdin, never as --argjson: it grows with the
+# window (a 90d merge with latency runs to megabytes), and a single argument
+# over 128 KiB fails exec on Linux with "Argument list too long".
 
 _cache_json() {
   local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
+  jq --argjson days "$days" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
-    ($m.days // {}) as $day
+    . as $m
+    | ($m.days // {}) as $day
     | {
         window_days: $days,
         per_day: (
@@ -329,15 +334,16 @@ _cache_json() {
           | {cache_read: $r, cache_create: $c, input: $i,
              total: ($r + $c + $i), hit_pct: hit($r; ($r + $c + $i))}
         )
-      }'
+      }' <<< "$merged"
 }
 
 _tokens_json() {
   local merged="$1" days="$2" floor="$3"
-  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" \
+  jq --argjson days "$days" --arg floor "$floor" \
     --arg self "$(_sync_self_name)" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
-    [ ($m.days // {}) | to_entries[]
+    . as $m
+    | [ ($m.days // {}) | to_entries[]
       | (.key | split("|")) as $p
       | select($p[1] != "<synthetic>" and $p[0] >= $floor)
       | {day: $p[0], model: $p[1], v: .value} ] as $rows
@@ -387,14 +393,15 @@ _tokens_json() {
           | map(select((.input + .output + .cache_read + .cache_create) > 0))
           | sort_by((if .local then 0 else 1 end), .host)
         )
-      }'
+      }' <<< "$merged"
 }
 
 _tools_json() {
   local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
+  jq --argjson days "$days" '
     def pct1($n; $d): if $d > 0 then (($n * 1000 / $d) | round) / 10 else 0 end;
-    ([$m.tools[]? ] | add // 0) as $tc
+    . as $m
+    | ([$m.tools[]? ] | add // 0) as $tc
     | ([$m.tool_errors[]? ] | add // 0) as $te
     | {
         window_days: $days,
@@ -414,13 +421,13 @@ _tools_json() {
           | sort_by(-.count)
         ),
         thinking_blocks: ($m.thinking_blocks // 0)
-      }'
+      }' <<< "$merged"
 }
 
 _limits_json() {
   local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
-    ($m.limit_hits // []) as $h
+  jq --argjson days "$days" '
+    (.limit_hits // []) as $h
     | {
         window_days: $days,
         total: ($h | length),
@@ -428,7 +435,7 @@ _limits_json() {
                | map({timestamp: (.timestamp // ""), model: (.model // "")})),
         by_model: ($h | map(.model // "unknown") | group_by(.)
                    | map({model: .[0], count: length}) | sort_by(-.count))
-      }'
+      }' <<< "$merged"
 }
 
 # ── claudii cache ────────────────────────────────────────────────────────────

@@ -93,13 +93,14 @@ _skills_cost_compare() {
   # tier() comes from the lib/tier.jq module via -L.
   # No 2>/dev/null: a failing program (broken CLAUDII_HOME, jq without module
   # support) must surface as an error, not masquerade as "no activity".
+  # Both merged windows go in on stdin (prior first, recent second), never as
+  # --argjson: they grow with the window, and Linux caps a single argument at
+  # 128 KiB ("Argument list too long" before jq even starts).
   local _rows_json
-  _rows_json=$(jq -n -L "$CLAUDII_HOME/lib" \
+  _rows_json=$(printf '%s\n%s\n' "$_prior" "$_recent" | jq -n -L "$CLAUDII_HOME/lib" \
     --arg k "$attr_key" \
     --arg kind "$attr_kind" \
     --argjson rates "$_rates" \
-    --argjson prior "$_prior" \
-    --argjson recent "$_recent" \
     -f "$CLAUDII_HOME/lib/skills-cost-compare.jq" 2>&1) || {
     printf 'claudii: skills-cost compare program failed (lib/skills-cost-compare.jq):\n%s\n' "$_rows_json" >&2
     return 1
@@ -109,11 +110,11 @@ _skills_cost_compare() {
 
   # JSON mode — emit the joined rows + window/metric metadata.
   if [[ "$fmt" == "json" ]]; then
-    jq -n --argjson rows "$_rows_json" --argjson b "$_before" --argjson a "$_after" --arg kind "$attr_kind" \
+    jq --argjson b "$_before" --argjson a "$_after" --arg kind "$attr_kind" \
       '{compare:{kind:$kind, before_days:$b, after_days:$a,
                  windows:"prior = [now-(BEFORE+AFTER), now-AFTER); recent = [now-AFTER, now]"},
         metric:"out_per_call is the context-robust signal (output tokens do not scale with session context size); avg_usd is shown but confounded by per-call context size — do not read it as edit impact",
-        rows:$rows}'
+        rows:.}' <<< "$_rows_json"
     return 0
   fi
 

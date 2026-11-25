@@ -1,8 +1,11 @@
 # skills-cost-compare.jq — join two priced windows into comparison rows.
 # Called from _skills_cost_compare (lib/cmd/skills-cost.sh) with:
+#   printf '%s\n%s\n' <prior merged> <recent merged> |
 #   jq -n -L "$CLAUDII_HOME/lib" --arg k <attr_key> --arg kind <attr_kind>
-#      --argjson rates <rate table> --argjson prior <merged> --argjson recent <merged>
-#      -f lib/skills-cost-compare.jq
+#      --argjson rates <rate table> -f lib/skills-cost-compare.jq
+# Input: two merged insights JSON documents on stdin — the prior window first,
+# the recent one second (read with `input`; never --argjson, which hits the
+# 128 KiB per-argument limit on Linux once a window grows).
 # Output: JSON array of {name, calls_prior, calls_recent, out_per_call_*,
 # avg_usd_*, out_per_call_delta}, sorted by combined call volume.
 include "tier";
@@ -36,7 +39,9 @@ def rows($m):
          | usd($rates["sonnet-legacy"])) as $rusd
       | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
 
-(rows($prior)) as $P
+input as $prior
+| input as $recent
+| (rows($prior)) as $P
 | (rows($recent)) as $R
 | ([$P[].name, $R[].name] | unique) as $names
 | $names | map(
