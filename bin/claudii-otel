@@ -482,12 +482,10 @@ _xmlesc() { jq -rn --arg v "$1" '$v | @html'; }   # & < > ' " as entities
 # nothing touches ~/Library/LaunchAgents without consent.
 _cmd_setup() {
   local cli="$CLAUDII_HOME/bin/claudii"
-  local beta
   # Both checked before the flag flips: a refused setup changes nothing.
   _endpoint || return 1
   _forward || return 1
   local forward="$FWD"
-  beta=$("$cli" config get perf.otel.beta_traces 2>/dev/null)
   "$cli" config set perf.otel.enabled true >/dev/null 2>&1
 
   mkdir -p "$OTEL_DIR"
@@ -501,7 +499,10 @@ _cmd_setup() {
     printf '%s\n' 'export OTEL_METRICS_EXPORTER=none'
     printf '%s\n' 'export OTEL_EXPORTER_OTLP_PROTOCOL=http/json'
     printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$(_shq "$EP_URL")"
-    [[ "$beta" == "true" ]] && printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
+    # Not optional: without it Claude Code emits no claude_code.llm_request span,
+    # and those spans are every latency/TTFT/success sample perf reads — perf
+    # would stay on the transcript estimate with the OTEL source switched on.
+    printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)

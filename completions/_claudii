@@ -344,7 +344,6 @@ _claudii() {
                 'search.effort:Effort for claudii search mode'
                 'perf.otel.enabled:Read exact latency from OpenTelemetry (opt-in, true/false)'
                 'perf.otel.endpoint:Export target and receiver listen address, loopback only (default: http://127.0.0.1:4318)'
-                'perf.otel.beta_traces:Capture the llm_request span for TTFT (true/false)'
                 'perf.otel.forward:Mirror OTLP batches to a central collector URL (empty = local only)'
               )
               _describe 'config key' keys

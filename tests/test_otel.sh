@@ -175,6 +175,15 @@ assert_eq "otel setup: env file written" "0" "$([ -r "$_OTEL_SCACHE/otel.env" ] 
 assert_contains "otel setup: env enables telemetry" "CLAUDE_CODE_ENABLE_TELEMETRY=1" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup: env sets http/json" "OTEL_EXPORTER_OTLP_PROTOCOL=http/json" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'" "$(<"$_OTEL_SCACHE/otel.env")"
+# The llm_request span (every perf sample) needs the beta flag; the old
+# perf.otel.beta_traces=false left the OTEL source on and empty. It is gone,
+# a leftover false in a user config changes nothing.
+_ocli config set perf.otel.beta_traces false >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+assert_contains "otel setup: beta flag always set (a leftover beta_traces=false is ignored)" \
+  "export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_eq "defaults: perf.otel.beta_traces removed" "false" \
+  "$(jq '.perf.otel | has("beta_traces")' "$CLAUDII_HOME/config/defaults.json")"
 assert_eq "otel setup: launchd plist generated" "0" "$([ -s "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" ] && echo 0 || echo 1)"
 # default config carries no forward → env/plist/doctor stay local-only
 assert_not_contains "otel setup (default): env omits CLAUDII_OTEL_FORWARD" \
