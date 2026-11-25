@@ -217,16 +217,32 @@ assert_eq "7d delta not shown in sessionline output" "0" "$(echo "$strip" | grep
 _cache_7d="$(cat "$_test_cache_dir/session-test7dde" 2>/dev/null)"
 assert_contains "7d_start cached from first call" "rate_7d_start=60" "$_cache_7d"
 
-# burn_eta written to session cache (non-empty when rate > 0 and duration > 0)
+# burn_eta / pace run on the 5h window's clock (account-wide limit), not on the
+# session's duration: elapsed = 18000 − (resets_at − now).
 _test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
-echo '{"session_id":"testburneta1","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":70},"seven_day":{"used_percentage":65}}}' \
-  | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
-_cache_be="$(cat "$_test_cache_dir/session-testburn" 2>/dev/null)"
-assert_contains "burn_eta key present in session cache" "burn_eta=" "$_cache_be"
-_burn_val="$(echo "$_cache_be" | grep '^burn_eta=' | cut -d= -f2)"
-[[ "$_burn_val" =~ ^[0-9]+$ ]] \
-  && assert_eq "burn_eta is a non-empty integer" "true" "true" \
-  || assert_eq "burn_eta is a non-empty integer" "true" "false (got: $_burn_val)"
+_be_json() {  # session-id duration-ms 5h-used% [resets_at]
+  local _rl='{"used_percentage":'"$3"'}'
+  [[ -n "${4:-}" ]] && _rl='{"used_percentage":'"$3"',"resets_at":'"$4"'}'
+  printf '{"session_id":"%s","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":%s},"rate_limits":{"five_hour":%s,"seven_day":{"used_percentage":65}}}' "$1" "$2" "$_rl"
+}
+_be_key() { grep "^$2=" "$_test_cache_dir/session-${1:0:8}" 2>/dev/null | cut -d= -f2; }
+# 30 min into the window at 70%: (100 − 70) / (70 / 30) = 12.9 → 13 min.
+_be_json testburneta1 1800000 70 $(( $(date +%s) + 16200 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: minutes to the limit at the window's average rate" "13" "$(_be_key testburneta1 burn_eta)"
+assert_eq "burn_eta: 70% after 30 of 300 min is behind linear" "behind" "$(_be_key testburneta1 pace)"
+# The audit probe: a 4-minute session, 60% used, reset in 1 h. The window is
+# 4 h old, so the limit is not near (160 min > 60 min left: no ETA) and 60% is
+# under the linear 80% (ahead) — dividing by the session's 4 min said "ETA:3m",
+# "behind".
+_be_json testburneta2 240000 60 $(( $(date +%s) + 3600 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: an ETA past the reset is dropped" "" "$(_be_key testburneta2 burn_eta)"
+assert_eq "burn_eta: pace counts the window's elapsed time, not the session's" "ahead" "$(_be_key testburneta2 pace)"
+_be_json testburneta3 1800000 70 | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: no resets_at → no ETA" "" "$(_be_key testburneta3 burn_eta)"
+assert_eq "burn_eta: no resets_at → no pace" "" "$(_be_key testburneta3 pace)"
+_be_json testburneta4 1800000 70 $(( $(date +%s) - 60 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: a reset already past → no ETA" "" "$(_be_key testburneta4 burn_eta)"
+unset -f _be_json _be_key
 
 # 7d-Countdown — shown when reset_7d is set (< 1h → Xm format)
 _reset_7d_soon=$(( $(date +%s) + 2700 ))
@@ -286,8 +302,8 @@ output=$(echo '{"model":{"display_name":"Opus"},"session_name":"omlx","context_w
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "session_name shown as @name fallback" "@omlx" "$strip"
 
-# burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \
+# burn-eta visible: 10 min into the 5h window at 80% → ETA appears on line 2
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80,"resets_at":'"$(( $(date +%s) + 17400 ))"'},"seven_day":{"used_percentage":60}}}' \
   | bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "burn-eta ETA visible on line 2" "1" "$(echo "$strip" | grep -c 'ETA:' || true)"
@@ -1474,39 +1490,41 @@ assert_eq "cc-version: fell off cached window → red +?" "v1.0.0 +?" "$strip"
 _pace_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
 mkdir -p "$_pace_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["pace"]]}}\n' > "$_pace_cfg_dir/claudii/config.json"
+# 30 min into the 5h window (linear = 10%); the session's own duration is irrelevant.
+_pace_r30=$(( $(date +%s) + 16200 )); _pace_r1=$(( $(date +%s) + 17940 ))
 
-# ahead: session 30min, linear=10%, actual=5% → 5 < 10×0.85=8.5 → ahead (↑)
-# 30min = 1800000ms; linear = 30/300*100 = 10%; rate_5h=5% → 5 < 8.5 → ahead
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+# ahead: window 30min, linear=10%, actual=5% → 5 < 10×0.85=8.5 → ahead (↑)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":10}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace ahead: ↑ shown" "↑" "$strip"
 
-# behind: session 30min, linear=10%, actual=20% → 20 > 10×1.15=11.5 → behind (↓)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":30}}}' \
+# behind: window 30min, linear=10%, actual=20% → 20 > 10×1.15=11.5 → behind (↓)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":30}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace behind: ↓ shown" "↓" "$strip"
 
-# on_pace: session 30min, linear=10%, actual=10% → exactly on-pace (=)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+# on_pace: window 30min, linear=10%, actual=10% → exactly on-pace (=)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":20}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace on_pace: = shown" "=" "$strip"
 
-# no data: session < 3min → pace segment empty (below gate)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":60000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+# no data: window < 3min old → pace segment empty (below gate)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":'"$_pace_r1"'},"seven_day":{"used_percentage":20}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_not_contains "pace: no glyph when session < 3min" "↑" "$strip"
-assert_not_contains "pace: no ↓ when session < 3min"     "↓" "$strip"
+assert_not_contains "pace: no glyph when the window is < 3min old" "↑" "$strip"
+assert_not_contains "pace: no ↓ when the window is < 3min old"     "↓" "$strip"
 
 # pace persisted in session cache file
 _pace_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_pace_cache_dir")
-echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":10}}}' \
   | CLAUDII_CACHE_DIR="$_pace_cache_dir" bash "$SL" 2>/dev/null >/dev/null
 _cache_pace="$(cat "$_pace_cache_dir/session-testpace" 2>/dev/null)"
 assert_contains "pace=ahead written to session cache" "pace=ahead" "$_cache_pace"
+unset _pace_r30 _pace_r1
 
 # ── Cron segment tests ────────────────────────────────────────────────────────
 # cron segment: renders ⏰ <relative> when next_cron_at is in the future

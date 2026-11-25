@@ -479,30 +479,34 @@ _api_recent="$_aw_keep"
 _api_mean_ms=""
 (( _aw_n > 0 )) && _api_mean_ms=$(( (_aw_sum + _aw_n / 2) / _aw_n ))
 
-# Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
-# Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
-# instead of two forks. US is passed as a var — \u escapes are not portable in
-# BSD awk's printf (macOS CI), so build the byte in bash and hand it over.
+# Burn-rate ETA + pace tri-state for the account-wide 5h limit — rendered by
+# the burn-eta and pace segments and cached (burn_eta=, pace=) for the Stop
+# hook's bell and `claudii se`. The limit fills on the window's clock, not
+# this session's, so the time it had is the window's elapsed time:
+# 18000 − (resets_at − now). No reset time, a reset already past, or under
+# 3 minutes into the window → nothing. An ETA at or past the reset is dropped
+# too: the window resets before the limit is reached.
+# Both derive from the same inputs, so one awk emits both (US-joined) instead
+# of two forks. US is passed as a var — \u escapes are not portable in BSD
+# awk's printf (macOS CI), so build the byte in bash and hand it over.
 _burn_eta=""
 _pace_state=""
-if _isset "$duration_ms"; then
-  _rate_5h_int=${rate_5h%.*};   [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
-  _dur_ms_int=${duration_ms%.*}; [[ "$_dur_ms_int" =~ ^[0-9]+$ ]] || _dur_ms_int=0
-  _session_min_int=$(( _dur_ms_int / 60000 ))
-  if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    # Pace: actual rate_5h vs linear burn (session_min / 300 * 100, hits 100% at
-    # the 5h mark); ±15% tolerance band → ahead / on_pace / behind.
-    _bp=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
-      m = dur / 60000; r = rat + 0
-      eta = (r > 0) ? int((100 - r) / (r / m) + 0.5) : 0
+_rate_5h_int=${rate_5h%.*}; [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
+_r5_left=${reset_5h%.*}
+if [[ "$_r5_left" =~ ^[0-9]+$ ]] && (( _rate_5h_int > 0 )); then
+  _r5_left=$(( _r5_left - _now )); _r5_el=$(( 18000 - _r5_left ))
+  if (( _r5_left > 0 && _r5_el >= 180 )); then
+    # Pace: actual rate_5h vs linear burn (window_min / 300 * 100, hits 100% at
+    # the reset); ±15% tolerance band → ahead / on_pace / behind.
+    _bp=$(LC_ALL=C awk -v el="$_r5_el" -v left="$_r5_left" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
+      m = el / 60; r = rat + 0
+      eta = int((100 - r) / (r / m) + 0.5)
+      if (eta * 60 >= left) eta = ""
       linear = m / 300 * 100
-      pace = ""
-      if (linear > 0) {
-        if      (r < linear * 0.85) pace = "ahead"
-        else if (r > linear * 1.15) pace = "behind"
-        else                        pace = "on_pace"
-      }
-      printf "%d%s%s", eta, us, pace
+      if      (r < linear * 0.85) pace = "ahead"
+      else if (r > linear * 1.15) pace = "behind"
+      else                        pace = "on_pace"
+      printf "%s%s%s", eta, us, pace
     }')
     _burn_eta="${_bp%%$'\x1f'*}"
     _pace_state="${_bp#*$'\x1f'}"
