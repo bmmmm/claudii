@@ -73,8 +73,16 @@ function _claudii_status_spawn {
     fi
     _claudii_log debug "status_spawn: PID $_check_pid alive but file ${_pid_age}s old — recycled, respawning"
   fi
+  # INTENT marker before the fork: this shell's own PID, alive and fresh, so a
+  # second spawner (the next precmd, another shell, cc-statusline's
+  # _spawn_refresher) that runs before claudii-status has started sees a job
+  # in flight instead of forking a duplicate. claudii-status overwrites it
+  # with its real PID once it runs (--pid-file). Same protocol as
+  # _spawn_refresher in bin/claudii-cc-statusline. >| because a user's
+  # NO_CLOBBER would otherwise refuse the overwrite.
+  print -r -- "$$" >| "$_pid_file" 2>/dev/null
   # ( cmd & ) — subshell exits immediately, grandchild is orphaned to init.
-  # PID written by claudii-status itself (see --pid-file). No $! available with this pattern.
+  # No $! available with this pattern.
   ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_pid_file" &>/dev/null & )
 }
 

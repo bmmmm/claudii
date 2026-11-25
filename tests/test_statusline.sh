@@ -774,8 +774,30 @@ pid_guard_out=$(
 # PID file must still contain original PID — no new spawn happened
 assert_eq "PID guard: no new spawn when previous fetch still running" "$_TEST_LIVE_PID" "$pid_guard_out"
 
+# Intent marker: the spawner writes its own PID into status.pid BEFORE the
+# fork, so a second spawner racing claudii-status's start sees a job in
+# flight. The stub claudii-status writes nothing, so whatever is in the file
+# after the call is the spawner's pre-fork write — even under NO_CLOBBER.
+rm -f "$PID_TMP/status.pid"
+mkdir -p "$PID_TMP/stub/bin"
+printf '#!/bin/sh\nexit 0\n' > "$PID_TMP/stub/bin/claudii-status"
+chmod +x "$PID_TMP/stub/bin/claudii-status"
+echo stale > "$PID_TMP/status.pid"
+pid_intent_out=$(
+  CLAUDII_CACHE_DIR="$PID_TMP" XDG_CONFIG_HOME="$PID_TMP/config" CLAUDII_HOME="$CLAUDII_HOME" \
+  _STUB="$PID_TMP/stub" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    setopt NO_CLOBBER
+    CLAUDII_HOME=\$_STUB
+    _claudii_status_spawn
+    [[ \"\$(<\"\$CLAUDII_CACHE_DIR/status.pid\")\" == \"\$\$\" ]] && print ok
+  " 2>/dev/null
+)
+assert_eq "status_spawn: intent marker (the shell's PID) written before the fork" "ok" "$pid_intent_out"
+
 rm -rf "$PID_TMP"
-unset PID_TMP pid_guard_out _TEST_LIVE_PID
+unset PID_TMP pid_guard_out pid_intent_out _TEST_LIVE_PID
 
 # ── Adaptive TTL ──────────────────────────────────────────────────────────────
 # Test that effective TTL is adjusted based on cache content:
