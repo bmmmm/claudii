@@ -101,13 +101,27 @@ printf '{"model":{"display_name":"Opus"},"session_id":"slconn00-0000"}\n' | \
   PATH="$_sl_off_dir:$PATH" CLAUDII_CACHE_DIR="$SL_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii-cc-statusline" >/dev/null 2>&1
 
-# Background fetch is async — wait up to 8s for the cache rewrite.
+# The spawn decision is synchronous: _spawn_refresher writes the INTENT marker
+# (a numeric PID) into status.pid BEFORE it forks, so it is already there when
+# the render returns. Assert that first — it pins "the render decided to
+# refresh" independently of how fast the background fetch happens to be.
+_sl_pidfile_content="$(cat "$SL_CACHE/status.pid" 2>/dev/null || true)"
+case "$_sl_pidfile_content" in
+  ''|*[!0-9]*) _sl_intent=no ;;
+  *)           _sl_intent=yes ;;
+esac
+assert_eq "self-refresh: status.pid intent marker written before the fork" "yes" "$_sl_intent"
+
+# The fetch itself is async. Poll for the cache rewrite instead of a fixed
+# wait: a loaded runner took 400+ s for the whole file (runs 17555 and 17593
+# went red on a rigid 8 s), and polling costs time only when it fails.
+# 30 s ceiling, 0.25 s steps.
 refreshed=no
-for _i in 1 2 3 4 5 6 7 8; do
+for _i in $(seq 1 120); do
   if grep -q '_api=unreachable' "$SL_CACHE/status-models" 2>/dev/null; then
     refreshed=yes; break
   fi
-  sleep 1
+  sleep 0.25
 done
 assert_eq "self-refresh: stale cache rewritten by spawned claudii-status" "yes" "$refreshed"
 
