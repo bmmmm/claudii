@@ -9,7 +9,7 @@ rules stay in `AGENTS.md`.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI dispatcher (~304 lines; helpers live in lib/helpers.sh)
+bin/claudii             # CLI dispatcher (~300 lines; helpers live in lib/helpers.sh)
 bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
@@ -19,6 +19,7 @@ bin/claudii-otel           # OTLP control (setup/off/receiver/doctor/build/compa
 bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → flat records in ~/.cache/claudii/otel/events/<kind>-<UTC day>.ndjson (+ receiver.status; --flatten converts old captures)
 bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pending updates + release inbox)
 bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
+bin/claudii-cc-update-refresh # Background refresher for the cc-version segment (GitHub releases → latest + recent tags)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
 lib/cmd/cost.sh         # Commands: cost, cost --forecast, cost --window (history aggregation, D-grid + amount-sorted bars)
@@ -53,6 +54,7 @@ lib/perf_rows.jq        # jq module: merged shape → claudii perf's tagged TSV 
 lib/perf_json.jq        # jq module: merged shape → claudii perf --json
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
+lib/insights-cost-rows.jq # cost's insights side: session token buckets priced at _CLAUDII_RATES → cost-stage-2 rows
 lib/insights_stream.sh  # _insights_stream: insights caches (+ synced host mirrors) → stdout, window-bounded, never argv
 lib/search_dir.sh       # _claudii_search_dir: search/clq workspace, default ~/search (bash + zsh), created on use
 lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
