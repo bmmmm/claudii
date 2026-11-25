@@ -219,9 +219,9 @@ _claudii() {
             preset)
               local -a sl_presets
               sl_presets=(
-                'focused:Dense 2-line layout (model+dir+ctx+rates / clock+health+vpn)'
+                'focused:Dense 3-line layout (model+dir+branch / context+rates / health+tailscale)'
                 'calm:Bare 2-line layout (model / context-bar)'
-                'default:Restore shipped 5-line layout (all segments)'
+                'default:Drop statusline.lines so the shipped layout applies'
               )
               _describe 'cc-statusline preset' sl_presets
               ;;

@@ -406,22 +406,20 @@ _cmd_status() {
 
 _cc_statusline_preset_json() {
   # Bake known presets here. Writes the JSON array for `.statusline.lines`.
+  # `default` is not baked: the preset command deletes `.statusline.lines`
+  # instead, so the shipped layout applies and can never drift from a copy.
   case "$1" in
     focused)
       # 3 lines, dense. Line 1: model+dir+branch (identity — where am I).
       # Line 2: context+compact-eta+rates (metrics — how much is left).
-      # Line 3: claude-status+vpn+tailscale (env). Dense means compact: the one-glyph
+      # Line 3: claude-status+tailscale (env). Dense means compact: the one-glyph
       # `context` segment, not the bar. cc-insomnii (if installed) prepends its
       # own line via the --after wrapper, so no clock segment here.
-      printf '%s' '[["model","dir","branch"],["context","compact-eta","rate-5h","rate-7d"],["claude-status","vpn","tailscale"]]'
+      printf '%s' '[["model","dir","branch"],["context","compact-eta","rate-5h","rate-7d"],["claude-status","tailscale"]]'
       ;;
     calm)
       # 2 lines, bare. Model on top, context bar below. Nothing else.
       printf '%s' '[["model"],["context-bar"]]'
-      ;;
-    default)
-      # Restore the shipped default layout (mirrors config/defaults.json).
-      printf '%s' '[["model","cc-version","tokens","cache-create","cache-hit","response"],["rate-5h","rate-7d","burn-eta","lines-changed"],["api-duration","duration","worktree","worktrees","branch","dir","remotes","git-sync"],["proxy","cost","context","compact-eta"],["claude-status"]]'
       ;;
     *)
       return 1
@@ -436,25 +434,34 @@ _cmd_cc_statusline() {
       _preset_name="${3:-}"
       if [[ -z "$_preset_name" ]]; then
         printf "  ${CLAUDII_CLR_BOLD}cc-statusline presets${CLAUDII_CLR_RESET}\n"
-        printf "    ${CLAUDII_CLR_CYAN}focused${CLAUDII_CLR_RESET}   dense 3-line layout: model+dir / ctx-bar+rates / clock+health+vpn\n"
+        printf "    ${CLAUDII_CLR_CYAN}focused${CLAUDII_CLR_RESET}   dense 3-line layout: model+dir+branch / context+rates / health+tailscale\n"
         printf "    ${CLAUDII_CLR_CYAN}calm${CLAUDII_CLR_RESET}      bare 2-line layout: model / context-bar\n"
-        printf "    ${CLAUDII_CLR_CYAN}default${CLAUDII_CLR_RESET}   shipped 5-line layout (everything)\n"
+        printf "    ${CLAUDII_CLR_CYAN}default${CLAUDII_CLR_RESET}   shipped layout (drops your statusline.lines)\n"
         printf "\n  Usage: ${CLAUDII_CLR_CYAN}claudii cc-statusline preset <name>${CLAUDII_CLR_RESET}\n"
         return 0
       fi
-      _preset_lines=$(_cc_statusline_preset_json "$_preset_name") || {
-        echo "Unknown preset: $_preset_name" >&2
-        echo "  → claudii cc-statusline preset   (list available)" >&2
-        return 1
-      }
+      _preset_lines=""
+      if [[ "$_preset_name" != default ]]; then
+        _preset_lines=$(_cc_statusline_preset_json "$_preset_name") || {
+          echo "Unknown preset: $_preset_name" >&2
+          echo "  → claudii cc-statusline preset   (list available)" >&2
+          return 1
+        }
+      fi
       _cfg_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
       if [[ ! -f "$_cfg_file" ]]; then
         mkdir -p "$(dirname "$_cfg_file")"
         cp "$CLAUDII_HOME/config/defaults.json" "$_cfg_file"
       fi
-      _jq_update "$_cfg_file" ".statusline.lines = $_preset_lines"
-      echo -e "${CLAUDII_CLR_GREEN}cc-statusline preset:${CLAUDII_CLR_RESET} $_preset_name"
-      echo -e "  ${CLAUDII_CLR_DIM}written to .statusline.lines in $_cfg_file${CLAUDII_CLR_RESET}"
+      if [[ -z "$_preset_lines" ]]; then
+        _jq_update "$_cfg_file" 'del(.statusline.lines)'
+        echo -e "${CLAUDII_CLR_GREEN}cc-statusline preset:${CLAUDII_CLR_RESET} default"
+        echo -e "  ${CLAUDII_CLR_DIM}removed .statusline.lines from $_cfg_file — the shipped layout applies${CLAUDII_CLR_RESET}"
+      else
+        _jq_update "$_cfg_file" ".statusline.lines = $_preset_lines"
+        echo -e "${CLAUDII_CLR_GREEN}cc-statusline preset:${CLAUDII_CLR_RESET} $_preset_name"
+        echo -e "  ${CLAUDII_CLR_DIM}written to .statusline.lines in $_cfg_file${CLAUDII_CLR_RESET}"
+      fi
       ;;
     on)
       if [[ ! -f "$SETTINGS" ]]; then
