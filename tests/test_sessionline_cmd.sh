@@ -50,6 +50,38 @@ output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline 2>&1)
 assert_contains "cc-statusline: shows active" "active" "$output"
 assert_contains "cc-statusline: plain command labelled plain" "plain" "$output"
 
+# ── status: wrapper chains are recognised through _cc_statusline_connected ──
+# The insomnii wrapper used to be detected by a literal glob on the command
+# string (AGENTS.md: never string-match statusLine.command), which missed an
+# absolute --after path and called it a "custom wrapper chain". Connection is
+# now the helper's call; the label only names the first program by basename.
+
+_sl_status_for() {  # <statusLine.command> -> status output
+  jq --arg c "$1" '.statusLine = {"type":"command","command":$c}' \
+    "$TEST_TMP/.claude/settings.json" > "$TEST_TMP/.claude/settings.json.tmp" \
+    && mv "$TEST_TMP/.claude/settings.json.tmp" "$TEST_TMP/.claude/settings.json"
+  HOME="$TEST_TMP" PATH="$TEST_TMP/bin:$PATH" bash "$CLI" cc-statusline 2>&1
+}
+
+output=$(_sl_status_for "cc-insomnii --after=claudii-cc-statusline")
+assert_contains "cc-statusline: --after= wrapper labelled cc-insomnii" "cc-insomnii wrapper" "$output"
+output=$(_sl_status_for "cc-insomnii --after claudii-cc-statusline")
+assert_contains "cc-statusline: --after <cmd> wrapper labelled cc-insomnii" "cc-insomnii wrapper" "$output"
+output=$(_sl_status_for "/opt/homebrew/bin/cc-insomnii --after=/opt/homebrew/bin/claudii-cc-statusline")
+assert_contains "cc-statusline: absolute-path wrapper labelled cc-insomnii" "cc-insomnii wrapper" "$output"
+output=$(_sl_status_for "/usr/local/bin/claudii-cc-statusline")
+assert_contains "cc-statusline: absolute plain path labelled plain" "plain" "$output"
+# A user wrapper script that calls claudii-cc-statusline (one indirection)
+mkdir -p "$TEST_TMP/bin"
+printf '#!/bin/sh\nexec claudii-cc-statusline\n' > "$TEST_TMP/bin/my-wrap"
+chmod +x "$TEST_TMP/bin/my-wrap"
+output=$(_sl_status_for "my-wrap")
+assert_contains "cc-statusline: user wrapper script is a custom chain" "custom wrapper chain: my-wrap" "$output"
+output=$(_sl_status_for "some-other-statusline")
+assert_contains "cc-statusline: foreign command is a custom configuration" "custom configuration" "$output"
+output=$(_sl_status_for "claudii-cc-statusline")
+unset -f _sl_status_for
+
 # ── off: removes statusLine ──
 
 output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline off 2>&1)

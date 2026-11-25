@@ -508,25 +508,27 @@ _cmd_cc_statusline() {
         echo "CC-Statusline: not configured  ($SETTINGS missing)"
       else
         _cur_cmd=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)
-        case "$_cur_cmd" in
-          "")
-            echo "CC-Statusline: not configured"
-            echo "  → claudii cc-statusline on  to enable"
-            ;;
-          claudii-cc-statusline)
+        if [[ -z "$_cur_cmd" ]]; then
+          echo "CC-Statusline: not configured"
+          echo "  → claudii cc-statusline on  to enable"
+        elif ! _cc_statusline_connected "$_cur_cmd"; then
+          echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
+        else
+          # Connected — _cc_statusline_connected decided that (AGENTS.md: never
+          # string-match statusLine.command). The label only names the
+          # program that runs first, by basename, so absolute paths and
+          # `--after <cmd>` read the same as the bare forms.
+          _sl_words=()
+          IFS=' ' read -ra _sl_words <<< "$_cur_cmd"
+          _sl_head="${_sl_words[0]##*/}"
+          if [[ "$_sl_head" == claudii-cc-statusline && ${#_sl_words[@]} -eq 1 ]]; then
             echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(plain — no insomnii wrapper)${CLAUDII_CLR_RESET}"
-            ;;
-          *cc-insomnii*--after=claudii-cc-statusline*|*cc-insomnii*--after\ claudii-cc-statusline*)
+          elif [[ "$_sl_head" == cc-insomnii ]]; then
             echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(cc-insomnii wrapper)${CLAUDII_CLR_RESET}"
-            ;;
-          *)
-            if _cc_statusline_connected "$_cur_cmd"; then
-              echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_cur_cmd)${CLAUDII_CLR_RESET}"
-            else
-              echo -e "CC-Statusline: ${CLAUDII_CLR_YELLOW}custom configuration${CLAUDII_CLR_RESET}  ($_cur_cmd)"
-            fi
-            ;;
-        esac
+          else
+            echo -e "CC-Statusline: ${CLAUDII_CLR_GREEN}active${CLAUDII_CLR_RESET}  ${CLAUDII_CLR_DIM}(custom wrapper chain: $_cur_cmd)${CLAUDII_CLR_RESET}"
+          fi
+        fi
       fi
       ;;
     *)
