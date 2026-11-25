@@ -18,8 +18,8 @@
 _AC_CLI="$CLAUDII_HOME/bin/claudii"
 
 # ── Commands not yet under the contract ──────────────────────────────────────
-# Their argument parsers live in lib/cmd/{system,sessions,display,config,omlx,
-# vpnii,vibemap,perf}.sh, outside the change that introduced this gate. The list
+# Their argument parsers live in lib/cmd/{system,sessions,display,config,
+# vibemap,perf}.sh, outside the change that introduced this gate. The list
 # is a RATCHET, not an excuse: the loop below asserts that each of these still
 # FAILS the contract, so converting one without deleting it from here turns this
 # test red. It can only shrink.
