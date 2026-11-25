@@ -30,8 +30,6 @@ assert_contains "omlx status: layout check present"    "statusline segment" "$_o
 assert_contains "omlx status: path check present"      "active.json path"   "$_om_out"
 assert_contains "omlx status: server check present"    "oMLX server"        "$_om_out"
 assert_contains "omlx status: CLI check present"       "oMLX CLI"           "$_om_out"
-# Shipped defaults include the omlx segment in .statusline.lines
-assert_contains "omlx status: defaults have omlx in lines" "omlx is in cc-statusline lines" "$_om_out"
 
 # ── omlx status (bare `claudii omlx`): same as status ─────────────────────────
 _om_bare=$(HOME="$_om_base" XDG_CONFIG_HOME="$_om_base/xdg" CLAUDII_CACHE_DIR="$_om_base/cache" \

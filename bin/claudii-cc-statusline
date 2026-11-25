@@ -30,20 +30,19 @@ umask 077
 # Config (statusline.* + vibemap.*) — single jq call.
 # Separators: US (0x1F) between fields, RS (0x1E) between layout lines.
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
-_from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
+_from_cfg=""; _sc_models_cfg=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
 _cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""; _cfg_cc_version_ttl=""
 _cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""; _cfg_debug_level=""
 if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
     _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label \
     _cfg_separator _cfg_debug_level < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
-      (.statusline.omlx_active_path // ""),
       (.statusline.rate_display // ""),
       (.statusline.bedtime // ""),
       (.vibemap.enabled // false | tostring),
@@ -75,7 +74,7 @@ CLAUDII_LOG_LEVEL="${_cfg_debug_level:-off}"
 _DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
-omlx,proxy,cost,context,compact-eta
+proxy,cost,context,compact-eta
 claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
@@ -88,9 +87,9 @@ _lines_raw="$_DEFAULT_LINES"
 # matched the `github` segment — that near-miss is documented further down).
 #
 # Resolved here, immediately after the config parse, rather than in the middle
-# of the segment section where it used to live: the clock, tailscale and omlx
-# segments all fork BEFORE that point, so they could not ask the question and
-# paid their forks on every render regardless of the layout.
+# of the segment section where it used to live: segments that fork earlier
+# (the clock) could not ask the question there and paid their forks on every
+# render regardless of the layout.
 _lines_csv=",${_lines_raw//$'\n'/,},"
 _in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
@@ -1451,10 +1450,6 @@ if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-# Layout and _in_layout are resolved near the top of the file, right after the
-# config parse — they only need $_from_cfg, and the segments that fork before
-# this point (clock/cc-insomnii, tailscale, omlx) have to be able to ask.
-
 # Claude Code app/CLI version (top-level .version in the statusLine payload),
 # red + "+N releases behind" when a newer build exists. N is exact — the
 # position of the installed version inside the cached release-tag list, not a
@@ -1965,41 +1960,12 @@ if _in_layout claude-status; then
   fi
 fi
 
-# omlx local-agent indicator — gateii's active.json, 300s stale-guard.
-_seg_omlx=""
-_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-$HOME/offline_coding/gateii/data/agents/active.json}}"
-# Layout-gated: the jq below is a fork, and mere existence of gateii's
-# active.json is not a reason to pay it on a layout that never shows omlx.
-if _in_layout omlx && [[ -f "$_omlx_active_path" ]]; then
-  IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
-    jq -r '[
-      (.started_epoch // 0 | tostring),
-      (.task // "?"),
-      (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
-    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
-  )"
-  if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
-    _omlx_age=$(( _now - _omlx_started ))
-    if (( _omlx_age >= 0 && _omlx_age < 300 )); then
-      _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
-    fi
-  fi
-fi
-
-# VPN — WireGuard tunnel name from the state file.
-_seg_vpn=""
-_vpn_state="${_cache_dir}/vpnii"
-if [[ -f "$_vpn_state" ]]; then
-  _vpn_tunnel=$(<"$_vpn_state")
-  [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
-fi
-
-# Tailscale (CGNAT 100.64.0.0/10) — its own segment, not glued to `vpn`, so a
-# layout can place WireGuard and Tailscale on different lines. The ifconfig
-# probe is a fork + grep on every render, so cache the up/down result ~30s
-# (shared with the zsh RPROMPT segment in lib/vpnii.zsh: $_cache_dir/vpnii-ts,
-# "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through to a re-probe via
-# the numeric guard.
+# Tailscale (CGNAT 100.64.0.0/10) — up when an interface holds a tailnet
+# address. The ifconfig probe is a fork + grep on every render, so cache the
+# up/down result ~30s in $_cache_dir/vpnii-ts ("<epoch> <0|1>", 1 = up; the
+# name predates this segment standing alone and stays so existing caches keep
+# working). Garbage/torn reads fall through to a re-probe via the numeric
+# guard.
 #
 # The 30s cache bounded how OFTEN the probe ran but not WHETHER it ran: a
 # layout without `tailscale` still paid the ifconfig fork every time the cache
@@ -2020,10 +1986,10 @@ fi
 if (( ! _ts_have )); then
   _ts_up=1
   grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' <<< "$(ifconfig 2>/dev/null)" && _ts_up=0
-  # Atomic, like every other cache this file writes: the zsh RPROMPT segment
-  # (lib/vpnii.zsh) writes the same path, so a truncating `>` lets a reader see
-  # a half-written line. The numeric guard above catches pure garbage but not a
-  # torn "<epoch> " — that parses as epoch-is-also-the-value.
+  # Atomic, like every other cache this file writes: concurrent renders (one
+  # per Claude Code session) share the path, so a truncating `>` lets a reader
+  # see a half-written line. The numeric guard above catches pure garbage but
+  # not a torn "<epoch> " — that parses as epoch-is-also-the-value.
   _ts_tmp="${_ts_cache}.tmp.$$"
   if printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_tmp" 2>/dev/null; then
     mv -f "$_ts_tmp" "$_ts_cache" 2>/dev/null || rm -f "$_ts_tmp" 2>/dev/null
@@ -2167,9 +2133,7 @@ while IFS= read -r _line_segs; do
       ci)            _val="$_seg_ci"       ;;
       sessions)      _val="$_seg_sessions" ;;
       claude-status) _val="$_seg_claude_status" ;;
-      vpn)           _val="$_seg_vpn"      ;;
       tailscale)     _val="$_seg_tailscale" ;;
-      omlx)          _val="$_seg_omlx"     ;;
       bumpii)        _val="$_seg_bumpii"   ;;
       proxy)         _val="$_seg_proxy"    ;;
       clock)         _val="$_seg_clock"    ;;
