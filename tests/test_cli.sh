@@ -361,17 +361,17 @@ unset _SE_TMP _SE_XDG _SE_CACHE _SE_PROJ _se_out _se_exit
 
 _COST_H_TMP="$(mktemp -d)"
 
-# Compute timestamps using portable macOS/GNU date
+# Compute timestamps using portable macOS/GNU date. "Today" is pinned to local
+# noon: a `now - 60` pair slides onto YESTERDAY in the first minute after
+# midnight (the same trap the same-day running_spend case below avoids). The
+# day string is read ONCE and everything — noon, the month key — derives from it.
+_cost_h_day=$(date '+%Y-%m-%d')
+_cost_h_ym="${_cost_h_day%-*}"
 _now_ts=$(date +%s)
-if date -j -f '%s' "$_now_ts" '+%Y-%m-%d' >/dev/null 2>&1; then
-  _today_ts=$_now_ts
-  _week_ts=$(( _now_ts - 86400 ))          # yesterday (same week unless Mon)
-  _old_ts=$(( _now_ts - 40 * 86400 ))      # ~40 days ago — different month
-else
-  _today_ts=$_now_ts
-  _week_ts=$(( _now_ts - 86400 ))
-  _old_ts=$(( _now_ts - 40 * 86400 ))
-fi
+_today_ts=$(date -d "$_cost_h_day 12:00" '+%s' 2>/dev/null \
+  || date -j -f '%Y-%m-%d %H:%M' "$_cost_h_day 12:00" '+%s')
+_week_ts=$(( _today_ts - 86400 ))          # yesterday (same week unless Mon)
+_old_ts=$(( _now_ts - 40 * 86400 ))        # ~40 days ago — different month
 
 # Write history.tsv: timestamp<tab>model<tab>cost<tab>ctx<tab>rate<tab>session_id
 # Entries must be in chronological order (ascending ts) — running_spend depends on order.
@@ -408,7 +408,7 @@ cost_h_tsv=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii" c
 assert_contains "cost (history) --tsv: has header" "period	model	cost" "$cost_h_tsv"
 assert_contains "cost (history) --tsv: has today row" "today" "$cost_h_tsv"
 # month rows now carry their YYYY-MM key in the period column (not literal "month")
-assert_contains "cost (history) --tsv: has YYYY-MM month row" "$(date +%Y-%m)" "$cost_h_tsv"
+assert_contains "cost (history) --tsv: has YYYY-MM month row" "$_cost_h_ym" "$cost_h_tsv"
 
 # Empty history.tsv (header only) → shows no-data message, no crash
 printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
@@ -417,7 +417,7 @@ cost_h_empty=$(CLAUDII_CACHE_DIR="$_COST_H_TMP" bash "$CLAUDII_HOME/bin/claudii"
 assert_matches "cost (history): empty history → actionable message" "No history|No session data" "$cost_h_empty"
 
 rm -rf "$_COST_H_TMP"
-unset _COST_H_TMP _now_ts _today_ts _week_ts _old_ts cost_h_out cost_h_err cost_h_json cost_h_tsv cost_h_empty
+unset _COST_H_TMP _cost_h_day _cost_h_ym _now_ts _today_ts _week_ts _old_ts cost_h_out cost_h_err cost_h_json cost_h_tsv cost_h_empty
 
 # ── cost (history): daily delta — multi-day session attribution ───────────────
 # Scenario A — multi-day Sonnet session:
@@ -778,6 +778,9 @@ _WK_TSV_TMP="$(mktemp -d)"
 mkdir -p "$_WK_TSV_TMP/claudii"
 cp "$CLAUDII_HOME/config/defaults.json" "$_WK_TSV_TMP/claudii/config.json"
 _wk_now=$(date +%s)
+# The month the fixture row belongs to, taken from its own timestamp — not from a
+# second `date` after the run, which differs across a month boundary.
+_wk_ym=$(date -d "@$_wk_now" +%Y-%m 2>/dev/null || date -r "$_wk_now" +%Y-%m)
 printf '%s\n' "timestamp	model	cost	ctx	rate	session_id" \
   "${_wk_now}	claude-sonnet-4-5	9.00	50	30	sid-wk" \
   > "$_WK_TSV_TMP/history.tsv"
@@ -785,10 +788,10 @@ _wk_tsv=$(CLAUDII_CACHE_DIR="$_WK_TSV_TMP" XDG_CONFIG_HOME="$_WK_TSV_TMP" \
   bash "$CLAUDII_HOME/bin/claudii" cost --tsv 2>&1)
 assert_contains "cost --tsv: week period present" "week" "$_wk_tsv"
 assert_contains "cost --tsv: today period present" "today" "$_wk_tsv"
-assert_contains "cost --tsv: YYYY-MM month period present" "$(date +%Y-%m)" "$_wk_tsv"
+assert_contains "cost --tsv: YYYY-MM month period present" "$_wk_ym" "$_wk_tsv"
 assert_contains "cost --tsv: alltime period present" "alltime" "$_wk_tsv"
 rm -rf "$_WK_TSV_TMP"
-unset _WK_TSV_TMP _wk_now _wk_tsv
+unset _WK_TSV_TMP _wk_now _wk_ym _wk_tsv
 
 # ── cost pretty output: no TZ=UTC artifacts ────────────────────────────────
 # After removing TZ=UTC prefix from date calls, output must still be clean.

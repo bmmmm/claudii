@@ -274,6 +274,9 @@ cat > "$_vm_home3/.config/claudii/config.json" <<EOF
 { "vibemap": { "enabled": true, "path": "$_vm_path3" }, "statusline": { "bedtime": "23:00" } }
 EOF
 
+# Hour read right before the run it describes (the strip reads the clock itself)
+_cur_h=$(date '+%H' | sed 's/^0//')
+_cur_h="${_cur_h:-0}"
 _strip_out=$(HOME="$_vm_home3" XDG_CACHE_HOME="$_vm_home3/.cache" \
   XDG_CONFIG_HOME="$_vm_home3/.config" \
   bash "$CLAUDII_HOME/bin/claudii" vibemap strip 2>&1)
@@ -286,20 +289,19 @@ assert_eq "strip today-row: ▶ marker present" "1" "$_ok"
 grep -q "│" <<< "$(grep "▶" <<< "$_strip_out")" && _ok=1 || _ok=0
 assert_eq "strip today-row: │ cursor present in today row" "1" "$_ok"
 
-# Determine current hour — if it's before 23, hour 23 should be blank in today-row
-_cur_h=$(date '+%H' | sed 's/^0//')
-_cur_h="${_cur_h:-0}"
-if (( _cur_h < 23 )); then
-  # today-row should have trailing spaces (future hours) after the cursor
-  _today_row=$(echo "$_strip_out" | grep "▶")
-  # Strip ANSI escapes to compare raw characters
-  _today_raw=$(printf '%s' "$_today_row" | sed $'s/\033\\[[0-9;]*m//g')
-  # Count trailing spaces after the cursor position — at least one future hour
-  # if we're not in the last hour of the day.
-  _future_spaces=$(printf '%s' "$_today_raw" | grep -o ' *$' | wc -c | tr -d ' ')
-  (( _future_spaces > 0 )) && _ok=1 || _ok=0
-  assert_eq "strip today-row: future hours rendered as blank spaces" "1" "$_ok"
-fi
+# Future hours must be blank — and the assertion ALWAYS runs. It used to sit in
+# `if (( _cur_h < 23 ))`, so between 23:00 and 24:00 it vanished and the suite
+# reported one assertion fewer (CI: 2848 vs 2849). The EXPECTED value follows
+# the clock instead: 1 while hours remain after the current one, 0 in hour 23.
+_today_row=$(echo "$_strip_out" | grep "▶")
+# Strip ANSI escapes to compare raw characters
+_today_raw=$(printf '%s' "$_today_row" | sed $'s/\033\\[[0-9;]*m//g')
+# Trailing spaces after the cursor = future hours (grep -o prints no empty match)
+_future_spaces=$(printf '%s' "$_today_raw" | grep -o ' *$' | wc -c | tr -d ' ')
+(( _future_spaces > 0 )) && _ok=1 || _ok=0
+(( _cur_h < 23 )) && _want_future=1 || _want_future=0
+assert_eq "strip today-row: future hours rendered as blank spaces (none left in hour 23)" "$_want_future" "$_ok"
+unset _cur_h _want_future _future_spaces _today_row _today_raw
 
 rm -rf "$_vm_home3"
 
