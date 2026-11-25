@@ -1,15 +1,14 @@
 # claudii TODO
 
-> Protokoll: siehe `/orchestrate` Skill. Agent-Aliases: `claudii agents` oder `config/defaults.json`.
+> Protokoll: siehe `/orchestrate` Skill. Agents: `claudii agents` (definiert unter `agents` in der User-Config; `config/defaults.json` liefert keine mehr).
 
 ---
 
 ## Pending
 
-> Die sechs Entdopplungs-Tasks aus dem Audit vom 2026-09-02 sind erledigt
-> (84b2cd3, f9b914f, 796ab53, 3331012, 8bd36a2, 96e52e7). Was hier steht, sind
-> die Reste, die die Tasks selbst offengelegt haben — jeweils weil ihre
-> Touches-Liste den Call-Site nicht enthielt.
+> Stand 2026-11-25, nach dem Aufräum-Audit (Branch
+> `t3/repo-audit-dead-code-cleanup`). Was hier steht, ist offen und an
+> aktuellem Code geprüft.
 
 ### Die vier positionellen awk-Programme auf HC[] ziehen
 
@@ -26,49 +25,21 @@ an den vier Call-Sites ergänzen, dann die Positionen durch `HC[]` ersetzen.
 `tests/test_history_cols.sh` pinnt die heutigen Positionen gegen das Schema und
 wird rot, wenn die Umstellung danebengeht.
 
-### Die 17 verbleibenden Commands unter den Exit-Code-Vertrag
+### Die sechs verbleibenden Commands unter den Exit-Code-Vertrag
 
 **Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/system.sh,
-lib/cmd/sessions.sh, lib/cmd/display.sh, lib/cmd/config.sh, lib/cmd/omlx.sh,
-lib/cmd/vpnii.sh, lib/cmd/vibemap.sh**
+lib/cmd/insights.sh, tests/test_arg_contract.sh, man/man1/claudii.1**
 
-28 von 45 dispatchten Commands liefern bei unbekannter Option rc 2 mit
-`claudii <cmd>: unknown option: <arg>`. Die übrigen stehen in `_AC_PENDING`
-(`tests/test_arg_contract.sh`) und die Liste ist eine **Ratsche**: der Test
-verlangt, dass ein Pending-Command den Vertrag noch *verfehlt*, geht also rot,
-wenn jemand einen konvertiert ohne ihn aus der Liste zu nehmen. Verifiziert
-2026-09-02, indem `perf` konvertiert und in der Liste gelassen wurde — genau
-eine Assertion fiel. Kein Freibrief, nur eine Reihenfolge.
-
-Dazu gehört `-h`/`--help`: die Man-Page sagt jetzt ehrlich, dass nur die
-konvertierten Commands eine Usage drucken und mit 0 enden. Die schlimmste
-Ausprägung ist `claudii config -h` — es fällt in den `*)`-Arm von
-`lib/cmd/config.sh` und **kippt die komplette User-Config nach stdout**,
-statt eine Usage zu zeigen. `pin -h` sucht eine Session namens `-h`;
-`sessions -h` ignoriert das Flag stillschweigend.
-
-### `tests/test_vibemap.sh` überspringt zwischen 23:00 und Mitternacht eine Assertion
-
-**Type: Fix** · **Complexity: Small** · **Touches: tests/test_vibemap.sh**
-
-Gefunden 2026-09-03. `tests/test_vibemap.sh:292` umschließt eine Assertion mit
-`if (( _cur_h < 23 ))`, wobei `_cur_h` die echte Uhrzeit ist (`date '+%H'`,
-Zeile 290) — die einzige Stelle der Datei, die eine laufende Uhr liest. In der
-letzten Stunde des Tages wird `strip today-row: future hours rendered as blank
-spaces` (Zeile 301) also **nicht rot, sondern gar nicht aufgerufen**. Daher
-meldet dieselbe Datei 40 statt 41, und die Suite 2295 statt 2296.
-
-Reproduziert ohne die Systemuhr anzufassen, im selben Moment:
-`TZ=Europe/Berlin` — lokal 03:17 — 41 · `TZ=America/Noronha` — lokal 23:17 — 40.
-
-**Fix:** `assert_eq` immer aufrufen und stattdessen den *Erwartungswert* aus
-`_cur_h` ableiten (0, wenn keine Zukunftsstunden mehr im Tag sind). Die
-Assertion prüft dann dieselbe Invariante und die Zahl steht zu jeder Stunde.
-
-**Warum das zählt:** die Assertion-Zahl ist in diesem Repo ein Prüfsignal — sie
-hat 143 verschluckte Asserts unter bash 3.2 gefangen und einen Agenten
-überführt, der einen grünen Lauf auf altem Zählerstand als Abdeckung meldete.
-Ein Wert, der an der Uhrzeit hängt, entwertet genau das.
+33 von 39 dispatchten Commands liefern bei unbekannter Option rc 2 mit
+`claudii <cmd>: unknown option: <arg>` (Helfer `_cli_unknown_opt`,
+`lib/cmd/insights.sh`) und bei `-h`/`--help` die Usage mit rc 0. Offen sind
+`cc-statusline`, `claudestatus`, `insomnii`, `session-dashboard`, `status`
+(alle `lib/cmd/system.sh`) und `session` (`lib/cmd/insights.sh`) — heute rc 1
+auf `--bogus`. Sie stehen in `_AC_PENDING` (`tests/test_arg_contract.sh`), und
+die Liste ist eine **Ratsche**: der Test verlangt, dass ein Pending-Command den
+Vertrag noch *verfehlt*, geht also rot, wenn jemand einen konvertiert, ohne
+ihn aus der Liste zu nehmen. Mit jedem konvertierten Command die Zählung in
+der Man-Page (EXIT STATUS, „33 of the 39“) mitziehen.
 
 ### Blocked: Session-Fingerprint Teil 3 — Orchestrator nutzt Fingerprints
 
