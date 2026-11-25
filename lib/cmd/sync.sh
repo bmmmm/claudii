@@ -426,6 +426,7 @@ _sync_apply() {
 
   if [[ -f "$tmp/live" && ! -L "$tmp/live" ]]; then
     mv -f "$tmp/live" "$mirror/live"
+    _sync_prune_sessions "$mirror"
   fi
 
   {
@@ -435,6 +436,26 @@ _sync_apply() {
     printf 'cursor=%s\n' "$at"
     printf 'synced_at=%s\n' "$(date +%s)"
   } > "$mirror/state.tmp" && mv -f "$mirror/state.tmp" "$mirror/state"
+  return 0
+}
+
+# The mirrored session caches only serve the live-session rows of `sync
+# status` (_sync_live_rows), and the source never says when one of its
+# sessions ends — so without this they piled up for good. Every bundle carries
+# the complete `live` list; whatever the mirror holds beyond it goes. A
+# session that comes back (a resume keeps its id) rewrites its cache at the
+# source, so the next delta brings the file back. Cache files are named
+# session-<first 8 of the id>, the way cc-statusline writes them.
+_sync_prune_sessions() {
+  local mirror="$1" f sid keep=$'\n'
+  [[ -d "$mirror/sessions" && -f "$mirror/live" ]] || return 0
+  while IFS= read -r sid; do
+    [[ -n "$sid" ]] && keep+="session-${sid:0:8}"$'\n'
+  done < "$mirror/live"
+  for f in "$mirror"/sessions/session-*; do
+    [[ -f "$f" ]] || continue
+    case "$keep" in *$'\n'"${f##*/}"$'\n'*) ;; *) rm -f "$f" ;; esac
+  done
   return 0
 }
 

@@ -300,3 +300,20 @@ _sy dst sync rm box >/dev/null 2>&1
 assert_eq "rm: unknown host exits 1" "1" "$?"
 
 unset _SY_CMD _SY_T _SY_SID_A _SY_SID_B _SY_SRC_C _SY_MIR _out _err _rc _tok _req _list _files _json _before _left _d
+
+# ── mirrored session caches are pruned to the source's live list ─────────────
+# The source never says when a session ends, so every import keeps only the
+# session-* caches whose id is in the bundle's `live` list.
+_SY_PR="$_SY_ROOT/prune"
+mkdir -p "$_SY_PR/sessions"
+printf 'session_id=%s\n' "aaaaaaaa-0000-4000-8000-00000000000a" > "$_SY_PR/sessions/session-aaaaaaaa"
+printf 'session_id=%s\n' "bbbbbbbb-0000-4000-8000-00000000000b" > "$_SY_PR/sessions/session-bbbbbbbb"
+printf '%s\n' "aaaaaaaa-0000-4000-8000-00000000000a" > "$_SY_PR/live"
+bash -c 'source "$CLAUDII_HOME/lib/cmd/sync.sh"; _sync_prune_sessions "$1"' _ "$_SY_PR"
+assert_file_exists "prune: a live session's cache stays" "$_SY_PR/sessions/session-aaaaaaaa"
+assert_eq "prune: an ended session's cache goes" "gone" \
+  "$([[ -e "$_SY_PR/sessions/session-bbbbbbbb" ]] && echo kept || echo gone)"
+: > "$_SY_PR/live"
+bash -c 'source "$CLAUDII_HOME/lib/cmd/sync.sh"; _sync_prune_sessions "$1"' _ "$_SY_PR"
+assert_eq "prune: an empty live list empties the mirror's sessions" "0" \
+  "$(find "$_SY_PR/sessions" -type f | wc -l | tr -d ' ')"
