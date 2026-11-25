@@ -1914,6 +1914,24 @@ from
 .B statusline.bedtime
 (default
 .IR 23:00 ).
+Three switches, all
+.B true
+by default, go along as
+.BR CC_INSOMNII_SHAME ,
+.B CC_INSOMNII_MOTIVATION
+and
+.BR CC_INSOMNII_RAINBOW :
+.B statusline.shame
+(the bedtime-shaming messages),
+.B statusline.motivation
+(the motivational messages) and
+.B statusline.rainbow
+(the rainbow colouring). Only a boolean
+.B false
+turns one off (as
+.B claudii config set
+writes it); what each one does is up to
+.BR cc-insomnii (1).
 .PP
 .B cron / Stop-hook integration:
 .B claudii-stop-hook

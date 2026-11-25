@@ -1749,6 +1749,13 @@ echo '{"model":{"display_name":"Opus"}}' \
 _ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
 assert_contains "insomnii env: absent keys fall back to shame=true"   "shame=true" "$_ins_env"
 assert_contains "insomnii env: absent keys fall back to rainbow=true" "rainbow=true" "$_ins_env"
+# The same three switches are declared in config/defaults.json, so
+# `claudii config get` reports what the renderer forwards instead of nothing.
+assert_eq "insomnii switches: defaults.json declares all three as true" "true true true" \
+  "$(jq -r '.statusline | "\(.shame) \(.motivation) \(.rainbow)"' "$CLAUDII_HOME/config/defaults.json")"
+assert_eq "insomnii switches: config get falls back to the default" "true" \
+  "$(HOME="$_ins_dir" XDG_CONFIG_HOME="$_ins_dir/cfg" CLAUDII_CACHE_DIR="$_ins_dir/cache" \
+     bash "$CLAUDII_HOME/bin/claudii" config get statusline.motivation 2>/dev/null)"
 
 # Regression 2, other half: a corrupt config no longer reaches cc-insomnii at
 # all. The failed jq leaves the layout at the shipped default, which has no
