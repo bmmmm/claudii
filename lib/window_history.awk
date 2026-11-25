@@ -2,7 +2,7 @@
 #
 # Boundaries arrive as a comma-separated ascending epoch list (-v bounds), so
 # window i spans [B[i], B[i+1]). They are computed by the caller from the
-# reset_7d values actually observed in history (column 11), falling back to a
+# reset7d values actually observed in history, falling back to a
 # 7-day grid only where none were recorded — Anthropic can reset a weekly
 # window early, and a hard-coded 7-day grid would invent boundaries that never
 # existed.
@@ -10,30 +10,40 @@
 # As in lib/window.awk, every row feeds attr_delta() so the per-session
 # baseline is correct, while only in-range rows are summed.
 #
-# Requires attr_delta() from lib/attribution.awk (prepended by the caller —
-# lib/cmd/week.sh string-interpolates both files into one program).
+# Requires lib/history_cols.awk and lib/attribution.awk (attr_delta) loaded
+# first: awk -f history_cols.awk -f attribution.awk -f window_history.awk
+# (lib/cmd/week.sh).
 #
 # Variables (-v): bounds — the comma-separated ascending epoch list above. The
 # only binding; everything else comes from the row.
 #
-# Columns: declared in lib/history_cols.awk (HC_SCHEMA) — ts, cost, sid, in,
-# out. Spelled out positionally here because that call site loads no
-# history_cols.awk; tests/test_history_cols.sh pins them against the schema.
+# Columns: read by name through lib/history_cols.awk (HC_SCHEMA) — ts, cost,
+# sid, in, out.
 #
 # Emits one TSV line per window: start  end  tokens  cost  sessions
 
-BEGIN { nb = split(bounds, B, ",") }
+BEGIN {
+  # Without HC[] every $HC_* below would degrade to $0 — numbers that are
+  # quietly wrong rather than absent. (exit from BEGIN still runs END, hence
+  # the flag; END bails before it prints anything.)
+  if (!("ts" in HC)) {
+    print "window_history.awk: needs -f lib/history_cols.awk loaded first" > "/dev/stderr"
+    hc_missing = 1
+    exit 2
+  }
+  nb = split(bounds, B, ",")
+}
 
 { gsub(/\r/, "") }
-NF < 6 { next }
-$1 == "timestamp" || $1 == "" || $6 == "" { next }
+NF < HC_MINCOL { next }
+$HC_TS == "timestamp" || $HC_TS == "" || $HC_SID == "" { next }
 
 {
-  ts = $1 + 0
+  ts = $HC_TS + 0
   if (ts == 0) next
-  sid = $6
-  cinc = attr_delta(cost_baseline, sid, $3 + 0)
-  tinc = attr_delta(tok_baseline, sid, ($7 == "" ? 0 : $7 + 0) + ($8 == "" ? 0 : $8 + 0))
+  sid = $HC_SID
+  cinc = attr_delta(cost_baseline, sid, $HC_COST + 0)
+  tinc = attr_delta(tok_baseline, sid, ($HC_IN == "" ? 0 : $HC_IN + 0) + ($HC_OUT == "" ? 0 : $HC_OUT + 0))
   if (cinc <= 0 && tinc <= 0) next
 
   # Rows arrive chronologically, so resume the scan where the last row landed
@@ -49,6 +59,7 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
 }
 
 END {
+  if (hc_missing) exit 2
   # Cost as integer cents — the renderer must not format a float (see the note
   # in lib/window.awk about the unreliable VAR=C prefix on bash printf).
   for (i = 1; i < nb; i++)

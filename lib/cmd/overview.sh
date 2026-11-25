@@ -100,6 +100,7 @@ _ov_history_kick() {
   _OV_HIST_TMP=$(mktemp "${TMPDIR:-/tmp}/claudii-usage.XXXXXX" 2>/dev/null) || _OV_HIST_TMP=""
   if [[ -n "$_OV_HIST_TMP" ]]; then
     ( LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/history_cols.awk" \
         -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
         "${_HIST_FILES[@]}" >"$_OV_HIST_TMP" 2>/dev/null || true ) &
     _OV_HIST_PID=$!
@@ -110,6 +111,7 @@ _ov_history_kick() {
     # path would show session-cache sums while the normal background path shows
     # history deltas. Same parse, same place — just no parallelism.
     _OV_HIST_RAW=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/history_cols.awk" \
         -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
         "${_HIST_FILES[@]}" 2>/dev/null) || _OV_HIST_RAW=""
   fi
