@@ -30,20 +30,19 @@ umask 077
 # Config (statusline.* + vibemap.*) — single jq call.
 # Separators: US (0x1F) between fields, RS (0x1E) between layout lines.
 _config_file="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
-_from_cfg=""; _sc_models_cfg=""; _cfg_omlx=""; _rate_display=""; _cfg_bedtime=""
+_from_cfg=""; _sc_models_cfg=""; _rate_display=""; _cfg_bedtime=""
 _cfg_vibemap_enabled=""; _cfg_vibemap_path=""
 _cfg_shame="true"; _cfg_motivation="true"; _cfg_rainbow="true"; _cfg_insomnii="auto"
 _cfg_status_ttl=""; _cfg_bumpii_ttl=""; _cfg_ci_ttl=""; _cfg_cc_version_ttl=""
 _cfg_max_width=""; _cfg_max_label=""; _cfg_separator=""; _cfg_debug_level=""
 if [[ -f "$_config_file" ]]; then
-  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _cfg_omlx _rate_display _cfg_bedtime \
+  IFS=$'\x1f' read -r _from_cfg _sc_models_cfg _rate_display _cfg_bedtime \
     _cfg_vibemap_enabled _cfg_vibemap_path _cfg_shame _cfg_motivation _cfg_rainbow _cfg_insomnii \
     _cfg_status_ttl _cfg_bumpii_ttl _cfg_ci_ttl _cfg_cc_version_ttl _cfg_max_width _cfg_max_label \
     _cfg_separator _cfg_debug_level < <(
     jq -r '[
       (if .statusline.lines then (.statusline.lines | map(join(",")) | join("\u001e")) else "" end),
       (.statusline.models // ""),
-      (.statusline.omlx_active_path // ""),
       (.statusline.rate_display // ""),
       (.statusline.bedtime // ""),
       (.vibemap.enabled // false | tostring),
@@ -75,7 +74,7 @@ CLAUDII_LOG_LEVEL="${_cfg_debug_level:-off}"
 _DEFAULT_LINES="model,cc-version,tokens,cache-create,cache-hit,cache-ttl,response
 rate-5h,rate-7d,burn-eta,lines-changed
 api-duration,duration,worktree,worktrees,branch,dir,remotes,git-sync
-omlx,proxy,cost,context,compact-eta
+proxy,cost,context,compact-eta
 claude-status"
 
 _lines_raw="$_DEFAULT_LINES"
@@ -88,9 +87,9 @@ _lines_raw="$_DEFAULT_LINES"
 # matched the `github` segment — that near-miss is documented further down).
 #
 # Resolved here, immediately after the config parse, rather than in the middle
-# of the segment section where it used to live: the clock, tailscale and omlx
-# segments all fork BEFORE that point, so they could not ask the question and
-# paid their forks on every render regardless of the layout.
+# of the segment section where it used to live: segments that fork earlier
+# (the clock) could not ask the question there and paid their forks on every
+# render regardless of the layout.
 _lines_csv=",${_lines_raw//$'\n'/,},"
 _in_layout() { [[ "$_lines_csv" == *",$1,"* ]]; }
 [[ "$_rate_display" != "remaining" ]] && _rate_display="used"
@@ -296,7 +295,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.repo.host // ""),
     (.workspace.repo.owner // ""),
     (.workspace.repo.name // ""),
-    (.workspace.repo.pr_number // "" | tostring),
+    (.pr.number // .workspace.repo.pr_number // "" | tostring),
     (.version // ""),
     (.prompt_cache.hit_ratio  | if type == "number" then (. * 100 | round | tostring) else "" end),
     (.prompt_cache.warm             | if . == null then "" else tostring end),
@@ -355,8 +354,6 @@ _cache_get() {
   fi
   _CG="$fallback"
 }
-_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && { _cache_get rate_7d_start "$rate_7d"; _rate_7d_start="$_CG"; }
-_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && { _cache_get rate_5h_start "$rate_5h"; _rate_5h_start="$_CG"; }
 _cache_get last_duration_ms ""; _last_duration_ms="$_CG"
 # idle-compact animation frame: flips on every render (statusLine.refreshInterval
 # re-renders while idle), persisted so the blink alternates at any interval.
@@ -435,6 +432,30 @@ fi
 # true in the meantime. `claudii perf` has the aggregates; this is the live
 # signal that separates "the model is thinking" from "the API is slow today".
 read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
+# delta-5h/7d baselines: the used% at this session's first render in the
+# current window. A new window (its reset moved by more than a minute — a
+# rollover, or another account after /login — or the cached reset has
+# passed) or an unreadable baseline restarts it at the current value, so the
+# drop to a fresh window never shows as a delta. → _CG
+_rate_start() {  # <5h|7d> <used%> <resets_at>
+  local _cur=$2 _rs=${3%.*} _st _prs
+  _CG=""
+  [[ -n "$_cur" && "$_cur" != "null" ]] || return 0
+  _cache_get "rate_${1}_start" "$_cur"; _st=$_CG
+  _cache_get "reset_${1}" ""; _prs=${_CG%.*}
+  if [[ ! "${_st%.*}" =~ ^[0-9]+$ ]]; then
+    _st=$_cur
+  elif [[ "$_prs" =~ ^[0-9]+$ ]]; then
+    if [[ "$_rs" =~ ^[0-9]+$ ]] && (( _rs - _prs > 60 || _prs - _rs > 60 )); then
+      _st=$_cur
+    elif (( _prs <= _now )); then
+      _st=$_cur
+    fi
+  fi
+  _CG=$_st
+}
+_rate_start 5h "$rate_5h" "$reset_5h"; _rate_5h_start=$_CG
+_rate_start 7d "$rate_7d" "$reset_7d"; _rate_7d_start=$_CG
 _cache_get last_api_duration_ms ""; _prev_api_total="$_CG"
 _cache_get last_api_delta "";       _api_delta="$_CG"
 _ad=0
@@ -479,30 +500,34 @@ _api_recent="$_aw_keep"
 _api_mean_ms=""
 (( _aw_n > 0 )) && _api_mean_ms=$(( (_aw_sum + _aw_n / 2) / _aw_n ))
 
-# Burn-rate ETA + pace tri-state (cached for dashboard, not rendered here).
-# Both derive from the same dur/rate inputs, so one awk emits both (US-joined)
-# instead of two forks. US is passed as a var — \u escapes are not portable in
-# BSD awk's printf (macOS CI), so build the byte in bash and hand it over.
+# Burn-rate ETA + pace tri-state for the account-wide 5h limit — rendered by
+# the burn-eta and pace segments and cached (burn_eta=, pace=) for the Stop
+# hook's bell and `claudii se`. The limit fills on the window's clock, not
+# this session's, so the time it had is the window's elapsed time:
+# 18000 − (resets_at − now). No reset time, a reset already past, or under
+# 3 minutes into the window → nothing. An ETA at or past the reset is dropped
+# too: the window resets before the limit is reached.
+# Both derive from the same inputs, so one awk emits both (US-joined) instead
+# of two forks. US is passed as a var — \u escapes are not portable in BSD
+# awk's printf (macOS CI), so build the byte in bash and hand it over.
 _burn_eta=""
 _pace_state=""
-if _isset "$duration_ms"; then
-  _rate_5h_int=${rate_5h%.*};   [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
-  _dur_ms_int=${duration_ms%.*}; [[ "$_dur_ms_int" =~ ^[0-9]+$ ]] || _dur_ms_int=0
-  _session_min_int=$(( _dur_ms_int / 60000 ))
-  if _isset "$rate_5h" && (( _session_min_int >= 3 && _rate_5h_int > 0 )); then
-    # Pace: actual rate_5h vs linear burn (session_min / 300 * 100, hits 100% at
-    # the 5h mark); ±15% tolerance band → ahead / on_pace / behind.
-    _bp=$(LC_ALL=C awk -v dur="$duration_ms" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
-      m = dur / 60000; r = rat + 0
-      eta = (r > 0) ? int((100 - r) / (r / m) + 0.5) : 0
+_rate_5h_int=${rate_5h%.*}; [[ "$_rate_5h_int" =~ ^[0-9]+$ ]] || _rate_5h_int=0
+_r5_left=${reset_5h%.*}
+if [[ "$_r5_left" =~ ^[0-9]+$ ]] && (( _rate_5h_int > 0 )); then
+  _r5_left=$(( _r5_left - _now )); _r5_el=$(( 18000 - _r5_left ))
+  if (( _r5_left > 0 && _r5_el >= 180 )); then
+    # Pace: actual rate_5h vs linear burn (window_min / 300 * 100, hits 100% at
+    # the reset); ±15% tolerance band → ahead / on_pace / behind.
+    _bp=$(LC_ALL=C awk -v el="$_r5_el" -v left="$_r5_left" -v rat="$rate_5h" -v us=$'\x1f' 'BEGIN {
+      m = el / 60; r = rat + 0
+      eta = int((100 - r) / (r / m) + 0.5)
+      if (eta * 60 >= left) eta = ""
       linear = m / 300 * 100
-      pace = ""
-      if (linear > 0) {
-        if      (r < linear * 0.85) pace = "ahead"
-        else if (r > linear * 1.15) pace = "behind"
-        else                        pace = "on_pace"
-      }
-      printf "%d%s%s", eta, us, pace
+      if      (r < linear * 0.85) pace = "ahead"
+      else if (r > linear * 1.15) pace = "behind"
+      else                        pace = "on_pace"
+      printf "%s%s%s", eta, us, pace
     }')
     _burn_eta="${_bp%%$'\x1f'*}"
     _pace_state="${_bp#*$'\x1f'}"
@@ -548,7 +573,6 @@ fi
 _cache_get ppid ""; _prev_ppid="$_CG"
 _cache_get ppid_lstart ""; _prev_ppid_lstart="$_CG"
 _ppid_lstart=""
-_anc_found_cmd=""
 if [[ "$_prev_ppid" =~ ^[0-9]+$ ]] && kill -0 "$_prev_ppid" 2>/dev/null; then
   _ppid="$_prev_ppid"
   _ppid_lstart="$_prev_ppid_lstart"   # reuse path: kill-0 only, carry stored lstart
@@ -563,7 +587,7 @@ else
     read -r _anc_pp _anc_cmd <<< "$_anc_line"
     _anc_b0="${_anc_cmd%% *}"; _anc_b0="${_anc_b0##*/}"
     if [[ "$_anc_b0" == "claude" ]]; then
-      _ppid="$_anc_p"; _anc_found_cmd="$_anc_cmd"
+      _ppid="$_anc_p"
       break
     fi
     if [[ "$_anc_b0" == "node" || "$_anc_b0" == "bun" ]]; then
@@ -571,7 +595,7 @@ else
       if [[ "$_anc_rest" != "$_anc_cmd" ]]; then
         _anc_b1="${_anc_rest%% *}"; _anc_b1="${_anc_b1##*/}"
         if [[ "$_anc_b1" == "claude" ]]; then
-          _ppid="$_anc_p"; _anc_found_cmd="$_anc_cmd"
+          _ppid="$_anc_p"
           break
         fi
       fi
@@ -589,93 +613,6 @@ else
   if [[ "$_ppid" =~ ^[0-9]+$ ]]; then
     _ppid_lstart=$(ps -o lstart= -p "$_ppid" 2>/dev/null)
     _ppid_lstart="${_ppid_lstart#"${_ppid_lstart%%[![:space:]]*}"}"
-  fi
-fi
-# `claude --settings <file-or-json>` (CC's flagSettings: above local, below
-# managed) and `--setting-sources <list>` — Commander single-value options in
-# CC 2.1.300, so the LAST occurrence wins; the `=` form is accepted. Parsed from
-# the claude ancestor's command line where the walk above already has it, then
-# carried in the session cache; the reuse path forks one ps only for a session
-# cached before these keys existed, and only when idle-compact (their sole
-# consumer) is in the layout. CLAUDII_CC_CMDLINE stands in for that command
-# line in tests. ps joins argv with spaces: a value ends at the next space,
-# inline JSON at its balancing brace (string-aware); a path containing a space
-# cannot be recovered. cc_settings= is "-" (none), the absolute settings file
-# (CC resolves a relative one once, against its launch directory), or for
-# inline JSON only the three keys idle-compact reads — no inline env value
-# lands in the cache.
-_cc_cut_value() {  # $1 = text after the flag → _CV
-  local _v="$1" _i _d=0 _s=0 _e=0 _ch
-  _CV=""
-  if [[ "$_v" != "{"* ]]; then _CV="${_v%% *}"; return 0; fi
-  for (( _i = 0; _i < ${#_v}; _i++ )); do
-    _ch="${_v:_i:1}"
-    if (( _s )); then
-      if (( _e )); then _e=0
-      elif [[ "$_ch" == "\\" ]]; then _e=1
-      elif [[ "$_ch" == '"' ]]; then _s=0
-      fi
-      continue
-    fi
-    case "$_ch" in
-      '"') _s=1 ;;
-      "{") _d=$(( _d + 1 )) ;;
-      "}") _d=$(( _d - 1 )); (( _d == 0 )) && { _CV="${_v:0:_i+1}"; return 0; } ;;
-    esac
-  done
-  return 0
-}
-_cc_flag_value() {  # $1 = command line, $2 = flag → _CFV (last occurrence),
-  local _rest=" $1" _a _b  # _CFF=1 when the flag occurs, _CFR = text after it
-  _CFV=""; _CFF=0; _CFR=""
-  while [[ "$_rest" == *" $2="* || "$_rest" == *" $2 "* ]]; do
-    # Either form's first occurrence will do: everything after it stays in
-    # _rest, so the loop still ends on the last occurrence of both forms.
-    _a="${_rest#*" $2="}"; _b="${_rest#*" $2 "}"
-    if [[ "$_a" != "$_rest" ]]; then _rest="$_a"; else _rest="$_b"; fi
-    _cc_cut_value "$_rest"; _CFV="$_CV"; _CFF=1; _CFR="$_rest"
-  done
-  return 0
-}
-_cc_resolve_cmdline() {  # $1 = claude command line → _cc_settings, _cc_sources
-  _cc_flag_value "$1" --settings
-  if [[ -z "$_CFV" ]]; then
-    _cc_settings="-"
-  elif [[ "$_CFV" == "{"* ]]; then
-    _cc_settings=$(jq -c '{idleCompaction, autoCompactEnabled, precomputeCompactionEnabled}
-      | with_entries(select(.value != null))' <<< "$_CFV" 2>/dev/null) || _cc_settings=""
-    [[ "$_cc_settings" == "{"* ]] || _cc_settings="{}"
-  elif [[ "$_CFV" == /* ]]; then
-    _cc_settings="$_CFV"
-  else
-    _cc_settings="${worktree_original_cwd:-${workspace_project_dir:-${cwd:-.}}}/$_CFV"
-  fi
-  # --setting-sources: CC splits on "," and trims each name, so "user, project"
-  # (two argv words once ps joins them) is one value; an empty value loads no
-  # file at all — cached as ",", which matches no name. "-" = flag absent.
-  _cc_flag_value "$1" --setting-sources
-  if (( ! _CFF )); then
-    _cc_sources="-"
-  else
-    local _v="$_CFV" _r="${_CFR#"$_CFV"}" _t
-    while [[ "$_v" == *, && "$_r" == " "[!-]* ]]; do
-      _r="${_r# }"; _t="${_r%% *}"; _v+="$_t"; _r="${_r#"$_t"}"
-    done
-    _v="${_v// /}"
-    _cc_sources="${_v:-,}"
-  fi
-}
-_cc_settings=""; _cc_sources=""
-if [[ -n "${CLAUDII_CC_CMDLINE+x}" ]]; then
-  _cc_resolve_cmdline "$CLAUDII_CC_CMDLINE"
-elif [[ -n "$_anc_found_cmd" ]]; then
-  _cc_resolve_cmdline "$_anc_found_cmd"
-else
-  _cache_get cc_settings "";        _cc_settings="$_CG"
-  _cache_get cc_setting_sources ""; _cc_sources="$_CG"
-  if [[ -z "$_cc_settings" || -z "$_cc_sources" ]] && [[ "$_ppid" =~ ^[0-9]+$ ]] \
-     && _in_layout idle-compact; then
-    _cc_resolve_cmdline "$(ps -o command= -p "$_ppid" 2>/dev/null)"
   fi
 fi
 _cache_get pinned "";       _cached_pinned="$_CG"
@@ -767,8 +704,6 @@ _tmp_session="${_session_file}.tmp.$$"
   "project_path=$cwd"
   [[ "$pc_misses" =~ ^[0-9]+$ ]]    && printf 'misses=%s\n'        "$pc_misses"
   [[ -n "$_miss_exp" ]]             && printf 'miss_exp=%s\n'      "$_miss_exp"
-  [[ -n "$_cc_settings" ]]          && printf 'cc_settings=%s\n'   "$_cc_settings"
-  [[ -n "$_cc_sources" ]]           && printf 'cc_setting_sources=%s\n' "$_cc_sources"
   [[ -n "$_ic_frame" ]]             && printf 'ic_frame=%s\n'      "$_ic_frame"
   printf 'hist_sig=%s\n' "$_hist_sig"
   [[ -n "$pc_miss_causes" ]]        && printf 'miss_causes=%s\n'   "$pc_miss_causes"
@@ -1082,30 +1017,23 @@ elif [[ "$pc_observed" == "true" && "$pc_warm" == "false" ]]; then
   fi
 fi
 
-# Idle compaction (CC 2.1.290+): an interactive conversation on the 1h
-# prompt-cache TTL whose context holds at least the threshold is compacted
-# shortly before its cache expires — at fireAtFraction (default 0.9, clamped
-# 0.5–0.95) of the cache lifetime, i.e. ~54 min after the last request. CC
-# exposes no field for it, so the time is derived: expires_at − (1 − fraction)
-# × 1h. An absolute clock time, not a countdown — the statusline does not
-# re-render while the session idles. Read from the CC 2.1.299/2.1.300 binaries
-# and code.claude.com (settings, managed-settings):
-#  - it runs only while the GrowthBook flag tengu_sunny_locket has mode
-#    "compact" or "compact_on_return" (2.1.300: the summary is written at the
-#    same time and swapped in when you come back — that mode also needs
-#    precomputeCompactionEnabled, default true); "log" is a dry run, absent
-#    is off. The flag is cached in .claude.json (cachedGrowthBookFeatures),
-#    with optional minTokens / fireAtFraction;
-#  - threshold: CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS (an invalid value is
-#    ignored), else the flag's minTokens, else 200000; never below 100000
-#    (the ctx_tokens >= 100000 pre-gate below is that floor);
+# Idle compaction: an interactive conversation on the 1h prompt-cache TTL
+# whose context holds at least the threshold is compacted shortly before its
+# cache expires — at 0.9 of the cache lifetime, i.e. 54 min after the last
+# request (expires_at − 360 s). CC exposes no field for it, so the time is
+# derived. Read from the CC 2.1.332 binary (and code.claude.com for the
+# settings sources); on by default, no feature flag any more:
+#  - threshold: max(100000, CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS ?? 200000) —
+#    the variable read like CC's integer settings (_ic_env_min below);
 #  - context = the last request's input + cache + output tokens;
 #  - off when DISABLE_COMPACT / DISABLE_AUTO_COMPACT is truthy (a managed env
 #    reaches this process as a real variable), or idleCompaction /
 #    autoCompactEnabled is false in the effective settings: user < project <
-#    local < --settings < managed, later wins, a broken file is skipped,
-#    --setting-sources drops the files it does not list; autoCompactEnabled
-#    falls back to .claude.json (the old /config toggle);
+#    local < managed, later wins, a broken file is skipped; autoCompactEnabled
+#    falls back to .claude.json (the old /config toggle). Not read: the
+#    `claude --settings` / `--setting-sources` flags (they live only on CC's
+#    command line). precomputeCompactionEnabled gates only a host-less session
+#    (the interactive REPL always has one);
 #  - managed = the admin sources remote cache (remote-settings.json; only
 #    while the session talks to Anthropic's API — not on Bedrock / Vertex /
 #    Foundry or a foreign ANTHROPIC_BASE_URL) > MDM plist (per-user, else
@@ -1115,25 +1043,85 @@ fi
 #    "first-wins" (default) takes the highest source with a policy key;
 #    "merge", read from the highest source carrying it or a policy key,
 #    layers them all;
-#  - skipped unless the rate-limit status is "allowed". CC derives
-#    allowed_warning itself from utilization and resets_at — both in the
-#    payload — with fixed thresholds (2.1.300 yS): 5h >= 90% used while <= 72%
-#    of the window has passed; 7d >= 75% / 50% / 25% while <= 60% / 35% / 15%
-#    has passed. The payload's used_percentage is utilization rounded to one
-#    decimal, so a value within 0.05 points of a threshold may tip either way.
-#    Not visible here: the server's surpassed-threshold header and the grace
-#    phase that skips the 5h check. Not modeled: a policyHelper.
+#  - skipped near the rate limit. CC derives allowed_warning itself from
+#    utilization and resets_at — both in the payload — with fixed thresholds:
+#    5h >= 90% used while <= 72% of the window has passed; 7d >= 75% / 50% /
+#    25% while <= 60% / 35% / 15% has passed. Since 2.1.332 such a derived
+#    warning below 70% used no longer blocks. The payload's used_percentage is
+#    utilization rounded to one decimal, so a value within 0.05 points of a
+#    threshold may tip either way;
+#  - not visible here, so not modeled: the server's surpassed-threshold
+#    header, the grace phase that skips the 5h check, a policyHelper, the
+#    growth check after a resumed auto-compact window, and the presence check
+#    at fire time (CC holds off while you are at the keyboard).
 # Layout-gated; one jq fork (every file passed as --rawfile, parsed per
 # file; an MDM plist arrives on stdin through one plutil fork).
 _ic_truthy() { case "$1" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) return 0 ;; esac; return 1; }
-_seg_idle_compact=""; _ic_kind=""; _ic_target=""; _ic_total=""
+# CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS as CC parses it (int, min 1, whole
+# value): trimmed; plain digits, an integral scientific notation (2e5,
+# 2.5e5) or 3-digit groups with one separator (200,000 / 200_000 / 200 000,
+# also NBSP / NNBSP). Anything else, or a value below 1, is ignored.
+# → _IC_ENV: the number, "inf" (more than 15 digits — beyond any context),
+# or "" (unset or ignored).
+_ic_env_min() {
+  local v="$1" s="" l lead rest sep d x p z
+  _IC_ENV=""
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; l=${#v}
+  case "$v" in +*) v="${v#+}" ;; -*) return 0 ;; esac
+  if [[ "$v" =~ ^[0-9]+$ ]]; then
+    s="$v"
+  elif (( l <= 32 )) && [[ "$v" =~ ^([0-9]*)(\.([0-9]*))?[eE]([+-]?)([0-9]+)$ ]] \
+       && [[ -n "${BASH_REMATCH[1]}${BASH_REMATCH[3]}" ]]; then
+    d="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"; x="${BASH_REMATCH[5]}"
+    x="${x#"${x%%[!0]*}"}"; (( ${#x} > 4 )) && return 0   # 0 or Infinity: ignored
+    x=$(( 10#${x:-0} )); [[ "${BASH_REMATCH[4]}" == - ]] && x=$(( -x ))
+    p=$(( ${#BASH_REMATCH[1]} + x ))
+    (( p < 0 )) && p=0
+    if (( p < ${#d} )); then
+      [[ "${d:p}" =~ ^0*$ ]] || return 0                    # not an integer
+      s="${d:0:p}"; z=0
+    else
+      s="$d"; z=$(( p - ${#d} ))
+    fi
+  else
+    lead="${v%%[!0-9]*}"; rest="${v:${#lead}}"; sep="${rest%%[0-9]*}"
+    (( ${#lead} >= 1 && ${#lead} <= 3 && l <= 32 )) || return 0
+    case "$sep" in _|,|" "|$'\xc2\xa0'|$'\xe2\x80\xaf') ;; *) return 0 ;; esac
+    s="$lead"
+    while [[ "$rest" == "$sep"* ]]; do
+      rest="${rest#"$sep"}"
+      [[ "${rest:0:3}" =~ ^[0-9]{3}$ ]] || return 0
+      s+="${rest:0:3}"; rest="${rest:3}"
+    done
+    [[ -z "$rest" ]] || return 0
+  fi
+  s="${s#"${s%%[!0]*}"}"; z=${z:-0}
+  [[ -n "$s" ]] || return 0                                 # 0: below the minimum
+  if (( ${#s} + z > 15 )); then
+    (( ${#s} + z > 308 )) || _IC_ENV=inf                    # past ~1.8e308: Infinity, ignored
+  else
+    _IC_ENV=$(( 10#$s * 10 ** z ))
+  fi
+  return 0
+}
+_seg_idle_compact=""; _ic_kind=""; _ic_target=""; _ic_total=""; _ic_min=""
 _ic_r5=${rate_5h%.*}; _ic_r7=${rate_7d%.*}
 [[ "$_ic_r5" =~ ^[0-9]+$ ]] || _ic_r5=0; [[ "$_ic_r7" =~ ^[0-9]+$ ]] || _ic_r7=0
 if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true" \
       && "${pc_expires%.*}" =~ ^[0-9]+$ && "$ctx_tokens" =~ ^[0-9]+$ \
       && "$pc_ttl_left" =~ ^[0-9]+$ ]] \
-   && (( ctx_tokens >= 100000 && _ic_r5 < 100 && _ic_r7 < 100 )) \
+   && (( ctx_tokens >= 100000 && pc_ttl_left > 360 && _ic_r5 < 100 && _ic_r7 < 100 )) \
    && ! _ic_truthy "${DISABLE_COMPACT:-}" && ! _ic_truthy "${DISABLE_AUTO_COMPACT:-}"; then
+  _ic_env_min "${CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS:-}"
+  case "$_IC_ENV" in
+    "")  _ic_min=200000 ;;
+    inf) _ic_min="" ;;
+    *)   _ic_min=$_IC_ENV; (( _ic_min < 100000 )) && _ic_min=100000 ;;
+  esac
+fi
+# pc_ttl_left > 360 (above): the time is still ahead — a late re-render must
+# not print one that already passed.
+if [[ -n "$_ic_min" ]] && (( ctx_tokens >= _ic_min )); then
   _ic_cfgdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   _ic_global="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
   _ic_proj="${workspace_project_dir:-$cwd}"
@@ -1142,123 +1130,99 @@ if _in_layout idle-compact && [[ "$pc_cache_ttl" == "1h" && "$pc_warm" == "true"
     if [[ "$OSTYPE" == darwin* ]]; then _ic_managed="/Library/Application Support/ClaudeCode"
     else _ic_managed="/etc/claude-code"; fi
   fi
-  if [[ -f "$_ic_global" && -r "$_ic_global" ]]; then
-    _ic_now=$(( ${pc_expires%.*} - pc_ttl_left ))
-    _ic_args=(--rawfile g "$_ic_global" --arg now "$_ic_now"
-              --arg r5 "$rate_5h" --arg r5r "$reset_5h" --arg r7 "$rate_7d" --arg r7r "$reset_7d")
-    _ic_n=10
-    for _p in "user=$_ic_cfgdir/settings.json" \
-              ${_ic_proj:+"project=$_ic_proj/.claude/settings.json"} \
-              ${_ic_proj:+"local=$_ic_proj/.claude/settings.local.json"}; do
-      # --setting-sources lists the files CC loads; "-" = all of them.
-      [[ "$_cc_sources" == "-" || -z "$_cc_sources" || ",$_cc_sources," == *",${_p%%=*},"* ]] || continue
-      _p="${_p#*=}"
-      [[ -f "$_p" && -r "$_p" ]] || continue
-      _ic_args+=(--rawfile "u$_ic_n" "$_p"); (( ++_ic_n ))
-    done
-    case "$_cc_settings" in
-      ""|-) ;;
-      "{"*) _ic_args+=(--arg fs "$_cc_settings") ;;
-      *) [[ -f "$_cc_settings" && -r "$_cc_settings" ]] && _ic_args+=(--rawfile fs "$_cc_settings") ;;
-    esac
-    # Server-managed settings apply only while the session talks to
-    # Anthropic's API directly; the cache file outlives a switch away.
-    _ic_remote=1
-    for _p in CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY \
-              CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_MANTLE; do
-      _ic_truthy "${!_p:-}" && _ic_remote=0
-    done
-    # CC compares the URL's host only (any scheme, path or trailing slash).
-    if [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
-      _p="${ANTHROPIC_BASE_URL#*://}"; _p="${_p%%[/?#]*}"
-      [[ "$_p" == "api.anthropic.com" ]] || _ic_remote=0
-    fi
-    (( _ic_remote )) && [[ -f "$_ic_cfgdir/remote-settings.json" && -r "$_ic_cfgdir/remote-settings.json" ]] \
-      && _ic_args+=(--rawfile r "$_ic_cfgdir/remote-settings.json")
-    # MDM profile, per-user before device, user from the passwd entry like
-    # CC's os.userInfo() (not $USER). Like CC: the first one plutil converts;
-    # a corrupt one (lint fails) stops the search as an empty profile; one
-    # that lints but will not convert (date/data values) falls through. The
-    # JSON reaches jq on stdin, never as an argument.
-    _ic_mdm=""
-    if [[ "$OSTYPE" == darwin* || -n "${CLAUDII_MANAGED_PREFS_DIR:-}" ]]; then
-      _ic_prefs="${CLAUDII_MANAGED_PREFS_DIR:-/Library/Managed Preferences}"
-      if [[ -d "$_ic_prefs" ]]; then
-        _ic_user=$(id -un 2>/dev/null)
-        for _p in ${_ic_user:+"$_ic_prefs/$_ic_user/com.anthropic.claudecode.plist"} \
-                  "$_ic_prefs/com.anthropic.claudecode.plist"; do
-          [[ -f "$_p" && -r "$_p" ]] || continue
-          _ic_mdm=$(plutil -convert json -o - -- "$_p" 2>/dev/null) && [[ -n "$_ic_mdm" ]] && break
-          _ic_mdm=""
-          plutil -lint -s -- "$_p" >/dev/null 2>&1 || break
-        done
-      fi
-    fi
-    # Drop-ins in C order like CC's sort (LC_ALL overrides LC_COLLATE).
-    _ic_lc="${LC_COLLATE-}"; _ic_la="${LC_ALL-}"; LC_COLLATE=C; LC_ALL=C
-    _ic_n=10
-    for _p in "$_ic_managed/managed-settings.json" "$_ic_managed/managed-settings.d"/*.json; do
-      [[ -f "$_p" && -r "$_p" ]] || continue
-      _ic_args+=(--rawfile "m$_ic_n" "$_p"); (( ++_ic_n ))
-    done
-    if [[ -n "$_ic_lc" ]]; then LC_COLLATE="$_ic_lc"; else unset LC_COLLATE; fi
-    if [[ -n "$_ic_la" ]]; then LC_ALL="$_ic_la"; else unset LC_ALL; fi
-    # Output: "<offset seconds> <flag minTokens or ->", or "off".
-    _ic_prog='
-      def obj: (try fromjson catch null) | objects // {};
-      def hollow: type == "object" and all(.[]; hollow);
-      def pol: with_entries(select(.value != null and (.value | hollow | not)
-        and (.key | startswith("$") | not)
-        and .key != "managedSourcesBehavior" and .key != "wslInheritsWindowsSettings"));
-      def num: try tonumber catch null;
-      def warn($u; $r; $w; $th): ($u | num) as $u | ($r | num) as $r | ($ARGS.named.now | num) as $n
-        | if $u == null or $r == null or $n == null then false
-          else ((($n - ($r - $w)) / $w) | if . < 0 then 0 elif . > 1 then 1 else . end) as $el
-            | any($th[]; ($u / 100) >= .u and $el <= .t) end;
-      $ARGS.named as $a
-      | ($a.g | obj) as $gc
-      | ($gc.cachedGrowthBookFeatures.tengu_sunny_locket | objects // {}) as $fl
-      | [$a | to_entries[] | select(.key | test("^u[0-9]+$")) | .value | obj] as $low
-      | ($a.fs // "" | obj) as $flag
-      | ((try input catch null) | objects // {}) as $mdm
-      | ([$a | to_entries[] | select(.key | test("^m[0-9]+$")) | .value | obj]
-          | reduce .[] as $s ({}; . * $s)) as $files
-      | [($a.r // "" | obj), $mdm, $files] as $admin
-      | ([$admin[] | select((pol | length) > 0 or has("managedSourcesBehavior"))] | first // {}) as $top
-      | [$admin[] | select((pol | length) > 0)] as $live
-      | (if $top.managedSourcesBehavior == "merge"
-           then $live | reverse | reduce .[] as $s ({}; . * $s)
-           else $live | first // {} end) as $managed
-      | reduce ($low[], $flag, $managed) as $s ({autoCompactEnabled: $gc.autoCompactEnabled}; . * $s)
-      | if ($fl.mode | IN("compact", "compact_on_return") | not)
-           or .idleCompaction == false or .autoCompactEnabled == false
-           or ($fl.mode == "compact_on_return" and .precomputeCompactionEnabled == false)
-           or warn($a.r5; $a.r5r; 18000; [{u: 0.9, t: 0.72}])
-           or warn($a.r7; $a.r7r; 604800; [{u: 0.75, t: 0.6}, {u: 0.5, t: 0.35}, {u: 0.25, t: 0.15}])
-        then "off"
-        else (($fl.fireAtFraction | numbers | if . < 0.5 then 0.5 elif . > 0.95 then 0.95 else . end) // 0.9) as $f
-          | "\((1 - $f) * 3600 | round) \((($fl.minTokens | numbers | ceil | if . < 100000 then 100000 elif . > 1e15 then 1e15 else . end | tostring) // "-"))" end'
-    if [[ -n "$_ic_mdm" ]]; then
-      _ic_state=$(jq -rn "${_ic_args[@]}" "$_ic_prog" <<< "$_ic_mdm" 2>/dev/null) || _ic_state="off"
-    else
-      _ic_state=$(jq -rn "${_ic_args[@]}" "$_ic_prog" < /dev/null 2>/dev/null) || _ic_state="off"
-    fi
-    if [[ "$_ic_state" =~ ^([0-9]+)\ (-|[0-9]+)$ ]]; then
-      _ic_off=${BASH_REMATCH[1]}; _ic_min=${BASH_REMATCH[2]}
-      _ic_env="${CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS:-}"; _ic_env="${_ic_env#+}"
-      if [[ "$_ic_env" =~ ^[0-9]{1,15}$ ]] && (( 10#$_ic_env > 0 )); then _ic_min=$(( 10#$_ic_env ))
-      elif [[ "$_ic_min" == "-" ]]; then _ic_min=200000
-      fi
-      # pc_ttl_left > offset: the time is still ahead — a late re-render must
-      # not print one that already passed.
-      if (( ctx_tokens >= _ic_min && pc_ttl_left > _ic_off )); then
-        _ic_kind=idle
-        _ic_target=$(( ${pc_expires%.*} - _ic_off )); _ic_total=$(( 3600 - _ic_off ))
-      fi
+  _ic_now=$(( ${pc_expires%.*} - pc_ttl_left ))
+  _ic_args=(--arg now "$_ic_now"
+            --arg r5 "$rate_5h" --arg r5r "$reset_5h" --arg r7 "$rate_7d" --arg r7r "$reset_7d")
+  [[ -f "$_ic_global" && -r "$_ic_global" ]] && _ic_args+=(--rawfile g "$_ic_global")
+  _ic_n=10
+  for _p in "$_ic_cfgdir/settings.json" \
+            ${_ic_proj:+"$_ic_proj/.claude/settings.json"} \
+            ${_ic_proj:+"$_ic_proj/.claude/settings.local.json"}; do
+    [[ -f "$_p" && -r "$_p" ]] || continue
+    _ic_args+=(--rawfile "u$_ic_n" "$_p"); (( ++_ic_n ))
+  done
+  # Server-managed settings apply only while the session talks to
+  # Anthropic's API directly; the cache file outlives a switch away.
+  _ic_remote=1
+  for _p in CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY \
+            CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD CLAUDE_CODE_USE_MANTLE; do
+    _ic_truthy "${!_p:-}" && _ic_remote=0
+  done
+  # CC compares the URL's host only (any scheme, path or trailing slash).
+  if [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
+    _p="${ANTHROPIC_BASE_URL#*://}"; _p="${_p%%[/?#]*}"
+    [[ "$_p" == "api.anthropic.com" ]] || _ic_remote=0
+  fi
+  (( _ic_remote )) && [[ -f "$_ic_cfgdir/remote-settings.json" && -r "$_ic_cfgdir/remote-settings.json" ]] \
+    && _ic_args+=(--rawfile r "$_ic_cfgdir/remote-settings.json")
+  # MDM profile, per-user before device, user from the passwd entry like
+  # CC's os.userInfo() (not $USER). Like CC: the first one plutil converts;
+  # a corrupt one (lint fails) stops the search as an empty profile; one
+  # that lints but will not convert (date/data values) falls through. The
+  # JSON reaches jq on stdin, never as an argument.
+  _ic_mdm=""
+  if [[ "$OSTYPE" == darwin* || -n "${CLAUDII_MANAGED_PREFS_DIR:-}" ]]; then
+    _ic_prefs="${CLAUDII_MANAGED_PREFS_DIR:-/Library/Managed Preferences}"
+    if [[ -d "$_ic_prefs" ]]; then
+      _ic_user=$(id -un 2>/dev/null)
+      for _p in ${_ic_user:+"$_ic_prefs/$_ic_user/com.anthropic.claudecode.plist"} \
+                "$_ic_prefs/com.anthropic.claudecode.plist"; do
+        [[ -f "$_p" && -r "$_p" ]] || continue
+        _ic_mdm=$(plutil -convert json -o - -- "$_p" 2>/dev/null) && [[ -n "$_ic_mdm" ]] && break
+        _ic_mdm=""
+        plutil -lint -s -- "$_p" >/dev/null 2>&1 || break
+      done
     fi
   fi
+  # Drop-ins in C order like CC's sort (LC_ALL overrides LC_COLLATE).
+  _ic_lc="${LC_COLLATE-}"; _ic_la="${LC_ALL-}"; LC_COLLATE=C; LC_ALL=C
+  _ic_n=10
+  for _p in "$_ic_managed/managed-settings.json" "$_ic_managed/managed-settings.d"/*.json; do
+    [[ -f "$_p" && -r "$_p" ]] || continue
+    _ic_args+=(--rawfile "m$_ic_n" "$_p"); (( ++_ic_n ))
+  done
+  if [[ -n "$_ic_lc" ]]; then LC_COLLATE="$_ic_lc"; else unset LC_COLLATE; fi
+  if [[ -n "$_ic_la" ]]; then LC_ALL="$_ic_la"; else unset LC_ALL; fi
+  # Output: "on" or "off".
+  _ic_prog='
+    def obj: (try fromjson catch null) | objects // {};
+    def hollow: type == "object" and all(.[]; hollow);
+    def pol: with_entries(select(.value != null and (.value | hollow | not)
+      and (.key | startswith("$") | not)
+      and .key != "managedSourcesBehavior" and .key != "wslInheritsWindowsSettings"));
+    def num: try tonumber catch null;
+    def warn($u; $r; $w; $th): ($u | num) as $u | ($r | num) as $r | ($ARGS.named.now | num) as $n
+      | if $u == null or $r == null or $n == null then false
+        else ((($n - ($r - $w)) / $w) | if . < 0 then 0 elif . > 1 then 1 else . end) as $el
+          | ($u / 100) >= 0.7 and any($th[]; ($u / 100) >= .u and $el <= .t) end;
+    $ARGS.named as $a
+    | ($a.g // "" | obj) as $gc
+    | [$a | to_entries[] | select(.key | test("^u[0-9]+$")) | .value | obj] as $low
+    | ((try input catch null) | objects // {}) as $mdm
+    | ([$a | to_entries[] | select(.key | test("^m[0-9]+$")) | .value | obj]
+        | reduce .[] as $s ({}; . * $s)) as $files
+    | [($a.r // "" | obj), $mdm, $files] as $admin
+    | ([$admin[] | select((pol | length) > 0 or has("managedSourcesBehavior"))] | first // {}) as $top
+    | [$admin[] | select((pol | length) > 0)] as $live
+    | (if $top.managedSourcesBehavior == "merge"
+         then $live | reverse | reduce .[] as $s ({}; . * $s)
+         else $live | first // {} end) as $managed
+    | reduce ($low[], $managed) as $s ({autoCompactEnabled: $gc.autoCompactEnabled}; . * $s)
+    | if .idleCompaction == false or .autoCompactEnabled == false
+         or warn($a.r5; $a.r5r; 18000; [{u: 0.9, t: 0.72}])
+         or warn($a.r7; $a.r7r; 604800; [{u: 0.75, t: 0.6}, {u: 0.5, t: 0.35}, {u: 0.25, t: 0.15}])
+      then "off" else "on" end'
+  if [[ -n "$_ic_mdm" ]]; then
+    _ic_state=$(jq -rn "${_ic_args[@]}" "$_ic_prog" <<< "$_ic_mdm" 2>/dev/null) || _ic_state="off"
+  else
+    _ic_state=$(jq -rn "${_ic_args[@]}" "$_ic_prog" < /dev/null 2>/dev/null) || _ic_state="off"
+  fi
+  if [[ "$_ic_state" == "on" ]]; then
+    _ic_kind=idle
+    _ic_target=$(( ${pc_expires%.*} - 360 )); _ic_total=3240
+  fi
 fi
-# Not compacting (flag off, too small, switched off, rate limit, 5m TTL…):
+# Not compacting (too small, switched off, rate limit, 5m TTL…):
 # what happens when you stay away is the cache going cold — the next request
 # then re-caches the whole context. Same segment, ♨ instead of ⇲.
 # Skipped when cache-ttl is in the layout: that segment already counts down to
@@ -1321,33 +1285,18 @@ if _isset "$cost"; then
   _seg_cost="${DIM}\$$(env LC_ALL=C printf '%.2f' "$cost")${RST}"
 fi
 
-# Reset countdown formatter — sets _reset_fmt + _reset_color.
-# < 60m → Xm, < 24h → XhYm (Yh suppressed if 0), ≥ 24h → XdYh (Yh suppressed if 0).
+# Reset countdown → _reset_fmt + _reset_color. The text is the shared _fmt_rel
+# (whole minutes, rounded down; "<1m" in the last minute), so a reset reads
+# the same here as in `claudii` and its warnings. This used to round to the
+# nearest minute below 1h only — 59m40s showed "60m" one second before "59m"
+# and the last 30s showed nothing — while every longer span rounded down.
+# The color ladder keys on whole minutes left.
 _fmt_reset() {
-  local _secs="$1" _pct="$2" _m _h _d _rh
+  local _secs="$1" _pct="$2" _m
   _reset_fmt=""; _reset_color=""
   (( _secs <= 0 )) && return
-  # _m feeds the color ladder below and must be set on EVERY branch — the
-  # >=24h branch used to leave it unassigned, so `(( _m < 5 ))` saw 0 and
-  # painted multi-day resets green instead of dim. The <60m branch overwrites
-  # it with the rounded display value.
+  _fmt_rel "$_secs"; _reset_fmt="$_REL_FMT"
   _m=$(( _secs / 60 ))
-  if (( _secs < 3600 )); then
-    _m=$(( (_secs + 30) / 60 ))
-    (( _m <= 0 )) && return
-    _reset_fmt="${_m}m"
-  elif (( _secs < 86400 )); then
-    _m=$(( _secs / 60 ))
-    _h=$(( _secs / 3600 ))
-    _rh=$(( (_secs % 3600) / 60 ))
-    if (( _rh > 0 )); then _reset_fmt="${_h}h${_rh}m"
-    else _reset_fmt="${_h}h"; fi
-  else
-    _d=$(( _secs / 86400 ))
-    _h=$(( (_secs % 86400) / 3600 ))
-    if (( _h > 0 )); then _reset_fmt="${_d}d${_h}h"
-    else _reset_fmt="${_d}d"; fi
-  fi
   if   (( _pct < 50 ));  then _reset_color="${DIM}"
   elif (( _m < 5 ));     then _reset_color="${GREEN}"
   elif (( _m < 60 ));    then _reset_color="${WHITE}"
@@ -1479,7 +1428,7 @@ fi
 _mk_delta_seg() {
   _seg_result=""
   local label=$1 cur=$2 start=$3
-  [[ -z "$start" || "$start" == "null" || -z "$cur" || "$cur" == "null" ]] && return
+  [[ "${start%.*}" =~ ^[0-9]+$ && "${cur%.*}" =~ ^[0-9]+$ ]] || return
   local d disp sign clr
   d=$(( ${cur%.*} - ${start%.*} ))
   disp=$d
@@ -1512,35 +1461,54 @@ if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   fi
 fi
 
-# GitHub / repo segment (workspace.repo.*, Claude Code 2.1.145+).
-# Renders <owner>/<name> + #<pr_number> when an open PR is detected on the
-# current branch. Skipped when repo info absent (non-git project, no remote).
+# GitHub / repo segment (workspace.repo.{owner,name}, Claude Code 2.1.145+).
+# Renders <owner>/<name> + #<number> when an open PR is detected on the
+# current branch — top-level pr.number (CC 2.1.332), else the older
+# workspace.repo.pr_number. Skipped when repo info absent (non-git project,
+# no remote).
 _seg_github=""
 if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _seg_github="${DIM}◆ ${repo_owner}/${repo_name}${RST}"
   _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
 fi
 
-# Layout and _in_layout are resolved near the top of the file, right after the
-# config parse — they only need $_from_cfg, and the segments that fork before
-# this point (clock/cc-insomnii, tailscale, omlx) have to be able to ask.
-
 # Claude Code app/CLI version (top-level .version in the statusLine payload),
 # red + "+N releases behind" when a newer build exists. N is exact — the
 # position of the installed version inside the cached release-tag list, not a
 # version-number diff — because Claude Code's release numbers are not
 # sequential (yanked/skipped tags happen: 2.1.230 was skipped entirely on
-# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". "+?"
-# means "definitely outdated, but the installed version fell off the cached
-# window" rather than a fabricated number. A cache miss (first run, or the
-# background refresher never having succeeded yet) renders plain, same as
-# up to date, until there is an actual answer.
+# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". An
+# older version missing from the list counts the listed releases newer than
+# it; "+?" means "definitely outdated, but older than the whole cached
+# window" rather than a fabricated number. A version newer than the cached
+# latest (a release the cache has not seen yet) or one that does not compare
+# as dotted digits counts as current — the cache is what is behind then, and
+# a newer one re-checks sooner. A cache miss (first run, or the background
+# refresher never having succeeded yet) renders plain, same as up to date,
+# until there is an actual answer.
 #
 # Deliberately independent of bumpii (see claudii-cc-update-refresh): the
 # cache schema (latest=/tags=/checked=) is the only contract, so a future
 # bumpii-backed refresher could populate the same file without this reader
 # changing at all.
+# Dotted-digit version compare → _VC: 1 ($1 newer), 0, -1, or "" when either
+# side is not plain dotted digits (a pre-release suffix, garbage).
+_cc_vcmp() {
+  local _a="$1" _b="$2" _x _y
+  _VC=""
+  [[ "$_a" =~ ^[0-9]{1,9}(\.[0-9]{1,9})*$ && "$_b" =~ ^[0-9]{1,9}(\.[0-9]{1,9})*$ ]] || return 0
+  while [[ -n "$_a" || -n "$_b" ]]; do
+    _x="${_a%%.*}"; _y="${_b%%.*}"
+    if [[ "$_a" == *.* ]]; then _a="${_a#*.}"; else _a=""; fi
+    if [[ "$_b" == *.* ]]; then _b="${_b#*.}"; else _b=""; fi
+    _x=$(( 10#${_x:-0} )); _y=$(( 10#${_y:-0} ))
+    if (( _x > _y )); then _VC=1; return 0; fi
+    if (( _x < _y )); then _VC=-1; return 0; fi
+  done
+  _VC=0
+}
 _seg_cc_version=""
+_ccup_newer=0
 _ccup_cache="${_cache_dir}/status-cc-version"
 if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
   _cc_latest=""; _cc_tags=""
@@ -1553,16 +1521,32 @@ if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
   fi
   _cc_behind=""
   if [[ -n "$_cc_latest" ]]; then
+    _cc_tags_csv=",${_cc_tags},"
     if [[ "$cc_version" == "$_cc_latest" ]]; then
       _cc_behind=0
-    elif [[ -n "$_cc_tags" ]]; then
-      _cc_tags_csv=",${_cc_tags},"
-      if [[ "$_cc_tags_csv" == *",$cc_version,"* ]]; then
-        # Everything before the (exact, comma-bounded) match — its comma
-        # count is exactly the number of newer releases ahead of it.
-        _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
-        _cc_commas="${_cc_before//[^,]/}"
-        _cc_behind=${#_cc_commas}
+    elif [[ -n "$_cc_tags" && "$_cc_tags_csv" == *",$cc_version,"* ]]; then
+      # Everything before the (exact, comma-bounded) match — its comma
+      # count is exactly the number of newer releases ahead of it.
+      _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
+      _cc_commas="${_cc_before//[^,]/}"
+      _cc_behind=${#_cc_commas}
+    else
+      _cc_vcmp "$cc_version" "$_cc_latest"
+      if [[ "$_VC" == 1 ]]; then
+        _cc_behind=0; _ccup_newer=1
+      elif [[ "$_VC" != -1 ]]; then
+        _cc_behind=0
+      elif [[ -n "$_cc_tags" ]]; then
+        _cc_vcmp "$cc_version" "${_cc_tags##*,}"
+        if [[ "$_VC" == -1 ]]; then
+          _cc_behind="?"
+        else
+          _cc_behind=0; _cc_t="$_cc_tags,"
+          while [[ -n "$_cc_t" ]]; do
+            _cc_vcmp "${_cc_t%%,*}" "$cc_version"; _cc_t="${_cc_t#*,}"
+            [[ "$_VC" == 1 ]] && _cc_behind=$(( _cc_behind + 1 ))
+          done
+        fi
       else
         _cc_behind="?"
       fi
@@ -1583,11 +1567,19 @@ fi
 if _in_layout cc-version; then
   _ccup_ttl="$_cfg_cc_version_ttl"
   [[ "$_ccup_ttl" =~ ^[0-9]+$ ]] || _ccup_ttl=3600
+  # Installed newer than the cached latest: the cache missed a release. Ask
+  # again after at most 5 minutes (a failed fetch bumps the mtime too, so this
+  # cannot hammer the API), past the refresher's own TTL check.
+  _ccup_force=""
+  if (( _ccup_newer )); then
+    (( _ccup_ttl > 300 )) && _ccup_ttl=300
+    _ccup_force=--force
+  fi
   _ccup_mtime=$(stat -f%m "$_ccup_cache" 2>/dev/null || stat -c%Y "$_ccup_cache" 2>/dev/null || echo 0)
   if (( _now - _ccup_mtime > _ccup_ttl )); then
     _ccuppid_file="$_cache_dir/cc-update-refresh.pid"
     _spawn_refresher "$_ccuppid_file" 30 \
-      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file"
+      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet ${_ccup_force:+"$_ccup_force"} --pid-file "$_ccuppid_file"
   fi
 fi
 
@@ -1990,41 +1982,12 @@ if _in_layout claude-status; then
   fi
 fi
 
-# omlx local-agent indicator — gateii's active.json, 300s stale-guard.
-_seg_omlx=""
-_omlx_active_path="${CLAUDII_OMLX_ACTIVE:-${_cfg_omlx:-$HOME/offline_coding/gateii/data/agents/active.json}}"
-# Layout-gated: the jq below is a fork, and mere existence of gateii's
-# active.json is not a reason to pay it on a layout that never shows omlx.
-if _in_layout omlx && [[ -f "$_omlx_active_path" ]]; then
-  IFS=$'\x1f' read -r _omlx_started _omlx_task _omlx_model_short <<< "$(
-    jq -r '[
-      (.started_epoch // 0 | tostring),
-      (.task // "?"),
-      (.model // "?" | gsub("-MLX-4bit$";"") | gsub("-A3B-4bit$";"-A3B") | gsub("-a4b-it-4bit$";"") | gsub("-it-4bit$";""))
-    ] | join("\u001f")' "$_omlx_active_path" 2>/dev/null
-  )"
-  if [[ -n "$_omlx_started" && "$_omlx_started" != "0" ]]; then
-    _omlx_age=$(( _now - _omlx_started ))
-    if (( _omlx_age >= 0 && _omlx_age < 300 )); then
-      _seg_omlx="${ACCENT}⚡${RST} ${BOLD}${_omlx_task}${RST} ${DIM}${_omlx_model_short} ${_omlx_age}s${RST}"
-    fi
-  fi
-fi
-
-# VPN — WireGuard tunnel name from the state file.
-_seg_vpn=""
-_vpn_state="${_cache_dir}/vpnii"
-if [[ -f "$_vpn_state" ]]; then
-  _vpn_tunnel=$(<"$_vpn_state")
-  [[ -n "$_vpn_tunnel" ]] && _seg_vpn="${GREEN}⬡${RST} ${DIM}${_vpn_tunnel}${RST}"
-fi
-
-# Tailscale (CGNAT 100.64.0.0/10) — its own segment, not glued to `vpn`, so a
-# layout can place WireGuard and Tailscale on different lines. The ifconfig
-# probe is a fork + grep on every render, so cache the up/down result ~30s
-# (shared with the zsh RPROMPT segment in lib/vpnii.zsh: $_cache_dir/vpnii-ts,
-# "<epoch> <0|1>", 1 = up). Garbage/torn reads fall through to a re-probe via
-# the numeric guard.
+# Tailscale (CGNAT 100.64.0.0/10) — up when an interface holds a tailnet
+# address. The ifconfig probe is a fork + grep on every render, so cache the
+# up/down result ~30s in $_cache_dir/vpnii-ts ("<epoch> <0|1>", 1 = up; the
+# name predates this segment standing alone and stays so existing caches keep
+# working). Garbage/torn reads fall through to a re-probe via the numeric
+# guard.
 #
 # The 30s cache bounded how OFTEN the probe ran but not WHETHER it ran: a
 # layout without `tailscale` still paid the ifconfig fork every time the cache
@@ -2045,10 +2008,10 @@ fi
 if (( ! _ts_have )); then
   _ts_up=1
   grep -qE 'inet 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' <<< "$(ifconfig 2>/dev/null)" && _ts_up=0
-  # Atomic, like every other cache this file writes: the zsh RPROMPT segment
-  # (lib/vpnii.zsh) writes the same path, so a truncating `>` lets a reader see
-  # a half-written line. The numeric guard above catches pure garbage but not a
-  # torn "<epoch> " — that parses as epoch-is-also-the-value.
+  # Atomic, like every other cache this file writes: concurrent renders (one
+  # per Claude Code session) share the path, so a truncating `>` lets a reader
+  # see a half-written line. The numeric guard above catches pure garbage but
+  # not a torn "<epoch> " — that parses as epoch-is-also-the-value.
   _ts_tmp="${_ts_cache}.tmp.$$"
   if printf '%s %s\n' "$_now" "$(( _ts_up == 0 ? 1 : 0 ))" > "$_ts_tmp" 2>/dev/null; then
     mv -f "$_ts_tmp" "$_ts_cache" 2>/dev/null || rm -f "$_ts_tmp" 2>/dev/null
@@ -2059,28 +2022,29 @@ if (( ! _ts_have )); then
 fi
 (( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"
 
-# Proxy — non-empty only when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
+# Proxy — where this session's API traffic goes: ANTHROPIC_BASE_URL's
+# host:port, empty when no base URL is set. Claude Code copies every settings
+# file's `env` into its own environment before it spawns this script, so the
+# environment is the answer (and also covers the shell and user-level
+# settings); the project's .claude/settings.local.json is only read when the
+# variable is absent — a render outside Claude Code, or a session that predates
+# the edit. Credentials in the URL (user:pass@) and the path never render.
 _seg_proxy=""
-for _p in \
-  "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
-  "${cwd:+${cwd}/.claude/settings.local.json}" \
-  ".claude/settings.local.json"; do
-  [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
-done
-# Gated on layout membership like the other fork-owning segments — this jq
-# used to run on every render whenever a settings.local.json existed.
-if _in_layout proxy && [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
-  _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
-  if [[ -n "$_proxy_url" ]]; then
-    if [[ "$_proxy_url" == "http://localhost:8888" ]]; then
-      _proxy_label="gateii"
-    else
-      _proxy_label="${_proxy_url#http://}"; _proxy_label="${_proxy_label#https://}"; _proxy_label="${_proxy_label%%/*}"
-    fi
-    _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
-  else
-    _seg_proxy="${DIM}→ api${RST}"
+if _in_layout proxy; then
+  _proxy_url="${ANTHROPIC_BASE_URL:-}"
+  if [[ -z "$_proxy_url" ]]; then
+    _proxy_settings=""
+    for _p in \
+      "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
+      "${cwd:+${cwd}/.claude/settings.local.json}" \
+      ".claude/settings.local.json"; do
+      [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
+    done
+    [[ -n "$_proxy_settings" ]] && \
+      _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // "" | strings' "$_proxy_settings" 2>/dev/null)
   fi
+  _proxy_label="${_proxy_url#*://}"; _proxy_label="${_proxy_label%%[/?#]*}"; _proxy_label="${_proxy_label##*@}"
+  [[ -n "$_proxy_label" ]] && _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
 fi
 
 # bumpii — pending tool updates (⬆) and unread release news (✉), read from
@@ -2192,9 +2156,7 @@ while IFS= read -r _line_segs; do
       ci)            _val="$_seg_ci"       ;;
       sessions)      _val="$_seg_sessions" ;;
       claude-status) _val="$_seg_claude_status" ;;
-      vpn)           _val="$_seg_vpn"      ;;
       tailscale)     _val="$_seg_tailscale" ;;
-      omlx)          _val="$_seg_omlx"     ;;
       bumpii)        _val="$_seg_bumpii"   ;;
       proxy)         _val="$_seg_proxy"    ;;
       clock)         _val="$_seg_clock"    ;;
@@ -2255,8 +2217,11 @@ while IFS= read -r _line_segs; do
   [[ -n "$_line_out" ]] && printf '%s\n' "${RST}${_line_out}" || true
 done <<< "$_lines_raw"
 
-# Vibemap append — opt-in, fire-and-forget, errors silent.
-if [[ "$_cfg_vibemap_enabled" == "true" ]]; then
+# Vibemap append — opt-in, fire-and-forget, errors silent. Same dedup as the
+# flight recorder: the map counts rows per time bucket, so the idle re-renders
+# of statusLine.refreshInterval (nothing changed) must not count as activity.
+# delta_ms stays "since the previous render".
+if [[ "$_cfg_vibemap_enabled" == "true" ]] && (( _hist_write )); then
   _vm_delta=0
   if [[ "$_last_duration_ms" =~ ^[0-9]+$ && "$duration_ms" =~ ^[0-9]+$ ]]; then
     _vm_delta=$(( duration_ms - _last_duration_ms ))

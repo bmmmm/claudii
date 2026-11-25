@@ -42,6 +42,9 @@
     "rate_display": "used",
     "bedtime": "23:00",
     "insomnii": "auto",
+    "shame": true,
+    "motivation": true,
+    "rainbow": true,
     "max_width": 0,
     "max_label": 20,
     "separator": "tight",
@@ -49,7 +52,7 @@
       ["model", "cc-version", "tokens", "cache-create", "cache-hit", "cache-ttl", "response"],
       ["rate-5h", "rate-7d", "burn-eta", "lines-changed"],
       ["api-duration", "duration", "worktree", "worktrees", "branch", "dir", "remotes", "git-sync"],
-      ["omlx", "proxy", "cost", "context", "compact-eta"],
+      ["proxy", "cost", "context", "compact-eta"],
       ["claude-status"]
     ]
   },
