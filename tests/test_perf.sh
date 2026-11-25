@@ -12,7 +12,8 @@
 # 200-400k context-window bucket; the four other responses are tiny (<50k) — the
 # By-context-window section therefore shows exactly two buckets.
 # All timestamps are stamped "today" so the default 7d window covers them.
-# A second block builds an OTEL fixture (traces+logs JSONL) to exercise the
+# A second block builds an OTEL fixture (OTLP batches flattened through the
+# receiver's --flatten into event files, as live ingest does) to exercise the
 # exact-source path: ctx buckets, [1m] model-merge, claudii-selftest exclusion,
 # TTFT, reliability (success/retried) and api_error status codes.
 
