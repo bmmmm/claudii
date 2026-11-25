@@ -296,44 +296,39 @@ _insights_reject_tsv() {
 # over 128 KiB fails exec on Linux with "Argument list too long".
 
 _cache_json() {
-  local merged="$1" days="$2"
-  jq --argjson days "$days" '
+  local merged="$1" days="$2" floor="${3:-}"
+  # Window = calendar floor on the days{} key, as in `tokens`: the merge admits
+  # a session by last_seen, so without it a session that started weeks ago
+  # brought its whole history into a 7-day view. Per-model comes from the same
+  # filtered days{} split (models{} is the unfiltered session total). An empty
+  # floor (date failure) keeps every day.
+  jq --argjson days "$days" --arg floor "$floor" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
-    . as $m
-    | ($m.days // {}) as $day
+    def sums: { cache_read:   ([.[].v.cache_read   // 0] | add // 0),
+                cache_create: ([.[].v.cache_create // 0] | add // 0),
+                input:        ([.[].v.in_tok       // 0] | add // 0) }
+              | . + {total: (.cache_read + .cache_create + .input)};
+    [ (.days // {}) | to_entries[]
+      | (.key | split("|")) as $p
+      | select($p[0] >= $floor)
+      | {day: $p[0], model: ($p[1] // ""), v: .value} ] as $rows
     | {
         window_days: $days,
         per_day: (
-          $day | to_entries
-          | map({day: (.key | split("|")[0]), v: .value})
-          | group_by(.day)
-          | map({ day: .[0].day,
-                  cache_read:   ([.[].v.cache_read   // 0] | add),
-                  cache_create: ([.[].v.cache_create // 0] | add),
-                  input:        ([.[].v.in_tok       // 0] | add) })
-          | map(. + {total: (.cache_read + .cache_create + .input)})
+          $rows | group_by(.day)
+          | map({day: .[0].day} + sums)
           | map(select(.total > 0))
           | map(. + {hit_pct: hit(.cache_read; .total)})
           | sort_by(.day) | reverse
         ),
         per_model: (
-          ($m.models // {}) | to_entries
-          | map({ model: .key,
-                  cache_read:   (.value.cache_read   // 0),
-                  cache_create: (.value.cache_create // 0),
-                  input:        (.value.in_tok       // 0) })
-          | map(. + {total: (.cache_read + .cache_create + .input)})
+          $rows | group_by(.model)
+          | map({model: .[0].model} + sums)
           | map(select(.total > 0 and .model != "<synthetic>"))
           | map(. + {hit_pct: hit(.cache_read; .total)})
           | sort_by(-.total)
         ),
-        summary: (
-          ([$day[]? | .cache_read   // 0] | add // 0) as $r
-          | ([$day[]? | .cache_create // 0] | add // 0) as $c
-          | ([$day[]? | .in_tok       // 0] | add // 0) as $i
-          | {cache_read: $r, cache_create: $c, input: $i,
-             total: ($r + $c + $i), hit_pct: hit($r; ($r + $c + $i))}
-        )
+        summary: ($rows | sums | . + {hit_pct: hit(.cache_read; .total)})
       }' <<< "$merged"
 }
 
@@ -466,8 +461,11 @@ _cmd_cache() {
     return 0
   fi
 
+  _window_cutoffs "$days"
+  local floor="$_WC_FLOOR"
+
   if [[ "$fmt" == "json" ]]; then
-    _cache_json "$merged" "$days"
+    _cache_json "$merged" "$days" "$floor"
     return 0
   fi
 
@@ -475,37 +473,19 @@ _cmd_cache() {
     "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
     "${CLAUDII_CLR_ACCENT}" "${VERSION:-?}" "${CLAUDII_CLR_RESET}"
 
-  # Single jq pass → per-day (D), per-model (M), summary (S) rows, tab-delimited,
-  # hit% pre-formatted to one decimal in jq (pct1s). Replaces 3 jq calls plus a
-  # per-row awk fork each: jq aggregates and formats, bash only renders. Collect-
-  # then-render (not mid-stream section state) stays set-u-safe under bash 3.2.
+  # The pretty rows are formatted from _cache_json's envelope, so both views
+  # aggregate (and window) the same way: per-day (D), per-model (M), summary
+  # (S), tab-delimited, hit% pre-formatted to one decimal in jq (pct1s).
+  # Collect-then-render (not mid-stream section state) stays set-u-safe under
+  # bash 3.2.
   local _rows
-  _rows=$(jq -r '
+  _rows=$(_cache_json "$merged" "$days" "$floor" | jq -r '
     def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
                       | "\(($z/10)|floor).\($z%10)" else "0.0" end;
-    ( (.days // {}) | to_entries
-      | map({day:(.key|split("|")[0]), v:.value})
-      | group_by(.day)
-      | map({day:.[0].day, cr:([.[].v.cache_read//0]|add),
-             cc:([.[].v.cache_create//0]|add), in:([.[].v.in_tok//0]|add)})
-      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0))
-      | sort_by(.day) | reverse
-      | .[] | ["D", .day, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
-    ),
-    ( (.models // {}) | to_entries
-      | map({model:.key, cr:(.value.cache_read//0),
-             cc:(.value.cache_create//0), in:(.value.in_tok//0)})
-      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0 and .model!="<synthetic>"))
-      | sort_by(-.total)
-      | .[] | ["M", .model, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
-    ),
-    ( ([(.days//{})[]?|.cache_read//0]|add//0) as $r
-      | ([(.days//{})[]?|.cache_create//0]|add//0) as $c
-      | ([(.days//{})[]?|.in_tok//0]|add//0) as $i
-      | ($r+$c+$i) as $t
-      | ["S", ($r|tostring), ($t|tostring), pct1s($r;$t)] | @tsv
-    )
-  ' <<< "$merged")
+    ( .per_day[]   | ["D", .day,   (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv ),
+    ( .per_model[] | ["M", .model, (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv ),
+    ( .summary     | ["S",         (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv )
+  ')
 
   local -a _d_rows=() _m_rows=()
   local _s_row="" _ln _tag

@@ -243,3 +243,41 @@ _sa_deploy_out2=$(jq -r '.attribution_skills.deploy.out_tok // "missing"' \
 assert_eq "subagent aggregate: subagent-only update re-aggregates parent (35+7)" "42" "$_sa_deploy_out2"
 rm -rf "$_sa_base"
 unset _sa_base _sa_deploy_out _sa_deploy_out2
+
+# ── The window cuts the days, not just the sessions ────────────────────────
+# The merge admits a session by last_seen, so a session that started 11 days
+# ago and is still running is IN a 7-day merge with its whole history. `tokens`
+# drops the days before the window's calendar floor; `cache` used to show them
+# (per day, per model and in the summary). Clock pinned to 2026-06-25T12:00Z
+# via CLAUDII_NOW: the 7-day floor is 2026-06-19.
+_CACHE_FL_PROJ="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_CACHE_FL_PROJ")
+_CACHE_FL_CACHE="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_CACHE_FL_CACHE")
+mkdir -p "$_CACHE_FL_PROJ/-test-project-floor"
+_CACHE_FL_SID="77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+{
+  # 11 days back: Opus, 900/1000 cache reads (90%) — outside a 7-day window.
+  printf '{"type":"assistant","timestamp":"2026-06-14T12:00:00Z","sessionId":"%s","message":{"id":"m-old","role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":900,"cache_creation_input_tokens":0}}}\n' "$_CACHE_FL_SID"
+  # Today: Sonnet, 500/1000 (50%).
+  printf '{"type":"assistant","timestamp":"2026-06-25T10:00:00Z","sessionId":"%s","message":{"id":"m-new","role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":500,"output_tokens":10,"cache_read_input_tokens":500,"cache_creation_input_tokens":0}}}\n' "$_CACHE_FL_SID"
+} > "$_CACHE_FL_PROJ/-test-project-floor/$_CACHE_FL_SID.jsonl"
+_cache_fl() {
+  CLAUDE_PROJECTS_DIR="$_CACHE_FL_PROJ" CLAUDII_CACHE_DIR="$_CACHE_FL_CACHE" CLAUDII_NOW=1782388800 \
+    bash "$CLAUDII_HOME/bin/claudii" cache "$@" 2>&1
+}
+_CACHE_FL_J7=$(_cache_fl --json)
+assert_eq "cache --json (7d): only in-window days" "2026-06-25" \
+  "$(jq -r '[.per_day[].day] | join(",")' <<< "$_CACHE_FL_J7")"
+assert_eq "cache --json (7d): per_model drops the pre-window model" "claude-sonnet-4-6" \
+  "$(jq -r '[.per_model[].model] | join(",")' <<< "$_CACHE_FL_J7")"
+assert_eq "cache --json (7d): summary counts only in-window tokens" "500 1000 50" \
+  "$(jq -r '.summary | "\(.cache_read) \(.total) \(.hit_pct)"' <<< "$_CACHE_FL_J7")"
+_CACHE_FL_J30=$(_cache_fl --json --days 30)
+assert_eq "cache --json (30d): the older day is back" "1400 2000 70" \
+  "$(jq -r '.summary | "\(.cache_read) \(.total) \(.hit_pct)"' <<< "$_CACHE_FL_J30")"
+assert_eq "cache --json (30d): both models" "2" \
+  "$(jq -r '.per_model | length' <<< "$_CACHE_FL_J30")"
+_CACHE_FL_P7=$(_cache_fl)
+assert_not_contains "cache (7d): pre-window model not listed" "Opus 4.7" "$_CACHE_FL_P7"
+assert_contains "cache (7d): summary uses the window's hit rate" "50.0% hit rate" "$_CACHE_FL_P7"
+unset -f _cache_fl
+unset _CACHE_FL_PROJ _CACHE_FL_CACHE _CACHE_FL_SID _CACHE_FL_J7 _CACHE_FL_J30 _CACHE_FL_P7
