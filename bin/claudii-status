@@ -9,7 +9,7 @@
 #   2. RSS fallback → only when unresolved.json is unreachable
 #      Parses HTML-encoded <strong> status tags to skip resolved items.
 #
-# Cache format: model=ok|degraded|down  (+ optional _api=unreachable marker)
+# Cache format: model=ok|degraded|down  (+ optional _api=unreachable and _incident=<stage> markers)
 # Exit codes:   0=all ok, 1=some degraded or down
 #
 # Env overrides: CLAUDII_UNRESOLVED_URL, CLAUDII_RSS_URL, CLAUDII_CACHE_TTL
