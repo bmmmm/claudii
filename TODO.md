@@ -10,21 +10,6 @@
 > `t3/repo-audit-dead-code-cleanup`). Was hier steht, ist offen und an
 > aktuellem Code geprüft.
 
-### Die vier positionellen awk-Programme auf HC[] ziehen
-
-**Type: Refactor** · **Complexity: Small** · **Touches: lib/cmd/week.sh,
-lib/cmd/overview.sh, lib/window.awk, lib/window_bounds.awk,
-lib/window_history.awk, lib/usage_spark.awk**
-
-`lib/history_cols.awk` deklariert die 11 Spalten jetzt an einer Stelle, aber
-`window.awk`, `window_bounds.awk`, `window_history.awk` und `usage_spark.awk`
-lesen weiter positionell — ihre Call-Sites (`week.sh`, `overview.sh`) lagen
-außerhalb der Touches, und awk hat kein include: ohne `-f lib/history_cols.awk`
-am Call-Site würde jeder Feldzugriff still zu `$0` degradieren. Also: das `-f`
-an den vier Call-Sites ergänzen, dann die Positionen durch `HC[]` ersetzen.
-`tests/test_history_cols.sh` pinnt die heutigen Positionen gegen das Schema und
-wird rot, wenn die Umstellung danebengeht.
-
 ### Die sechs verbleibenden Commands unter den Exit-Code-Vertrag
 
 **Type: Refactor** · **Complexity: Medium** · **Touches: lib/cmd/system.sh,
