@@ -84,9 +84,9 @@ for cmd in $_COMP_NAMES; do
   case "$_KNOWN" in *" $cmd "*) ;; *) _unreachable="$_unreachable $cmd" ;; esac
 done
 assert_eq "every completion entry is reachable in bin/claudii" "" "$_unreachable"
-# _UNDOCUMENTED_OK and DISPATCHED stay in scope — the overview-list check below
-# uses both.
-unset _DISPATCH_BLOCK _ALIAS_BLOCK _KNOWN _COMP_NAMES _unreachable _MAN_WORDS
+# _UNDOCUMENTED_OK, DISPATCHED and _KNOWN stay in scope — the overview-list
+# checks below use them.
+unset _DISPATCH_BLOCK _ALIAS_BLOCK _COMP_NAMES _unreachable _MAN_WORDS
 
 # config subcommands
 CONFIG_SUBS=(get set reset export import theme)
@@ -147,7 +147,9 @@ unset _lint_postinc
 # that has no entry at all.
 OV_EXEMPT=(sessions sessions-inactive)   # listed by their shorthands se · si
 _OV_FN=$(LC_ALL=C sed -n '/^_ov_render_commands()/,/^}/p' "$CLAUDII_HOME/lib/cmd/overview.sh")
-_OV_ITEMS=$(printf '%s\n' "$_OV_FN" \
+# Only the group rows (the `%-10s` label format) — the header and the
+# _ov_hint line also end in a quoted string, and neither holds commands.
+_OV_ITEMS=$(printf '%s\n' "$_OV_FN" | LC_ALL=C grep -F '%-10s' \
   | LC_ALL=C sed -n 's/.*"\([^"]*\)"[[:space:]]*$/\1/p' \
   | LC_ALL=C tr '·' '\n' | LC_ALL=C tr -d ' ')
 assert_eq "overview command list is extractable" "0" \
@@ -160,7 +162,15 @@ for cmd in $DISPATCHED; do
   assert_eq "bare claudii lists command: $cmd" "0" \
     "$(LC_ALL=C grep -qx -- "$cmd" <<< "$_OV_ITEMS" && echo 0 || echo 1)"
 done
-unset _OV_FN _OV_ITEMS _skip _x
+# Reverse direction: every item must be reachable. omlx and vpnii stayed in
+# the list after both commands were removed, because only the forward
+# direction was gated.
+_ov_dead=""
+for _it in $_OV_ITEMS; do
+  case "$_KNOWN" in *" $_it "*) ;; *) _ov_dead="$_ov_dead $_it" ;; esac
+done
+assert_eq "every bare claudii item is a dispatch arm or alias" "" "$_ov_dead"
+unset _OV_FN _OV_ITEMS _skip _x _it _ov_dead _KNOWN
 
 # ── Window words: completions offer every word _insights_window accepts ─────
 # tokens/tools/limits/cache take today|day, week, month, quarter, year (plus

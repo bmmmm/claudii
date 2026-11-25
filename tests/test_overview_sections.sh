@@ -35,8 +35,8 @@ assert_contains "agents: hint is an invocable command" "claudii agents" "$_ovs_o
 
 # Commands section: grouped quick reference, items are real subcommands
 assert_contains "commands: vibemap discoverable" "vibemap" "$_ovs_out"
-assert_contains "commands: omlx discoverable"    "omlx"    "$_ovs_out"
-assert_contains "commands: vpnii discoverable"   "vpnii"   "$_ovs_out"
+assert_not_contains "commands: removed omlx not listed"  "omlx"  "$_ovs_out"
+assert_not_contains "commands: removed vpnii not listed" "vpnii" "$_ovs_out"
 assert_contains "commands: skills-cost listed"   "skills-cost" "$_ovs_out"
 assert_contains "commands: prefix rule stated"   "claudii <command>" "$_ovs_out"
 # Unified taxonomy: the `insights` group restores the analytics commands the old
