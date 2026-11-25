@@ -922,6 +922,10 @@ of the formatted tables.
 Prompt-cache hit rate per day and per model (default: 7-day window).
 Aggregated from JSONL transcripts under
 .IR ~/.claude/projects .
+The per-day rows, the per-model split and the summary are all floored to
+exactly the window's calendar days, as in
+.BR tokens ;
+a session that started earlier contributes only its days inside the window.
 First run is slower (5\(en30 s) while the cache warms; subsequent runs
 only re-aggregate changed sessions.
 .RS
