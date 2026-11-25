@@ -595,3 +595,26 @@ assert_eq "doctor: plugin ok when the caller exported CLAUDII_HOME" "ok" "$(_dp_
 rm -rf "$_DP_BASE"
 unset _DP_BASE _DP_XDG _DP_CACHE _dp_out
 unset -f _dp_status
+
+# ── status --json: claudii-status bookkeeping keys are not models ─────────────
+# The status cache carries _incident / _incident_started / _api next to the
+# model lines; --json used to emit them as models ({"model":"_incident",…}).
+# A stub claudii-status (bin/claudii calls it before rendering) writes the
+# cache, so no network is involved.
+_make_cfg_tmp _SJ
+mkdir -p "$_SJ_BASE/home/bin"
+for _sj_d in lib config completions; do ln -s "$CLAUDII_HOME/$_sj_d" "$_SJ_BASE/home/$_sj_d"; done
+ln -s "$CLAUDII_HOME/bin/claudii" "$_SJ_BASE/home/bin/claudii"
+cat > "$_SJ_BASE/home/bin/claudii-status" <<'STUB'
+#!/bin/bash
+printf 'opus=ok\nsonnet=degraded\n_incident=investigating\n_incident_started=1700000000\n_api=ok\n' \
+  > "$CLAUDII_CACHE_DIR/status-models"
+STUB
+chmod +x "$_SJ_BASE/home/bin/claudii-status"
+_sj_out=$(CLAUDII_HOME="$_SJ_BASE/home" HOME="$_SJ_BASE" XDG_CONFIG_HOME="$_SJ_XDG" \
+  CLAUDII_CACHE_DIR="$_SJ_CACHE" bash "$_SJ_BASE/home/bin/claudii" status --json 2>&1)
+assert_eq "status --json: only model entries" \
+  '[{"model":"opus","status":"ok"},{"model":"sonnet","status":"degraded"}]' \
+  "$(jq -c . <<< "$_sj_out" 2>&1)"
+rm -rf "$_SJ_BASE"
+unset _SJ_BASE _SJ_XDG _SJ_CACHE _sj_out _sj_d

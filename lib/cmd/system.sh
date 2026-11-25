@@ -191,7 +191,9 @@ _status_print_transition() {
 _status_render() {
   if [[ "$_FORMAT" == "json" ]]; then
     if [[ -f "$cache_file" ]]; then
-      jq -Rn '[inputs | select(length > 0) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
+      # Keys with a leading underscore (_incident, _incident_started, _api)
+      # are claudii-status bookkeeping, not models.
+      jq -Rn '[inputs | select(length > 0 and (startswith("_") | not)) | split("=") | {"model": .[0], "status": .[1]}]' < "$cache_file"
     else
       echo "[]"
     fi
