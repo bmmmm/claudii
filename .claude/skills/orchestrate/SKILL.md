@@ -38,7 +38,7 @@ Before any wave touching `lib/statusline.zsh`, read the file and list which arra
 
 > **Removed functions — do not re-add:** `_claudii_render_global_line`, `_claudii_render_session_lines`, `_claudii_build_title`. If you see references to these anywhere, delete them.
 >
-> **Current session arrays:** `_CLAUDII_SDASH_MODELS`, `_CLAUDII_SDASH_CTXS`, `_CLAUDII_SDASH_TOKS`, `_CLAUDII_SDASH_5HS`, `_CLAUDII_SDASH_R5HS` — no others. (`_COSTS` is gone: the dashboard shows token throughput, not dollars.)
+> **Current session arrays:** `_CLAUDII_SDASH_MODELS`, `_CLAUDII_SDASH_CTXS`, `_CLAUDII_SDASH_TOKS` — no others. The 5h limit is account-wide, so it is two scalars (`_CLAUDII_SDASH_RATE5H`, `_CLAUDII_SDASH_RESET5H`), not per-session arrays; `_5HS`/`_R5HS` and `_COSTS` are gone.
 
 ---
 
