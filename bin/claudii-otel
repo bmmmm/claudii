@@ -396,12 +396,12 @@ _cmd_doctor() {
   # loaded, last batch, forward counters); doctor compares that sha with the
   # repo's receiver so a stale copy or wrapper target is visible.
   if [[ -s "$STATUS_FILE" ]] && jq -e . "$STATUS_FILE" >/dev/null 2>&1; then
-    local s_sha s_pid s_last s_batches s_records s_wfail s_listen f_on f_ok f_failed f_dropped f_err f_err_at r_sha
+    local s_sha s_pid s_last s_batches s_records s_wfail s_listen s_rej s_rej_last f_on f_ok f_failed f_dropped f_err f_err_at r_sha
     # Empty fields become "-": with IFS=tab an empty field collapses and every
     # later field shifts (the empty-field trap).
-    IFS=$'\t' read -r s_sha s_pid s_last s_batches s_records s_wfail s_listen f_on f_ok f_failed f_dropped f_err_at f_err < <(
-      jq -r '[.sha, .pid, .last_batch, .batches, .records, .write_failed, .listen, .forward.enabled, .forward.ok,
-              .forward.failed, .forward.dropped, .forward.last_error_at, .forward.last_error]
+    IFS=$'\t' read -r s_sha s_pid s_last s_batches s_records s_wfail s_listen s_rej s_rej_last f_on f_ok f_failed f_dropped f_err_at f_err < <(
+      jq -r '[.sha, .pid, .last_batch, .batches, .records, .write_failed, .listen, .rejected, .last_rejected,
+              .forward.enabled, .forward.ok, .forward.failed, .forward.dropped, .forward.last_error_at, .forward.last_error]
              | map(if . == null or . == "" then "-" else . end) | @tsv' "$STATUS_FILE")
     r_sha=$(_sha256 "$RECEIVER")
     # Dead only on "No such process": a sandbox that denies signalling other
@@ -423,6 +423,9 @@ _cmd_doctor() {
       printf ' · no batch since start\n'
     fi
     [[ "${s_wfail:-0}" != "0" ]] && printf '  WRITE FAIL   %s failed write(s) — check disk space (receiver.status: last_write_error)\n' "$s_wfail"
+    # Refused requests (wrong path/host/type, over 32 MiB): a client that is not
+    # Claude Code's exporter, or an exporter set to an unsupported protocol.
+    [[ "$s_rej" != "-" && "$s_rej" != "0" ]] && printf '  REJECTED     %s request(s) refused · last: %s\n' "$s_rej" "$s_rej_last"
     # "-": a receiver from before the listen field — nothing to compare.
     if (( recv_up && ep_ok )) && [[ "$s_listen" != "-" && "$s_listen" != "$EP_HOST:$EP_PORT" ]]; then
       printf '  MISMATCH     receiver listens on %s, perf.otel.endpoint is %s:%s — restart the receiver\n' "$s_listen" "$EP_HOST" "$EP_PORT"

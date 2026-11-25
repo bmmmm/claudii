@@ -1035,7 +1035,15 @@ does it on demand). The receiver also keeps
 .B doctor
 compares that sha with the repo's receiver and reports
 .B DRIFT
-when a stale copy is running. A capture from claudii 0.28 or earlier
+when a stale copy is running. Only OTLP requests are accepted \(em a POST to
+.IR /v1/logs ", " /v1/traces " or " /v1/metrics
+with a loopback Host header, JSON or protobuf, at most 32 MiB on the wire and
+after gzip decoding; anything else is refused, stores and forwards nothing,
+and is counted
+.RB ( REJECTED
+in
+.BR doctor ).
+A capture from claudii 0.28 or earlier
 .RI ( traces.jsonl / logs.jsonl )
 is not read any more;
 .B doctor

@@ -290,6 +290,21 @@ body = b"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\
 req = urllib.request.Request("http://127.0.0.1:%s/v1/logs" % sys.argv[1], data=body, headers={"Content-Type": "application/json"}, method="POST")
 print(urllib.request.urlopen(req, timeout=5).status)' "$_OTEL_PORT" 2>&1)
     assert_eq "otel receiver: a POSTed batch is accepted" "200" "$_OTEL_POST"
+    # refusals over the socket: path, DNS-rebinding Host, a type a page can
+    # POST without preflight, a 33 KB gzip that decodes past 32 MiB
+    _OTEL_REJ=$(python3 -I -c '
+import gzip, http.client, sys
+def send(path, body, **hdr):
+    c = http.client.HTTPConnection("127.0.0.1", int(sys.argv[1]), timeout=10)
+    h = {"Content-Type": "application/json"}; h.update({k.replace("_", "-"): v for k, v in hdr.items()})
+    c.request("POST", path, body=body, headers=h)
+    s = c.getresponse().status; c.close(); return s
+b = b"{}"
+print(send("/v1/nope", b), send("/v1/logs", b, Host="evil.example"), send("/v1/logs", b, Content_Type="text/plain"),
+      send("/v1/logs", gzip.compress(b"\0" * (32 * 1024 * 1024 + 1)), Content_Encoding="gzip"))' "$_OTEL_PORT" 2>&1)
+    assert_eq "otel receiver (live): 404 path · 403 host · 415 type · 413 gzip bomb" "404 403 415 413" "$_OTEL_REJ"
+    assert_eq "otel receiver (live): refused requests store nothing" "1" \
+      "$(cat "$_OTEL_LCACHE"/otel/events/*.ndjson 2>/dev/null | wc -l | tr -d ' ')"
     assert_eq "otel receiver: the batch lands in claudii's events dir" "529" \
       "$(cat "$_OTEL_LCACHE"/otel/events/err-*.ndjson 2>/dev/null | jq -r '.status_code')"
     assert_eq "otel receiver: CLAUDII_OTEL_DIR from the caller's env does not redirect it" "1" \
@@ -672,6 +687,77 @@ assert_eq "receiver.status: sha == sha256 of the receiver file, no .tmp, counter
   "$(printf '%s\n' "$_SRES" | sed -n 1p)"
 assert_eq "receiver: failed writes (no dir, unwritable file) are counted, batches still count, no exception" "2 2 1 0 1 0" \
   "$(printf '%s\n' "$_SRES" | sed -n 2p)"
+# Request limits. Handler.do_POST runs on an in-memory request (no socket), so
+# status counters and the forward queue are visible; the live block above
+# sends some of the same refusals over a real socket.
+_OTEL_HDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_HDIR")
+_HRES=$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD= python3 -B -c '
+import importlib.util, importlib.machinery, email.message, gzip, io, os, sys, zlib
+spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+out = []
+# gunzip: members back to back like gzip.decompress; past the limit TooLarge
+out.append(m.gunzip(gzip.compress(b"ab") + gzip.compress(b"cd")) == b"abcd")
+out.append(len(m.gunzip(gzip.compress(b"\0" * 1000), 1000)))
+for body in (gzip.compress(b"\0" * 1001), gzip.compress(b"x") + gzip.compress(b"\0" * 1000)):
+    try:
+        m.gunzip(body, 1000); out.append("fits")
+    except m.TooLarge:
+        out.append("big")
+for body in (b"plain", gzip.compress(b"x" * 100)[:-12]):
+    try:
+        m.gunzip(body); out.append("ok")
+    except (zlib.error, EOFError):
+        out.append("bad")
+class Srv:
+    server_address = ("127.0.0.1", 4318)
+fwd = []
+m._enqueue_forward = lambda path, data, ctype, enc: fwd.append(path)
+def post(path, body, cl=None, **hdr):
+    h = email.message.Message()
+    hdr.setdefault("Host", "127.0.0.1:4318"); hdr.setdefault("Content_Type", "application/json")
+    if cl != "omit":
+        h["Content-Length"] = str(len(body)) if cl is None else cl
+    for k, v in hdr.items():
+        if v is not None:
+            h[k.replace("_", "-")] = v
+    r = m.Handler.__new__(m.Handler)
+    r.path, r.headers, r.server, r.client_address = path, h, Srv(), ("127.0.0.1", 0)
+    r.rfile, r.wfile = io.BytesIO(body), io.BytesIO()
+    r.request_version, r.command, r.close_connection = "HTTP/1.1", "POST", True
+    r.requestline = "POST %s HTTP/1.1" % path
+    r.do_POST()
+    return int(r.wfile.getvalue().split(b" ", 2)[1])
+rec = b"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"1\",\"body\":{\"stringValue\":\"x\"}}]}]}]}"
+m.MAX_BODY = 1000
+codes = [post("/v1/logs", rec), post("/v1/traces", rec, Host="localhost"),
+         post("/v1/logs", rec, Content_Type="application/json; charset=utf-8"),
+         post("/v1/logs/x", rec), post("/", rec), post("/v1/logs", rec, Host="evil.example:4318"),
+         post("/v1/logs", rec, Host=None), post("/v1/logs", rec, Content_Type="text/plain"),
+         post("/v1/logs", rec, Content_Type=None), post("/v1/logs", rec, cl="-1"), post("/v1/logs", rec, cl="12abc"),
+         post("/v1/logs", rec, cl="1001"), post("/v1/logs", rec, cl="omit", Transfer_Encoding="chunked"),
+         post("/v1/logs", rec, cl="500"),
+         post("/v1/logs", gzip.compress(b"{" + b" " * 2000 + b"}"), Content_Encoding="gzip"),
+         post("/v1/logs", b"", cl="omit")]
+out.append(",".join(map(str, codes)))
+out.append(",".join(fwd))
+out.append("%d|%s" % (m._STATUS["rejected"], m._STATUS["last_rejected"].split(" ", 1)[0]))
+out.append("%d|%d" % (m._STATUS["batches"], m._STATUS["records"]))
+print(" ".join(map(str, out)))
+' "$_RCV" 2>&1)
+assert_eq "receiver: gunzip decodes members, stops past the limit, refuses non-gzip" \
+  "True 1000 big big bad bad" "$(printf '%s' "$_HRES" | cut -d' ' -f1-6)"
+assert_eq "receiver: request codes (ok ×3 · path 404 ×2 · host 403 ×2 · type 415 ×2 · length 400 ×2 / 413 · chunked 411 · short 400 · gzip bomb 413 · empty 200)" \
+  "200,200,200,404,404,403,403,415,415,400,400,413,411,400,413,200" "$(printf '%s' "$_HRES" | cut -d' ' -f7)"
+assert_eq "receiver: only accepted batches are forwarded — after they were stored" \
+  "/v1/logs,/v1/traces,/v1/logs,/v1/logs" "$(printf '%s' "$_HRES" | cut -d' ' -f8)"
+assert_eq "receiver: refusals counted in receiver.status (last: the gzip bomb)" "12|413" "$(printf '%s' "$_HRES" | cut -d' ' -f9)"
+assert_eq "receiver: refused bodies store nothing (3 batches, 3 records)" "3|3" "$(printf '%s' "$_HRES" | cut -d' ' -f10)"
+assert_eq "receiver: a forward that is not http(s) is ignored" "|file:///etc/passwd|True" \
+  "$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD=file:///etc/passwd python3 -B -c '
+import importlib.util, importlib.machinery, sys
+spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print("%s|%s|%s" % (m.FORWARD, m.FORWARD_BAD, m._FQ is None))' "$_RCV" 2>&1)"
+
 # doctor reads that status file: matching sha → ok, other sha → DRIFT
 _OTEL_DCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_DCACHE"); mkdir -p "$_OTEL_DCACHE/otel"
 # the python process that wrote it is gone — a live pid (this shell) stands in
@@ -692,6 +778,12 @@ assert_contains "otel doctor: an empty sha does not shift the forward counters" 
 sleep 0 & _RS_DEAD=$!; wait "$_RS_DEAD"
 jq -c --argjson p "$_RS_DEAD" '.pid = $p' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
 assert_contains "otel doctor: a dead receiver pid is reported as NOT RUNNING" "NOT RUNNING" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+jq -c --argjson p "$$" '.pid = $p | .rejected = 3 | .last_rejected = "403 host evil.example"' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
+assert_contains "otel doctor: refused requests are shown" "REJECTED     3 request(s) refused · last: 403 host evil.example" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+jq -c --argjson p "$$" '.pid = $p' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
+assert_not_contains "otel doctor: no REJECTED line while nothing was refused" "REJECTED" \
   "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
 
 # ── doctor: flag, otel.env, receiver and launchd job must agree ──

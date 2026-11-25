@@ -32,14 +32,15 @@ kind: llm (span claude_code.llm_request) · err (log claude_code.api_error) ·
   claude_code.tool_*) · hook (log claude_code.hook_*) · other (everything else;
   a metrics batch is one record of _sig metrics with the identity scrubbed).
 
-An empty body is forwarded and nothing is written. A body that is not JSON, or
+An empty body is a no-op (200, nothing written or forwarded). A body that is not JSON, or
 a batch the flattening cannot process, goes verbatim (base64 when not UTF-8)
 to events/unparsed-<day>.ndjson — nothing is lost, and nothing is written
 twice, since the batch is flattened in memory before the first append.
 
-Optional fan-out: if CLAUDII_OTEL_FORWARD is set, each batch is also tee'd
+Optional fan-out: if CLAUDII_OTEL_FORWARD is set (an http:// or https:// URL;
+anything else is ignored with a log line), each accepted batch is also tee'd
 verbatim (identity included) to that base endpoint (e.g. an internal collector
-gateway). Best-effort and off the hot path — a single daemon worker drains a
+gateway), after it was stored. Best-effort and off the hot path — a single daemon worker drains a
 bounded queue, so a slow or unreachable gateway never blocks the local persist
 or the 200 returned to Claude Code; batches drop (queue-full) rather than
 back-pressure.
@@ -60,6 +61,15 @@ Conversion / tests:
     serves live ingest, the tests and the conversion.
 
 Security: binds 127.0.0.1 only, so nothing on the network can push events in.
+What a local client (or a web page in a local browser) can send is narrowed
+too, each refusal counted as "rejected" in receiver.status: only POST to
+/v1/logs, /v1/traces or /v1/metrics (404), a Host header naming the loopback
+(403 — a DNS-rebinding page names its own host), Content-Type application/json
+or application/x-protobuf (415 — the types a page can POST without a CORS
+preflight are not among them), a numeric Content-Length (400; a chunked body
+411) of at most 32 MiB, and a gzip body that decodes to at most 32 MiB (413 —
+decoded in bounded steps, so a small gzip bomb cannot fill memory). A refused
+request stores and forwards nothing.
 `claudii-otel receiver` and the launchd plist set dir, host and port from
 claudii (cache dir, perf.otel.endpoint) — the env defaults below are for a
 direct run.
@@ -74,15 +84,16 @@ Env:
   CLAUDII_OTEL_VERBOSE          1 → log one diagnostic line per request to stderr
 """
 import base64
-import gzip
 import hashlib
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
 import urllib.request
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OUT_DIR = os.path.expanduser(os.environ.get("CLAUDII_OTEL_DIR", "~/.cache/claudii/otel"))
@@ -93,6 +104,10 @@ STATUS_EVERY = 5.0
 VERBOSE = os.environ.get("CLAUDII_OTEL_VERBOSE", "") == "1"
 
 FORWARD = os.environ.get("CLAUDII_OTEL_FORWARD", "").rstrip("/")
+# urllib also speaks file:// and ftp:// — a forward is a collector, nothing else.
+FORWARD_BAD = ""
+if FORWARD and not re.match(r"^https?://\S+$", FORWARD):
+    FORWARD_BAD, FORWARD = FORWARD, ""
 FORWARD_TIMEOUT = float(os.environ.get("CLAUDII_OTEL_FORWARD_TIMEOUT", "5") or "5")
 # Bounded so an unreachable gateway can't grow memory without limit; drop-on-full
 # keeps the local path unaffected. One worker is plenty at Claude Code's batch rate.
@@ -100,6 +115,12 @@ _FQ = queue.Queue(maxsize=512) if FORWARD else None
 
 IDENTITY = frozenset(("user.email", "user.id", "user.account_uuid",
                       "user.account_id", "organization.id"))
+
+# Request limits (see Security in the docstring). A Claude Code batch is a few
+# KB; 32 MiB bounds the wire body and, separately, what a gzip body decodes to.
+MAX_BODY = 32 * 1024 * 1024
+OTLP_PATHS = frozenset(("/v1/logs", "/v1/traces", "/v1/metrics"))
+OTLP_CTYPES = frozenset(("application/json", "application/x-protobuf"))
 KINDS = ("llm", "err", "api", "tool", "hook", "other", "unparsed")
 
 # One lock for every append and for the status file: ThreadingHTTPServer runs
@@ -328,7 +349,7 @@ def _self_sha():
 _STATUS = {
     "sha": _self_sha(), "pid": os.getpid(), "started": int(time.time()),
     "last_batch": 0, "batches": 0, "records": 0, "unparsed": 0,
-    "write_failed": 0, "last_write_error": "",
+    "write_failed": 0, "last_write_error": "", "rejected": 0, "last_rejected": "",
     "forward": {"enabled": bool(FORWARD), "target": FORWARD, "ok": 0, "failed": 0,
                 "dropped": 0, "last_error": "", "last_error_at": 0},
 }
@@ -437,16 +458,40 @@ def _append_all(groups):
     return failed
 
 
+class TooLarge(Exception):
+    """A body that is, or decodes to, more than MAX_BODY bytes."""
+
+
+def gunzip(data, limit=None):
+    """gzip.decompress (members back to back) that stops past `limit` decoded
+    bytes (default MAX_BODY) with TooLarge — 33 KB of gzip can decode to 32 MiB
+    and more. Raises zlib.error / EOFError on a body that is not (whole) gzip."""
+    limit = MAX_BODY if limit is None else limit
+    out, total = [], 0
+    while data:
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        chunk = d.decompress(data, limit - total + 1)
+        total += len(chunk)
+        if total > limit or d.unconsumed_tail:
+            raise TooLarge()
+        out.append(chunk)
+        if not d.eof:
+            raise EOFError("truncated gzip member")
+        data = d.unused_data
+    return b"".join(out)
+
+
 def persist(raw_body, path, ctype, encoding):
     """Flatten one wire body and append it under the UTC write day.
-    Returns (records written, unparsed lines written)."""
+    Returns (records written, unparsed lines written). Raises TooLarge — before
+    anything is stored — for a gzip body that decodes past MAX_BODY."""
     body = raw_body
     stored_encoding = encoding
     if "gzip" in encoding:
         try:
-            body = gzip.decompress(raw_body)
+            body = gunzip(raw_body)
             stored_encoding = ""  # the unparsed record holds the decoded body
-        except (OSError, EOFError):
+        except (zlib.error, EOFError):
             pass
     day = time.strftime("%Y-%m-%d", time.gmtime())
     lines = None
@@ -473,46 +518,93 @@ def persist(raw_body, path, ctype, encoding):
     return n_rec, n_unp
 
 
+def check_request(path, headers, bind_host):
+    """(None, body length) for a request the receiver reads, else (code, why).
+    headers: a mapping with .get (the request's email.message.Message)."""
+    if path not in OTLP_PATHS:
+        return 404, "path %s" % path[:80]
+    host = headers.get("Host") or ""
+    name = host if host.startswith("[") else host.rsplit(":", 1)[0]
+    if name.lower() not in ("127.0.0.1", "localhost", bind_host):
+        return 403, "host %s" % (host[:80] or "-")
+    ctype = (headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    if ctype not in OTLP_CTYPES:
+        return 415, "content-type %s" % (ctype[:80] or "-")
+    if headers.get("Transfer-Encoding"):
+        return 411, "chunked body, no Content-Length"
+    cl = (headers.get("Content-Length") or "0").strip()
+    if not re.match(r"^[0-9]+$", cl):
+        return 400, "content-length %s" % cl[:40]
+    if int(cl) > MAX_BODY:
+        return 413, "content-length %s over %d" % (cl, MAX_BODY)
+    return None, int(cl)
+
+
+def _count_rejected(code, why):
+    with _WLOCK:
+        _STATUS["rejected"] += 1
+        _STATUS["last_rejected"] = "%d %s" % (code, why)
+        status_write()
+    if VERBOSE:
+        _log("rejected %d: %s" % (code, why))
+
+
 class Handler(BaseHTTPRequestHandler):
+    timeout = 30  # a client stalling mid-body must not hold its thread forever
+
     def log_message(self, *args):
         pass  # silence stdlib's default per-request logging
 
-    def do_POST(self):
+    def _reply(self, code):
+        # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
         try:
-            length = int(self.headers.get("Content-Length", 0) or 0)
-            raw = self.rfile.read(length) if length else b""  # wire body (maybe gzipped)
-            encoding = (self.headers.get("Content-Encoding") or "").lower()
-            ctype = (self.headers.get("Content-Type") or "").lower()
-            # Tee the raw body to the gateway before we touch it — byte-transparent,
-            # so the upstream collector sees exactly what Claude Code sent.
-            _enqueue_forward(self.path, raw, self.headers.get("Content-Type"),
-                             self.headers.get("Content-Encoding"))
-            if raw:
-                n_rec, n_unp = persist(raw, self.path, ctype, encoding)
-            else:
-                n_rec, n_unp = 0, 0  # empty body: nothing to store
-            if VERBOSE:
-                _log("POST %s  ctype=%s  enc=%s  wire=%db  records=%d  unparsed=%d  fwd=%s"
-                     % (self.path, ctype or "-", encoding or "-", len(raw), n_rec, n_unp,
-                        "on" if _FQ is not None else "off"))
-        except Exception as exc:  # noqa: BLE001 — a handler must never die on ENOSPC & co.
-            _log("request failed: %s" % exc)
-        finally:
-            # OTLP/HTTP success: an empty 200 is accepted by both JSON and proto exporters.
-            try:
-                self.send_response(200)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-            except OSError:
-                pass
-
-    def do_GET(self):
-        try:
-            self.send_response(200)
+            self.send_response(code)
             self.send_header("Content-Length", "0")
             self.end_headers()
         except OSError:
             pass
+
+    def do_POST(self):
+        code, length = check_request(self.path, self.headers, self.server.server_address[0])
+        if code is not None:
+            _count_rejected(code, length)
+            self._reply(code)
+            return
+        try:
+            raw = self.rfile.read(length) if length else b""  # wire body (maybe gzipped)
+        except OSError as exc:  # timeout or reset mid-body: no one left to answer
+            _log("read failed: %s" % exc)
+            self.close_connection = True
+            return
+        if len(raw) < length:
+            _count_rejected(400, "body ends %d bytes short of content-length" % (length - len(raw)))
+            self._reply(400)
+            return
+        try:
+            encoding = (self.headers.get("Content-Encoding") or "").lower()
+            ctype = (self.headers.get("Content-Type") or "").lower()
+            if raw:
+                n_rec, n_unp = persist(raw, self.path, ctype, encoding)
+            else:
+                n_rec, n_unp = 0, 0  # empty body: nothing to store
+            # Tee what was accepted, byte-transparent — the upstream collector
+            # sees exactly what Claude Code sent (Content-Encoding kept).
+            _enqueue_forward(self.path, raw, self.headers.get("Content-Type"),
+                             self.headers.get("Content-Encoding"))
+            if VERBOSE:
+                _log("POST %s  ctype=%s  enc=%s  wire=%db  records=%d  unparsed=%d  fwd=%s"
+                     % (self.path, ctype or "-", encoding or "-", len(raw), n_rec, n_unp,
+                        "on" if _FQ is not None else "off"))
+        except TooLarge:
+            _count_rejected(413, "gzip body decodes past %d" % MAX_BODY)
+            self._reply(413)
+            return
+        except Exception as exc:  # noqa: BLE001 — a handler must never die on ENOSPC & co.
+            _log("request failed: %s" % exc)
+        self._reply(200)
+
+    def do_GET(self):
+        self._reply(200)
 
 
 # ── conversion CLI ───────────────────────────────────────────────────────────
@@ -654,6 +746,8 @@ def main(argv=None):
     _log("listening on %s:%d  ->  %s  (sha %s)" % (host, port, EVENTS_DIR, _STATUS["sha"][:12]))
     if FORWARD:
         _log("forwarding batches -> %s (timeout %.0fs)" % (FORWARD, FORWARD_TIMEOUT))
+    elif FORWARD_BAD:
+        _log("CLAUDII_OTEL_FORWARD ignored, not an http(s) URL: %s" % FORWARD_BAD)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
