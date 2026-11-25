@@ -49,83 +49,64 @@ _insights_host_label() {
   if [[ -z "$1" ]]; then _sync_self_name; else printf '%s' "$1"; fi
 }
 
-# Render a 20-block bar coloured green-up-to-filled, dim-for-empty.
-# Args: filled_count (0..20)
-# Echoes the rendered bar (ANSI included).
-_insights_bar() {
-  local filled="${1:-0}"
-  (( filled < 0 ))  && filled=0
-  (( filled > 20 )) && filled=20
-  local empty=$(( 20 - filled ))
-  local f="" e=""
-  (( filled > 0 )) && printf -v f "%${filled}s" "" && f="${f// /█}"
-  (( empty  > 0 )) && printf -v e "%${empty}s"  "" && e="${e// /░}"
-  printf '%s%s%s%s%s' \
-    "${CLAUDII_CLR_GREEN}" "$f" \
-    "${CLAUDII_CLR_DIM}"   "$e" \
-    "${CLAUDII_CLR_RESET}"
-}
-
 # Short-number formatting (B/M/K) now lives in lib/render.sh as _fmt_tok
 # (pure bash, no per-call awk fork). Call sites below use it directly.
 
-# Map full model id to short label.
-# When a new model ships, add its versioned case ABOVE the bare fallback
-# (most-specific-first; the bare *opus*/*sonnet*/*haiku* lines must stay last).
-# Older versions are kept on purpose so historical cost/insights data still
-# resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
+# Map a model id to its display label: family + version — "Opus 5.5",
+# "Opus 5.1", "Fable 5.2", "Sonnet 4", "Haiku 3.5". The version is read from
+# the id, not looked up, so a new model needs no case here:
+#   claude-<family>-<major>[-<minor>]   every id since Claude 4
+#   claude-<major>[-<minor>]-<family>   the Claude 3 ids (claude-3-5-haiku-…)
+# A single-digit minor only: a trailing date ("claude-sonnet-4-20250514") is
+# not a minor version. No version in the id → the bare family ("opus" →
+# "Opus"). Mythos labels as "Fable" without a version: it is the Fable tier
+# under another access program (Project Glasswing), billed and grouped as
+# Fable by lib/model_tier.awk, lib/tier.jq and the _rates table in
+# lib/cmd/skills-cost.sh. bin/claudii-status carries the family in
+# _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
 #
 # THE single bash model->label map. lib/cmd/overview.sh's _norm_model_short
 # delegates here (it only collapses the version off) instead of keeping a second
 # case list — the two used to drift, and `claudii` and `claudii perf` printed
-# different strings for the SAME status-cache line. The awk sibling
-# (lib/model_tier.awk `tier_label`) and the jq sibling (lib/tier.jq `tier`) stay
-# separate implementations — different languages, not duplication worth removing
-# — but tests/test_model_label_agreement.sh pins all four against one fixture
-# list so a drift like that goes red instead of shipping.
+# different strings for the SAME status-cache line. Its jq twin is label() in
+# lib/tier.jq (the cost rows' model column); the awk tier_label() in
+# lib/model_tier.awk and jq tier() collapse to the tier. Different languages,
+# not duplication worth removing — tests/test_model_label_agreement.sh pins
+# all five against one fixture list so a drift goes red instead of shipping.
+# (The last one: this function knew a fixed version list and printed
+# claude-opus-5-1 as "Opus 5" while the jq twin said "Opus 5.1".)
 #
-# Case-folded first, like tolower()/ascii_downcase() in those two siblings, so a
+# Case-folded first, like tolower()/ascii_downcase() in those siblings, so a
 # capitalised id resolves instead of dropping through to the raw passthrough
 # (_norm_model_short matched case-insensitively and callers still rely on that).
 # bash 3.2 has no ${var,,} and the fold costs a fork, so it only runs when the
 # input actually carries an uppercase letter — real model ids ("claude-opus-4-8")
 # and the status-cache family keys never pay it. [[:upper:]], not [A-Z]: bracket
-# RANGES are locale-collated and CI has a de_DE leg.
+# RANGES are locale-collated and CI has a de_DE leg (hence [[:digit:]] below).
+# The version patterns run against "_<id>_" so neither needs an anchor inside
+# a group.
+_IML_RE_FAM_VER='(fable|opus|sonnet|haiku)-([[:digit:]])(-([[:digit:]]))?[^[:digit:]]'
+_IML_RE_VER_FAM='[^[:alnum:]]([[:digit:]])(-([[:digit:]]))?-(fable|opus|sonnet|haiku)'
 _insights_model_label() {
-  local _m="$1"
+  local _m="$1" _fam _ver=""
   case "$_m" in
     *[[:upper:]]*) _m=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_m") ;;
   esac
   case "$_m" in
-    *fable-5-1*)  printf 'Fable 5.1'  ;;
-    *fable-5*)    printf 'Fable 5'    ;;
-    *fable*)      printf 'Fable'      ;;
-    # Mythos is the Fable tier under a different access program (Project
-    # Glasswing): claude-mythos-5-1 has the same 1M window and the same
-    # $10/$50 per MTok as claude-fable-5-1, which is why lib/model_tier.awk,
-    # lib/tier.jq and the _rates table in lib/cmd/skills-cost.sh all bill and
-    # label it as Fable. Bash was the only one of the four that did not know
-    # the alias, so `claudii perf` printed a bare "mythos" where the overview
-    # printed "Fable". No version is claimed here — the tier is what the three
-    # siblings agree on. bin/claudii-status carries the family in
-    # _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
-    *mythos*)     printf 'Fable'      ;;
-    *opus-5-5*)   printf 'Opus 5.5'   ;;
-    *opus-5*)     printf 'Opus 5'     ;;
-    *opus-4-8*)   printf 'Opus 4.8'   ;;
-    *opus-4-7*)   printf 'Opus 4.7'   ;;
-    *opus-4-6*)   printf 'Opus 4.6'   ;;
-    *opus*)       printf 'Opus'       ;;
-    *sonnet-5-5*) printf 'Sonnet 5.5' ;;
-    *sonnet-5*)   printf 'Sonnet 5'   ;;
-    *sonnet-4-6*) printf 'Sonnet 4.6' ;;
-    *sonnet*)     printf 'Sonnet'     ;;
-    *haiku-5-5*)  printf 'Haiku 5.5'  ;;
-    *haiku-4-5*)  printf 'Haiku 4.5'  ;;
-    *haiku*)      printf 'Haiku'      ;;
-    '<synthetic>'|synthetic) printf 'synthetic' ;;
-    *)            printf '%s' "$1"    ;;
+    *mythos*) printf 'Fable'; return 0 ;;
+    *fable*)  _fam='Fable'  ;;
+    *opus*)   _fam='Opus'   ;;
+    *sonnet*) _fam='Sonnet' ;;
+    *haiku*)  _fam='Haiku'  ;;
+    '<synthetic>'|synthetic) printf 'synthetic'; return 0 ;;
+    *)        printf '%s' "$1"; return 0 ;;
   esac
+  if [[ "_${_m}_" =~ $_IML_RE_FAM_VER ]]; then
+    _ver=" ${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
+  elif [[ "_${_m}_" =~ $_IML_RE_VER_FAM ]]; then
+    _ver=" ${BASH_REMATCH[1]}${BASH_REMATCH[3]:+.${BASH_REMATCH[3]}}"
+  fi
+  printf '%s%s' "$_fam" "$_ver"
 }
 
 # Map ISO date (YYYY-MM-DD) to "Today" or a strftime label (default %a, the
@@ -307,54 +288,55 @@ _insights_reject_tsv() {
 # `// {}` / `// []` defaults yield the same envelope shape with empty arrays.
 # Kept inline alongside the pretty-path jq for the same view (the established
 # convention in this file) rather than re-aggregating in a shared .jq module.
+#
+# The merged JSON goes in on stdin, never as --argjson: it grows with the
+# window (a 90d merge with latency runs to megabytes), and a single argument
+# over 128 KiB fails exec on Linux with "Argument list too long".
 
 _cache_json() {
-  local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
+  local merged="$1" days="$2" floor="${3:-}"
+  # Window = calendar floor on the days{} key, as in `tokens`: the merge admits
+  # a session by last_seen, so without it a session that started weeks ago
+  # brought its whole history into a 7-day view. Per-model comes from the same
+  # filtered days{} split (models{} is the unfiltered session total). An empty
+  # floor (date failure) keeps every day.
+  jq --argjson days "$days" --arg floor "$floor" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
-    ($m.days // {}) as $day
+    def sums: { cache_read:   ([.[].v.cache_read   // 0] | add // 0),
+                cache_create: ([.[].v.cache_create // 0] | add // 0),
+                input:        ([.[].v.in_tok       // 0] | add // 0) }
+              | . + {total: (.cache_read + .cache_create + .input)};
+    [ (.days // {}) | to_entries[]
+      | (.key | split("|")) as $p
+      | select($p[0] >= $floor)
+      | {day: $p[0], model: ($p[1] // ""), v: .value} ] as $rows
     | {
         window_days: $days,
         per_day: (
-          $day | to_entries
-          | map({day: (.key | split("|")[0]), v: .value})
-          | group_by(.day)
-          | map({ day: .[0].day,
-                  cache_read:   ([.[].v.cache_read   // 0] | add),
-                  cache_create: ([.[].v.cache_create // 0] | add),
-                  input:        ([.[].v.in_tok       // 0] | add) })
-          | map(. + {total: (.cache_read + .cache_create + .input)})
+          $rows | group_by(.day)
+          | map({day: .[0].day} + sums)
           | map(select(.total > 0))
           | map(. + {hit_pct: hit(.cache_read; .total)})
           | sort_by(.day) | reverse
         ),
         per_model: (
-          ($m.models // {}) | to_entries
-          | map({ model: .key,
-                  cache_read:   (.value.cache_read   // 0),
-                  cache_create: (.value.cache_create // 0),
-                  input:        (.value.in_tok       // 0) })
-          | map(. + {total: (.cache_read + .cache_create + .input)})
+          $rows | group_by(.model)
+          | map({model: .[0].model} + sums)
           | map(select(.total > 0 and .model != "<synthetic>"))
           | map(. + {hit_pct: hit(.cache_read; .total)})
           | sort_by(-.total)
         ),
-        summary: (
-          ([$day[]? | .cache_read   // 0] | add // 0) as $r
-          | ([$day[]? | .cache_create // 0] | add // 0) as $c
-          | ([$day[]? | .in_tok       // 0] | add // 0) as $i
-          | {cache_read: $r, cache_create: $c, input: $i,
-             total: ($r + $c + $i), hit_pct: hit($r; ($r + $c + $i))}
-        )
-      }'
+        summary: ($rows | sums | . + {hit_pct: hit(.cache_read; .total)})
+      }' <<< "$merged"
 }
 
 _tokens_json() {
   local merged="$1" days="$2" floor="$3"
-  jq -n --argjson m "$merged" --argjson days "$days" --arg floor "$floor" \
+  jq --argjson days "$days" --arg floor "$floor" \
     --arg self "$(_sync_self_name)" '
     def hit($r; $d): if $d > 0 then (($r * 1000 / $d) | round) / 10 else 0 end;
-    [ ($m.days // {}) | to_entries[]
+    . as $m
+    | [ ($m.days // {}) | to_entries[]
       | (.key | split("|")) as $p
       | select($p[1] != "<synthetic>" and $p[0] >= $floor)
       | {day: $p[0], model: $p[1], v: .value} ] as $rows
@@ -404,14 +386,15 @@ _tokens_json() {
           | map(select((.input + .output + .cache_read + .cache_create) > 0))
           | sort_by((if .local then 0 else 1 end), .host)
         )
-      }'
+      }' <<< "$merged"
 }
 
 _tools_json() {
   local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
+  jq --argjson days "$days" '
     def pct1($n; $d): if $d > 0 then (($n * 1000 / $d) | round) / 10 else 0 end;
-    ([$m.tools[]? ] | add // 0) as $tc
+    . as $m
+    | ([$m.tools[]? ] | add // 0) as $tc
     | ([$m.tool_errors[]? ] | add // 0) as $te
     | {
         window_days: $days,
@@ -431,13 +414,13 @@ _tools_json() {
           | sort_by(-.count)
         ),
         thinking_blocks: ($m.thinking_blocks // 0)
-      }'
+      }' <<< "$merged"
 }
 
 _limits_json() {
   local merged="$1" days="$2"
-  jq -n --argjson m "$merged" --argjson days "$days" '
-    ($m.limit_hits // []) as $h
+  jq --argjson days "$days" '
+    (.limit_hits // []) as $h
     | {
         window_days: $days,
         total: ($h | length),
@@ -445,7 +428,7 @@ _limits_json() {
                | map({timestamp: (.timestamp // ""), model: (.model // "")})),
         by_model: ($h | map(.model // "unknown") | group_by(.)
                    | map({model: .[0], count: length}) | sort_by(-.count))
-      }'
+      }' <<< "$merged"
 }
 
 # ── claudii cache ────────────────────────────────────────────────────────────
@@ -476,8 +459,11 @@ _cmd_cache() {
     return 0
   fi
 
+  _window_cutoffs "$days"
+  local floor="$_WC_FLOOR"
+
   if [[ "$fmt" == "json" ]]; then
-    _cache_json "$merged" "$days"
+    _cache_json "$merged" "$days" "$floor"
     return 0
   fi
 
@@ -485,37 +471,19 @@ _cmd_cache() {
     "${CLAUDII_CLR_CYAN}" "${CLAUDII_CLR_RESET}" \
     "${CLAUDII_CLR_ACCENT}" "${VERSION:-?}" "${CLAUDII_CLR_RESET}"
 
-  # Single jq pass → per-day (D), per-model (M), summary (S) rows, tab-delimited,
-  # hit% pre-formatted to one decimal in jq (pct1s). Replaces 3 jq calls plus a
-  # per-row awk fork each: jq aggregates and formats, bash only renders. Collect-
-  # then-render (not mid-stream section state) stays set-u-safe under bash 3.2.
+  # The pretty rows are formatted from _cache_json's envelope, so both views
+  # aggregate (and window) the same way: per-day (D), per-model (M), summary
+  # (S), tab-delimited, hit% pre-formatted to one decimal in jq (pct1s).
+  # Collect-then-render (not mid-stream section state) stays set-u-safe under
+  # bash 3.2.
   local _rows
-  _rows=$(jq -r '
+  _rows=$(_cache_json "$merged" "$days" "$floor" | jq -r '
     def pct1s($n;$d): if $d>0 then (($n*1000/$d)|round) as $z
                       | "\(($z/10)|floor).\($z%10)" else "0.0" end;
-    ( (.days // {}) | to_entries
-      | map({day:(.key|split("|")[0]), v:.value})
-      | group_by(.day)
-      | map({day:.[0].day, cr:([.[].v.cache_read//0]|add),
-             cc:([.[].v.cache_create//0]|add), in:([.[].v.in_tok//0]|add)})
-      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0))
-      | sort_by(.day) | reverse
-      | .[] | ["D", .day, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
-    ),
-    ( (.models // {}) | to_entries
-      | map({model:.key, cr:(.value.cache_read//0),
-             cc:(.value.cache_create//0), in:(.value.in_tok//0)})
-      | map(.+{total:(.cr+.cc+.in)}) | map(select(.total>0 and .model!="<synthetic>"))
-      | sort_by(-.total)
-      | .[] | ["M", .model, (.cr|tostring), (.total|tostring), pct1s(.cr;.total)] | @tsv
-    ),
-    ( ([(.days//{})[]?|.cache_read//0]|add//0) as $r
-      | ([(.days//{})[]?|.cache_create//0]|add//0) as $c
-      | ([(.days//{})[]?|.in_tok//0]|add//0) as $i
-      | ($r+$c+$i) as $t
-      | ["S", ($r|tostring), ($t|tostring), pct1s($r;$t)] | @tsv
-    )
-  ' <<< "$merged")
+    ( .per_day[]   | ["D", .day,   (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv ),
+    ( .per_model[] | ["M", .model, (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv ),
+    ( .summary     | ["S",         (.cache_read|tostring), (.total|tostring), pct1s(.cache_read;.total)] | @tsv )
+  ')
 
   local -a _d_rows=() _m_rows=()
   local _s_row="" _ln _tag
@@ -543,7 +511,7 @@ _cmd_cache() {
       pct_int=$(( 100 * creads / total ))
       filled=$(( (pct_int * 20 + 50) / 100 ))
       label=$(_insights_day_label "$day")
-      bar=$(_insights_bar "$filled")
+      bar=$(_bar_c "$filled" 20)
       creads_h=$(_fmt_tok "$creads")
       total_h=$(_fmt_tok "$total")
       printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
@@ -570,7 +538,7 @@ _cmd_cache() {
       mpct_int=$(( 100 * mcreads / mtotal ))
       mfilled=$(( (mpct_int * 20 + 50) / 100 ))
       mlabel=$(_insights_model_label "$model")
-      mbar=$(_insights_bar "$mfilled")
+      mbar=$(_bar_c "$mfilled" 20)
       mtotal_h=$(_fmt_tok "$mtotal")
       printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
         "$mlabel" \

@@ -738,9 +738,12 @@ counts both; the split comes from the transcript's
 (insights schema v11). Writes without it \(em caches built before v11,
 sessions whose transcript is gone \(em bill at the 5-minute rate.
 Version-aware within a tier:
-Sonnet 4.x / 3.x, Haiku 4.x / 3.x and Fable 5 keep their own older rates, and Opus 5.5 (now
-the default Opus) carries the newer, cheaper rate while older Opus ids keep the
-existing one. Haiku 5.5 is priced per request: $0.10/$0.50/M, and 5\(mu that
+Sonnet 4.x / 3.x, Haiku 4.x and Fable 5 keep their own older rates, and Opus 5.5 (now
+the default Opus) carries the newer, cheaper rate while Opus 4.5 to 5.1 keep
+$5/$25/M. The models before that bill their own list price: Opus 4 / 4.1 and
+Claude 3 Opus $15/$75/M, Claude 3.5 Haiku $0.80/$4/M, Claude 3 Haiku
+$0.25/$1.25/M (its cache columns are its own: read $0.03/M, writes
+$0.30/$0.50/M). Haiku 5.5 is priced per request: $0.10/$0.50/M, and 5\(mu that
 ($0.50/$2.50/M, every column) for a request whose prompt \(em input plus cache
 reads and cache writes \(em is over 100,000 tokens. The split is taken per
 response when the cache is built (insights schema v14); caches from before it
@@ -755,11 +758,26 @@ documents the rates and the residual fallback.
 Token-primary rolling 7-day chart: daily token bars (normalized to the busiest
 day) with spend as a dim side column, a 30-day model split by tokens, busiest
 day, average API duration per session, and the 7d-vs-30d token trend.
+A daily row counts the sessions active that day; the
+.B 7d total
+row and the API average count each session once, however many days it ran.
 Reads from
 .I ~/.cache/claudii/history-YYYY-MM.tsv
 (written by the CC-Statusline handler).
 Supports
-.BR \-\-json .
+.BR \-\-json :
+.B this_week
+is the rolling 7 days,
+.B last_week
+the previous full calendar week (it starts on
+.BR cost.week_start ),
+with its first and last day as
+.B from
+and
+.BR to ;
+its
+.B sessions
+counts distinct sessions.
 Alias:
 .BR t .
 .TP
@@ -926,6 +944,10 @@ of the formatted tables.
 Prompt-cache hit rate per day and per model (default: 7-day window).
 Aggregated from JSONL transcripts under
 .IR ~/.claude/projects .
+The per-day rows, the per-model split and the summary are all floored to
+exactly the window's calendar days, as in
+.BR tokens ;
+a session that started earlier contributes only its days inside the window.
 First run is slower (5\(en30 s) while the cache warms; subsequent runs
 only re-aggregate changed sessions.
 .RS

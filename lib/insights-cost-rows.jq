@@ -23,29 +23,11 @@
 #   host         "" for this claudii, else the sync mirror name (the marker)
 #   src          "i": stage 2 drops the row when history already covers the
 #                session, so a session is never counted twice
-# Only the four Claude tiers are priced; anything else (a local model routed
-# through omlx, "<synthetic>") has no list price and stays out.
+# Only the four Claude families are priced (family() in lib/tier.jq); anything
+# else (a local model behind a gateway, "<synthetic>") has no list price and
+# stays out. The model column is model_label() — "Opus 5.5", the versioned form the
+# history model column carries, which the cost legend prefers.
 include "tier";
-
-def tier_name($m):
-  ($m | ascii_downcase) as $l
-  | if   ($l | test("(^|[^a-z])(fable|mythos)([^a-z]|$)")) then "Fable"
-    elif ($l | test("(^|[^a-z])opus([^a-z]|$)"))   then "Opus"
-    elif ($l | test("(^|[^a-z])sonnet([^a-z]|$)")) then "Sonnet"
-    elif ($l | test("(^|[^a-z])haiku([^a-z]|$)"))  then "Haiku"
-    else "" end;
-
-# "claude-opus-5-5" -> "Opus 5.5", the form the history model column carries
-# (the cost legend prefers a versioned name). Mythos bills and labels as Fable,
-# without a version (see _insights_model_label in lib/cmd/insights.sh).
-def display($m; $t):
-  ($m | ascii_downcase) as $l
-  | if ($l | test("mythos")) then "Fable"
-    else ($l | capture("(fable|opus|sonnet|haiku)-(?<a>[0-9])(-(?<b>[0-9]))?($|[^0-9])") // null) as $c
-      | if $c == null then $t
-        elif $c.b == null then "\($t) \($c.a)"
-        else "\($t) \($c.a).\($c.b)" end
-    end;
 
 foreach inputs as $i ({h: "", s: null};
     if ($i | type) == "object" and ($i | has("_claudii_host"))
@@ -58,7 +40,7 @@ foreach inputs as $i ({h: "", s: null};
 | [ (.days // {}) | to_entries[]
     | (.key | split("|")) as $p
     | ($p[1] // "") as $m
-    | tier_name($m) as $t
+    | family($m) as $t
     | select($t != "" and ($p[0] // "") != "")
     | { day: $p[0], model: $m, t: $t,
         b: ({ model: $m } + ({ in_tok: 0, out_tok: 0, cache_read: 0, cache_create: 0,
@@ -68,5 +50,5 @@ foreach inputs as $i ({h: "", s: null};
     .c += ($r.b | model_usd($rates))
     | .i += $r.b.in_tok
     | .o += $r.b.out_tok;
-    [ $r.day, $r.t, (.c * 1000000 | round / 1000000), $sid, display($r.model; $r.t),
+    [ $r.day, $r.t, (.c * 1000000 | round / 1000000), $sid, model_label($r.model),
       .i, .o, ($r.day + "T12:00:00Z" | fromdateiso8601), $h, "i" ] | @tsv)

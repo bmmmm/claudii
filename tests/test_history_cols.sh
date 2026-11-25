@@ -7,9 +7,9 @@
 #   1. the declared indices (and that hist_row() writes exactly that shape),
 #   2. that a TWELFTH column costs one edit — appending a name to HC_SCHEMA is
 #      enough for a consumer to read it, and changes nothing that came before,
-#   3. that the raw-history readers whose call sites this refactor did not
-#      touch (lib/window*.awk, lib/usage_spark.awk) still read the columns the
-#      schema declares — a behavioural drift gate, not a grep.
+#   3. that the raw-history readers (lib/window*.awk, lib/usage_spark.awk,
+#      lib/forecast.awk) read the columns by name — reversing the schema and
+#      every row leaves their output unchanged — and refuse to run without it.
 
 _hcd="$CLAUDII_TEST_TMP/history_cols"
 rm -rf "$_hcd"; mkdir -p "$_hcd"
@@ -155,35 +155,78 @@ assert_eq "appending a column changes no existing field" \
   "$(_hr "day model cost sid raw in out ts" "$_hc11f")" \
   "$(_hr "day model cost sid raw in out ts" "$_hc12f")"
 
-# ── drift gate: raw-history readers still read the declared columns ─────────
-# lib/window*.awk and lib/usage_spark.awk are loaded from lib/cmd/week.sh and
-# lib/cmd/overview.sh, which this change did not touch, so they still index by
-# position. These assertions fail the moment either side moves.
+# ── raw-history readers read the declared columns by name ──────────────────
+# lib/window*.awk (lib/cmd/week.sh) and lib/usage_spark.awk (lib/cmd/overview.sh)
+# index raw history through HC[] like forecast.awk; their call sites load
+# history_cols.awk first. Pin the numbers each one reads, then prove they come
+# from HC_SCHEMA and not from positions: reverse the schema AND every row, and
+# the output must not change.
 _hcwb="$_hcd/wb.tsv"
 for _hc_i in 1 2 3; do
   hist_row "$_hcwb" $(( 1788000000 + _hc_i )) "claude-opus-4-5" "1.00" 10 5 "sid-wb" \
     1000 200 300 20 1788600000
 done
-assert_eq "window_bounds.awk reads reset_7d from the declared column" \
-  "1788600000" \
-  "$(LC_ALL=C awk -F'\t' -f "$_hclib/window_bounds.awk" "$_hcwb" | cut -f1)"
-
 _hcw="$_hcd/w.tsv"
-hist_row "$_hcw" 1788000100 "claude-opus-4-5" "1.00" 10 5 "sid-w" 1000 200 300
-hist_row "$_hcw" 1788000200 "claude-opus-4-5" "3.50" 10 5 "sid-w" 4000 800 300
-_hcw_row=$(LC_ALL=C awk -F'\t' -v window_start=1788000000 \
-  -f "$_hclib/attribution.awk" -f "$_hclib/window.awk" "$_hcw")
+hist_row "$_hcw" 1788000100 "claude-opus-4-5" "1.00" 10 5 "sid-w" 1000 200 300 10
+hist_row "$_hcw" 1788000200 "claude-opus-4-5" "3.50" 10 5 "sid-w" 4000 800 300 30
+_hcus="$_hcd/us.tsv"
+hist_row "$_hcus" 1787999900 "claude-opus-4-5" "1.00" 10 5 "sid-us" 1000 200 300
+
+# $1 = the history_cols.awk to load, $2 = the directory holding the fixtures.
+_hc_wb() { LC_ALL=C awk -F'\t' -f "$1" -f "$_hclib/window_bounds.awk" "$2/wb.tsv"; }
+_hc_w()  { LC_ALL=C awk -F'\t' -v window_start=1788000000 -f "$1" \
+             -f "$_hclib/attribution.awk" -f "$_hclib/window.awk" "$2/w.tsv"; }
+_hc_wh() { LC_ALL=C awk -F'\t' -v bounds=1788000000,1788000150,1788000300 -f "$1" \
+             -f "$_hclib/attribution.awk" -f "$_hclib/window_history.awk" "$2/w.tsv"; }
+_hc_us() { LC_ALL=C awk -v today_epoch=1788000000 -v tz_offset=0 -v ndays=3 -f "$1" \
+             -f "$_hclib/attribution.awk" -f "$_hclib/usage_spark.awk" "$2/us.tsv"; }
+
+_hc_cols="$_hclib/history_cols.awk"
+assert_eq "window_bounds.awk reads reset_7d from the declared column" \
+  "1788600000" "$(_hc_wb "$_hc_cols" "$_hcd" | cut -f1)"
+_hcw_row=$(_hc_w "$_hc_cols" "$_hcd")
 assert_eq "window.awk sums the declared input+output token columns" \
   "4800" "$(cut -f1 <<< "$_hcw_row")"
 assert_eq "window.awk sums the declared cost column" \
   "350" "$(cut -f8 <<< "$_hcw_row")"
-
-_hcus="$_hcd/us.tsv"
-hist_row "$_hcus" 1787999900 "claude-opus-4-5" "1.00" 10 5 "sid-us" 1000 200 300
-_hcus_out=$(LC_ALL=C awk -v today_epoch=1788000000 -v tz_offset=0 -v ndays=3 \
-  -f "$_hclib/attribution.awk" -f "$_hclib/usage_spark.awk" "$_hcus")
+assert_eq "window.awk reads rate_7d from the declared column (one 10→30 pair)" \
+  "1" "$(cut -f7 <<< "$_hcw_row")"
+assert_eq "window_history.awk buckets the declared cost/token columns per window" \
+  "$(printf '1788000000\t1788000150\t1200\t100\t1\n1788000150\t1788000300\t3600\t250\t1')" \
+  "$(_hc_wh "$_hc_cols" "$_hcd")"
+_hcus_out=$(_hc_us "$_hc_cols" "$_hcd")
 assert_eq "usage_spark.awk totals the declared input+output token columns" \
   "1200" "$(sed -n '2p' <<< "$_hcus_out" | cut -f3)"
+
+# The same fixtures, every column in reverse order, read through a schema
+# declaring exactly that order.
+_hcrev="$_hcd/rev"; mkdir -p "$_hcrev"
+_hc_rev_schema=$(LC_ALL=C awk -F'"' '/^  HC_SCHEMA = /{ n = split($2, c, " ");
+  for (i = n; i >= 1; i--) printf "%s%s", c[i], (i > 1 ? " " : "") }' "$_hc_cols")
+sed "s/^  HC_SCHEMA = \".*\"$/  HC_SCHEMA = \"$_hc_rev_schema\"/" "$_hc_cols" > "$_hcrev/cols.awk"
+for _hc_i in wb w us; do
+  LC_ALL=C awk -F'\t' '{ for (i = NF; i >= 1; i--) printf "%s%s", $i, (i > 1 ? "\t" : "\n") }' \
+    "$_hcd/$_hc_i.tsv" > "$_hcrev/$_hc_i.tsv"
+done
+assert_eq "reversed schema: the timestamp is now the last column" \
+  "11" "$(LC_ALL=C awk -v n=ts -f "$_hcrev/cols.awk" -f "$_hcd/idx.awk" </dev/null)"
+assert_eq "window_bounds.awk follows HC_SCHEMA, not positions" \
+  "$(_hc_wb "$_hc_cols" "$_hcd")" "$(_hc_wb "$_hcrev/cols.awk" "$_hcrev")"
+assert_eq "window.awk follows HC_SCHEMA, not positions" \
+  "$_hcw_row" "$(_hc_w "$_hcrev/cols.awk" "$_hcrev")"
+assert_eq "window_history.awk follows HC_SCHEMA, not positions" \
+  "$(_hc_wh "$_hc_cols" "$_hcd")" "$(_hc_wh "$_hcrev/cols.awk" "$_hcrev")"
+assert_eq "usage_spark.awk follows HC_SCHEMA, not positions" \
+  "$_hcus_out" "$(_hc_us "$_hcrev/cols.awk" "$_hcrev")"
+
+# Without the schema each one fails loudly and prints nothing — a silent $0
+# read would sum the wrong column instead.
+_hc_nocols="$_hcd/empty.awk"; : > "$_hc_nocols"
+for _hc_i in wb w wh us; do
+  _hc_out=$("_hc_$_hc_i" "$_hc_nocols" "$_hcd" 2>/dev/null); _hc_rc=$?
+  assert_eq "$_hc_i: without history_cols.awk exits 2" "2" "$_hc_rc"
+  assert_eq "$_hc_i: without history_cols.awk prints nothing" "" "$_hc_out"
+done
 
 # forecast.awk was converted to the named indices; pin the two columns it reads
 # beyond the timestamp — rate_5h (the burn slope) and cost (the month total).
@@ -205,4 +248,5 @@ rm -rf "$_hcd"
 unset _hcd _hclib _hcf _hcfilt _hc11f _hc12f _hc12 _hcwb _hcw _hcus _hcfc
 unset _hc_meta _hc_cost_row _hc_trends_row _hc_chain _hc_err _hc12_row _hcw_row
 unset _hcus_out _hcfc_out _hc_i _hc_trends_chain _hc_fc_chain
-unset -f _hc_idx _hr
+unset _hc_cols _hcrev _hc_rev_schema _hc_nocols _hc_out _hc_rc
+unset -f _hc_idx _hr _hc_wb _hc_w _hc_wh _hc_us

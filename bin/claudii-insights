@@ -13,9 +13,10 @@
 #   claudii-insights aggregate --force # rebuild every cache
 #   claudii-insights aggregate <jsonl> # refresh one specific file
 #   claudii-insights cache-dir         # print insights cache directory
-#   claudii-insights merge [--days N] [--until-days M] [--by-host]
+#   claudii-insights merge [--days N] [--until-days M] [--with-latency] [--by-host]
 #                                      # stream merged stats to stdout (jq-able)
-#                                      # includes per-skill, per-plugin and per-MCP-tool attribution
+#                                      # includes per-skill, per-plugin and per-MCP-tool attribution;
+#                                      # --with-latency adds .latency[], one sample per response (claudii perf)
 #   claudii-insights gc --older-than DAYS [--yes]
 #                                      # prune orphaned caches (dry-run without --yes)
 #
@@ -529,8 +530,9 @@ claudii-insights — aggregate JSONL transcripts to JSON cache
 
 Usage:
   claudii-insights aggregate [--force | <jsonl>]
-  claudii-insights merge [--days N] [--until-days M] [--by-host]
+  claudii-insights merge [--days N] [--until-days M] [--with-latency] [--by-host]
                          # includes per-skill, per-plugin and per-MCP-tool attribution;
+                         # --with-latency adds .latency[], one sample per response (claudii perf);
                          # --by-host adds .hosts{NAME: {sessions, days}} ("" = this host)
   claudii-insights gc --older-than DAYS [--yes]
                          # prune orphaned caches (source JSONL gone); dry-run without --yes

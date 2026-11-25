@@ -55,11 +55,12 @@ _ov_hint() {
   printf "    ${CLAUDII_CLR_DIM}→ %s${CLAUDII_CLR_RESET}\n" "$_h"
 }
 
-# ── Parallel prefetch — the two heavy, independent subprocesses ──────────────
+# ── Parallel prefetch — the heavy, independent subprocesses ─────────────────
 # `claude agents --json` (Node startup, _live_pids_kick in helpers.sh) and the
-# merged history pass each take ~0.3-0.5s and need nothing from each other.
-# _cmd_default kicks both before rendering; _ov_gather reaps them — wall time
-# collapses from their sum to their max. _ov_uv_* are seeded at file scope so a
+# merged history pass each take ~0.3-0.5s, the vibemap strip (_ov_vibemap_kick)
+# ~0.2s, and none needs anything from the others. _cmd_default kicks all three
+# before _ov_gather, which reaps them — wall time collapses from their sum to
+# their max — and only then renders. _ov_uv_* are seeded at file scope so a
 # reap (or a standalone render) is always set -u-safe.
 _OV_HIST_PID=""
 _OV_HIST_TMP=""
@@ -100,6 +101,7 @@ _ov_history_kick() {
   _OV_HIST_TMP=$(mktemp "${TMPDIR:-/tmp}/claudii-usage.XXXXXX" 2>/dev/null) || _OV_HIST_TMP=""
   if [[ -n "$_OV_HIST_TMP" ]]; then
     ( LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/history_cols.awk" \
         -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
         "${_HIST_FILES[@]}" >"$_OV_HIST_TMP" 2>/dev/null || true ) &
     _OV_HIST_PID=$!
@@ -110,6 +112,7 @@ _ov_history_kick() {
     # path would show session-cache sums while the normal background path shows
     # history deltas. Same parse, same place — just no parallelism.
     _OV_HIST_RAW=$(LC_ALL=C awk -v today_epoch="$now" -v tz_offset="${_ov_tz:-0}" -v ndays=30 \
+        -f "$CLAUDII_HOME/lib/history_cols.awk" \
         -f "$CLAUDII_HOME/lib/attribution.awk" -f "$CLAUDII_HOME/lib/usage_spark.awk" \
         "${_HIST_FILES[@]}" 2>/dev/null) || _OV_HIST_RAW=""
   fi
@@ -480,7 +483,10 @@ _ov_render_agents() {
       Fable)  _ag_fable+="${_ag_fable:+ · }${_a_entry}"   ;;
       *)      _ag_other+="${_ag_other:+ · }${_a_entry}"   ;;
     esac
-  done < <(jq -r 'to_entries | sort_by(.key)[] | [(.value.model // "?"), (.key + (if (.value.effort // "") == "" then "" else "/" + .value.effort end))] | @tsv' <<< "$_ov_agents_json")
+  # Here-string of a command substitution, not `< <(jq …)`: the substitution is
+  # reaped before the loop starts, a process-substitution child is not and can
+  # exit (SIGCHLD) in the middle of a later printf — see _cmd_default.
+  done <<< "$(jq -r 'to_entries | sort_by(.key)[] | [(.value.model // "?"), (.key + (if (.value.effort // "") == "" then "" else "/" + .value.effort end))] | @tsv' <<< "$_ov_agents_json")"
 
   [[ -n "$_ag_haiku"  ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "haiku"  "$_ag_haiku"
   [[ -n "$_ag_sonnet" ]] && printf "    ${CLAUDII_CLR_DIM}%-7s${CLAUDII_CLR_RESET} %s\n" "sonnet" "$_ag_sonnet"
@@ -497,8 +503,6 @@ _ov_render_services() {
   printf '\n'
   _ov_cs_en=$(_cfgget statusline.enabled)
   _ov_dash_en=$(_cfgget session-dashboard.enabled)
-  # Migration fallback: read legacy key if new one absent
-  [[ -z "$_ov_dash_en" ]] && _ov_dash_en=$(_cfgget dashboard.enabled)
   [[ -z "$_ov_dash_en" ]] && _ov_dash_en="off"
   _ov_sl_settings="${HOME}/.claude/settings.json"
   _ov_sl_on=0
@@ -616,26 +620,11 @@ _ov_render_commands() {
 }
 
 # ── Entry point — bare `claudii` ─────────────────────────────────────────────
-_cmd_default() {
-  _cfg_init
-  cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  now=$(date +%s); _NOW="$now"
-  # Remove the prefetch temp files even on Ctrl-C during the ~0.5s render window
-  # (the reaps handle the normal path; this covers the interrupt). Safe to claim
-  # the EXIT trap here — the overview path runs no spinner, so nothing else owns
-  # it; the names expand at fire time, empty when no job was kicked.
-  trap 'rm -f "$_OV_HIST_TMP" "$_LIVE_PIDS_TMP" 2>/dev/null || true' EXIT
-  # Fire the two heavy, independent subprocesses now so they run while we print
-  # the header and walk the session caches; _ov_gather reaps both — live PIDs
-  # before the session loop, the history pass after it.
-  _live_pids_kick
-  _ov_history_kick
-  _ov_vibemap_kick
-
+# Header + the configured sections + footer. Writes only to stdout, so
+# _cmd_default can point it at a buffer file.
+_ov_render() {
   printf '\n'
   printf "  ${CLAUDII_CLR_CYAN}claudii${CLAUDII_CLR_RESET} ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_ACCENT}v%s${CLAUDII_CLR_RESET}\n" "$VERSION"
-
-  _ov_gather
 
   local _ov_sec _ov_secs _ov_has_commands=0
   _ov_secs=$(_ov_sections)
@@ -661,5 +650,51 @@ _cmd_default() {
   if (( _ov_has_commands == 0 )); then
     printf "  ${CLAUDII_CLR_DIM}claudii help  for all commands${CLAUDII_CLR_RESET}\n"
     printf '\n'
+  fi
+}
+
+# Copy the render buffer to stdout and drop it. Idempotent: the EXIT trap calls
+# it too, so a set -e abort mid-render still shows what was rendered.
+_OV_BUF=""
+_ov_flush() {
+  [[ -n "$_OV_BUF" ]] || return 0
+  [[ -s "$_OV_BUF" ]] && cat "$_OV_BUF"
+  rm -f "$_OV_BUF" 2>/dev/null
+  _OV_BUF=""
+  return 0
+}
+
+_cmd_default() {
+  _cfg_init
+  cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
+  now=$(date +%s); _NOW="$now"
+  # Nothing reaches stdout while a child of this shell can still exit. Each exit
+  # raises SIGCHLD, and bash 3.2 (macOS /bin/bash) installs that handler without
+  # SA_RESTART, so a printf blocked on a pipe or tty when it lands fails with
+  # "write error: Interrupted system call" — the overview used to print its
+  # header while the three prefetch jobs below were still running. So: kick,
+  # gather (which reaps all three), render into a regular file (writes there
+  # are not interrupted), then hand it to stdout with one `cat`. No buffer
+  # (mktemp failed) → render straight to stdout, still after the reap.
+  _OV_BUF=$(mktemp "${TMPDIR:-/tmp}/claudii-overview.XXXXXX" 2>/dev/null) || _OV_BUF=""
+  # Also removes the prefetch temp files on Ctrl-C during the ~0.5s render
+  # window (the reaps handle the normal path). Safe to claim the EXIT trap here
+  # — the overview path runs no spinner, so nothing else owns it; the names
+  # expand at fire time, empty when no job was kicked.
+  trap '_ov_flush; rm -f "$_OV_HIST_TMP" "$_LIVE_PIDS_TMP" 2>/dev/null || true' EXIT
+  # Fire the heavy, independent subprocesses first so they overlap the session
+  # cache walk; _ov_gather reaps them — live PIDs before the session loop, the
+  # history pass and the vibemap warm-up after it.
+  _live_pids_kick
+  _ov_history_kick
+  _ov_vibemap_kick
+
+  _ov_gather
+
+  if [[ -n "$_OV_BUF" ]]; then
+    _ov_render >"$_OV_BUF"
+    _ov_flush
+  else
+    _ov_render
   fi
 }
