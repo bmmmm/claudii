@@ -52,7 +52,21 @@ _rc=0
 _out=$(cd / && env -u CLAUDII_HOME "$TEST_TMP/rel/claudii" version 2>&1) || _rc=$?
 assert_eq "install: relative link chain resolves (rc)" "0" "$_rc"
 assert_contains "install: relative link chain prints its version" "$_ver" "$_out"
-unset _ver _rc _out
+# The linked helpers resolve their checkout the same way — they used to take
+# `dirname "$0"/..` and source lib/ from the bin dir's parent. Run each one
+# from the link without CLAUDII_HOME, against an isolated cache (a fresh
+# status-models keeps claudii-status off the network).
+_lk_cache="$TEST_TMP/lkcache"; mkdir -p "$_lk_cache" "$TEST_TMP/lkproj"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\nfable=ok\n' > "$_lk_cache/status-models"
+for _lk in "claudii-status --quiet" "claudii-insights" "claudii-cc-statusline"; do
+  _rc=0
+  _out=$(cd / && printf '{}' | env -u CLAUDII_HOME CLAUDII_CACHE_DIR="$_lk_cache" \
+    CLAUDE_PROJECTS_DIR="$TEST_TMP/lkproj" XDG_CONFIG_HOME="$TEST_TMP/config" \
+    $TEST_TMP/bin/$_lk 2>&1) || _rc=$?
+  assert_eq "install: linked ${_lk%% *} runs without CLAUDII_HOME (rc)" "0" "$_rc"
+  assert_not_contains "install: linked ${_lk%% *} finds its lib/" "No such file" "$_out"
+done
+unset _ver _rc _out _lk _lk_cache
 
 # source line added to zshrc
 zshrc=$(cat "$TEST_TMP/zshrc")
