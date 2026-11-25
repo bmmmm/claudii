@@ -1474,17 +1474,38 @@ fi
 # position of the installed version inside the cached release-tag list, not a
 # version-number diff — because Claude Code's release numbers are not
 # sequential (yanked/skipped tags happen: 2.1.230 was skipped entirely on
-# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". "+?"
-# means "definitely outdated, but the installed version fell off the cached
-# window" rather than a fabricated number. A cache miss (first run, or the
-# background refresher never having succeeded yet) renders plain, same as
-# up to date, until there is an actual answer.
+# 2026-08-17), so "2.1.233 vs 2.1.231" is not reliably "2 releases". An
+# older version missing from the list counts the listed releases newer than
+# it; "+?" means "definitely outdated, but older than the whole cached
+# window" rather than a fabricated number. A version newer than the cached
+# latest (a release the cache has not seen yet) or one that does not compare
+# as dotted digits counts as current — the cache is what is behind then, and
+# a newer one re-checks sooner. A cache miss (first run, or the background
+# refresher never having succeeded yet) renders plain, same as up to date,
+# until there is an actual answer.
 #
 # Deliberately independent of bumpii (see claudii-cc-update-refresh): the
 # cache schema (latest=/tags=/checked=) is the only contract, so a future
 # bumpii-backed refresher could populate the same file without this reader
 # changing at all.
+# Dotted-digit version compare → _VC: 1 ($1 newer), 0, -1, or "" when either
+# side is not plain dotted digits (a pre-release suffix, garbage).
+_cc_vcmp() {
+  local _a="$1" _b="$2" _x _y
+  _VC=""
+  [[ "$_a" =~ ^[0-9]{1,9}(\.[0-9]{1,9})*$ && "$_b" =~ ^[0-9]{1,9}(\.[0-9]{1,9})*$ ]] || return 0
+  while [[ -n "$_a" || -n "$_b" ]]; do
+    _x="${_a%%.*}"; _y="${_b%%.*}"
+    if [[ "$_a" == *.* ]]; then _a="${_a#*.}"; else _a=""; fi
+    if [[ "$_b" == *.* ]]; then _b="${_b#*.}"; else _b=""; fi
+    _x=$(( 10#${_x:-0} )); _y=$(( 10#${_y:-0} ))
+    if (( _x > _y )); then _VC=1; return 0; fi
+    if (( _x < _y )); then _VC=-1; return 0; fi
+  done
+  _VC=0
+}
 _seg_cc_version=""
+_ccup_newer=0
 _ccup_cache="${_cache_dir}/status-cc-version"
 if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
   _cc_latest=""; _cc_tags=""
@@ -1497,16 +1518,32 @@ if [[ -n "$cc_version" && "$cc_version" != "null" ]]; then
   fi
   _cc_behind=""
   if [[ -n "$_cc_latest" ]]; then
+    _cc_tags_csv=",${_cc_tags},"
     if [[ "$cc_version" == "$_cc_latest" ]]; then
       _cc_behind=0
-    elif [[ -n "$_cc_tags" ]]; then
-      _cc_tags_csv=",${_cc_tags},"
-      if [[ "$_cc_tags_csv" == *",$cc_version,"* ]]; then
-        # Everything before the (exact, comma-bounded) match — its comma
-        # count is exactly the number of newer releases ahead of it.
-        _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
-        _cc_commas="${_cc_before//[^,]/}"
-        _cc_behind=${#_cc_commas}
+    elif [[ -n "$_cc_tags" && "$_cc_tags_csv" == *",$cc_version,"* ]]; then
+      # Everything before the (exact, comma-bounded) match — its comma
+      # count is exactly the number of newer releases ahead of it.
+      _cc_before="${_cc_tags_csv%%",$cc_version,"*}"
+      _cc_commas="${_cc_before//[^,]/}"
+      _cc_behind=${#_cc_commas}
+    else
+      _cc_vcmp "$cc_version" "$_cc_latest"
+      if [[ "$_VC" == 1 ]]; then
+        _cc_behind=0; _ccup_newer=1
+      elif [[ "$_VC" != -1 ]]; then
+        _cc_behind=0
+      elif [[ -n "$_cc_tags" ]]; then
+        _cc_vcmp "$cc_version" "${_cc_tags##*,}"
+        if [[ "$_VC" == -1 ]]; then
+          _cc_behind="?"
+        else
+          _cc_behind=0; _cc_t="$_cc_tags,"
+          while [[ -n "$_cc_t" ]]; do
+            _cc_vcmp "${_cc_t%%,*}" "$cc_version"; _cc_t="${_cc_t#*,}"
+            [[ "$_VC" == 1 ]] && _cc_behind=$(( _cc_behind + 1 ))
+          done
+        fi
       else
         _cc_behind="?"
       fi
@@ -1527,11 +1564,19 @@ fi
 if _in_layout cc-version; then
   _ccup_ttl="$_cfg_cc_version_ttl"
   [[ "$_ccup_ttl" =~ ^[0-9]+$ ]] || _ccup_ttl=3600
+  # Installed newer than the cached latest: the cache missed a release. Ask
+  # again after at most 5 minutes (a failed fetch bumps the mtime too, so this
+  # cannot hammer the API), past the refresher's own TTL check.
+  _ccup_force=""
+  if (( _ccup_newer )); then
+    (( _ccup_ttl > 300 )) && _ccup_ttl=300
+    _ccup_force=--force
+  fi
   _ccup_mtime=$(stat -f%m "$_ccup_cache" 2>/dev/null || stat -c%Y "$_ccup_cache" 2>/dev/null || echo 0)
   if (( _now - _ccup_mtime > _ccup_ttl )); then
     _ccuppid_file="$_cache_dir/cc-update-refresh.pid"
     _spawn_refresher "$_ccuppid_file" 30 \
-      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet --pid-file "$_ccuppid_file"
+      "$CLAUDII_HOME/bin/claudii-cc-update-refresh" --quiet ${_ccup_force:+"$_ccup_force"} --pid-file "$_ccuppid_file"
   fi
 fi
 

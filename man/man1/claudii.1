@@ -1511,19 +1511,23 @@ recent release tags, not a version-number diff \(em because Claude Code's
 release numbers are not sequential (a tag gets skipped/yanked now and then),
 so
 .RI "\[u201C]" 2.1.233\ vs.\&\ 2.1.231 "\[u201D] "
-is not reliably \[u201C]2 releases\[u201D]. A
+is not reliably \[u201C]2 releases\[u201D]. An older version missing from
+the list counts the listed releases newer than it. A
 .B +?
-means the installed version fell out of the cached window \(em definitely
-outdated, count unknown \(em rather than a fabricated number. No cache yet
-(first run, or the background check never having succeeded) renders the
-plain dim version, same as up to date, until there is an actual answer. No
-render ever makes a network call:
+means the installed version is older than the whole cached window \(em
+definitely outdated, count unknown \(em rather than a fabricated number. A
+version newer than the cached latest (a release the cache has not seen yet)
+or one that does not compare as dotted digits (a pre-release suffix) renders
+plain dim, as current. No cache yet (first run, or the background check
+never having succeeded) renders the plain dim version too, until there is
+an actual answer. No render ever makes a network call:
 .BR claudii-cc-update-refresh (1)
 maintains
 .I status-cc-version
 in the background under the TTL
 .RB ( cc_version.cache_ttl ,
-default 3600s), asking GitHub's public releases API for
+default 3600s; at most 300s while the installed version is newer than the
+cached latest), asking GitHub's public releases API for
 .IR anthropics/claude-code .
 The cache schema (
 .IR latest= / tags= / checked= )

@@ -1498,6 +1498,55 @@ output=$(echo "$_jold" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_ca
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cc-version: fell off cached window → red +?" "v1.0.0 +?" "$strip"
 
+# Installed newer than the cached latest (a release the cache has not seen
+# yet): current, not "+?" — the cache is what is behind.
+_jnew=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.92","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_jnew" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: newer than cached latest → plain version" "v2.1.92" "$strip"
+assert_not_contains "cc-version: newer than cached latest → not red" $'\033[0;31m' "$output"
+# Numeric, not lexical: 2.1.100 is newer than 2.1.91.
+_j100=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.100","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j100" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+assert_eq "cc-version: 2.1.100 vs latest 2.1.91 → current (numeric compare)" "v2.1.100" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+# Not comparable (pre-release suffix): no claim either way.
+_jpre=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.92-beta.1","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_jpre" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+assert_eq "cc-version: unparsable version → plain, no +?" "v2.1.92-beta.1" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+# Older and inside the window but not listed (a yanked tag): count the listed
+# releases newer than it.
+_j89=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.89","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j89" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_2behind" bash "$SL" 2>&1)
+assert_eq "cc-version: unlisted version inside the window → count of newer releases" "v2.1.89 +2" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+
+# A newer install re-checks after 5 min, past the refresher's own TTL. Stub
+# refresher in a scratch CLAUDII_HOME, so nothing touches the network.
+_ccv_home="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-home-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_home")
+mkdir -p "$_ccv_home/bin"
+ln -s "$CLAUDII_HOME/lib" "$_ccv_home/lib"; ln -s "$CLAUDII_HOME/config" "$_ccv_home/config"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/args"\n' "$_ccv_home" > "$_ccv_home/bin/claudii-cc-update-refresh"
+chmod +x "$_ccv_home/bin/claudii-cc-update-refresh"
+_ccv_cache_stale="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_stale")
+printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=1\n' > "$_ccv_cache_stale/status-cc-version"
+_ccv_ts=$(date -v-600S +%Y%m%d%H%M.%S 2>/dev/null || date -d "600 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+if [[ -n "$_ccv_ts" ]]; then
+  touch -t "$_ccv_ts" "$_ccv_cache_stale/status-cc-version"
+  _ccv_wait() { local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [[ -s "$_ccv_home/args" ]] && return; sleep 0.1; done; }
+  # A listed version with a 10-min-old cache: inside the 1h TTL → no refresh.
+  echo "$_j" | CLAUDII_HOME="$_ccv_home" XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_stale" bash "$SL" > /dev/null 2>&1
+  echo "$_jnew" | CLAUDII_HOME="$_ccv_home" XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_stale" bash "$SL" > /dev/null 2>&1
+  _ccv_wait
+  assert_eq "cc-version: newer install → exactly one forced refresh" "1" \
+    "$(grep -c -- '--force' "$_ccv_home/args" 2>/dev/null || echo 0)"
+  assert_eq "cc-version: the older install never spawned a refresh" "1" \
+    "$(wc -l < "$_ccv_home/args" 2>/dev/null | tr -d ' ')"
+  unset -f _ccv_wait
+fi
+unset _jnew _j100 _jpre _j89 _ccv_home _ccv_cache_stale _ccv_ts
+
 # ── Pace tri-state segment tests ───────────────────────────────────────────────
 _pace_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
 mkdir -p "$_pace_cfg_dir/claudii"
