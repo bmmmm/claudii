@@ -55,11 +55,12 @@ _ov_hint() {
   printf "    ${CLAUDII_CLR_DIM}→ %s${CLAUDII_CLR_RESET}\n" "$_h"
 }
 
-# ── Parallel prefetch — the two heavy, independent subprocesses ──────────────
+# ── Parallel prefetch — the heavy, independent subprocesses ─────────────────
 # `claude agents --json` (Node startup, _live_pids_kick in helpers.sh) and the
-# merged history pass each take ~0.3-0.5s and need nothing from each other.
-# _cmd_default kicks both before rendering; _ov_gather reaps them — wall time
-# collapses from their sum to their max. _ov_uv_* are seeded at file scope so a
+# merged history pass each take ~0.3-0.5s, the vibemap strip (_ov_vibemap_kick)
+# ~0.2s, and none needs anything from the others. _cmd_default kicks all three
+# before _ov_gather, which reaps them — wall time collapses from their sum to
+# their max — and only then renders. _ov_uv_* are seeded at file scope so a
 # reap (or a standalone render) is always set -u-safe.
 _OV_HIST_PID=""
 _OV_HIST_TMP=""

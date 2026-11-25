@@ -7,10 +7,6 @@
 # stream large history files and format in-process, while the jq-backed commands
 # (cache/tokens/session/tools) aggregate small JSON and render here in bash.
 # Keep _fmt_tok's K/M/B thresholds in sync with fmt.awk's fmt_tok().
-#
-# NOTE: the composite B-style bar ROW (label │ value │ bar │ trail) lands here
-# with its first real consumer (`claudii tokens`) so the column API is derived
-# from a concrete layout rather than guessed up front.
 
 # Token / large-number short form: K/M/B. Pure integer math — no awk fork (this
 # replaces _insights_short_num's per-call `awk`). 0 → "0", sub-1000 → as-is,

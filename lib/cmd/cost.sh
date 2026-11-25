@@ -283,7 +283,7 @@ ${_fmt_awk}
         model_display[model] = raw
 
       # Per-row spend increment, attributed to the model ACTIVE on this row.
-      # cost ($3) is the session-cumulative total (model-agnostic), so a per-model
+      # cost is the session-cumulative total (model-agnostic), so a per-model
       # cost series cannot be reconstructed — but each *increment* can be attributed
       # to whichever model was running when it was incurred. This fixes the
       # mixed-model-day bug where the whole-day delta was credited to the last
@@ -672,8 +672,9 @@ _cmd_cost() {
   fi
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
-  # History (Flight Recorder) is the only data source — it carries correct
-  # daily-delta cost attribution. Monthly rotation: history-*.tsv + legacy
+  # History (Flight Recorder) is the primary data source — it carries correct
+  # daily-delta cost attribution; only sessions it has no rows for are priced
+  # from the insights caches (below). Monthly rotation: history-*.tsv + legacy
   # history.tsv. The old no-history fallback (summing cumulative session-cache
   # cost by file mtime) was removed in 0.21: it only ever applied before the
   # first statusline render wrote history, and its mtime-keyed "today"

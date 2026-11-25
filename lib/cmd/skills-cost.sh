@@ -7,9 +7,9 @@
 # shared with `claudii cost`).
 
 # Per-token pricing (USD), per model tier. These are the only hardcoded rates
-# in claudii. skills-cost prices every bucket with it; `claudii cost` reads
-# costUSD from history and falls back to it only for sessions that have no
-# history rows (lib/insights-cost-rows.jq). Per MTok:
+# in claudii. skills-cost prices every bucket with it; `claudii cost` takes
+# the cost Claude Code reported from history and falls back to the table only
+# for sessions that have no history rows (lib/insights-cost-rows.jq). Per MTok:
 # Opus $5/$25, Sonnet 5 $2/$10 (standard list price since CC v2.1.243 — not a
 # promo), legacy Sonnet 4.x $3/$15, Haiku 5.5 $0.10/$0.50 (4.x $1/$5), Fable $10/$50; cache_read =
 # 0.1× input. The pre-4.5 list prices have their own keys: "opus-legacy"
@@ -28,8 +28,9 @@
 # alone — that is not a typo, don't "restore" the 0.1× rule.
 # Opus 5.5 (CC 2.1.280, now the default Opus) is the third, and breaks TWO
 # columns at once: $4/$20 (not $5/$25) AND a 5% cache read (not the usual
-# 10%) — cr = 0.0000002, not 0.1×in's 0.0000004. "opus" still prices every
-# older opus id (5/4.8/4.7/4.6); "opus-5-5" is the new, not the legacy, rate.
+# 10%) — cr = 0.0000002, not 0.1×in's 0.0000004. "opus" still prices the
+# older opus ids from 5.1 down to 4.5; "opus-5-5" is the new, not the legacy,
+# rate.
 # Sonnet 5.5 is the fourth: $2/$10 like Sonnet 5, but a 5% cache read since
 # 2026-10-07 — "sonnet-5-5" differs from "sonnet" in "cr" alone.
 # Haiku 5.5 (CC 2.1.293, now the default Haiku) is the fifth: $0.10/$0.50,
