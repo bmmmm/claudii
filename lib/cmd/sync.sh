@@ -303,7 +303,9 @@ _sync_import() {
     # (GNU and BSD tar only refuse to write THROUGH such a link while
     # extracting). No portable tar option skips links, so a bundle that
     # contains one — or a fifo or device — is refused as a whole.
-    odd=$(find "$tmp" ! -type f ! -type d -print 2>/dev/null | head -n 1)
+    # `|| true`: with many links find outlives head and dies of SIGPIPE, which
+    # pipefail + set -e would turn into an abort that strands .lock and $tmp.
+    odd=$(find "$tmp" ! -type f ! -type d -print 2>/dev/null | head -n 1) || true
     if [[ -n "$odd" ]]; then
       printf 'claudii sync: %s: bundle contains a link or special file (%s) — refused\n' \
         "$name" "${odd#"$tmp"/}" >&2

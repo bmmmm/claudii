@@ -252,6 +252,23 @@ assert_eq "import: …the receiver's own history.tsv stays where it is" "$_SY_VB
 assert_eq "import: …and no mirror is created for it" "1" \
   "$([[ -e "$_SY_VC/hosts/evil" ]] && echo 0 || echo 1)"
 
+# Thousands of links: the link scan's `find | head -n 1` outlives head and gets
+# SIGPIPE; under pipefail + set -e that aborted the import before cleanup and
+# stranded .lock and the .incoming dir. Still a clean refusal, nothing left.
+_SY_MANY="$_SY_ROOT/many-bundle"; mkdir -p "$_SY_MANY/tail"
+for (( _i = 0; _i < 2000; _i++ )); do
+  ln -s /nonexistent "$_SY_MANY/tail/a_link_name_long_enough_to_fill_a_pipe_buffer_$_i"
+done
+: > "$_SY_MANY/live"
+cp "$_SY_EVIL/manifest" "$_SY_MANY/manifest"
+( cd "$_SY_MANY" && tar -czf ../many.tgz manifest live tail )
+_err=$(_sy victim sync import many < "$_SY_ROOT/many.tgz" 2>&1 >/dev/null); _rc=$?
+assert_eq "import: a bundle with thousands of links is refused (exit 1)" "1" "$_rc"
+assert_contains "import: …with the reason, not an abort" "link or special file" "$_err"
+_left=""
+for _d in "$_SY_VC/hosts"/.[!.]* "$_SY_VC/hosts/many"; do [[ -e "$_d" ]] && _left+="${_d##*/} "; done
+assert_eq "import: …and leaves no lock, staging dir or mirror behind" "" "$_left"
+
 # ── 4. push ──────────────────────────────────────────────────────────────────
 # sync.name ends up in the remote command line — refused locally, before ssh.
 _sy other config set sync.name 'x;touch pwned' >/dev/null
