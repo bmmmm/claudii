@@ -118,6 +118,12 @@ Show the alias table and run a live model health check.
 .B clorch / cle
 Example agent aliases — see
 .BR "claudii agents" .
+None ship by default
+.RB ( agents
+is empty). Each configured agent becomes a shell function of its name,
+unless the shell already resolves that name \(em a command, builtin, alias,
+reserved word or another function; such an agent is skipped and logged at
+.BR debug.level " warn."
 .
 .SH OPTIONS
 .TP

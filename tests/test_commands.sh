@@ -255,15 +255,27 @@ assert_eq "claudii on: preserves cc-insomnii wrapper statusLine" \
 rm -rf "$_CWR_BASE"
 unset _CWR_BASE _CWR_XDG _CWR_CACHE _cwr_cmd
 
+# Agents fixture: defaults.json ships none ("agents": {}), so the agent tests
+# write their own — the shape the old defaults had (skill-less + skill agents).
+_AGENTS_FIXTURE='{"hk": {"model": "haiku", "effort": "high", "description": "Haiku worker"},
+  "sn": {"model": "sonnet", "effort": "high", "description": "Sonnet worker"},
+  "op": {"model": "opus", "effort": "high", "description": "Opus worker"},
+  "orc": {"model": "opus", "effort": "xhigh", "skill": "orchestrate", "description": "Orchestrator"}}'
+_with_agents() {   # $1 = config.json to rewrite, $2 = agents JSON object
+  jq --argjson a "$2" '.agents = $a' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
 # ── zsh agent registration: skill-less agents + no field-shift noise ──────────
 # Regression 1: agents without a skill (hk/sn/op/…) were skipped entirely —
 # advertised by `claudii agents` but never registered (command not found).
 # Regression 2: the registration TSV used tab separators; zsh `read` collapses
 # runs of IFS-whitespace, so an empty skill field shifted model→skill and
 # effort→model, printing "invalid agent effort:" on every shell start.
-if command -v zsh >/dev/null 2>&1; then
-  _make_cfg_tmp _ZAG
-  _zag_out=$(XDG_CONFIG_HOME="$_ZAG_XDG" zsh -fc '
+# Sources lib/config.zsh + lib/functions.zsh directly (no plugin, no PATH
+# change), so it also runs where e.g. 1Password's `op` is installed: the
+# fixture's `op` would then be a command — see the guard test below.
+_zag_zsh() {   # $1 = XDG config dir; prints the registration report
+  XDG_CONFIG_HOME="$1" zsh -fc '
     export CLAUDII_HOME="'"$CLAUDII_HOME"'"
     typeset -gA _CLAUDII_METRICS
     zmodload zsh/datetime 2>/dev/null; zmodload zsh/mathfunc 2>/dev/null
@@ -275,27 +287,111 @@ if command -v zsh >/dev/null 2>&1; then
       (( ${+functions[$a]} )) && print "registered: $a" || print "MISSING: $a"
     done
     print "body-hk: ${functions[hk]}"
-  ' 2>&1)
+    print "body-orc: ${functions[orc]}"
+  ' 2>&1
+}
+if command -v zsh >/dev/null 2>&1; then
+  _make_cfg_tmp _ZAG
+  _with_agents "$_ZAG_XDG/claudii/config.json" "$_AGENTS_FIXTURE"
+  _zag_out=$(_zag_zsh "$_ZAG_XDG")
   assert_contains "zsh agents: skill-less hk registered"   "registered: hk"  "$_zag_out"
   assert_contains "zsh agents: skill-less sn registered"   "registered: sn"  "$_zag_out"
   assert_contains "zsh agents: skill agent orc registered" "registered: orc" "$_zag_out"
   assert_contains "zsh agents: hk body is a plain launcher" \
     '_claudii_agent_launch "" "haiku" "high"' "$_zag_out"
   assert_not_contains "zsh agents: no field-shift error noise" "invalid agent" "$_zag_out"
-  rm -rf "$_ZAG_BASE"
-  unset _ZAG_BASE _ZAG_XDG _ZAG_CACHE _zag_out
+
+  # ── defaults ship no agents → nothing registered ──
+  _make_cfg_tmp _ZAD
+  _zag_out=$(_zag_zsh "$_ZAD_XDG")
+  assert_contains "zsh agents: defaults register no hk" "MISSING: hk" "$_zag_out"
+  assert_contains "zsh agents: defaults register no op" "MISSING: op" "$_zag_out"
+
+  # ── guard: never shadow what the shell already resolves ──
+  # The old defaults shipped `sh` (shadowed /bin/sh) and `op` (the 1Password
+  # CLI). An agent whose name is a command, builtin, alias, reserved word or a
+  # foreign function is skipped — silently at the default debug.level=off.
+  _make_cfg_tmp _ZGD
+  _zgd_cfg="$_ZGD_XDG/claudii/config.json"
+  _with_agents "$_zgd_cfg" '{"sh": {"model": "haiku"}, "echo": {"model": "haiku"},
+    "if": {"model": "haiku"}, "myalias": {"model": "haiku"}, "myfn": {"model": "haiku"},
+    "hk": {"model": "haiku"}}'
+  _zgd_out=$(XDG_CONFIG_HOME="$_ZGD_XDG" zsh -fc '
+    export CLAUDII_HOME="'"$CLAUDII_HOME"'"
+    typeset -gA _CLAUDII_METRICS
+    zmodload zsh/datetime 2>/dev/null; zmodload zsh/mathfunc 2>/dev/null
+    source "$CLAUDII_HOME/lib/visual.sh" 2>/dev/null
+    source "$CLAUDII_HOME/lib/log.sh"
+    source "$CLAUDII_HOME/lib/config.zsh" 2>/dev/null
+    alias myalias="print alias-kept"
+    function myfn { print fn-kept }
+    source "$CLAUDII_HOME/lib/functions.zsh"
+    for a in sh echo if myalias myfn; do
+      (( ${+functions[$a]} )) && [[ "${functions[$a]}" == *_claudii_agent_launch* ]] \
+        && print "SHADOWED: $a" || print "kept: $a"
+    done
+    (( ${+functions[hk]} )) && print "registered: hk"
+    myfn; eval myalias   # eval: an alias only expands in code parsed after it
+    # Re-sourcing the plugin replaces our own earlier registration
+    source "$CLAUDII_HOME/lib/functions.zsh"
+    (( ${+functions[hk]} )) && print "re-registered: hk"
+  ' 2>&1)
+  for _a in sh echo if myalias myfn; do
+    assert_contains "agent guard: $_a not shadowed" "kept: $_a" "$_zgd_out"
+  done
+  assert_contains "agent guard: a free name still registers" "registered: hk" "$_zgd_out"
+  assert_contains "agent guard: foreign function body untouched" "fn-kept" "$_zgd_out"
+  assert_contains "agent guard: alias untouched" "alias-kept" "$_zgd_out"
+  assert_contains "agent guard: own registration replaceable on re-source" "re-registered: hk" "$_zgd_out"
+  assert_not_contains "agent guard: silent at debug.level=off" "not registered" "$_zgd_out"
+
+  # debug.level=warn surfaces the skip, naming what the name already is
+  jq '.debug.level = "warn"' "$_zgd_cfg" > "$_zgd_cfg.tmp" && mv "$_zgd_cfg.tmp" "$_zgd_cfg"
+  _zgd_out=$(_zag_zsh "$_ZGD_XDG")
+  assert_contains "agent guard: warn names the command" "agent alias not registered: sh is already a command" "$_zgd_out"
+  assert_contains "agent guard: warn names the builtin" "echo is already a builtin" "$_zgd_out"
+  assert_contains "agent guard: warn names the reserved word" "if is already a reserved word" "$_zgd_out"
+
+  rm -rf "$_ZAG_BASE" "$_ZAD_BASE" "$_ZGD_BASE"
+  unset _ZAG_BASE _ZAG_XDG _ZAG_CACHE _ZAD_BASE _ZAD_XDG _ZAD_CACHE \
+    _ZGD_BASE _ZGD_XDG _ZGD_CACHE _zgd_cfg _zgd_out _zag_out _a
 fi
+unset -f _zag_zsh
 
 # ── agents ────────────────────────────────────────────────────────────────────
+
+# agents: the shipped defaults have none → onboarding, and --json is []
+_make_cfg_tmp _AO
+_ao_out=$(XDG_CONFIG_HOME="$_AO_XDG" bash "$CLAUDII_HOME/bin/claudii" agents 2>&1)
+assert_contains "agents: defaults show onboarding" "No agents configured" "$_ao_out"
+assert_eq "agents --json: defaults give []" "[]" \
+  "$(XDG_CONFIG_HOME="$_AO_XDG" bash "$CLAUDII_HOME/bin/claudii" agents --json 2>&1)"
+
+# The onboarding's setup lines must work as printed: three config sets give a
+# listed agent (`claudii config set agents.clorch.skill orchestrate` …).
+_ao_rc=0
+while IFS= read -r _ao_line; do
+  # shellcheck disable=SC2086  # the printed line is split on purpose
+  set -- ${_ao_line#  claudii }
+  XDG_CONFIG_HOME="$_AO_XDG" bash "$CLAUDII_HOME/bin/claudii" "$@" >/dev/null 2>&1 || _ao_rc=1
+done < <(grep '^  claudii config set agents\.' <<< "$_ao_out")
+set --
+assert_eq "agents: onboarding setup lines run cleanly" "0" "$_ao_rc"
+assert_eq "agents: onboarding setup yields the agent" "clorch orchestrate opus high" \
+  "$(XDG_CONFIG_HOME="$_AO_XDG" bash "$CLAUDII_HOME/bin/claudii" agents --json 2>/dev/null \
+     | jq -r '.[] | select(.alias == "clorch") | "\(.alias) \(.skill) \(.model) \(.effort)"')"
+rm -rf "$_AO_BASE"
+unset _AO_BASE _AO_XDG _AO_CACHE _ao_out _ao_rc _ao_line
 
 _make_cfg_tmp _AG
 _ag_xdg="$_AG_XDG"
 _ag_base="$_AG_BASE"
+_with_agents "$_ag_xdg/claudii/config.json" "$_AGENTS_FIXTURE"
 
-# agents: default config has at least sn and op aliases
+# agents: a configured config lists its aliases
 _ag_out=$(XDG_CONFIG_HOME="$_ag_xdg" bash "$CLAUDII_HOME/bin/claudii" agents 2>&1)
-assert_contains "agents: default config shows 'sn' alias" "sn" "$_ag_out"
-assert_contains "agents: default config shows 'op' alias" "op" "$_ag_out"
+assert_contains "agents: configured config shows 'sn' alias" "sn" "$_ag_out"
+assert_contains "agents: configured config shows 'op' alias" "op" "$_ag_out"
 
 # agents: output has no literal ANSI escapes
 assert_no_literal_ansi "agents: no literal \\033 in output" "$_ag_out"
@@ -315,7 +411,8 @@ assert_matches "agents: output has model info" "opus|sonnet|haiku" "$_ag_out"
 assert_matches "agents: output has effort info" "xhigh|high|medium|low|max" "$_ag_out"
 
 rm -rf "$_ag_base"
-unset _AG_BASE _AG_XDG _ag_xdg _ag_base _ag_out _ag_json _ag_json_ok _ag_exit
+unset _AG_BASE _AG_XDG _ag_xdg _ag_base _ag_out _ag_json _ag_json_ok _ag_exit _AGENTS_FIXTURE
+unset -f _with_agents
 
 # ── explain ───────────────────────────────────────────────────────────────────
 

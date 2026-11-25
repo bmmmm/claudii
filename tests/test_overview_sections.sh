@@ -13,7 +13,12 @@ _ovs_plain() { _ovs_run | sed 's/\x1b\[[0-9;]*m//g'; }
 mkdir -p "$_ovs_tmp/cache"
 
 # ── Default sections (from defaults.json) ────────────────────────────────────
-cp "$CLAUDII_HOME/config/defaults.json" "$_ovs_xdg/claudii/config.json"
+# defaults.json ships no agents ("agents": {}), so the Agents section gets a
+# small fixture: one haiku, one sonnet/max, one opus agent.
+jq '.agents = {"hk": {"model": "haiku", "effort": "high"},
+               "snmax": {"model": "sonnet", "effort": "max"},
+               "op": {"model": "opus", "effort": "high"}}' \
+  "$CLAUDII_HOME/config/defaults.json" > "$_ovs_xdg/claudii/config.json"
 _ovs_out=$(_ovs_plain)
 
 for _sec in Account Usage Sessions Agents Services Commands; do
