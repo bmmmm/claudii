@@ -512,6 +512,96 @@ assert_eq "se --resume: no 'Unknown command'" "0" \
   "$(echo "$resume_out" | grep -c 'Unknown command' || true)"
 unset resume_out
 
+# ── sessions: exit-code contract ─────────────────────────────────────────────
+# `sessions -h` used to be ignored (the whole list rendered); any other flag too.
+# A --resume that reaches the handler has no id (with one, the dispatcher execs
+# claude before getting here), which is a missing value, not a list request.
+_SC_TMP="$(mktemp -d)"
+_sc_env=(env HOME="$_SC_TMP" XDG_CONFIG_HOME="$_SC_TMP/cfg" CLAUDII_CACHE_DIR="$_SC_TMP/cache")
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" sessions -h 2>/dev/null); _sc_rc=$?
+assert_eq "sessions -h: exit 0" "0" "$_sc_rc"
+assert_contains "sessions -h: usage on stdout" "Usage: claudii sessions" "$_sc_out"
+assert_not_contains "sessions -h: no session list rendered" "active," "$_sc_out"
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" se --help 2>/dev/null); _sc_rc=$?
+assert_eq "se --help (alias): exit 0" "0" "$_sc_rc"
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" sessions --bogus 2>&1 >/dev/null); _sc_rc=$?
+assert_eq "sessions --bogus: exit 2" "2" "$_sc_rc"
+assert_contains "sessions --bogus: contract message" "claudii sessions: unknown option: --bogus" "$_sc_out"
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" sessions --resume 2>&1 >/dev/null); _sc_rc=$?
+assert_eq "sessions --resume (no id): exit 2" "2" "$_sc_rc"
+assert_contains "sessions --resume (no id): names the missing id" "needs a session id" "$_sc_out"
+# --json/--tsv stay accepted — the dispatcher consumes them before the handler
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" sessions --json 2>&1); _sc_rc=$?
+assert_eq "sessions --json: exit 0" "0" "$_sc_rc"
+assert_eq "sessions --json: valid JSON" "0" "$(printf '%s' "$_sc_out" | jq . >/dev/null 2>&1; echo $?)"
+_sc_out=$("${_sc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" sessions --tsv 2>&1); _sc_rc=$?
+assert_eq "sessions --tsv: exit 0 (the handler returns instead of exiting)" "0" "$_sc_rc"
+# The structured branches must RETURN: a sourced handler that exits tears down the caller
+_sc_out=$(HOME="$_SC_TMP" XDG_CONFIG_HOME="$_SC_TMP/cfg" CLAUDII_CACHE_DIR="$_SC_TMP/cache" \
+  bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"; source "$CLAUDII_HOME/lib/spinner.sh"
+  source "$CLAUDII_HOME/lib/helpers.sh"; source "$CLAUDII_HOME/lib/render.sh"
+  source "$CLAUDII_HOME/lib/cmd/sessions.sh"
+  _FORMAT=tsv;  _cmd_sessions sessions >/dev/null 2>&1; echo "TSV rc=$?"
+  _FORMAT=json; _cmd_sessions sessions >/dev/null 2>&1; echo "JSON rc=$?"
+  echo SURVIVED' 2>&1)
+assert_contains "sessions --tsv handler: returns instead of exiting" "TSV rc=0" "$_sc_out"
+assert_contains "sessions --json handler: returns instead of exiting" "JSON rc=0" "$_sc_out"
+assert_contains "sessions handler: the shell is still alive afterwards" "SURVIVED" "$_sc_out"
+rm -rf "$_SC_TMP"
+unset _SC_TMP _sc_env _sc_out _sc_rc
+
+# ── explain: the RPROMPT section describes the prompt that is really drawn ───
+# It used to show `[Opus ✓ Sonnet ✓ Haiku ✓]` (the real prompt collapses to
+# `[claude ✓]`), ⚠/✗ for degraded/down (the prompt draws ~ and ↓), and had no
+# incident glyphs. The glyphs come from the CLAUDII_SYM_* constants.
+_EX_TMP="$(mktemp -d)"
+_ex_out=$(HOME="$_EX_TMP" XDG_CONFIG_HOME="$_EX_TMP/cfg" CLAUDII_CACHE_DIR="$_EX_TMP/cache" \
+  bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
+_ex_rp=$(printf '%s\n' "$_ex_out" | sed -n '/ClaudeStatus (RPROMPT)/,$p')
+_ex_src=$(HOME="$_EX_TMP" bash -c 'source "$CLAUDII_HOME/lib/visual.sh"
+  printf "%s|%s|%s|%s|%s|%s|%s" "$CLAUDII_SYM_OK" "$CLAUDII_SYM_DEGRADED" "$CLAUDII_SYM_DOWN" \
+    "$CLAUDII_SYM_INVESTIGATING" "$CLAUDII_SYM_IDENTIFIED" "$CLAUDII_SYM_MONITORING" "$CLAUDII_SYM_NOTE"')
+assert_eq "explain: legend glyphs are the visual.sh constants" "✓|~|↓|‼|⚐|◎|ⓘ" "$_ex_src"
+assert_contains "explain: example shows the collapsed all-healthy prompt" "[claude ✓]" "$_ex_out"
+assert_not_contains "explain: no per-model all-healthy example any more" "Opus ✓ Sonnet ✓ Haiku ✓" "$_ex_out"
+assert_matches "explain: degraded is drawn with the real glyph (~)" "~ +degraded" "$_ex_rp"
+assert_matches "explain: down is drawn with the real glyph (↓)" "↓ +down" "$_ex_rp"
+assert_not_contains "explain: the old ⚠ degraded glyph is gone" "⚠" "$_ex_rp"
+assert_not_contains "explain: the old ✗ down glyph is gone" "✗" "$_ex_rp"
+assert_matches "explain: incident ‼ investigating" "‼ +investigating" "$_ex_rp"
+assert_matches "explain: incident ⚐ identified" "⚐ +identified" "$_ex_rp"
+assert_matches "explain: incident ◎ monitoring" "◎ +monitoring" "$_ex_rp"
+assert_matches "explain: incident ⓘ note" "ⓘ +note" "$_ex_rp"
+assert_not_contains "explain: no mention of removed omlx" "omlx" "$_ex_out"
+assert_not_contains "explain: no mention of removed vpnii" "vpnii" "$_ex_out"
+
+# 42: counts the models it monitors — there are four
+_ex_42=$(HOME="$_EX_TMP" XDG_CONFIG_HOME="$_EX_TMP/cfg" CLAUDII_CACHE_DIR="$_EX_TMP/cache" \
+  bash "$CLAUDII_HOME/bin/claudii" 42 2>&1)
+assert_contains "42: says all four" "all four" "$_ex_42"
+assert_not_contains "42: no longer says all three" "all three" "$_ex_42"
+assert_eq "42: four tracked models by default" "4" \
+  "$(jq -r '.statusline.models | split(",") | length' "$CLAUDII_HOME/config/defaults.json")"
+
+# trends (sourced handler) must not leak its working variables, and must RETURN
+# on an empty history instead of exiting the caller
+_ex_leak=$(HOME="$_EX_TMP" XDG_CONFIG_HOME="$_EX_TMP/cfg" CLAUDII_CACHE_DIR="$_EX_TMP/cache" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"; source "$CLAUDII_HOME/lib/spinner.sh"
+  source "$CLAUDII_HOME/lib/helpers.sh"; source "$CLAUDII_HOME/lib/render.sh"
+  source "$CLAUDII_HOME/lib/cmd/display.sh"
+  _FORMAT=""
+  _cmd_trends >/dev/null 2>&1; echo "EMPTY rc=$?"
+  printf "timestamp\tmodel\tcost\tctx\trate\tsession_id\n%s\tclaude-sonnet-4-5\t1.00\t50\t30\tsid-leak\n" "$(date +%s)" > "$CLAUDII_CACHE_DIR/history.tsv"
+  _cmd_trends >/dev/null 2>&1; echo "DATA rc=$?"
+  echo "leak:${_trends_augmented+A}${today_str+B}${week_start_str+C}${_week_days+D}${now+E}"
+  echo SURVIVED' 2>&1)
+assert_contains "trends: empty history returns instead of exiting" "EMPTY rc=0" "$_ex_leak"
+assert_contains "trends: the shell survives the empty-history path" "SURVIVED" "$_ex_leak"
+assert_matches "trends: _trends_augmented/today_str/... stay local" "^leak:$" "$_ex_leak"
+rm -rf "$_EX_TMP"
+unset _EX_TMP _ex_out _ex_rp _ex_src _ex_42 _ex_leak
+
 # ── Spinner: output must be on stderr only, stdout must be clean ─────────────
 # `claudii se` and `claudii cost` run a spinner on stderr.
 # Stdout must contain normal output; stderr must not bleed into stdout.
