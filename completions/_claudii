@@ -357,6 +357,7 @@ _claudii() {
               theme_names=(
                 'default:Default theme (magenta accent, standard ANSI colors)'
                 'pastel:Pastel theme (softer 256-color palette)'
+                'auto:Pastel on a light terminal, default on a dark one'
               )
               _describe 'theme name' theme_names
               ;;

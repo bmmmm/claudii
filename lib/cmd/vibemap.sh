@@ -155,9 +155,9 @@ _vibemap_render_grid() {
   for b in 0 1 2 3 4 5 6 7; do
     bin_start=$(( b * 3 ))
     bin_end=$(( bin_start + 3 ))
-    # A bin is "past bedtime" if any of its 3 hours falls in [bedtime,bedtime+8h)
-    # — covers the worst-overdue window. We mark the bin if its start hour
-    # is within 8 hours after bedtime (mod 24).
+    # A bin is "past bedtime" if any of its 3 hours falls in [bedtime,bedtime+6h)
+    # — the same 6-hour window the strip view colours (diff < 6 below and in
+    # _vibemap_render_strip). Hours are compared mod 24.
     is_past_bedtime=0
     local h
     for (( h = bin_start; h < bin_end; h++ )); do
@@ -418,9 +418,9 @@ _cmd_vibemap() {
     grid)                 _vibemap_render_grid ;;
     strip|--recent)
       shift
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then _vibemap_usage; return 0; fi
       if [[ -n "${1:-}" && "${1:-}" != "--days" ]]; then
-        printf 'claudii vibemap strip: unexpected argument %s — try `claudii vibemap strip --days N`\n' "$1" >&2
-        return 2
+        _cli_unknown_opt "vibemap strip" "$1" '[--days N]' || return $?
       fi
       local days=30
       if [[ "${1:-}" == "--days" ]]; then days="${2:-30}"; fi
@@ -432,8 +432,7 @@ _cmd_vibemap() {
     status)               _vibemap_show_status ;;
     -h|--help|help)       _vibemap_usage ;;
     *)
-      printf 'claudii vibemap: unknown subcommand %s — try `claudii vibemap help`\n' "$1" >&2
-      return 2
+      _cli_unknown_opt vibemap "$1" '[strip|grid|status|path|clear|help]' || return $?
       ;;
   esac
 }

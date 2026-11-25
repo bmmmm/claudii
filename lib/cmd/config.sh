@@ -1,32 +1,38 @@
 # lib/cmd/config.sh — configuration and tool commands (config, agents, search)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail
 
+_config_usage() {
+  cat <<'EOF'
+Usage: claudii config [get KEY | set KEY VALUE | reset | export [FILE] | import FILE | theme [NAME]]
+
+Without a subcommand, prints the user config.
+
+  get KEY           print one value (user config, falling back to the defaults)
+  set KEY VALUE     write one value (numbers and true/false stay typed)
+  reset             overwrite the user config with the defaults
+  export [FILE]     copy the config to FILE (stdout without FILE)
+  import FILE       replace the config with FILE (a backup is kept)
+  theme [NAME]      list the colour themes, or switch to NAME (or "auto")
+EOF
+}
+
 _cmd_config() {
   _cfg_init
-
-  # Build a properly quoted jq path from a dotted key.
-  # Needed for keys with hyphens (e.g. "session-dashboard.enabled" → ."session-dashboard"."enabled")
-  # since jq parses ."session-dashboard" as ."session" - "dashboard" (subtraction).
-  _build_jq_path() {
-    local key="$1" _jp="" _seg
-    local _IFS_OLD="$IFS"
-    IFS='.' read -ra _segs <<< "$key"
-    IFS="$_IFS_OLD"
-    for _seg in "${_segs[@]}"; do
-      _jp+='."'"$_seg"'"'
-    done
-    echo "$_jp"
-  }
+  # Locals: the sourced handler used to leave all of these in the CLI's scope.
+  local key value file theme_arg current valid t _known _unknown _bad_agents _reserved
 
   case "${2:-}" in
+    -h|--help)
+      _config_usage
+      return 0
+      ;;
     get)
       key="${3:-}"
       [[ -z "$key" ]] && { echo "Usage: claudii config get <key>" >&2; return 1; }
-      _validate_key "$key" || return 1
-      jq_path=$(_build_jq_path "$key")
-      val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$CONFIG" 2>/dev/null)
-      [[ -z "$val" ]] && val=$(jq -r "if ($jq_path | type) != \"null\" then ($jq_path | tostring) else empty end" "$DEFAULTS" 2>/dev/null)
-      echo "$val"
+      # _cfgget: the same user-config-then-defaults lookup (with the jq path
+      # quoting that hyphenated keys need) every other reader uses — validates
+      # the key itself, so there is one implementation, not two.
+      _cfgget "$key" || return 1
       ;;
     set)
       key="${3:-}"
@@ -63,10 +69,10 @@ _cmd_config() {
       jq '.' "$file" >/dev/null 2>&1 || { echo "Not valid JSON: $file — run 'jq . $file' to diagnose" >&2; return 1; }
       jq -e 'type == "object"' "$file" >/dev/null 2>&1 || { echo "config import: $file is not a JSON object — aborting" >&2; return 1; }
       # Validate only known top-level keys (a non-object would make `keys` error → empty → vacuous pass).
-      # Derive the known set from defaults.json so it never drifts when a new
-      # config block ships (perf, …); fall back to a literal set if unreadable.
-      _known=$(jq -c 'keys' "$DEFAULTS" 2>/dev/null) \
-        || _known='["statusline","debug","theme","theme_presets","cost","search","status","agents","fallback","aliases","session-dashboard","vibemap","overview","notifications","display","presence","perf","bumpii","ci","cc_version"]'
+      # The known set IS defaults.json (shipped with the install, so always
+      # readable) — it never drifts when a new config block ships.
+      _known=$(jq -c 'keys' "$DEFAULTS" 2>/dev/null)
+      [[ -n "$_known" ]] || { echo "config import: cannot read $DEFAULTS — aborting" >&2; return 1; }
       _unknown=$(jq --argjson known "$_known" 'keys - $known | length' "$file")
       [[ "$_unknown" -eq 0 ]] || { printf "config import: unknown keys in %s — aborting\n" "$file" >&2; return 1; }
 
@@ -91,6 +97,13 @@ _cmd_config() {
         # List available themes from defaults.json theme_presets
         echo "Available themes:"
         current=$(jq -r '.theme.name // "default"' "$CONFIG" 2>/dev/null)
+        # "auto" is no preset: lib/visual.sh resolves it to pastel or default
+        # from the terminal background, so it is listed apart from the presets.
+        if [[ "$current" == "auto" ]]; then
+          echo "  * auto (active — light/dark detected from the terminal)"
+        else
+          echo "    auto (light/dark detected from the terminal)"
+        fi
         jq -r '.theme_presets | keys[]' "$DEFAULTS" 2>/dev/null | sort | while IFS= read -r t; do
           if [[ "$t" == "$current" ]]; then
             echo "  * $t (active)"
@@ -99,10 +112,10 @@ _cmd_config() {
           fi
         done
       else
-        # Validate that the theme exists in defaults
+        # Validate that the theme exists in defaults — or is "auto"
         valid=$(jq -r --arg name "$theme_arg" '.theme_presets | has($name)' "$DEFAULTS" 2>/dev/null)
-        if [[ "$valid" != "true" ]]; then
-          echo "Unknown theme: $theme_arg — available: $(jq -r '.theme_presets | keys | join(", ")' "$DEFAULTS" 2>/dev/null)" >&2
+        if [[ "$valid" != "true" && "$theme_arg" != "auto" ]]; then
+          echo "Unknown theme: $theme_arg — available: auto, $(jq -r '.theme_presets | keys | join(", ")' "$DEFAULTS" 2>/dev/null)" >&2
           return 1
         fi
         # Set theme.name in user config
@@ -110,16 +123,45 @@ _cmd_config() {
         echo "Theme set to: $theme_arg"
       fi
       ;;
-    *)
+    "")
       echo "User config: $CONFIG"
       echo ""
       jq '.' "$CONFIG"
       ;;
+    # Anything else used to fall into the print-everything arm above: a typo
+    # such as `config gett` dumped the whole user config and answered 0.
+    *)
+      _cli_unknown_opt config "$2" '[get|set|reset|export|import|theme]' || return $?
+      ;;
   esac
 }
 
+_search_usage() {
+  cat <<'EOF'
+Usage: claudii search [QUERY…] [-- CLAUDE_FLAGS…]
+
+Start Claude Code in the search workspace (search.dir, default ~/search) with
+the search model and effort. QUERY becomes the opening prompt; anything after
+a bare -- goes to claude untouched (e.g. claudii search -- --continue).
+EOF
+}
+
 _cmd_search() {
+  # Before the exec, so a typo'd flag is rejected rather than handed to claude
+  # (it answered whatever claude answered). Flags for claude itself follow `--`.
+  local _sa _passthru=0
+  local -a _search_args=()
+  for _sa in "${@:2}"; do
+    if (( _passthru )); then _search_args+=("$_sa"); continue; fi
+    case "$_sa" in
+      -h|--help) _search_usage; return 0 ;;
+      --)        _passthru=1 ;;
+      -*)        _cli_unknown_opt search "$_sa" '[QUERY…] [-- CLAUDE_FLAGS…]' || return $? ;;
+      *)         _search_args+=("$_sa") ;;
+    esac
+  done
   _cfg_init
+  local search_dir model effort
   search_dir=$(_claudii_search_dir "$(_cfgget search.dir)")
 
   # Try search.model first, fall back to aliases.clq.model, then to default haiku
@@ -133,7 +175,7 @@ _cmd_search() {
   [[ -z "$effort" ]] && effort="xhigh"
 
   cd "$search_dir" 2>/dev/null || { echo "claudii: cannot use search directory: $search_dir" >&2; return 1; }
-  exec claude --model "$model" --effort "$effort" "${@:2}"
+  exec claude --model "$model" --effort "$effort" ${_search_args[@]+"${_search_args[@]}"}
 }
 
 _cmd_agents() {

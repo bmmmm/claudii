@@ -10,12 +10,15 @@ _cmd_trends() {
 
   if [[ ${#_HIST_FILES[@]} -eq 0 ]]; then
     echo "No history data yet. Start a Claude session with CC-Statusline enabled."
-    exit 0
+    return 0
   fi
 
   # Strategy: one awk pass (epoch_to_date + a weekday table) computes every date
   # boundary and the rolling 7-day window, replacing ~21 `date` subprocess spawns
   # plus the macOS/GNU branching. awk does all aggregation/formatting afterwards.
+  # Locals: all of these used to leak into the CLI's global scope.
+  local now today_str week_start_str last_monday_str last_sunday_str \
+        thirty_days_ago_str _week_days _trends_augmented
   now=$(date +%s)
 
   _date_init
@@ -164,7 +167,10 @@ _cmd_explain() {
   printf "  ${CLAUDII_CLR_BOLD}${CLAUDII_CLR_CYAN}ClaudeStatus${CLAUDII_CLR_RESET}                              Shell RPROMPT\n"
   printf "  ${CLAUDII_CLR_DIM}%s${CLAUDII_CLR_RESET}\n" "$_rule"
   printf '  Model health indicators from status.claude.com\n'
-  printf "  Example:  [Opus ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Sonnet ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET} Haiku ${CLAUDII_CLR_GREEN}✓${CLAUDII_CLR_RESET}] 13m\n"
+  # Mirrors the RPROMPT in lib/statusline.zsh: every tracked model in the same
+  # state collapses to one "claude <glyph>"; a mix lists only the affected models.
+  printf "  All healthy:   [${CLAUDII_CLR_GREEN}claude ${CLAUDII_SYM_OK}${CLAUDII_CLR_RESET}] 13m\n"
+  printf "  Some affected: [${CLAUDII_CLR_RED}Opus ${CLAUDII_SYM_DOWN}${CLAUDII_CLR_RESET} ${CLAUDII_CLR_YELLOW}Haiku ${CLAUDII_SYM_DEGRADED}${CLAUDII_CLR_RESET}] 2m ${CLAUDII_CLR_RED}${CLAUDII_SYM_INVESTIGATING}${CLAUDII_CLR_RESET}\n"
   printf '\n'
   printf '  Status:   %b\n' "$cs_state"
   printf '  Models:   %s\n' "$cs_models"
@@ -277,11 +283,15 @@ _cmd_explain() {
   printf '  %-4s %-20s %s\n' ""    "duration"         "total session time"
   printf '\n'
   printf '  ClaudeStatus (RPROMPT)\n'
-  printf '  %-4s %-20s %s\n' "✓"  "ok"               "model operational"
-  printf '  %-4s %-20s %s\n' "⚠"  "degraded"         "partial outage"
-  printf '  %-4s %-20s %s\n' "✗"  "down"             "major outage"
-  printf '  %-4s %-20s %s\n' "⟳"  "refreshing"       "background check running"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_OK"       "ok"               "model operational (all ok: one \"claude ${CLAUDII_SYM_OK}\")"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_DEGRADED" "degraded"         "partial outage"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_DOWN"     "down"             "major outage"
+  printf '  %-4s %-20s %s\n' "⟳"  "refreshing"       "cache older than its TTL, background check running"
   printf '  %-4s %-20s %s\n' "?"   "unreachable"      "status.claude.com not reachable"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_INVESTIGATING" "investigating" "incident open, cause unknown"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_IDENTIFIED"    "identified"    "incident: cause found, fix in progress"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_MONITORING"    "monitoring"    "incident: fix deployed, watching"
+  printf '  %-4s %-20s %s\n' "$CLAUDII_SYM_NOTE"          "note"          "incident that affects none of the tracked models"
   printf '\n'
 }
 
@@ -292,6 +302,6 @@ _cmd_42() {
   printf '  It was also the number of times Opus was down\n'
   printf '  while this tool was being built.\n'
   printf '\n'
-  printf "  ${CLAUDII_CLR_ACCENT}(We monitor all three now. You're welcome.)${CLAUDII_CLR_RESET}\n"
+  printf "  ${CLAUDII_CLR_ACCENT}(We monitor all four now. You're welcome.)${CLAUDII_CLR_RESET}\n"
   printf '\n'
 }

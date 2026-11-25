@@ -149,6 +149,17 @@ _out=$(_vm_run zzzzzz 2>&1; echo "rc=$?")
 grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap: unknown subcommand returns rc=2" "1" "$_ok"
 
+# Exit-code contract: the same message as every other command, rc 2, stderr only
+_out=$(_vm_run --bogus 2>&1 >/dev/null; echo "rc=$?")
+assert_contains "vibemap --bogus: contract message" "claudii vibemap: unknown option: --bogus" "$_out"
+assert_contains "vibemap --bogus: rc=2" "rc=2" "$_out"
+_out=$(_vm_run strip --bogus 2>&1 >/dev/null; echo "rc=$?")
+assert_contains "vibemap strip --bogus: names the subcommand" "claudii vibemap strip: unknown option: --bogus" "$_out"
+assert_contains "vibemap strip --bogus: rc=2" "rc=2" "$_out"
+_out=$(_vm_run strip -h 2>/dev/null; echo "rc=$?")
+assert_contains "vibemap strip -h: usage on stdout" "Usage: claudii vibemap" "$_out"
+assert_contains "vibemap strip -h: rc=0" "rc=0" "$_out"
+
 # --days input validation
 _out=$(_vm_run strip --days 999 2>&1; echo "rc=$?")
 grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
@@ -274,6 +285,9 @@ cat > "$_vm_home3/.config/claudii/config.json" <<EOF
 { "vibemap": { "enabled": true, "path": "$_vm_path3" }, "statusline": { "bedtime": "23:00" } }
 EOF
 
+# Hour read right before the run it describes (the strip reads the clock itself)
+_cur_h=$(date '+%H' | sed 's/^0//')
+_cur_h="${_cur_h:-0}"
 _strip_out=$(HOME="$_vm_home3" XDG_CACHE_HOME="$_vm_home3/.cache" \
   XDG_CONFIG_HOME="$_vm_home3/.config" \
   bash "$CLAUDII_HOME/bin/claudii" vibemap strip 2>&1)
@@ -286,20 +300,19 @@ assert_eq "strip today-row: ▶ marker present" "1" "$_ok"
 grep -q "│" <<< "$(grep "▶" <<< "$_strip_out")" && _ok=1 || _ok=0
 assert_eq "strip today-row: │ cursor present in today row" "1" "$_ok"
 
-# Determine current hour — if it's before 23, hour 23 should be blank in today-row
-_cur_h=$(date '+%H' | sed 's/^0//')
-_cur_h="${_cur_h:-0}"
-if (( _cur_h < 23 )); then
-  # today-row should have trailing spaces (future hours) after the cursor
-  _today_row=$(echo "$_strip_out" | grep "▶")
-  # Strip ANSI escapes to compare raw characters
-  _today_raw=$(printf '%s' "$_today_row" | sed $'s/\033\\[[0-9;]*m//g')
-  # Count trailing spaces after the cursor position — at least one future hour
-  # if we're not in the last hour of the day.
-  _future_spaces=$(printf '%s' "$_today_raw" | grep -o ' *$' | wc -c | tr -d ' ')
-  (( _future_spaces > 0 )) && _ok=1 || _ok=0
-  assert_eq "strip today-row: future hours rendered as blank spaces" "1" "$_ok"
-fi
+# Future hours must be blank — and the assertion ALWAYS runs. It used to sit in
+# `if (( _cur_h < 23 ))`, so between 23:00 and 24:00 it vanished and the suite
+# reported one assertion fewer (CI: 2848 vs 2849). The EXPECTED value follows
+# the clock instead: 1 while hours remain after the current one, 0 in hour 23.
+_today_row=$(echo "$_strip_out" | grep "▶")
+# Strip ANSI escapes to compare raw characters
+_today_raw=$(printf '%s' "$_today_row" | sed $'s/\033\\[[0-9;]*m//g')
+# Trailing spaces after the cursor = future hours (grep -o prints no empty match)
+_future_spaces=$(printf '%s' "$_today_raw" | grep -o ' *$' | wc -c | tr -d ' ')
+(( _future_spaces > 0 )) && _ok=1 || _ok=0
+(( _cur_h < 23 )) && _want_future=1 || _want_future=0
+assert_eq "strip today-row: future hours rendered as blank spaces (none left in hour 23)" "$_want_future" "$_ok"
+unset _cur_h _want_future _future_spaces _today_row _today_raw
 
 rm -rf "$_vm_home3"
 

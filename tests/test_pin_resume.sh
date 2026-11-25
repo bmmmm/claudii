@@ -30,6 +30,20 @@ assert_eq "pin nonexistent: exits non-zero" "1" \
 assert_contains "pin nonexistent: error message" "No session matching" \
   "$(echo "$_pin_bad" | grep -v '^exit:')"
 
+# ── pin/unpin: exit-code contract ────────────────────────────────────────────
+# `pin -h` used to look for a session named "-h" and answer 1.
+for _pc in pin unpin; do
+  _pc_out=$(CLAUDII_CACHE_DIR="$_PR_TMP" XDG_CONFIG_HOME="$_PR_XDG" \
+    bash "$CLAUDII_HOME/bin/claudii" "$_pc" -h 2>/dev/null); _pc_rc=$?
+  assert_eq "$_pc -h: exit 0" "0" "$_pc_rc"
+  assert_contains "$_pc -h: usage on stdout" "Usage: claudii $_pc <session-id>" "$_pc_out"
+  _pc_out=$(CLAUDII_CACHE_DIR="$_PR_TMP" XDG_CONFIG_HOME="$_PR_XDG" \
+    bash "$CLAUDII_HOME/bin/claudii" "$_pc" --bogus 2>&1 >/dev/null); _pc_rc=$?
+  assert_eq "$_pc --bogus: exit 2" "2" "$_pc_rc"
+  assert_contains "$_pc --bogus: contract message" "claudii $_pc: unknown option: --bogus" "$_pc_out"
+done
+unset _pc _pc_out _pc_rc
+
 # ── pin: valid session → session file has pinned=1 ──────────────────────────
 CLAUDII_CACHE_DIR="$_PR_TMP" XDG_CONFIG_HOME="$_PR_XDG" \
   bash "$CLAUDII_HOME/bin/claudii" pin "$_pr_sid" >/dev/null 2>&1
@@ -129,6 +143,30 @@ assert_contains "resume valid: session ID forwarded" "$_pr_sid" "$_resume_valid"
 
 rm -rf "$_mock_dir"
 unset _mock_dir _resume_bad _resume_valid _resume_noop
+
+# ── pin: an interrupted pin leaves a `.tmp.` file, which no reader treats as a session ──
+# The old `${f}.pin.PID` temp name was not covered by the `*.tmp.*` filter that
+# _session_files and gc apply to atomic-write leftovers. A failing `mv` stands
+# in for the interruption: the temp file is what stays behind.
+_pt_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_pintmp.XXXXXX")
+_pt_stub=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_pintmp_stub.XXXXXX")
+printf '#!/bin/bash\nexit 1\n' > "$_pt_stub/mv"; chmod +x "$_pt_stub/mv"
+printf 'model=Sonnet\nsession_id=0123456789abcdef\n' > "$_pt_dir/session-pintmp"
+PATH="$_pt_stub:$PATH" CLAUDII_CACHE_DIR="$_pt_dir" XDG_CONFIG_HOME="$_PR_XDG" \
+  bash "$CLAUDII_HOME/bin/claudii" pin 0123456789abcdef >/dev/null 2>&1
+_pt_left=""
+for _pt_f in "$_pt_dir"/*; do
+  [[ "${_pt_f##*/}" == "session-pintmp" ]] || _pt_left+="${_pt_f##*/}"$'\n'
+done
+assert_contains "pin interrupted: the leftover temp file has a .tmp. name" ".tmp." "$_pt_left"
+assert_eq "pin interrupted: every leftover is a .tmp. name" "" \
+  "$(printf '%s\n' "$_pt_left" | grep -v '\.tmp\.' || true)"
+_pt_list=$(CLAUDII_CACHE_DIR="$_pt_dir" XDG_CONFIG_HOME="$_PR_XDG" bash -c '
+  source "$CLAUDII_HOME/lib/helpers.sh"; _session_files "$CLAUDII_CACHE_DIR"
+  printf "%s\n" "${_SESSION_FILES[@]}"')
+assert_eq "pin interrupted: only the real session is listed" "$_pt_dir/session-pintmp" "$_pt_list"
+rm -rf "$_pt_dir" "$_pt_stub"
+unset _pt_dir _pt_stub _pt_left _pt_list _pt_f
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 rm -rf "$_PR_TMP"
