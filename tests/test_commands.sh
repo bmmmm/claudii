@@ -589,7 +589,7 @@ _dp_status() {
 _dp_out=$(env -u CLAUDII_HOME HOME="$_DP_BASE" XDG_CONFIG_HOME="$_DP_XDG" CLAUDII_CACHE_DIR="$_DP_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" doctor --json 2>/dev/null)
 assert_eq "doctor: plugin warn when the caller has no CLAUDII_HOME" "warn" "$(_dp_status "$_dp_out")"
-_dp_out=$(HOME="$_DP_BASE" XDG_CONFIG_HOME="$_DP_XDG" CLAUDII_CACHE_DIR="$_DP_CACHE" \
+_dp_out=$(env HOME="$_DP_BASE" XDG_CONFIG_HOME="$_DP_XDG" CLAUDII_CACHE_DIR="$_DP_CACHE" \
   CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" doctor --json 2>/dev/null)
 assert_eq "doctor: plugin ok when the caller exported CLAUDII_HOME" "ok" "$(_dp_status "$_dp_out")"
 rm -rf "$_DP_BASE"
