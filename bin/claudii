@@ -9,7 +9,20 @@ set -euo pipefail
 # 1 when the calling shell already exported CLAUDII_HOME (claudii.plugin.zsh
 # does) — doctor's "plugin loaded" check; the export below hides it otherwise.
 _CLAUDII_HOME_INHERITED="${CLAUDII_HOME:+1}"
-export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Resolve the checkout through symlinks: install.sh links this file into
+# /usr/local/bin, where `dirname "$0"` named /usr/local and every source below
+# failed. One readlink per hop — macOS readlink has no -f; 40 hops ends a loop.
+if [[ -z "${CLAUDII_HOME:-}" ]]; then
+  _cl_self="$0" _cl_hops=0
+  while [[ -L "$_cl_self" ]] && (( _cl_hops++ < 40 )); do
+    _cl_link=$(readlink "$_cl_self")
+    [[ "$_cl_link" == /* ]] || _cl_link="$(dirname "$_cl_self")/$_cl_link"
+    _cl_self="$_cl_link"
+  done
+  CLAUDII_HOME="$(cd "$(dirname "$_cl_self")/.." && pwd)"
+  unset _cl_self _cl_hops _cl_link
+fi
+export CLAUDII_HOME
 source "$CLAUDII_HOME/lib/visual.sh"
 source "$CLAUDII_HOME/lib/spinner.sh"
 source "$CLAUDII_HOME/lib/helpers.sh"
