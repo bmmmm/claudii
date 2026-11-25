@@ -117,3 +117,54 @@ def model_usd($rates):
           cache_create_1h: ($b.cache_create_1h - $l.cache_create_1h)} | usd($rates[$t]))
         + ($l | usd($lr))
     end;
+
+# Price the aggregate rows of one attribution kind ("skill", "plugin", "mcp")
+# of a merged insights document — the single copy of what lib/skills-cost-
+# rows.jq and lib/skills-cost-compare.jq each used to carry.
+#   .[$k]                  {name: {calls, in_tok, out_tok, cache_read, …}}
+#   .attribution_models    {"<kind>|<name>|<model>": token bucket} (schema v5)
+# Each row's per-model buckets are priced at their own tier (model_usd). What
+# they do not cover — aggregate minus the per-model tokens, i.e. pre-v5 or
+# orphaned data — prices at the flat legacy-Sonnet rate, which that data
+# predates Sonnet 5 for. model is the bucket model with >= 80% of the row's
+# attributed calls, else "mixed". Output, in .[$k] order:
+#   [{name, calls, in_tok, out_tok, cache_read, cache_create,
+#     cache_create_1h, tot_usd, model}]
+def attr_rows($kind; $k; $rates):
+  ( .attribution_models // {} | to_entries
+    | map((.key | split("|")) as $p
+        | select($p[0] == $kind)
+        | {name: ($p[1] // ""), model: ($p[2] // "unknown"),
+           calls:                (.value.calls                // 0),
+           in_tok:               (.value.in_tok               // 0),
+           out_tok:              (.value.out_tok              // 0),
+           cache_read:           (.value.cache_read           // 0),
+           cache_create:         (.value.cache_create         // 0),
+           cache_create_1h:      (.value.cache_create_1h      // 0),
+           long_in_tok:          (.value.long_in_tok          // 0),
+           long_out_tok:         (.value.long_out_tok         // 0),
+           long_cache_read:      (.value.long_cache_read      // 0),
+           long_cache_create:    (.value.long_cache_create    // 0),
+           long_cache_create_1h: (.value.long_cache_create_1h // 0)}) ) as $am
+  | .[$k] // {}
+  | to_entries
+  | map({name:            .key,
+         calls:           (.value.calls           // 0),
+         in_tok:          (.value.in_tok          // 0),
+         out_tok:         (.value.out_tok         // 0),
+         cache_read:      (.value.cache_read      // 0),
+         cache_create:    (.value.cache_create    // 0),
+         cache_create_1h: (.value.cache_create_1h // 0)})
+  | map(. as $row
+      | [$am[] | select(.name == $row.name)] as $cand
+      | def res($f): [$row[$f] - ($cand | map(.[$f]) | add // 0), 0] | max;
+      ($cand | map(model_usd($rates)) | add // 0) as $model_usd
+      | ({in_tok: res("in_tok"), out_tok: res("out_tok"), cache_read: res("cache_read"),
+          cache_create: res("cache_create"), cache_create_1h: res("cache_create_1h")}
+         | usd($rates["sonnet-legacy"])) as $res_usd
+      | ($cand | map(.calls) | add // 0) as $acalls
+      | $row + {tot_usd: ($model_usd + $res_usd),
+                model: (if $acalls <= 0 then "mixed"
+                        else ($cand | max_by(.calls)) as $top
+                          | if ($top.calls / $acalls) >= 0.8 then $top.model else "mixed" end
+                        end)});
