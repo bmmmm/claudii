@@ -199,6 +199,17 @@ _reset_soon=$(( $(date +%s) + 180 ))
 output_soon=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":67,\"resets_at\":${_reset_soon}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
 assert_eq "reset countdown < 5min + rate>=50%: green color code present" "1" "$(printf '%s' "$output_soon" | grep -c $'\033\[0;32m↺' || true)"
 
+# Reset text is the shared _fmt_rel: whole minutes rounded down, "<1m" in the
+# last minute. The old local formatter rounded below 1h only — 59m40s read
+# "60m", and the last 30 s showed no countdown at all.
+_rst_json() { printf '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":%s}}}' "$1"; }
+strip=$(_rst_json $(( $(date +%s) + 3580 )) | bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "reset 59m40s → ↺59m (rounded down)" "↺59m" "$strip"
+assert_not_contains "reset 59m40s → never ↺60m" "↺60m" "$strip"
+strip=$(_rst_json $(( $(date +%s) + 20 )) | bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "reset in the last minute → ↺<1m" "↺<1m" "$strip"
+unset -f _rst_json
+
 # Burn-ETA removed — "~Xmin" must NOT appear in output
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":47,"total_input_tokens":64900,"total_output_tokens":121100,"context_window_size":200000},"cost":{"total_cost_usd":12.53,"total_duration_ms":3600000},"rate_limits":{"five_hour":{"used_percentage":67},"seven_day":{"used_percentage":65}}}' | COLUMNS=150 bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')

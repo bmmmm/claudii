@@ -1264,33 +1264,18 @@ if _isset "$cost"; then
   _seg_cost="${DIM}\$$(env LC_ALL=C printf '%.2f' "$cost")${RST}"
 fi
 
-# Reset countdown formatter — sets _reset_fmt + _reset_color.
-# < 60m → Xm, < 24h → XhYm (Yh suppressed if 0), ≥ 24h → XdYh (Yh suppressed if 0).
+# Reset countdown → _reset_fmt + _reset_color. The text is the shared _fmt_rel
+# (whole minutes, rounded down; "<1m" in the last minute), so a reset reads
+# the same here as in `claudii` and its warnings. This used to round to the
+# nearest minute below 1h only — 59m40s showed "60m" one second before "59m"
+# and the last 30s showed nothing — while every longer span rounded down.
+# The color ladder keys on whole minutes left.
 _fmt_reset() {
-  local _secs="$1" _pct="$2" _m _h _d _rh
+  local _secs="$1" _pct="$2" _m
   _reset_fmt=""; _reset_color=""
   (( _secs <= 0 )) && return
-  # _m feeds the color ladder below and must be set on EVERY branch — the
-  # >=24h branch used to leave it unassigned, so `(( _m < 5 ))` saw 0 and
-  # painted multi-day resets green instead of dim. The <60m branch overwrites
-  # it with the rounded display value.
+  _fmt_rel "$_secs"; _reset_fmt="$_REL_FMT"
   _m=$(( _secs / 60 ))
-  if (( _secs < 3600 )); then
-    _m=$(( (_secs + 30) / 60 ))
-    (( _m <= 0 )) && return
-    _reset_fmt="${_m}m"
-  elif (( _secs < 86400 )); then
-    _m=$(( _secs / 60 ))
-    _h=$(( _secs / 3600 ))
-    _rh=$(( (_secs % 3600) / 60 ))
-    if (( _rh > 0 )); then _reset_fmt="${_h}h${_rh}m"
-    else _reset_fmt="${_h}h"; fi
-  else
-    _d=$(( _secs / 86400 ))
-    _h=$(( (_secs % 86400) / 3600 ))
-    if (( _h > 0 )); then _reset_fmt="${_d}d${_h}h"
-    else _reset_fmt="${_d}d"; fi
-  fi
   if   (( _pct < 50 ));  then _reset_color="${DIM}"
   elif (( _m < 5 ));     then _reset_color="${GREEN}"
   elif (( _m < 60 ));    then _reset_color="${WHITE}"
