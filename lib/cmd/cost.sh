@@ -68,8 +68,6 @@ _cmd_cost_from_history() {
   # The insights rows (sessions priced from their tokens, see
   # lib/insights-cost-rows.jq) follow AFTER all history rows: stage 2 must know
   # every session history covers before it decides to keep an insights row.
-  # _COST_INSIGHTS=0 leaves them out (the forecast and the tests that pin the
-  # history-only arithmetic).
   {
     if (( ${#_history_files[@]} )); then
       LC_ALL=C awk -F'\t' \
@@ -82,11 +80,9 @@ _cmd_cost_from_history() {
         -f "$CLAUDII_HOME/lib/history_rows.awk" \
         "${_history_files[@]}"
     fi
-    if [[ "${_COST_INSIGHTS:-1}" == "1" ]]; then
-      _insights_stream_tagged "$_cache_dir/insights" \
-        | jq -rn -L "$CLAUDII_HOME/lib" --argjson rates "$_CLAUDII_RATES" \
-            -f "$CLAUDII_HOME/lib/insights-cost-rows.jq" 2>/dev/null || true
-    fi
+    _insights_stream_tagged "$_cache_dir/insights" \
+      | jq -rn -L "$CLAUDII_HOME/lib" --argjson rates "$_CLAUDII_RATES" \
+          -f "$CLAUDII_HOME/lib/insights-cost-rows.jq" 2>/dev/null || true
   } | LC_ALL=C awk -F'\t' \
     -v emit="$_emit2" \
     -v self="$(_sync_self_name)" \

@@ -60,7 +60,6 @@ BEGIN {
   if (!((sid, day) in session_day_seen)) {
     session_day_seen[sid, day] = 1
     day_sessions[day]++
-    day_model_sessions[day, model]++
 
     if (day >= thirty && !((sid, "30d") in session_30d_seen)) {
       session_30d_seen[sid, "30d"] = 1
@@ -88,12 +87,6 @@ END {
   # Cost-based costliest day (30d) — kept only for the JSON contract.
   max_day_cost = 0; max_day = ""
   for (d in day_cost) if (d >= thirty && day_cost[d] > max_day_cost) { max_day_cost = day_cost[d]; max_day = d }
-
-  # tw_model_sessions (day_model_sessions keyed by day,model) — JSON only.
-  for (combo in day_model_sessions) {
-    split(combo, cp, SUBSEP)
-    if (cp[1] >= week_start) tw_model_sessions[cp[2]] += day_model_sessions[combo]
-  }
 
   # Parse week_days "date:name,..." into wd_date[1..n] / wd_name[1..n]
   n_days = split(week_days, _wd_parts, ",")
