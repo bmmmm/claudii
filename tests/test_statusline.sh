@@ -389,14 +389,19 @@ if [[ -n "$_stale_ts" ]]; then
   rm -f "$SESSION_BAR_TMP/session-staletest"
 fi
 
-# reset_5h backfill: session with missing reset_5h gets countdown from sibling session
+# 5h limit is account-wide: ONE line, from the NEWEST session sample (mtime),
+# not from glob order and not per session. "session-a-older" sorts first by id
+# but is older; "session-b-newer" is newer -> its value wins.
 _live_pid=$$
-_reset_future=$(( ${EPOCHSECONDS:-$(date +%s)} + 3360 ))  # 56min from now
+_reset_future=$(( ${EPOCHSECONDS:-$(date +%s)} + 4 * 3600 + 9 * 60 + 30 ))  # 4h9m(+30s) from now
+rm -f "$SESSION_BAR_TMP"/session-*
 printf 'model=Sonnet\nctx_pct=73\ncost=0.50\nrate_5h=83\nreset_5h=\nppid=%s\n' "$_live_pid" \
-  > "$SESSION_BAR_TMP/session-noreset"
-printf 'model=Sonnet\nctx_pct=17\ncost=0.30\nrate_5h=63\nreset_5h=%s\nppid=%s\n' "$_reset_future" "$_live_pid" \
-  > "$SESSION_BAR_TMP/session-withreset"
-zsh_reset_backfill=$(
+  > "$SESSION_BAR_TMP/session-a-older"
+printf 'model=Opus\nctx_pct=17\ncost=0.30\nrate_5h=63\nreset_5h=%s\nppid=%s\n' "$_reset_future" "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-b-newer"
+_old_ts=$(date -d "30 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || date -v-30S +%Y%m%d%H%M.%S 2>/dev/null || true)
+[[ -n "$_old_ts" ]] && touch -t "$_old_ts" "$SESSION_BAR_TMP/session-a-older"
+zsh_acct_rate=$(
   CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
   zsh -c "
     source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
@@ -406,11 +411,64 @@ zsh_reset_backfill=$(
     print -P \"\${(e)PROMPT}\"
   " 2>/dev/null
 )
-# Both sessions should show ↺Xm (backfill gives the missing session its sibling's reset time)
-_reset_count=$(printf '%s' "$zsh_reset_backfill" | grep -o '↺[0-9]*m' | wc -l | tr -d ' ')
-assert_eq "reset_5h backfill: session without reset gets sibling countdown" "2" "$_reset_count"
-rm -f "$SESSION_BAR_TMP/session-noreset" "$SESSION_BAR_TMP/session-withreset"
-unset _reset_future _reset_count zsh_reset_backfill
+assert_eq "dashboard 5h: shown once, not per session" "1" \
+  "$(printf '%s' "$zsh_acct_rate" | grep -c '5h:')"
+assert_contains "dashboard 5h: newest sample wins (63, not glob-first 83)" "5h:63%" "$zsh_acct_rate"
+assert_not_contains "dashboard 5h: older session's value not shown" "5h:83%" "$zsh_acct_rate"
+# Reset countdown uses the shared _fmt_rel format (4h9m), not raw minutes (249m)
+assert_contains "dashboard 5h: reset countdown in _fmt_rel format" "↺4h9m" "$zsh_acct_rate"
+assert_not_contains "dashboard 5h: no raw-minutes countdown" "249m" "$zsh_acct_rate"
+
+# Newest sample has no 5h value -> fall back to the newest sample that does
+printf 'model=Opus\nctx_pct=17\ncost=0.30\nrate_5h=\nreset_5h=\nppid=%s\n' "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-b-newer"
+zsh_acct_fallback=$(
+  CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+assert_contains "dashboard 5h: newest sample without rate -> older one with rate is used" "5h:83%" "$zsh_acct_fallback"
+
+# A sample whose reset_5h already passed (window rolled) is not shown
+printf 'model=Sonnet\nctx_pct=73\ncost=0.50\nrate_5h=91\nreset_5h=%s\nppid=%s\n' "$(( ${EPOCHSECONDS:-$(date +%s)} - 60 ))" "$_live_pid" \
+  > "$SESSION_BAR_TMP/session-a-older"
+zsh_acct_rolled=$(
+  CLAUDII_CACHE_DIR="$SESSION_BAR_TMP" XDG_CONFIG_HOME="$SESSION_BAR_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    print -P \"\${(e)PROMPT}\"
+  " 2>/dev/null
+)
+assert_not_contains "dashboard 5h: rolled window (reset_5h in the past) -> no stale 5h" "5h:" "$zsh_acct_rolled"
+rm -f "$SESSION_BAR_TMP"/session-*
+unset _reset_future _old_ts zsh_acct_rate zsh_acct_fallback zsh_acct_rolled
+
+# Legacy 0.8.0 key `dashboard.enabled` is no longer read: with only that key set
+# to "on" (and no session-dashboard key) the shipped default "off" applies.
+LEGACY_TMP="$CLAUDII_TEST_TMP/test_statusline_legacy_dash"
+rm -rf "$LEGACY_TMP"; mkdir -p "$LEGACY_TMP/config/claudii"
+jq 'del(."session-dashboard") | .dashboard = {"enabled": "on"}' "$CLAUDII_HOME/config/defaults.json" > "$LEGACY_TMP/config/claudii/config.json"
+printf 'model=Sonnet\nctx_pct=42\nrate_5h=\nreset_5h=\nppid=%s\n' "$$" > "$LEGACY_TMP/session-legacy"
+zsh_legacy_dash=$(
+  CLAUDII_CACHE_DIR="$LEGACY_TMP" XDG_CONFIG_HOME="$LEGACY_TMP/config" ZDOTDIR="$ZDOTDIR_EMPTY" CLAUDII_HOME="$CLAUDII_HOME" \
+  zsh -c "
+    source \"\$CLAUDII_HOME/claudii.plugin.zsh\"
+    _CLAUDII_CMD_RAN=1
+    _CLAUDII_LAST_CMD='claudii'
+    _claudii_session_dashboard
+    printf '%s' \"\$PROMPT\"
+  " 2>/dev/null
+)
+assert_not_contains "dashboard: legacy dashboard.enabled=on no longer enables it" "Sonnet" "$zsh_legacy_dash"
+rm -rf "$LEGACY_TMP"; unset LEGACY_TMP zsh_legacy_dash
 
 # dashboard: PROMPT must not contain save/restore cursor escape sequences
 prompt_val=$(

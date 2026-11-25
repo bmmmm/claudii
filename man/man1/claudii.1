@@ -216,7 +216,12 @@ instead of an alarm.
 .TP
 .B Session Dashboard (above prompt)
 Per-session summary lines above the prompt, rendered via the precmd hook.
-Shows model, context %, token throughput, 5h rate limit + countdown.
+Each session line shows model, context % and token throughput. One extra line
+shows the account-wide 5h rate limit and its reset countdown (e.g.
+.BR 5h:63% " \[u21BA]4h9m" ),
+taken from the newest session sample whose window is still open \(em never one
+value per session. The number follows
+.BR statusline.rate_display .
 Only shown after
 .B claudii
 commands; suppressed after
