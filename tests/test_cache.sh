@@ -45,6 +45,17 @@ assert_contains "cache: hit rate suffix"   "hit rate"           "$_CACHE_OUT"
 # Rounded display is "87.5%" — verify it's printed somewhere in the summary.
 assert_contains "cache: overall hit rate ≈ 87.5%" "87.5%" "$_CACHE_OUT"
 
+# Bars come from the shared _bar_c (lib/render.sh) — 20 cells, theme symbols —
+# not a private copy: 95% → 19 full + 1 empty, 80% → 16 full + 4 empty.
+_CACHE_OPUS_LINE=$(grep 'Opus 4.7' <<< "$_CACHE_OUT")
+_CACHE_SONNET_LINE=$(grep 'Sonnet 4.6' <<< "$_CACHE_OUT")
+# (Captured output is not a TTY, so it carries no colour codes.)
+assert_contains "cache: Opus bar is 19 full + 1 empty cells (95%)" \
+  " ███████████████████░ " "$_CACHE_OPUS_LINE"
+assert_contains "cache: Sonnet bar is 16 full + 4 empty cells (80%)" \
+  " ████████████████░░░░ " "$_CACHE_SONNET_LINE"
+unset _CACHE_OPUS_LINE _CACHE_SONNET_LINE
+
 # Verify cache directory got populated.
 assert_eq "cache: per-session JSON cache exists" "1" \
   "$([ -s "$_CACHE_CACHE/insights/$_SID.json" ] && echo 1 || echo 0)"

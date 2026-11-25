@@ -49,23 +49,6 @@ _insights_host_label() {
   if [[ -z "$1" ]]; then _sync_self_name; else printf '%s' "$1"; fi
 }
 
-# Render a 20-block bar coloured green-up-to-filled, dim-for-empty.
-# Args: filled_count (0..20)
-# Echoes the rendered bar (ANSI included).
-_insights_bar() {
-  local filled="${1:-0}"
-  (( filled < 0 ))  && filled=0
-  (( filled > 20 )) && filled=20
-  local empty=$(( 20 - filled ))
-  local f="" e=""
-  (( filled > 0 )) && printf -v f "%${filled}s" "" && f="${f// /█}"
-  (( empty  > 0 )) && printf -v e "%${empty}s"  "" && e="${e// /░}"
-  printf '%s%s%s%s%s' \
-    "${CLAUDII_CLR_GREEN}" "$f" \
-    "${CLAUDII_CLR_DIM}"   "$e" \
-    "${CLAUDII_CLR_RESET}"
-}
-
 # Short-number formatting (B/M/K) now lives in lib/render.sh as _fmt_tok
 # (pure bash, no per-call awk fork). Call sites below use it directly.
 
@@ -543,7 +526,7 @@ _cmd_cache() {
       pct_int=$(( 100 * creads / total ))
       filled=$(( (pct_int * 20 + 50) / 100 ))
       label=$(_insights_day_label "$day")
-      bar=$(_insights_bar "$filled")
+      bar=$(_bar_c "$filled" 20)
       creads_h=$(_fmt_tok "$creads")
       total_h=$(_fmt_tok "$total")
       printf '    %-6s %s  %s%5s%%%s  %s%s / %s%s\n' \
@@ -570,7 +553,7 @@ _cmd_cache() {
       mpct_int=$(( 100 * mcreads / mtotal ))
       mfilled=$(( (mpct_int * 20 + 50) / 100 ))
       mlabel=$(_insights_model_label "$model")
-      mbar=$(_insights_bar "$mfilled")
+      mbar=$(_bar_c "$mfilled" 20)
       mtotal_h=$(_fmt_tok "$mtotal")
       printf '    %-11s %s  %s%5s%%%s  %s%s%s\n' \
         "$mlabel" \
