@@ -85,6 +85,21 @@ bash "$CLAUDII_HOME/bin/claudii-status" --quiet 2>/dev/null || true
 cached=$(cat "$CLAUDII_CACHE_DIR/status-models" 2>/dev/null || true)
 assert_contains "new model in config appears in cache" "testmodel=" "$cached"
 
+# No statusline.models in the user config → the shipped defaults apply, and they
+# include fable (the old hard-coded fallback "opus,sonnet,haiku" dropped it).
+_nomod_cfg=$(mktemp -d "$CLAUDII_TEST_TMP/test_status_nomodels.XXXXXX")
+mkdir -p "$_nomod_cfg/claudii" "$_nomod_cfg/cache"
+printf '{}\n' > "$_nomod_cfg/claudii/config.json"
+PATH="$_off_dir:$PATH" XDG_CONFIG_HOME="$_nomod_cfg" CLAUDII_CACHE_DIR="$_nomod_cfg/cache" \
+  bash "$CLAUDII_HOME/bin/claudii-status" --quiet >/dev/null 2>&1 || true
+_nomod_cache=$(cat "$_nomod_cfg/cache/status-models" 2>/dev/null || true)
+assert_contains "no config models → defaults.json models checked (fable included)" "fable=" "$_nomod_cache"
+assert_contains "no config models → opus checked too" "opus=" "$_nomod_cache"
+_def_models=$(jq -r '.statusline.models' "$CLAUDII_HOME/config/defaults.json")
+assert_eq "no config models → exactly the defaults.json models" "$_def_models" \
+  "$(grep -v '^_' "$_nomod_cfg/cache/status-models" | cut -d= -f1 | paste -sd, -)"
+rm -rf "$_nomod_cfg"; unset _nomod_cfg _nomod_cache _def_models
+
 # ── Incident display: claudii status reads status-unresolved.json ────────────
 # _cmd_status calls $CLAUDII_HOME/bin/claudii-status directly, so we need a
 # temp CLAUDII_HOME with a stub binary that writes mock incident data.

@@ -25,19 +25,21 @@ CACHE_INCIDENTS="$CACHE_DIR/status-unresolved.json"
 CACHE_HISTORY="$CACHE_DIR/status-history.tsv"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json"
 DEFAULTS="${CLAUDII_HOME}/config/defaults.json"
-_cfg() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$CONFIG" 2>/dev/null; }
-_def() { jq -r "if (.$1 | type) != \"null\" then (.$1 | tostring) else empty end" "$DEFAULTS" 2>/dev/null; }
+# helpers.sh: _cfgget (config → defaults.json in one jq fork; no _cfg_init, so
+# no config file is created), _mtime, and _status_cache_read/_status_cache_state
+# (the writer used to read its own cache back with a `grep`+`cut` per model).
+# Cheap next to the curl this script exists to run.
+# shellcheck source=lib/helpers.sh
+source "${CLAUDII_HOME}/lib/helpers.sh"
 
-CACHE_TTL="${CLAUDII_CACHE_TTL:-$(_cfg status.cache_ttl)}"
-CACHE_TTL="${CACHE_TTL:-$(_def status.cache_ttl)}"
+CACHE_TTL="${CLAUDII_CACHE_TTL:-$(_cfgget status.cache_ttl)}"
 CACHE_TTL="${CACHE_TTL:-300}"
 
-RSS_URL="${CLAUDII_RSS_URL:-$(_cfg status.rss_url)}"
+RSS_URL="${CLAUDII_RSS_URL:-$(_cfgget status.rss_url)}"
 RSS_URL="${RSS_URL:-https://status.claude.com/history.rss}"
 
 _base_url="${RSS_URL%/history.rss}"; _base_url="${_base_url%/}"
-UNRESOLVED_URL="${CLAUDII_UNRESOLVED_URL:-$(_cfg status.unresolved_url)}"
-UNRESOLVED_URL="${UNRESOLVED_URL:-$(_def status.unresolved_url)}"
+UNRESOLVED_URL="${CLAUDII_UNRESOLVED_URL:-$(_cfgget status.unresolved_url)}"
 UNRESOLVED_URL="${UNRESOLVED_URL:-${_base_url}/api/v2/incidents/unresolved.json}"
 
 case "${RSS_URL}" in
@@ -55,12 +57,6 @@ trap 'rm -f "$_tmp_status" "$_tmp_incidents"' EXIT
 
 source "${CLAUDII_HOME}/lib/visual.sh"
 source "${CLAUDII_HOME}/lib/log.sh"
-# helpers.sh for _status_cache_read/_status_cache_state — the writer read its
-# own cache back with a `grep`+`cut` per model in two places. It also brings
-# _mtime (this script used to define its own identical copy) and, via
-# helpers.sh, lib/timefmt.sh. Cheap next to the curl this script exists to run.
-# shellcheck source=lib/helpers.sh
-source "${CLAUDII_HOME}/lib/helpers.sh"
 
 quiet=false
 _pid_file=""
@@ -84,9 +80,11 @@ done
 # here. Either way, don't drop this write as redundant with the intent one.
 [[ -n "$_pid_file" ]] && printf '%s\n' "$$" > "$_pid_file"
 
-models_raw="${CLAUDII_MODELS:-$(_cfg statusline.models)}"
-models_raw="${models_raw:-$(_def statusline.models)}"
-models_raw="${models_raw:-opus,sonnet,haiku}"
+# Config → defaults.json (opus,sonnet,haiku,fable). The literal is only the
+# last resort for an unreadable defaults.json and mirrors it, fable included —
+# the old "opus,sonnet,haiku" silently dropped a model from the cache.
+models_raw="${CLAUDII_MODELS:-$(_cfgget statusline.models)}"
+models_raw="${models_raw:-opus,sonnet,haiku,fable}"
 IFS=',' read -ra MODELS <<< "$models_raw"
 for i in "${!MODELS[@]}"; do MODELS[$i]="${MODELS[$i]// /}"; done
 
