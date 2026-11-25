@@ -91,7 +91,7 @@ assert_eq "empty json doesn't crash" "0" "$?"
 # Cache hit ratio (⚡) — shown when cache_read_input_tokens > 0
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000,"cache_creation_input_tokens":0}},"cost":{"total_cost_usd":0.20,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
 assert_contains "cache hit shows lightning bolt" "⚡" "$output"
-assert_contains "cache hit shows percentage" "33%" "$output"
+assert_contains "cache hit shows percentage" "50%" "$output"
 
 # Cache hit ratio — NOT shown when cache_read is 0
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":500}},"cost":{"total_cost_usd":0.10,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
@@ -139,6 +139,27 @@ assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_ca
 assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
 # tok= = cumulative input+output (1000 + 200) — read by the token-first dashboard / se.
 assert_contains "session cache has tok= (input+output)" "tok=1200" "$_cache_contents"
+
+# Session totals: total_input_tokens/total_output_tokens are the LAST request's
+# usage (CC 2.1.330+), so the statusline sums them one request at a time.
+_tk_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_tk_dir")
+_tk() {  # <total_in> <cache_read> <out>
+  printf '{"session_id":"toksum-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":%s,"total_output_tokens":%s,"context_window_size":200000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"cost":{"total_cost_usd":0.05}}' "$1" "$3" "$2" "$3" \
+    | CLAUDII_CACHE_DIR="$_tk_dir" bash "$SL" 2>/dev/null
+}
+_tk_get() { grep "^$1=" "$_tk_dir/session-toksum-0" | cut -d= -f2; }
+_tk 50000 40000 300 >/dev/null
+assert_eq "tok sum: first request seeds the totals" "50300" "$(_tk_get tok)"
+_tk 50000 40000 300 >/dev/null
+assert_eq "tok sum: an idle re-render of the same request adds nothing" "50300" "$(_tk_get tok)"
+_tk 50000 40000 900 >/dev/null
+assert_eq "tok sum: rising output of the same request replaces its share" "50900" "$(_tk_get tok)"
+_tk_out=$(_tk 60000 50000 200 | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "tok sum: a new request adds its input and output" "110000:1100" "$(_tk_get tok_in):$(_tk_get tok_out)"
+assert_contains "tok sum: tokens segment shows the session input total" "110.0K↑" "$_tk_out"
+assert_contains "tok sum: history row carries the running totals" $'\t110000\t1100\t' \
+  "$(tail -1 "$_tk_dir"/history-*.tsv)"
+unset -f _tk _tk_get; unset _tk_out
 
 # Worktree segment rendered: name + ⎇ branch in output (via custom config with worktree segment)
 mkdir -p "$CLAUDII_TEST_TMP"
@@ -562,7 +583,7 @@ unset -f _cx_run; unset _cx_raw
 printf '{"statusline":{"lines":[["context-bar","cache-hit"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _ch_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
 _ch=$(echo "$_ch_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "cache-hit segment renders ⚡33%" "⚡33%" "$_ch"
+assert_contains "cache-hit segment renders ⚡50%" "⚡50%" "$_ch"
 # …and the context-bar next to it no longer carries its own copy.
 assert_eq "cache-hit appears exactly once" "1" "$(printf '%s' "$_ch" | grep -o '⚡' | grep -c . || true)"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_cx_cfg/claudii/config.json"
@@ -576,7 +597,8 @@ unset _ch _ch_json
 # object leaves cache-ttl empty (older CC) while cache-hit falls back.
 printf '{"statusline":{"lines":[["cache-hit","cache-ttl"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _pc_now=$(date +%s)
-# Native hit_ratio 0.73 beats the derived 33% the context_window values imply.
+# Native hit_ratio 0.73 beats the derived 50% the context_window values imply
+# (total_input_tokens already includes the 5000 cache reads).
 _pc_json="{\"model\":{\"display_name\":\"Sonnet\"},\"context_window\":{\"used_percentage\":30,\"total_input_tokens\":10000,\"total_output_tokens\":2000,\"context_window_size\":200000,\"current_usage\":{\"cache_read_input_tokens\":5000}},\"cost\":{\"total_cost_usd\":0.2},\"prompt_cache\":{\"warm\":true,\"caching_observed\":true,\"hit_ratio\":0.73,\"expires_at\":$(( _pc_now + 250 )),\"recache_tokens_if_cold\":312000}}"
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "cache-hit: native hit_ratio wins over derivation" "⚡73%" "$_pc"
@@ -590,7 +612,7 @@ assert_contains "cache-hit: native ratio works without cache_read" "⚡42%" "$_p
 _pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cache-ttl: absent object renders nothing" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
-assert_contains "cache-hit: absent object falls back to derivation" "⚡33%" "$_pc"
+assert_contains "cache-hit: absent object falls back to derivation" "⚡50%" "$_pc"
 # caching never observed (provider without cache reporting) → no cold noise.
 _pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.2},"prompt_cache":{"warm":false,"caching_observed":false,"hit_ratio":0}}'
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
@@ -1431,6 +1453,11 @@ output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains     "github: pr.number wins over workspace.repo.pr_number" "#7"  "$strip"
 assert_not_contains "github: the older field is only a fallback"           "#42" "$strip"
+# pr.kind "mr" (GitLab merge request) renders as !N, not as a PR's #N
+_j=$(jq -cn --argjson w '{"repo":{"host":"gitlab.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":12,"kind":"mr"},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+strip=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: a merge request renders as !N" "bmmmm/claudii !12" "$strip"
+assert_not_contains "github: a merge request is no #N"      "#12"               "$strip"
 
 # Repo without PR: still shows owner/name but no #
 _j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')

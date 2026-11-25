@@ -261,7 +261,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
   workspace_project_dir worktree_original_cwd \
   repo_host repo_owner repo_name repo_pr cc_version \
   pc_hit_pct pc_warm pc_observed pc_ttl_left pc_recache \
-  pc_misses pc_miss_cause pc_miss_causes pc_expires pc_cache_ttl ctx_tokens <<< "$(
+  pc_misses pc_miss_cause pc_miss_causes pc_expires pc_cache_ttl ctx_tokens pr_kind <<< "$(
   jq -r '[
     (.model.display_name // ""),
     (.context_window.used_percentage // "" | tostring),
@@ -307,8 +307,9 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.prompt_cache.miss_causes | if type == "object" then (to_entries | map("\(.key):\(.value)") | join(",")) else "" end),
     (.prompt_cache.expires_at // "" | tostring),
     (.prompt_cache.ttl // "" | tostring),
-    (.context_window.current_usage | if type == "object" then ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.output_tokens // 0) | tostring) else "" end)
-  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
+    (.context_window.current_usage | if type == "object" then ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.output_tokens // 0) | tostring) else "" end),
+    (.pr.kind // "")
+  ] | join("\u001f")' <<< "$json" 2>/dev/null || printf "${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}${_D}"
 )"
 
 # Helper: non-empty, non-"null", non-"0".
@@ -327,14 +328,10 @@ elif _isset "$cache_read"; then
   # subscripts — same discipline as the _tok/_dur formatters below.
   _cr=${cache_read%.*}; [[ "$_cr" =~ ^[0-9]+$ ]] || _cr=0
   _ci=${input_tok%.*};  [[ "$_ci" =~ ^[0-9]+$ ]] || _ci=0
-  if (( _ci + _cr > 0 )); then _cache_pct=$(( _cr * 100 / (_cr + _ci) )); fi
+  # total_input_tokens already includes the cache reads (and creations).
+  (( _cr > _ci )) && _ci=$_cr
+  if (( _ci > 0 )); then _cache_pct=$(( _cr * 100 / _ci )); fi
 fi
-
-# Session-cumulative in+out tokens — persisted so the token-first dashboard and
-# `claudii se` (which read this cache, not the live JSON) can show throughput.
-_tok_total=0
-[[ "${input_tok%.*}"  =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${input_tok%.*} ))
-[[ "${output_tok%.*}" =~ ^[0-9]+$ ]] && _tok_total=$(( _tok_total + ${output_tok%.*} ))
 
 # Existing per-session cache → 7d/5h baselines + previous duration.
 _sid="${session_id:+${session_id:0:8}}"
@@ -355,6 +352,46 @@ _cache_get() {
   _CG="$fallback"
 }
 _cache_get last_duration_ms ""; _last_duration_ms="$_CG"
+
+# Session-cumulative tokens. The payload has no such count:
+# context_window.total_input_tokens / total_output_tokens are the LAST
+# request's usage (input + cache creation + cache read, and its output) —
+# a context size, not a running total. So the sum is kept here, one request
+# at a time, and persisted as tok_in=/tok_out= (tok= is their sum, read by the
+# dashboard, `claudii se` and the overview; the history in/out columns carry
+# the same running totals, which is what attr_delta expects).
+# A request is recognised by its input triple (total input, cache read, cache
+# creation) — two different requests never share one, the cache-read count
+# grows with every turn. A re-render of the same request (idle refresh, or
+# output_tokens still rising while it streams) only replaces that request's
+# output share instead of counting it twice. A request that finished between
+# two renders is missed; the totals undercount then, they never inflate.
+_ti=${input_tok%.*};    [[ "$_ti" =~ ^[0-9]+$ ]] || _ti=""
+_to=${output_tok%.*};   [[ "$_to" =~ ^[0-9]+$ ]] || _to=0
+_tcr=${cache_read%.*};  [[ "$_tcr" =~ ^[0-9]+$ ]] || _tcr=0
+_tcc=${cache_create%.*}; [[ "$_tcc" =~ ^[0-9]+$ ]] || _tcc=0
+_cache_get tok_in "";  _tok_in="$_CG";  [[ "$_tok_in"  =~ ^[0-9]+$ ]] || _tok_in=""
+_cache_get tok_out ""; _tok_out="$_CG"; [[ "$_tok_out" =~ ^[0-9]+$ ]] || _tok_out=""
+_cache_get tok_req ""; _tok_req_prev="$_CG"
+_tok_req=""
+[[ -n "$_ti" || "$_to" != 0 ]] && _ti=${_ti:-0}
+if [[ -n "$_ti" ]] && (( _ti + _to > 0 )); then
+  _tok_req="${_ti}:${_tcr}:${_tcc}:${_to}"
+  if [[ -z "$session_id" || -z "$_tok_in" || -z "$_tok_out" ]]; then
+    # first render, a cache from before tok_in=, or no session id (the shared
+    # session-unknown file must not add up unrelated payloads)
+    _tok_in=$_ti _tok_out=$_to
+  elif [[ "${_tok_req_prev%:*}" == "${_tok_req%:*}" ]]; then
+    _tpo=${_tok_req_prev##*:}; [[ "$_tpo" =~ ^[0-9]+$ ]] || _tpo=0
+    _tok_out=$(( _tok_out - _tpo + _to ))
+    (( _tok_out < 0 )) && _tok_out=0
+  else
+    _tok_in=$(( _tok_in + _ti )) _tok_out=$(( _tok_out + _to ))
+  fi
+else
+  _tok_req="$_tok_req_prev"            # no usage in this payload: keep the totals
+fi
+_tok_total=$(( ${_tok_in:-0} + ${_tok_out:-0} ))
 # idle-compact animation frame: flips on every render (statusLine.refreshInterval
 # re-renders while idle), persisted so the blink alternates at any interval.
 _ic_frame=""
@@ -667,7 +704,7 @@ fi
 # session does not count as active on the days it merely stayed open.
 printf -v _hist_row '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
   "$model" "$cost" "$ctx_pct" "$rate_5h" "$session_id" \
-  "${input_tok:-0}" "${output_tok:-0}" "${api_duration_ms:-0}" \
+  "${_tok_in:-0}" "${_tok_out:-0}" "${api_duration_ms:-0}" \
   "$rate_7d" "$reset_7d"
 _hist_sig="${_hist_row//$'\t'/|}"
 _cache_get hist_sig ""
@@ -685,6 +722,9 @@ _tmp_session="${_session_file}.tmp.$$"
   "pace=$_pace_state" \
   "cache_pct=$_cache_pct" \
   "tok=$_tok_total" \
+  "tok_in=$_tok_in" \
+  "tok_out=$_tok_out" \
+  "tok_req=$_tok_req" \
   "ppid=$_ppid" \
   "ppid_lstart=$_ppid_lstart" \
   "rate_7d_start=$_rate_7d_start" \
@@ -1333,10 +1373,11 @@ _mk_rate_seg 5h "$rate_5h" "$reset_5h"; _seg_rate5h=$_seg_result
 _mk_rate_seg 7d "$rate_7d" "$reset_7d"; _seg_rate7d=$_seg_result
 
 _seg_tokens=""
-if [[ -n "$input_tok" && "$input_tok" != "null" ]]; then
+if [[ -n "$_tok_in" ]]; then
   # Tokens are the primary metric — rendered in the value colour (cyan), not dim.
-  _tok "$input_tok";  [[ -n "$_tok_result" ]] && _seg_tokens="${CYAN}${_tok_result}↑${RST}"
-  _tok "$output_tok"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${CYAN}${_tok_result}↓${RST}"
+  # Session totals (see tok_in= above), not the last request's context.
+  _tok "$_tok_in";  [[ -n "$_tok_result" ]] && _seg_tokens="${CYAN}${_tok_result}↑${RST}"
+  _tok "$_tok_out"; [[ -n "$_tok_result" ]] && _seg_tokens+="${_seg_tokens:+ }${CYAN}${_tok_result}↓${RST}"
 fi
 
 _seg_lines=""
@@ -1464,12 +1505,14 @@ fi
 # GitHub / repo segment (workspace.repo.{owner,name}, Claude Code 2.1.145+).
 # Renders <owner>/<name> + #<number> when an open PR is detected on the
 # current branch — top-level pr.number (CC 2.1.332), else the older
-# workspace.repo.pr_number. Skipped when repo info absent (non-git project,
-# no remote).
+# workspace.repo.pr_number; a merge request (pr.kind "mr") renders as !N.
+# Skipped when repo info absent (non-git project, no remote).
 _seg_github=""
 if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _seg_github="${DIM}◆ ${repo_owner}/${repo_name}${RST}"
-  _isset "$repo_pr" && _seg_github+=" ${YELLOW}#${repo_pr}${RST}"
+  # pr.kind (CC 2.1.332): "mr" is a GitLab merge request, written !N there.
+  _pr_mark="#"; [[ "$pr_kind" == mr ]] && _pr_mark="!"
+  _isset "$repo_pr" && _seg_github+=" ${YELLOW}${_pr_mark}${repo_pr}${RST}"
 fi
 
 # Claude Code app/CLI version (top-level .version in the statusLine payload),
