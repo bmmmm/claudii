@@ -292,10 +292,23 @@ _sync_import() {
 
   # Unpacked next to the mirror (same filesystem → plain renames), in a dot
   # dir that no reader's hosts/*/ glob matches.
-  local tmp rc=0
+  local tmp rc=0 odd=""
   tmp=$(mktemp -d "$hosts/.incoming.XXXXXX") || { rm -rf "$mirror/.lock"; return 1; }
   if tar -xzf - -C "$tmp" 2>/dev/null && [[ -f "$tmp/manifest" && ! -L "$tmp/manifest" ]]; then
-    _sync_apply "$name" "$tmp" "$mirror" "$cdir" || rc=$?
+    # An export holds regular files and directories, nothing else. tar
+    # recreates whatever link a bundle carries, and a `tail -> <our cache>`
+    # would turn the moves out of the staging dir into moves of OUR files
+    # (GNU and BSD tar only refuse to write THROUGH such a link while
+    # extracting). No portable tar option skips links, so a bundle that
+    # contains one — or a fifo or device — is refused as a whole.
+    odd=$(find "$tmp" ! -type f ! -type d -print 2>/dev/null | head -n 1)
+    if [[ -n "$odd" ]]; then
+      printf 'claudii sync: %s: bundle contains a link or special file (%s) — refused\n' \
+        "$name" "${odd#"$tmp"/}" >&2
+      rc=1
+    else
+      _sync_apply "$name" "$tmp" "$mirror" "$cdir" || rc=$?
+    fi
   else
     printf 'claudii sync: %s: not a claudii sync bundle\n' "$name" >&2
     rc=1
@@ -369,7 +382,9 @@ _sync_apply() {
 
   # Only regular files with the expected names make it out of the bundle:
   # -type f skips symlinks and devices, the name filters skip everything else,
-  # and mv into a directory keeps nothing but the basename.
+  # and mv into a directory keeps nothing but the basename. The -L checks
+  # repeat what _sync_import already refused — the moves below must never
+  # start from a link, whoever calls this.
   if [[ -d "$tmp/insights" && ! -L "$tmp/insights" ]]; then
     find "$tmp/insights" -maxdepth 1 -type f -name '[0-9A-Za-z]*.json' -print0 \
       | _sync_batch 'mv -f' "$mirror/insights" || return 1
@@ -379,9 +394,10 @@ _sync_apply() {
       | _sync_batch 'mv -f' "$mirror/sessions" || return 1
   fi
 
-  local k v base off chunk dst have
+  local k v base off chunk dst have tails=0
+  [[ -d "$tmp/tail" && ! -L "$tmp/tail" ]] && tails=1
   while IFS='=' read -r k v; do
-    [[ "$k" == "append" ]] || continue
+    [[ "$k" == "append" ]] && (( tails )) || continue
     base="${v%:*}"; off="${v##*:}"
     [[ "$base" =~ $_SYNC_HIST_RE && "$off" =~ ^[0-9]+$ ]] || continue
     chunk="$tmp/tail/$base"

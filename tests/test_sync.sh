@@ -217,6 +217,26 @@ _left=""
 for _d in "$_SY_ROOT/dst/.cache/claudii/hosts"/.[!.]*; do [[ -e "$_d" ]] && _left+="${_d##*/} "; done
 assert_eq "import of a non-bundle: no incoming dir left behind" "" "$_left"
 
+# A bundle whose tail/ is a link to the receiver's own cache: the history
+# "tail" moved out of it would be OUR history.tsv — gone from the cache,
+# counted as the other host's, deleted by `sync rm`. Refused whole.
+_sy_home victim
+_SY_VC="$_SY_ROOT/victim/.cache/claudii"; mkdir -p "$_SY_VC"
+hist_row "$_SY_VC/history.tsv" "$_SY_T" "Opus 5.5" "1.00" 30 10 "$_SY_SID_A" 10 100 100
+_SY_VBEFORE=$(cat "$_SY_VC/history.tsv")
+_SY_EVIL="$_SY_ROOT/evil-bundle"; mkdir -p "$_SY_EVIL"
+ln -s "$_SY_VC" "$_SY_EVIL/tail"
+: > "$_SY_EVIL/live"
+printf 'format=1\norigin_id=%s\norigin=evil@x\nversion=\nexported_at=%s\nsince=0\nappend=history.tsv:0\n' \
+  "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" "$(date +%s)" > "$_SY_EVIL/manifest"
+( cd "$_SY_EVIL" && tar -czf ../evil.tgz manifest live tail )
+_err=$(_sy victim sync import evil < "$_SY_ROOT/evil.tgz" 2>&1 >/dev/null); _rc=$?
+assert_eq "import: a bundle with a symlinked tail/ is refused (exit 1)" "1" "$_rc"
+assert_contains "import: …and says why" "link or special file" "$_err"
+assert_eq "import: …the receiver's own history.tsv stays where it is" "$_SY_VBEFORE" "$(cat "$_SY_VC/history.tsv" 2>/dev/null)"
+assert_eq "import: …and no mirror is created for it" "1" \
+  "$([[ -e "$_SY_VC/hosts/evil" ]] && echo 0 || echo 1)"
+
 # ── 4. push ──────────────────────────────────────────────────────────────────
 # sync.name ends up in the remote command line — refused locally, before ssh.
 _sy other config set sync.name 'x;touch pwned' >/dev/null
