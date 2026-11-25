@@ -511,6 +511,19 @@ assert_eq "insights aggregate: compacts a log bloated by duplicates" "3" \
 # arrayValue and status code 2, a log record whose duration_ms arrives as a
 # STRING (tool_result does), and one whose observedTimeUnixNano differs.
 _RCV="$CLAUDII_HOME/bin/claudii-otel-receiver"
+# _rpy CODE [ARG...] — run CODE with the receiver imported as module `m`
+# (sys.argv[1] is its path, the ARGs follow). Always -B: imported through
+# SourceFileLoader, the receiver was otherwise cached as bytecode in
+# bin/__pycache__ — inside the checkout or the installed package. The leftover
+# of earlier runs goes first, so the check after the last import is exact.
+_RPY_LOAD='import importlib.machinery, importlib.util, sys
+_ld = importlib.machinery.SourceFileLoader("recv", sys.argv[1])
+m = importlib.util.module_from_spec(importlib.util.spec_from_file_location("recv", sys.argv[1], loader=_ld))
+_ld.exec_module(m)
+'
+_rpy() { local code="$1"; shift; python3 -B -c "$_RPY_LOAD$code" "$_RCV" "$@"; }
+rm -f "$CLAUDII_HOME/bin/__pycache__"/claudii-otel-receiver*.pyc 2>/dev/null
+rmdir "$CLAUDII_HOME/bin/__pycache__" 2>/dev/null
 _OTEL_FDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_FDIR")
 _IDATTRS='{"key":"user.email","value":{"stringValue":"someone@example.invalid"}},{"key":"user.id","value":{"stringValue":"uid-1"}},{"key":"user.account_uuid","value":{"stringValue":"acct-uuid"}},{"key":"user.account_id","value":{"stringValue":"acct-1"}},{"key":"organization.id","value":{"stringValue":"org-1"}}'
 _RES='{"attributes":[{"key":"host.arch","value":{"stringValue":"arm64"}},{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"service.version","value":{"stringValue":"2.1.283"}}]}'
@@ -526,15 +539,13 @@ printf '%s\n' '{"resourceLogs":[{"resource":'"$_RES"',"scopeLogs":[{"scope":{"na
  {"timeUnixNano":"1790000007000000000","observedTimeUnixNano":"1790000007000000000","body":{"stringValue":"claude_code.api_request"},"attributes":['"$_IDATTRS"',{"key":"duration_ms","value":{"intValue":7}}]}
 ]}]}]}' | tr -d '\n' > "$_OTEL_FDIR/logs.jsonl"; printf '\n' >> "$_OTEL_FDIR/logs.jsonl"
 # flatten(): the module function every ingest path uses
-_FLAT=$(python3 -c '
-import importlib.util, json, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+_FLAT=$(_rpy '
+import json
 for f in sys.argv[2:]:
     for line in open(f):
         for kind, t, rec in m.flatten(json.loads(line)):
             print(kind + "\t" + rec)
-' "$_RCV" "$_OTEL_FDIR/traces.jsonl" "$_OTEL_FDIR/logs.jsonl" 2>/dev/null)
+' "$_OTEL_FDIR/traces.jsonl" "$_OTEL_FDIR/logs.jsonl" 2>/dev/null)
 _frec() { printf '%s\n' "$_FLAT" | awk -F'\t' -v k="$1" '$1 == k {print $2}' | jq -c "select(._name == \"$2\")" | head -1; }
 assert_eq "flatten: 7 records, kinds llm/tool/other/err/api/hook" "api err hook llm other tool tool" \
   "$(printf '%s\n' "$_FLAT" | cut -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -565,16 +576,14 @@ assert_eq "flatten: observedTimeUnixNano dropped when equal, kept when it differ
 assert_eq "flatten: default log flags not stored" "false" "$(printf '%s' "$_TRREC" | jq 'has("_flags")')"
 # a metrics batch becomes one 'other' record with the identity scrubbed
 assert_eq "flatten: a metrics batch → one other record, identity scrubbed" "other|metrics|0|1" \
-  "$(python3 -c '
-import importlib.util, json, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+  "$(_rpy '
+import json
 b = {"resourceMetrics":[{"resource":{"attributes":[{"key":"user.email","value":{"stringValue":"x@y"}},{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeMetrics":[]}]}
 out = m.flatten(b)
 rec = json.loads(out[0][2])
 s = json.dumps(rec)
 print("%s|%s|%d|%d" % (out[0][0], rec["_sig"], s.count("user.email"), s.count("service.name")))
-' "$_RCV" 2>/dev/null)"
+' 2>/dev/null)"
 
 # --flatten <dir> [--tag TAG]: OTLP batch lines on stdin → event files dated by
 # each record's own timestamp, never the live file name. The old receiver's
@@ -653,10 +662,8 @@ assert_eq "otel_rows.jq: rows of flattened OTLP batches == the pre-events extrac
 # receiver.status: sha of the running receiver file, atomic (no .tmp left);
 # a failed write (here the events dir is a FILE) is counted, never raised.
 _OTEL_SDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SDIR")
-_SRES=$(CLAUDII_OTEL_DIR="$_OTEL_SDIR" CLAUDII_OTEL_FORWARD= python3 -c '
-import importlib.util, json, os, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+_SRES=$(CLAUDII_OTEL_DIR="$_OTEL_SDIR" CLAUDII_OTEL_FORWARD= _rpy '
+import json, os
 m.status_write(force=True)
 st = json.load(open(m.STATUS_FILE))
 print(st["sha"], os.path.exists(m.STATUS_FILE + ".tmp"), st["batches"], st["forward"]["enabled"])
@@ -678,7 +685,7 @@ r3 = m.persist(gzip.compress(rec), "/v1/logs", "application/json", "gzip")
 r4 = m.persist(gzip.compress(b"plain text"), "/v1/logs", "text/plain", "gzip")   # decodes, is not JSON
 unp = [json.loads(l) for l in open(os.path.join(m.EVENTS_DIR, "unparsed-%s.ndjson" % time.strftime("%Y-%m-%d", time.gmtime())))]
 print(r1, r2, r3, r4, len(unp), unp[0]["bytes"], "body_b64" in unp[0], unp[1]["body"], unp[1]["encoding"], unp[2]["body"], repr(unp[2]["encoding"]))
-' "$_RCV" 2>/dev/null)
+' 2>/dev/null)
 assert_eq "receiver: non-JSON, undecodable gzip and gzip bodies are filed, never dropped (decoded body not labelled gzip)" \
   "(0, 1) (0, 1) (1, 0) (0, 1) 3 10 True not gzip at all gzip plain text ''" \
   "$(printf '%s\n' "$_SRES" | sed -n 3p)"
@@ -691,9 +698,8 @@ assert_eq "receiver: failed writes (no dir, unwritable file) are counted, batche
 # status counters and the forward queue are visible; the live block above
 # sends some of the same refusals over a real socket.
 _OTEL_HDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_HDIR")
-_HRES=$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD= python3 -B -c '
-import importlib.util, importlib.machinery, email.message, gzip, io, os, sys, zlib
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+_HRES=$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD= _rpy '
+import email.message, gzip, io, os, zlib
 out = []
 # gunzip: members back to back like gzip.decompress; past the limit TooLarge
 out.append(m.gunzip(gzip.compress(b"ab") + gzip.compress(b"cd")) == b"abcd")
@@ -743,7 +749,7 @@ out.append(",".join(fwd))
 out.append("%d|%s" % (m._STATUS["rejected"], m._STATUS["last_rejected"].split(" ", 1)[0]))
 out.append("%d|%d" % (m._STATUS["batches"], m._STATUS["records"]))
 print(" ".join(map(str, out)))
-' "$_RCV" 2>&1)
+' 2>&1)
 assert_eq "receiver: gunzip decodes members, stops past the limit, refuses non-gzip" \
   "True 1000 big big bad bad" "$(printf '%s' "$_HRES" | cut -d' ' -f1-6)"
 assert_eq "receiver: request codes (ok ×3 · path 404 ×2 · host 403 ×2 · type 415 ×2 · length 400 ×2 / 413 · chunked 411 · short 400 · gzip bomb 413 · empty 200)" \
@@ -753,10 +759,10 @@ assert_eq "receiver: only accepted batches are forwarded — after they were sto
 assert_eq "receiver: refusals counted in receiver.status (last: the gzip bomb)" "12|413" "$(printf '%s' "$_HRES" | cut -d' ' -f9)"
 assert_eq "receiver: refused bodies store nothing (3 batches, 3 records)" "3|3" "$(printf '%s' "$_HRES" | cut -d' ' -f10)"
 assert_eq "receiver: a forward that is not http(s) is ignored" "|file:///etc/passwd|True" \
-  "$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD=file:///etc/passwd python3 -B -c '
-import importlib.util, importlib.machinery, sys
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-print("%s|%s|%s" % (m.FORWARD, m.FORWARD_BAD, m._FQ is None))' "$_RCV" 2>&1)"
+  "$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD=file:///etc/passwd _rpy '
+print("%s|%s|%s" % (m.FORWARD, m.FORWARD_BAD, m._FQ is None))' 2>&1)"
+assert_eq "receiver tests: importing the receiver writes no bytecode into bin/" "" \
+  "$(find "$CLAUDII_HOME/bin" -name '*.pyc' 2>/dev/null)"
 
 # doctor reads that status file: matching sha → ok, other sha → DRIFT
 _OTEL_DCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_DCACHE"); mkdir -p "$_OTEL_DCACHE/otel"
