@@ -67,7 +67,8 @@ _repomap() {
              if ($f | length) == 2 and $f[0] != "" and $f[1] != ""
              then .[$f[0]] = $f[1] else . end)' "$REPOMAP_LOG" 2>/dev/null) || map=""
   else
-    map=$(_insights_stream "$INSIGHTS_DIR" "$days" \
+    # Local caches only: OTEL events are this host's, a mirror holds none of them.
+    map=$(CLAUDII_LOCAL_ONLY=1 _insights_stream "$INSIGHTS_DIR" "$days" \
       | jq -cn 'reduce inputs as $s ({};
              if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
              then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null) || map=""

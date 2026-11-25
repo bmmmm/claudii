@@ -957,7 +957,9 @@ signal), a
 breakdown, and a one-line
 .B API health
 read from the ClaudeStatus cache. Throughput is output tokens over end-to-end
-time (includes wait).
+time (includes wait). Only this host's sessions count, with or without
+.B sync
+(see Several Hosts and Accounts).
 .PP
 With the optional OpenTelemetry source enabled
 .RB ( "claudii\-otel setup" ,
@@ -1236,6 +1238,10 @@ Puts the sessions of other machines and accounts into this claudii's numbers.
 and
 .B session
 then count every synced host as if its sessions had run here.
+.B perf
+stays on this host: its OpenTelemetry source never leaves the machine, and
+response times measured over different networks do not belong in one
+percentile.
 .PP
 What travels is claudii's own condensed data, never a transcript: the
 per-session insights caches, the Flight Recorder history and the live-session

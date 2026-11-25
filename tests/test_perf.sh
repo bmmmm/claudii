@@ -135,6 +135,24 @@ _PERF_PF=$(_perf pf --json 2>&1)
 assert_eq "pf: shorthand resolves (total_samples=5)" "5" \
   "$(printf '%s' "$_PERF_PF" | jq -r '.total_samples')"
 
+# ── This host only: a `claudii sync` mirror stays out of perf ──
+# The mirror holds a third session (repoC, one 20s sample). tokens counts it
+# (input 60 → 70) — the mirror is wired up — while perf, json and rendered,
+# keeps to this host's 5 samples whatever the source: OTEL events are local only.
+mkdir -p "$_PERF_CACHE/hosts/box/insights"
+jq '.sessionId = "perftest-c" | .project.repo = "repoC" | .project.path = "/x/repoC"' \
+  "$_PERF_CACHE/insights/perftest-b.json" > "$_PERF_CACHE/hosts/box/insights/perftest-c.json"
+assert_eq "perf mirror: tokens counts the mirror (wiring check)" "70" \
+  "$(_perf tokens --json 2>/dev/null | jq -r '.by_type.input')"
+_PERF_MJSON=$(_perf perf --json 2>&1)
+assert_eq "perf mirror: total_samples stays 5" "5" \
+  "$(printf '%s' "$_PERF_MJSON" | jq -r '.total_samples')"
+assert_eq "perf mirror: repoC not in by_repo" "0" \
+  "$(printf '%s' "$_PERF_MJSON" | jq -r '[.by_repo[] | select(.repo=="repoC")] | length')"
+assert_not_contains "perf mirror: repoC not rendered" "repoC" "$(_perf perf 2>&1)"
+rm -rf "$_PERF_CACHE/hosts"
+unset _PERF_MJSON
+
 # ── Empty cache → empty-state message ──
 _PERF_EPROJ="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_EPROJ")
 _PERF_ECACHE="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_ECACHE")

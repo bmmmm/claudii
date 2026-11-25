@@ -109,8 +109,9 @@ _cmd_perf() {
     printf 'Response-time percentiles (p50/p90/p99), output throughput (tok/s)\n'
     printf 'and a per-day latency trend, by model, context window and repo, plus\n'
     printf 'API health.\n'
-    printf 'Latency is estimated from transcript timestamps (assistant minus\n'
-    printf 'parent); --repo NAME narrows every section to one repository.\n'
+    printf 'Exact with perf.otel.enabled (claudii-otel setup), otherwise estimated\n'
+    printf 'from transcript timestamps (assistant minus parent). This host only,\n'
+    printf 'also with sync; --repo NAME narrows every section to one repository.\n'
     printf '%s\n' '--watch[=N] refreshes every N seconds (default: 30).'
     return 0
   fi
@@ -145,6 +146,12 @@ _perf_render() {
   # no latency sample — or when build fails — and perf falls back. perf is the
   # only command that needs the (large) latency list — the transcript merge
   # requests it explicitly; cache/tokens/tools/limits use the latency-free merge.
+  #
+  # This host only, whatever the source: OTEL events never leave the machine,
+  # so the transcript merge leaves the `claudii sync` mirrors out too
+  # (CLAUDII_LOCAL_ONLY) — otherwise the numbers would switch between "here"
+  # and "all hosts" with the source, and response times of different networks
+  # would land in one percentile.
   local src="transcript" _rows=""
   if [[ "$(_cfgget perf.otel.enabled 2>/dev/null)" == "true" ]]; then
     _rows=$("$CLAUDII_HOME/bin/claudii-otel" build --days "$days" --render "$mode" \
@@ -153,14 +160,14 @@ _perf_render() {
   fi
   if [[ "$src" == "transcript" ]]; then
     if [[ "$mode" == "json" ]]; then
-      _rows=$(_insights_run merge --days "$days" --with-latency 2>/dev/null \
+      _rows=$(CLAUDII_LOCAL_ONLY=1 _insights_run merge --days "$days" --with-latency 2>/dev/null \
         | jq -L "$lib" --argjson days "$days" --arg floor "$floor" --arg repo "$repo_filter" '
             include "perf_json"; perf_json($days; $floor; $repo; "transcript")' 2>/dev/null) || _rows=""
       [[ -z "$_rows" ]] && _rows=$(jq -n -L "$lib" --argjson days "$days" --arg floor "$floor" \
         --arg repo "$repo_filter" 'include "perf_json"; {} | perf_json($days; $floor; $repo; "transcript")')
     else
       # A bare {} is the merge of an empty cache.
-      _rows=$(_insights_run merge --days "$days" --with-latency 2>/dev/null \
+      _rows=$(CLAUDII_LOCAL_ONLY=1 _insights_run merge --days "$days" --with-latency 2>/dev/null \
         | jq -r -L "$lib" --arg floor "$floor" --arg repo "$repo_filter" '
             include "perf_rows"; if . == {} then empty else perf_rows($floor; $repo) end' 2>/dev/null) || _rows=""
       if [[ -z "$_rows" ]]; then
