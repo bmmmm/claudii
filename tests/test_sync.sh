@@ -88,6 +88,21 @@ assert_eq "sync add: a subcommand name is refused (exit 2)" "2" "$?"
 _sy dst sync add box -oProxyCommand=x >/dev/null 2>&1
 assert_eq "sync add: an ssh target that is an option is refused (exit 2)" "2" "$?"
 
+# A hand-written host entry without ssh: the empty field must not shift the
+# others (cmd read as the target, mode as the cmd) — the host is reported as
+# having no target and ssh never runs.
+_SY_HCFG="$_SY_ROOT/dst/.config/claudii/config.json"
+mkdir -p "${_SY_HCFG%/*}"
+_SY_HBAK=""; [[ -f "$_SY_HCFG" ]] && _SY_HBAK=$(cat "$_SY_HCFG")
+printf '%s\n' '{"sync":{"hosts":{"bare":{"mode":"push"},"typo":{"ssh":"src","mode":"pusj"}}}}' > "$_SY_HCFG"
+_err=$(HOME="$_SY_ROOT/dst" XDG_CACHE_HOME="$_SY_ROOT/dst/.cache" XDG_CONFIG_HOME="$_SY_ROOT/dst/.config" \
+  CLAUDII_SSH="$_SY_ROOT/ssh-forbidden" bash "$CLAUDII_HOME/bin/claudii" sync --quiet 2>&1); _rc=$?
+assert_eq "host without ssh: sync exits 1" "1" "$_rc"
+assert_contains "host without ssh: says the target is missing" "bare has no ssh target" "$_err"
+assert_contains "host with an unknown mode: named, not skipped silently" "typo: unknown mode pusj" "$_err"
+assert_not_contains "host without ssh: ssh is never invoked" "ssh-forbidden" "$_err"
+if [[ -n "$_SY_HBAK" ]]; then printf '%s\n' "$_SY_HBAK" > "$_SY_HCFG"; else rm -f "$_SY_HCFG"; fi
+
 # ── 1. pull ──────────────────────────────────────────────────────────────────
 _sy dst sync add box src --cmd "$_SY_CMD" >/dev/null
 assert_eq "sync add: host stored in config" "src" \
@@ -216,6 +231,26 @@ assert_eq "import of a non-bundle: mirror untouched" "$_before" "$(cat "$_SY_MIR
 _left=""
 for _d in "$_SY_ROOT/dst/.cache/claudii/hosts"/.[!.]*; do [[ -e "$_d" ]] && _left+="${_d##*/} "; done
 assert_eq "import of a non-bundle: no incoming dir left behind" "" "$_left"
+
+# A bundle whose tail/ is a link to the receiver's own cache: the history
+# "tail" moved out of it would be OUR history.tsv — gone from the cache,
+# counted as the other host's, deleted by `sync rm`. Refused whole.
+_sy_home victim
+_SY_VC="$_SY_ROOT/victim/.cache/claudii"; mkdir -p "$_SY_VC"
+hist_row "$_SY_VC/history.tsv" "$_SY_T" "Opus 5.5" "1.00" 30 10 "$_SY_SID_A" 10 100 100
+_SY_VBEFORE=$(cat "$_SY_VC/history.tsv")
+_SY_EVIL="$_SY_ROOT/evil-bundle"; mkdir -p "$_SY_EVIL"
+ln -s "$_SY_VC" "$_SY_EVIL/tail"
+: > "$_SY_EVIL/live"
+printf 'format=1\norigin_id=%s\norigin=evil@x\nversion=\nexported_at=%s\nsince=0\nappend=history.tsv:0\n' \
+  "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" "$(date +%s)" > "$_SY_EVIL/manifest"
+( cd "$_SY_EVIL" && tar -czf ../evil.tgz manifest live tail )
+_err=$(_sy victim sync import evil < "$_SY_ROOT/evil.tgz" 2>&1 >/dev/null); _rc=$?
+assert_eq "import: a bundle with a symlinked tail/ is refused (exit 1)" "1" "$_rc"
+assert_contains "import: …and says why" "link or special file" "$_err"
+assert_eq "import: …the receiver's own history.tsv stays where it is" "$_SY_VBEFORE" "$(cat "$_SY_VC/history.tsv" 2>/dev/null)"
+assert_eq "import: …and no mirror is created for it" "1" \
+  "$([[ -e "$_SY_VC/hosts/evil" ]] && echo 0 || echo 1)"
 
 # ── 4. push ──────────────────────────────────────────────────────────────────
 # sync.name ends up in the remote command line — refused locally, before ssh.

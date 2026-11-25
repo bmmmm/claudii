@@ -46,6 +46,8 @@ _SYNC_RESERVED=" add rm remove status ls export import state help "
 _SYNC_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._@-]*$'
 _SYNC_HIST_RE='^history(-[0-9][0-9][0-9][0-9]-[0-9][0-9])?\.tsv$'
 _SYNC_ID_RE='^[0-9a-f]{32}$'
+# Field separator for rows that may hold empty fields (see _sync_hosts_load).
+_SYNC_US=$'\037'
 
 _sync_cache_dir() { printf '%s' "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"; }
 
@@ -292,10 +294,23 @@ _sync_import() {
 
   # Unpacked next to the mirror (same filesystem → plain renames), in a dot
   # dir that no reader's hosts/*/ glob matches.
-  local tmp rc=0
+  local tmp rc=0 odd=""
   tmp=$(mktemp -d "$hosts/.incoming.XXXXXX") || { rm -rf "$mirror/.lock"; return 1; }
   if tar -xzf - -C "$tmp" 2>/dev/null && [[ -f "$tmp/manifest" && ! -L "$tmp/manifest" ]]; then
-    _sync_apply "$name" "$tmp" "$mirror" "$cdir" || rc=$?
+    # An export holds regular files and directories, nothing else. tar
+    # recreates whatever link a bundle carries, and a `tail -> <our cache>`
+    # would turn the moves out of the staging dir into moves of OUR files
+    # (GNU and BSD tar only refuse to write THROUGH such a link while
+    # extracting). No portable tar option skips links, so a bundle that
+    # contains one — or a fifo or device — is refused as a whole.
+    odd=$(find "$tmp" ! -type f ! -type d -print 2>/dev/null | head -n 1)
+    if [[ -n "$odd" ]]; then
+      printf 'claudii sync: %s: bundle contains a link or special file (%s) — refused\n' \
+        "$name" "${odd#"$tmp"/}" >&2
+      rc=1
+    else
+      _sync_apply "$name" "$tmp" "$mirror" "$cdir" || rc=$?
+    fi
   else
     printf 'claudii sync: %s: not a claudii sync bundle\n' "$name" >&2
     rc=1
@@ -369,7 +384,9 @@ _sync_apply() {
 
   # Only regular files with the expected names make it out of the bundle:
   # -type f skips symlinks and devices, the name filters skip everything else,
-  # and mv into a directory keeps nothing but the basename.
+  # and mv into a directory keeps nothing but the basename. The -L checks
+  # repeat what _sync_import already refused — the moves below must never
+  # start from a link, whoever calls this.
   if [[ -d "$tmp/insights" && ! -L "$tmp/insights" ]]; then
     find "$tmp/insights" -maxdepth 1 -type f -name '[0-9A-Za-z]*.json' -print0 \
       | _sync_batch 'mv -f' "$mirror/insights" || return 1
@@ -379,9 +396,10 @@ _sync_apply() {
       | _sync_batch 'mv -f' "$mirror/sessions" || return 1
   fi
 
-  local k v base off chunk dst have
+  local k v base off chunk dst have tails=0
+  [[ -d "$tmp/tail" && ! -L "$tmp/tail" ]] && tails=1
   while IFS='=' read -r k v; do
-    [[ "$k" == "append" ]] || continue
+    [[ "$k" == "append" ]] && (( tails )) || continue
     base="${v%:*}"; off="${v##*:}"
     [[ "$base" =~ $_SYNC_HIST_RE && "$off" =~ ^[0-9]+$ ]] || continue
     chunk="$tmp/tail/$base"
@@ -521,18 +539,21 @@ _sync_push() {
 # ── Configured hosts ─────────────────────────────────────────────────────────
 
 # Fills parallel arrays (bash 3.2: no declare -A) from config.json sync.hosts.
+# US-delimited, not tab: tab is IFS whitespace, so an empty field (a host
+# without ssh) collapsed and shifted the rest — cmd became the ssh target,
+# mode the cmd. US is not whitespace: empty fields stay where they are.
 _SH_NAMES=() _SH_SSH=() _SH_CMD=() _SH_MODE=()
 _sync_hosts_load() {
   _SH_NAMES=() _SH_SSH=() _SH_CMD=() _SH_MODE=()
   local n s c m i=0
   [[ -f "$CONFIG" ]] || return 0
-  while IFS=$'\t' read -r n s c m; do
+  while IFS="$_SYNC_US" read -r n s c m; do
     [[ -n "$n" ]] || continue
     _SH_NAMES[$i]="$n"; _SH_SSH[$i]="$s"; _SH_CMD[$i]="${c:-claudii}"; _SH_MODE[$i]="${m:-pull}"
     (( ++i ))
   done < <(jq -r '(.sync.hosts // {}) | to_entries[]
                   | [.key, (.value.ssh // ""), (.value.cmd // "claudii"), (.value.mode // "pull")]
-                  | @tsv' "$CONFIG" 2>/dev/null)
+                  | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$CONFIG" 2>/dev/null)
   return 0
 }
 
@@ -635,6 +656,12 @@ _sync_run() {
       printf 'claudii sync: %s has no ssh target (sync.hosts.%s.ssh)\n' "$n" "$n" >&2
       (( ++fails )); continue
     fi
+    # Anything else would match neither branch below and "succeed" silently.
+    case "$m" in
+      pull|push|both) ;;
+      *) printf 'claudii sync: %s: unknown mode %s (sync.hosts.%s.mode: pull, push or both)\n' "$n" "$m" "$n" >&2
+         (( ++fails )); continue ;;
+    esac
     if [[ "$m" == "pull" || "$m" == "both" ]]; then
       t0=$(date +%s); rc=0
       _sync_pull "$n" "$t" "$c" || rc=$?
@@ -698,9 +725,9 @@ _sync_mirror_stats() {
 }
 
 # Live sessions of one mirror: model, ctx%, project dir — from the mirrored
-# session caches whose id the source listed as live. US-delimited, not tab: an
-# empty ctx% would collapse under IFS=$'\t' and shift the project into it.
-_SYNC_US=$'\037'
+# session caches whose id the source listed as live. US-delimited (_SYNC_US),
+# not tab: an empty ctx% would collapse under IFS=$'\t' and shift the project
+# into it.
 _sync_live_rows() {
   local mirror="$1" f sid model ctx proj
   [[ -s "$mirror/live" && -d "$mirror/sessions" ]] || return 0

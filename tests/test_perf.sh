@@ -12,7 +12,8 @@
 # 200-400k context-window bucket; the four other responses are tiny (<50k) — the
 # By-context-window section therefore shows exactly two buckets.
 # All timestamps are stamped "today" so the default 7d window covers them.
-# A second block builds an OTEL fixture (traces+logs JSONL) to exercise the
+# A second block builds an OTEL fixture (OTLP batches flattened through the
+# receiver's --flatten into event files, as live ingest does) to exercise the
 # exact-source path: ctx buckets, [1m] model-merge, claudii-selftest exclusion,
 # TTFT, reliability (success/retried) and api_error status codes.
 
@@ -135,6 +136,24 @@ _PERF_PF=$(_perf pf --json 2>&1)
 assert_eq "pf: shorthand resolves (total_samples=5)" "5" \
   "$(printf '%s' "$_PERF_PF" | jq -r '.total_samples')"
 
+# ── This host only: a `claudii sync` mirror stays out of perf ──
+# The mirror holds a third session (repoC, one 20s sample). tokens counts it
+# (input 60 → 70) — the mirror is wired up — while perf, json and rendered,
+# keeps to this host's 5 samples whatever the source: OTEL events are local only.
+mkdir -p "$_PERF_CACHE/hosts/box/insights"
+jq '.sessionId = "perftest-c" | .project.repo = "repoC" | .project.path = "/x/repoC"' \
+  "$_PERF_CACHE/insights/perftest-b.json" > "$_PERF_CACHE/hosts/box/insights/perftest-c.json"
+assert_eq "perf mirror: tokens counts the mirror (wiring check)" "70" \
+  "$(_perf tokens --json 2>/dev/null | jq -r '.by_type.input')"
+_PERF_MJSON=$(_perf perf --json 2>&1)
+assert_eq "perf mirror: total_samples stays 5" "5" \
+  "$(printf '%s' "$_PERF_MJSON" | jq -r '.total_samples')"
+assert_eq "perf mirror: repoC not in by_repo" "0" \
+  "$(printf '%s' "$_PERF_MJSON" | jq -r '[.by_repo[] | select(.repo=="repoC")] | length')"
+assert_not_contains "perf mirror: repoC not rendered" "repoC" "$(_perf perf 2>&1)"
+rm -rf "$_PERF_CACHE/hosts"
+unset _PERF_MJSON
+
 # ── Empty cache → empty-state message ──
 _PERF_EPROJ="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_EPROJ")
 _PERF_ECACHE="$(mktemp -d)"; _PERF_TMPDIRS+=("$_PERF_ECACHE")
@@ -248,10 +267,9 @@ assert_contains "perf otel: API errors section"        "API errors"        "$_OT
 assert_contains "perf otel: 429 rendered"              "429"               "$_OTEL_OUT"
 assert_not_contains "perf otel: selftest not rendered" "selftest"          "$_OTEL_OUT"
 
-# json/render boundary parity: the ctx-bucket set is encoded twice (numeric wk +
-# label map in perf_json, string keys in the render W-rows — both in lib/perf_common.jq), so pin that every
-# --json bucket label also appears in the rendered output for one fixture — a
-# boundary/label edit to only one block then trips this.
+# json/render bucket parity: both take the label from wkey_s (lib/perf_common.jq);
+# pin that every --json bucket label also appears in the rendered output, so a
+# renderer that relabels or drops a bucket trips this.
 # grep on a here-string, not `printf | grep -qF`: under run.sh's pipefail,
 # grep -q exits at the first match, printf takes SIGPIPE, and the pipeline
 # returns 141 — so a bucket that IS present reads as missing and the parity

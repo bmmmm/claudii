@@ -174,7 +174,16 @@ assert_eq "otel setup: config flag enabled" "true" "$(_ocli config get perf.otel
 assert_eq "otel setup: env file written" "0" "$([ -r "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
 assert_contains "otel setup: env enables telemetry" "CLAUDE_CODE_ENABLE_TELEMETRY=1" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup: env sets http/json" "OTEL_EXPORTER_OTLP_PROTOCOL=http/json" "$(<"$_OTEL_SCACHE/otel.env")"
-assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_contains "otel setup: env points at endpoint" "OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'" "$(<"$_OTEL_SCACHE/otel.env")"
+# The llm_request span (every perf sample) needs the beta flag; the old
+# perf.otel.beta_traces=false left the OTEL source on and empty. It is gone,
+# a leftover false in a user config changes nothing.
+_ocli config set perf.otel.beta_traces false >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+assert_contains "otel setup: beta flag always set (a leftover beta_traces=false is ignored)" \
+  "export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1" "$(<"$_OTEL_SCACHE/otel.env")"
+assert_eq "defaults: perf.otel.beta_traces removed" "false" \
+  "$(jq '.perf.otel | has("beta_traces")' "$CLAUDII_HOME/config/defaults.json")"
 assert_eq "otel setup: launchd plist generated" "0" "$([ -s "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" ] && echo 0 || echo 1)"
 # default config carries no forward → env/plist/doctor stay local-only
 assert_not_contains "otel setup (default): env omits CLAUDII_OTEL_FORWARD" \
@@ -189,18 +198,126 @@ assert_eq "otel off: config flag disabled" "false" "$(_ocli config get perf.otel
 assert_eq "otel off: env file removed" "1" "$([ -e "$_OTEL_SCACHE/otel.env" ] && echo 0 || echo 1)"
 
 # ── forward / gateway fan-out (perf.otel.forward → receiver tee) ──
-# Placeholder host only — never a real internal name in tracked source. The
-# socket tee itself isn't testable here (sandbox blocks bind); this pins the
-# wiring (env + plist + doctor), the operator smoke-tests the actual forward.
+# Placeholder host only — never a real internal name in tracked source. This
+# pins the wiring (plist + doctor); the tee to a real gateway is the
+# operator's smoke test.
 _ocli config set perf.otel.forward "http://nutc.example:4318" >/dev/null 2>&1
 _otel setup >/dev/null 2>&1
-assert_contains "otel setup (forward): env exports CLAUDII_OTEL_FORWARD" \
-  "export CLAUDII_OTEL_FORWARD=http://nutc.example:4318" "$(<"$_OTEL_SCACHE/otel.env")"
+# only the receiver tees — the shells get the exporter side and nothing else
+assert_not_contains "otel setup (forward): env leaves the forward to the receiver" \
+  "CLAUDII_OTEL_FORWARD" "$(<"$_OTEL_SCACHE/otel.env")"
 assert_contains "otel setup (forward): plist bakes forward into receiver env" \
   "<key>CLAUDII_OTEL_FORWARD</key><string>http://nutc.example:4318</string>" \
   "$(<"$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist")"
 assert_contains "otel doctor (forward): reports the gateway" \
   "http://nutc.example:4318" "$(_otel doctor 2>&1)"
+
+# Config values land in a file every zsh SOURCES and in an XML plist: a forward
+# URL carrying shell syntax must stay a literal string (it ran in every new
+# shell when written unquoted) and must not break the plist.
+_OTEL_MARK="$_OTEL_SCACHE/pwned"
+_OTEL_EVIL="http://gw:4318/?a=1&b=\$(touch\${IFS}$_OTEL_MARK)&c='q'<x>"
+_ocli config set perf.otel.forward "$_OTEL_EVIL" >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+_OTEL_SRC=$(env -i PATH="$PATH" bash --norc --noprofile -c '. "$1" && printf %s "$OTEL_EXPORTER_OTLP_ENDPOINT"' _ "$_OTEL_SCACHE/otel.env" 2>&1)
+assert_eq "otel setup (shell syntax): bash sources the env cleanly" "http://127.0.0.1:4318" "$_OTEL_SRC"
+if command -v zsh >/dev/null 2>&1; then
+  _OTEL_SRC=$(env -i PATH="$PATH" zsh -f -c '. "$1" && printf %s "$OTEL_EXPORTER_OTLP_ENDPOINT"' _ "$_OTEL_SCACHE/otel.env" 2>&1)
+  assert_eq "otel setup (shell syntax): zsh sources the env cleanly" "http://127.0.0.1:4318" "$_OTEL_SRC"
+fi
+assert_eq "otel setup (shell syntax): sourcing ran nothing" "1" "$([ -e "$_OTEL_MARK" ] && echo 0 || echo 1)"
+if command -v python3 >/dev/null 2>&1; then
+  _OTEL_PL=$(python3 -I -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["EnvironmentVariables"]["CLAUDII_OTEL_FORWARD"])' \
+    "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" 2>&1)
+  assert_eq "otel setup (shell syntax): plist is XML and keeps the URL" "$_OTEL_EVIL" "$_OTEL_PL"
+fi
+# Not http(s): urllib would read file:// — refused before the flag flips.
+_ocli config set perf.otel.forward "file:///etc/passwd" >/dev/null 2>&1
+_ocli config set perf.otel.enabled false >/dev/null 2>&1
+_OTEL_OUT=$(_otel setup 2>&1); _OTEL_RC=$?
+assert_eq "otel setup (file:// forward): refused" "1" "$_OTEL_RC"
+assert_contains "otel setup (file:// forward): says why" "http:// or https://" "$_OTEL_OUT"
+assert_eq "otel setup (file:// forward): flag untouched" "false" "$(_ocli config get perf.otel.enabled 2>/dev/null)"
+_ocli config set perf.otel.forward "http://nutc.example:4318" >/dev/null 2>&1
+
+# perf.otel.endpoint is also the receiver's listen address: only loopback http
+# with an explicit port; anything else is refused before the flag flips.
+for _OTEL_EP in "http://0.0.0.0:4318" "http://127.0.0.1" "https://127.0.0.1:4318" \
+                "http://127.0.0.1:70000" "http://127.0.0.1:0" "http://10.0.0.5:4318"; do
+  _ocli config set perf.otel.endpoint "$_OTEL_EP" >/dev/null 2>&1
+  _OTEL_OUT=$(_otel setup 2>&1); _OTEL_RC=$?
+  assert_eq "otel setup (endpoint $_OTEL_EP): refused, flag untouched" "1|false" \
+    "$_OTEL_RC|$(_ocli config get perf.otel.enabled 2>/dev/null)"
+done
+assert_contains "otel setup (bad endpoint): says what is accepted" "loopback only" "$_OTEL_OUT"
+assert_eq "otel receiver (bad endpoint): refused before python starts" "1" \
+  "$(_otel receiver >/dev/null 2>&1; echo $?)"
+_ocli config set perf.otel.endpoint "http://localhost:4319/" >/dev/null 2>&1
+_otel setup >/dev/null 2>&1
+assert_contains "otel setup (localhost:4319/): exporter URL without trailing slash" \
+  "OTEL_EXPORTER_OTLP_ENDPOINT='http://localhost:4319'" "$(<"$_OTEL_SCACHE/otel.env")"
+if command -v python3 >/dev/null 2>&1; then
+  assert_eq "otel setup (localhost:4319/): plist binds 127.0.0.1:4319, dir = claudii's cache" \
+    "127.0.0.1|4319|$_OTEL_SCACHE/otel" \
+    "$(python3 -I -c 'import plistlib,sys; e=plistlib.load(open(sys.argv[1],"rb"))["EnvironmentVariables"]; print("|".join([e["CLAUDII_OTEL_HOST"], e["CLAUDII_OTEL_PORT"], e["CLAUDII_OTEL_DIR"]]))' \
+       "$_OTEL_SCACHE/otel/com.claudii.otel-receiver.plist" 2>&1)"
+fi
+_ocli config set perf.otel.endpoint "http://127.0.0.1:4318" >/dev/null 2>&1
+
+# `claudii-otel receiver` runs the server wired like the launchd job: it listens
+# on perf.otel.endpoint and writes under claudii's cache dir (it used to fall
+# back to ~/.cache/claudii/otel whatever CLAUDII_CACHE_DIR said). Live: a free
+# loopback port, one batch, then the process is stopped.
+_OTEL_PORT=$(python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])' 2>/dev/null)
+if [[ -n "$_OTEL_PORT" ]]; then
+  _OTEL_LCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_LCACHE")
+  _ocli config set perf.otel.endpoint "http://127.0.0.1:$_OTEL_PORT" >/dev/null 2>&1
+  ( CLAUDII_CACHE_DIR="$_OTEL_LCACHE" XDG_CONFIG_HOME="$_OTEL_SCFG" CLAUDII_OTEL_DIR="$_OTEL_LCACHE/elsewhere" \
+      exec bash "$CLAUDII_HOME/bin/claudii-otel" receiver >"$_OTEL_LCACHE/receiver.log" 2>&1 &
+    echo $! > "$_OTEL_LCACHE/receiver.pid" )   # bash execs python: same pid
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    [[ -s "$_OTEL_LCACHE/otel/receiver.status" ]] && break; sleep 0.2
+  done
+  _OTEL_LPID=$(<"$_OTEL_LCACHE/receiver.pid")
+  if [[ -s "$_OTEL_LCACHE/otel/receiver.status" ]]; then
+    assert_eq "otel receiver: the pid in receiver.status is the started process" "$_OTEL_LPID" \
+      "$(jq -r '.pid' "$_OTEL_LCACHE/otel/receiver.status")"
+    assert_eq "otel receiver: status under claudii's cache, listen = endpoint" "127.0.0.1:$_OTEL_PORT" \
+      "$(jq -r '.listen' "$_OTEL_LCACHE/otel/receiver.status")"
+    _OTEL_POST=$(python3 -I -c '
+import sys, urllib.request
+body = b"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"1\",\"body\":{\"stringValue\":\"claude_code.api_error\"},\"attributes\":[{\"key\":\"status_code\",\"value\":{\"intValue\":529}}]}]}]}]}"
+req = urllib.request.Request("http://127.0.0.1:%s/v1/logs" % sys.argv[1], data=body, headers={"Content-Type": "application/json"}, method="POST")
+print(urllib.request.urlopen(req, timeout=5).status)' "$_OTEL_PORT" 2>&1)
+    assert_eq "otel receiver: a POSTed batch is accepted" "200" "$_OTEL_POST"
+    # refusals over the socket: path, DNS-rebinding Host, a type a page can
+    # POST without preflight, a 33 KB gzip that decodes past 32 MiB
+    _OTEL_REJ=$(python3 -I -c '
+import gzip, http.client, sys
+def send(path, body, **hdr):
+    c = http.client.HTTPConnection("127.0.0.1", int(sys.argv[1]), timeout=10)
+    h = {"Content-Type": "application/json"}; h.update({k.replace("_", "-"): v for k, v in hdr.items()})
+    c.request("POST", path, body=body, headers=h)
+    s = c.getresponse().status; c.close(); return s
+b = b"{}"
+print(send("/v1/nope", b), send("/v1/logs", b, Host="evil.example"), send("/v1/logs", b, Content_Type="text/plain"),
+      send("/v1/logs", gzip.compress(b"\0" * (32 * 1024 * 1024 + 1)), Content_Encoding="gzip"))' "$_OTEL_PORT" 2>&1)
+    assert_eq "otel receiver (live): 404 path · 403 host · 415 type · 413 gzip bomb" "404 403 415 413" "$_OTEL_REJ"
+    assert_eq "otel receiver (live): refused requests store nothing" "1" \
+      "$(cat "$_OTEL_LCACHE"/otel/events/*.ndjson 2>/dev/null | wc -l | tr -d ' ')"
+    assert_eq "otel receiver: the batch lands in claudii's events dir" "529" \
+      "$(cat "$_OTEL_LCACHE"/otel/events/err-*.ndjson 2>/dev/null | jq -r '.status_code')"
+    assert_eq "otel receiver: CLAUDII_OTEL_DIR from the caller's env does not redirect it" "1" \
+      "$([ -e "$_OTEL_LCACHE/elsewhere" ] && echo 0 || echo 1)"
+  elif [[ -e "$_OTEL_LCACHE/elsewhere" ]]; then
+    assert_eq "otel receiver: status under claudii's cache, not the caller's CLAUDII_OTEL_DIR" \
+      "$_OTEL_LCACHE/otel" "$_OTEL_LCACHE/elsewhere"
+  else
+    printf '  (skipped: receiver did not come up on 127.0.0.1:%s — %s)\n' "$_OTEL_PORT" "$(head -c 200 "$_OTEL_LCACHE/receiver.log" 2>/dev/null)"
+  fi
+  kill "$_OTEL_LPID" 2>/dev/null
+  _ocli config set perf.otel.endpoint "http://127.0.0.1:4318" >/dev/null 2>&1
+fi
 
 # ── event-file layout: compact / rows / window ──
 _OTEL_MCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_MCACHE")
@@ -394,6 +511,19 @@ assert_eq "insights aggregate: compacts a log bloated by duplicates" "3" \
 # arrayValue and status code 2, a log record whose duration_ms arrives as a
 # STRING (tool_result does), and one whose observedTimeUnixNano differs.
 _RCV="$CLAUDII_HOME/bin/claudii-otel-receiver"
+# _rpy CODE [ARG...] — run CODE with the receiver imported as module `m`
+# (sys.argv[1] is its path, the ARGs follow). Always -B: imported through
+# SourceFileLoader, the receiver was otherwise cached as bytecode in
+# bin/__pycache__ — inside the checkout or the installed package. The leftover
+# of earlier runs goes first, so the check after the last import is exact.
+_RPY_LOAD='import importlib.machinery, importlib.util, sys
+_ld = importlib.machinery.SourceFileLoader("recv", sys.argv[1])
+m = importlib.util.module_from_spec(importlib.util.spec_from_file_location("recv", sys.argv[1], loader=_ld))
+_ld.exec_module(m)
+'
+_rpy() { local code="$1"; shift; python3 -B -c "$_RPY_LOAD$code" "$_RCV" "$@"; }
+rm -f "$CLAUDII_HOME/bin/__pycache__"/claudii-otel-receiver*.pyc 2>/dev/null
+rmdir "$CLAUDII_HOME/bin/__pycache__" 2>/dev/null
 _OTEL_FDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_FDIR")
 _IDATTRS='{"key":"user.email","value":{"stringValue":"someone@example.invalid"}},{"key":"user.id","value":{"stringValue":"uid-1"}},{"key":"user.account_uuid","value":{"stringValue":"acct-uuid"}},{"key":"user.account_id","value":{"stringValue":"acct-1"}},{"key":"organization.id","value":{"stringValue":"org-1"}}'
 _RES='{"attributes":[{"key":"host.arch","value":{"stringValue":"arm64"}},{"key":"service.name","value":{"stringValue":"claude-code"}},{"key":"service.version","value":{"stringValue":"2.1.283"}}]}'
@@ -409,15 +539,13 @@ printf '%s\n' '{"resourceLogs":[{"resource":'"$_RES"',"scopeLogs":[{"scope":{"na
  {"timeUnixNano":"1790000007000000000","observedTimeUnixNano":"1790000007000000000","body":{"stringValue":"claude_code.api_request"},"attributes":['"$_IDATTRS"',{"key":"duration_ms","value":{"intValue":7}}]}
 ]}]}]}' | tr -d '\n' > "$_OTEL_FDIR/logs.jsonl"; printf '\n' >> "$_OTEL_FDIR/logs.jsonl"
 # flatten(): the module function every ingest path uses
-_FLAT=$(python3 -c '
-import importlib.util, json, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+_FLAT=$(_rpy '
+import json
 for f in sys.argv[2:]:
     for line in open(f):
         for kind, t, rec in m.flatten(json.loads(line)):
             print(kind + "\t" + rec)
-' "$_RCV" "$_OTEL_FDIR/traces.jsonl" "$_OTEL_FDIR/logs.jsonl" 2>/dev/null)
+' "$_OTEL_FDIR/traces.jsonl" "$_OTEL_FDIR/logs.jsonl" 2>/dev/null)
 _frec() { printf '%s\n' "$_FLAT" | awk -F'\t' -v k="$1" '$1 == k {print $2}' | jq -c "select(._name == \"$2\")" | head -1; }
 assert_eq "flatten: 7 records, kinds llm/tool/other/err/api/hook" "api err hook llm other tool tool" \
   "$(printf '%s\n' "$_FLAT" | cut -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -448,16 +576,14 @@ assert_eq "flatten: observedTimeUnixNano dropped when equal, kept when it differ
 assert_eq "flatten: default log flags not stored" "false" "$(printf '%s' "$_TRREC" | jq 'has("_flags")')"
 # a metrics batch becomes one 'other' record with the identity scrubbed
 assert_eq "flatten: a metrics batch → one other record, identity scrubbed" "other|metrics|0|1" \
-  "$(python3 -c '
-import importlib.util, json, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+  "$(_rpy '
+import json
 b = {"resourceMetrics":[{"resource":{"attributes":[{"key":"user.email","value":{"stringValue":"x@y"}},{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeMetrics":[]}]}
 out = m.flatten(b)
 rec = json.loads(out[0][2])
 s = json.dumps(rec)
 print("%s|%s|%d|%d" % (out[0][0], rec["_sig"], s.count("user.email"), s.count("service.name")))
-' "$_RCV" 2>/dev/null)"
+' 2>/dev/null)"
 
 # --flatten <dir> [--tag TAG]: OTLP batch lines on stdin → event files dated by
 # each record's own timestamp, never the live file name. The old receiver's
@@ -536,10 +662,8 @@ assert_eq "otel_rows.jq: rows of flattened OTLP batches == the pre-events extrac
 # receiver.status: sha of the running receiver file, atomic (no .tmp left);
 # a failed write (here the events dir is a FILE) is counted, never raised.
 _OTEL_SDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_SDIR")
-_SRES=$(CLAUDII_OTEL_DIR="$_OTEL_SDIR" CLAUDII_OTEL_FORWARD= python3 -c '
-import importlib.util, json, os, sys
-import importlib.machinery
-spec = importlib.util.spec_from_file_location("recv", sys.argv[1], loader=importlib.machinery.SourceFileLoader("recv", sys.argv[1])); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+_SRES=$(CLAUDII_OTEL_DIR="$_OTEL_SDIR" CLAUDII_OTEL_FORWARD= _rpy '
+import json, os
 m.status_write(force=True)
 st = json.load(open(m.STATUS_FILE))
 print(st["sha"], os.path.exists(m.STATUS_FILE + ".tmp"), st["batches"], st["forward"]["enabled"])
@@ -561,7 +685,7 @@ r3 = m.persist(gzip.compress(rec), "/v1/logs", "application/json", "gzip")
 r4 = m.persist(gzip.compress(b"plain text"), "/v1/logs", "text/plain", "gzip")   # decodes, is not JSON
 unp = [json.loads(l) for l in open(os.path.join(m.EVENTS_DIR, "unparsed-%s.ndjson" % time.strftime("%Y-%m-%d", time.gmtime())))]
 print(r1, r2, r3, r4, len(unp), unp[0]["bytes"], "body_b64" in unp[0], unp[1]["body"], unp[1]["encoding"], unp[2]["body"], repr(unp[2]["encoding"]))
-' "$_RCV" 2>/dev/null)
+' 2>/dev/null)
 assert_eq "receiver: non-JSON, undecodable gzip and gzip bodies are filed, never dropped (decoded body not labelled gzip)" \
   "(0, 1) (0, 1) (1, 0) (0, 1) 3 10 True not gzip at all gzip plain text ''" \
   "$(printf '%s\n' "$_SRES" | sed -n 3p)"
@@ -570,6 +694,76 @@ assert_eq "receiver.status: sha == sha256 of the receiver file, no .tmp, counter
   "$(printf '%s\n' "$_SRES" | sed -n 1p)"
 assert_eq "receiver: failed writes (no dir, unwritable file) are counted, batches still count, no exception" "2 2 1 0 1 0" \
   "$(printf '%s\n' "$_SRES" | sed -n 2p)"
+# Request limits. Handler.do_POST runs on an in-memory request (no socket), so
+# status counters and the forward queue are visible; the live block above
+# sends some of the same refusals over a real socket.
+_OTEL_HDIR="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_HDIR")
+_HRES=$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD= _rpy '
+import email.message, gzip, io, os, zlib
+out = []
+# gunzip: members back to back like gzip.decompress; past the limit TooLarge
+out.append(m.gunzip(gzip.compress(b"ab") + gzip.compress(b"cd")) == b"abcd")
+out.append(len(m.gunzip(gzip.compress(b"\0" * 1000), 1000)))
+for body in (gzip.compress(b"\0" * 1001), gzip.compress(b"x") + gzip.compress(b"\0" * 1000)):
+    try:
+        m.gunzip(body, 1000); out.append("fits")
+    except m.TooLarge:
+        out.append("big")
+for body in (b"plain", gzip.compress(b"x" * 100)[:-12]):
+    try:
+        m.gunzip(body); out.append("ok")
+    except (zlib.error, EOFError):
+        out.append("bad")
+class Srv:
+    server_address = ("127.0.0.1", 4318)
+fwd = []
+m._enqueue_forward = lambda path, data, ctype, enc: fwd.append(path)
+def post(path, body, cl=None, **hdr):
+    h = email.message.Message()
+    hdr.setdefault("Host", "127.0.0.1:4318"); hdr.setdefault("Content_Type", "application/json")
+    if cl != "omit":
+        h["Content-Length"] = str(len(body)) if cl is None else cl
+    for k, v in hdr.items():
+        if v is not None:
+            h[k.replace("_", "-")] = v
+    r = m.Handler.__new__(m.Handler)
+    r.path, r.headers, r.server, r.client_address = path, h, Srv(), ("127.0.0.1", 0)
+    r.rfile, r.wfile = io.BytesIO(body), io.BytesIO()
+    r.request_version, r.command, r.close_connection = "HTTP/1.1", "POST", True
+    r.requestline = "POST %s HTTP/1.1" % path
+    r.do_POST()
+    return int(r.wfile.getvalue().split(b" ", 2)[1])
+rec = b"{\"resourceLogs\":[{\"scopeLogs\":[{\"logRecords\":[{\"timeUnixNano\":\"1\",\"body\":{\"stringValue\":\"x\"}}]}]}]}"
+m.MAX_BODY = 1000
+codes = [post("/v1/logs", rec), post("/v1/traces", rec, Host="localhost"),
+         post("/v1/logs", rec, Content_Type="application/json; charset=utf-8"),
+         post("/v1/logs/x", rec), post("/", rec), post("/v1/logs", rec, Host="evil.example:4318"),
+         post("/v1/logs", rec, Host=None), post("/v1/logs", rec, Content_Type="text/plain"),
+         post("/v1/logs", rec, Content_Type=None), post("/v1/logs", rec, cl="-1"), post("/v1/logs", rec, cl="12abc"),
+         post("/v1/logs", rec, cl="1001"), post("/v1/logs", rec, cl="omit", Transfer_Encoding="chunked"),
+         post("/v1/logs", rec, cl="500"),
+         post("/v1/logs", gzip.compress(b"{" + b" " * 2000 + b"}"), Content_Encoding="gzip"),
+         post("/v1/logs", b"", cl="omit")]
+out.append(",".join(map(str, codes)))
+out.append(",".join(fwd))
+out.append("%d|%s" % (m._STATUS["rejected"], m._STATUS["last_rejected"].split(" ", 1)[0]))
+out.append("%d|%d" % (m._STATUS["batches"], m._STATUS["records"]))
+print(" ".join(map(str, out)))
+' 2>&1)
+assert_eq "receiver: gunzip decodes members, stops past the limit, refuses non-gzip" \
+  "True 1000 big big bad bad" "$(printf '%s' "$_HRES" | cut -d' ' -f1-6)"
+assert_eq "receiver: request codes (ok ×3 · path 404 ×2 · host 403 ×2 · type 415 ×2 · length 400 ×2 / 413 · chunked 411 · short 400 · gzip bomb 413 · empty 200)" \
+  "200,200,200,404,404,403,403,415,415,400,400,413,411,400,413,200" "$(printf '%s' "$_HRES" | cut -d' ' -f7)"
+assert_eq "receiver: only accepted batches are forwarded — after they were stored" \
+  "/v1/logs,/v1/traces,/v1/logs,/v1/logs" "$(printf '%s' "$_HRES" | cut -d' ' -f8)"
+assert_eq "receiver: refusals counted in receiver.status (last: the gzip bomb)" "12|413" "$(printf '%s' "$_HRES" | cut -d' ' -f9)"
+assert_eq "receiver: refused bodies store nothing (3 batches, 3 records)" "3|3" "$(printf '%s' "$_HRES" | cut -d' ' -f10)"
+assert_eq "receiver: a forward that is not http(s) is ignored" "|file:///etc/passwd|True" \
+  "$(CLAUDII_OTEL_DIR="$_OTEL_HDIR" CLAUDII_OTEL_FORWARD=file:///etc/passwd _rpy '
+print("%s|%s|%s" % (m.FORWARD, m.FORWARD_BAD, m._FQ is None))' 2>&1)"
+assert_eq "receiver tests: importing the receiver writes no bytecode into bin/" "" \
+  "$(find "$CLAUDII_HOME/bin" -name '*.pyc' 2>/dev/null)"
+
 # doctor reads that status file: matching sha → ok, other sha → DRIFT
 _OTEL_DCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_DCACHE"); mkdir -p "$_OTEL_DCACHE/otel"
 # the python process that wrote it is gone — a live pid (this shell) stands in
@@ -591,5 +785,67 @@ sleep 0 & _RS_DEAD=$!; wait "$_RS_DEAD"
 jq -c --argjson p "$_RS_DEAD" '.pid = $p' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
 assert_contains "otel doctor: a dead receiver pid is reported as NOT RUNNING" "NOT RUNNING" \
   "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+jq -c --argjson p "$$" '.pid = $p | .rejected = 3 | .last_rejected = "403 host evil.example"' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
+assert_contains "otel doctor: refused requests are shown" "REJECTED     3 request(s) refused · last: 403 host evil.example" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+jq -c --argjson p "$$" '.pid = $p' "$_OTEL_SDIR/receiver.status" > "$_OTEL_DCACHE/otel/receiver.status"
+assert_not_contains "otel doctor: no REJECTED line while nothing was refused" "REJECTED" \
+  "$(CLAUDII_CACHE_DIR="$_OTEL_DCACHE" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+
+# ── doctor: flag, otel.env, receiver and launchd job must agree ──
+# Each disagreement leaves perf silently on the transcript estimate. launchctl
+# is a fake (loaded = a marker file), HOME a temp dir for ~/Library/LaunchAgents.
+_OTEL_WCFG="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WCFG")
+_OTEL_WCACHE="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WCACHE")
+_OTEL_WHOME="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WHOME")
+_OTEL_WBIN="$(mktemp -d)"; _OTEL_TMPDIRS+=("$_OTEL_WBIN")
+printf '#!/bin/sh\n[ "$1" = list ] && [ "$2" = com.claudii.otel-receiver ] && [ -e "%s/loaded" ]\n' "$_OTEL_WBIN" > "$_OTEL_WBIN/launchctl"
+chmod +x "$_OTEL_WBIN/launchctl"
+_wotel() { PATH="$_OTEL_WBIN:$PATH" HOME="$_OTEL_WHOME" CLAUDII_CACHE_DIR="$_OTEL_WCACHE" XDG_CONFIG_HOME="$_OTEL_WCFG" \
+  bash "$CLAUDII_HOME/bin/claudii-otel" "$@" 2>&1; }
+_wcli() { XDG_CONFIG_HOME="$_OTEL_WCFG" bash "$CLAUDII_HOME/bin/claudii" "$@" >/dev/null 2>&1; }
+_wstatus() { jq -c --argjson p "$1" --arg l "$2" '.pid = $p | .listen = $l' "$_OTEL_SDIR/receiver.status" > "$_OTEL_WCACHE/otel/receiver.status"; }
+_wotel setup >/dev/null
+_OTEL_WENV="$_OTEL_WCACHE/otel.env"; cp "$_OTEL_WENV" "$_OTEL_WCACHE/otel.env.orig"
+_OTEL_WINST="$_OTEL_WHOME/Library/LaunchAgents/com.claudii.otel-receiver.plist"
+_wstatus "$$" "127.0.0.1:4318"
+_WD=$(_wotel doctor)
+assert_not_contains "otel doctor (wired, receiver up): no MISMATCH" "MISMATCH" "$_WD"
+assert_contains "otel doctor: shows the endpoint" "endpoint     http://127.0.0.1:4318" "$_WD"
+assert_contains "otel doctor (launchd): not loaded, plist not installed" "launchd      not loaded · plist not installed" "$_WD"
+mkdir -p "${_OTEL_WINST%/*}"; cp "$_OTEL_WCACHE/otel/com.claudii.otel-receiver.plist" "$_OTEL_WINST"
+assert_contains "otel doctor (launchd): installed plist == generated one" "matches the generated one" "$(_wotel doctor)"
+printf '<!-- edited -->\n' >> "$_OTEL_WINST"
+assert_contains "otel doctor (launchd): an edited/stale installed plist" "installed plist DIFFERS" "$(_wotel doctor)"
+sleep 0 & _RS_DEAD2=$!; wait "$_RS_DEAD2"
+_wstatus "$_RS_DEAD2" "127.0.0.1:4318"; touch "$_OTEL_WBIN/loaded"
+_WD=$(_wotel doctor)
+assert_contains "otel doctor (launchd): loaded" "launchd      loaded" "$_WD"
+assert_contains "otel doctor: loaded job without a running receiver" "the launchd job is loaded but no receiver runs" "$_WD"
+rm -f "$_OTEL_WBIN/loaded" "$_OTEL_WCACHE/otel/receiver.status"
+assert_contains "otel doctor: flag on, no receiver, no job" "perf.otel.enabled is true but no receiver runs" "$(_wotel doctor)"
+_wstatus "$$" "127.0.0.1:9999"
+assert_contains "otel doctor: receiver listening elsewhere than the endpoint" \
+  "receiver listens on 127.0.0.1:9999, perf.otel.endpoint is 127.0.0.1:4318" "$(_wotel doctor)"
+_wstatus "$$" "127.0.0.1:4318"
+grep -v '^export OTEL_EXPORTER_OTLP_ENDPOINT=' "$_OTEL_WCACHE/otel.env.orig" > "$_OTEL_WENV"
+printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:9999\n' >> "$_OTEL_WENV"   # unquoted: written by an older setup
+assert_contains "otel doctor: otel.env exporting elsewhere than the endpoint" \
+  "otel.env exports to http://127.0.0.1:9999, perf.otel.endpoint is http://127.0.0.1:4318" "$(_wotel doctor)"
+grep -v 'CLAUDE_CODE_ENHANCED_TELEMETRY_BETA' "$_OTEL_WCACHE/otel.env.orig" > "$_OTEL_WENV"
+assert_contains "otel doctor: otel.env without the beta flag" "lacks CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1" "$(_wotel doctor)"
+cp "$_OTEL_WCACHE/otel.env.orig" "$_OTEL_WENV"
+_wcli config set perf.otel.enabled false
+assert_contains "otel doctor: otel.env sourced, flag off" "perf.otel.enabled is false — perf ignores OTEL" "$(_wotel doctor)"
+_wcli config set perf.otel.enabled true; rm -f "$_OTEL_WENV"
+assert_contains "otel doctor: flag on, otel.env missing" "perf.otel.enabled is true but otel.env is missing" "$(_wotel doctor)"
+_wcli config set perf.otel.forward "file:///etc/passwd"
+assert_contains "otel doctor: a non-http forward is flagged" "forward cfg  INVALID file:///etc/passwd" "$(_wotel doctor)"
+_wcli config set perf.otel.endpoint "http://0.0.0.0:4318"
+assert_contains "otel doctor: an endpoint the receiver cannot bind is flagged" "endpoint     INVALID" "$(_wotel doctor)"
+if ! command -v launchctl >/dev/null 2>&1; then
+  assert_contains "otel doctor (no launchctl): says so" "launchd      n/a (no launchctl)" \
+    "$(HOME="$_OTEL_WHOME" CLAUDII_CACHE_DIR="$_OTEL_WCACHE" XDG_CONFIG_HOME="$_OTEL_WCFG" bash "$CLAUDII_HOME/bin/claudii-otel" doctor 2>&1)"
+fi
 
 unset _NOW _NANO _OLD _OLDNANO _OB _OE _OBAD _ODOC _PO _POR _POJ _FLAT _LLMREC _TRREC _CSTATS _SRES _DDOC _RROWS _GROWS

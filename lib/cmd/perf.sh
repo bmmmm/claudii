@@ -1,18 +1,18 @@
 # lib/cmd/perf.sh — token-performance & API-health dashboard (claudii perf)
 # Sourced by bin/claudii — do NOT add shebang or set -euo pipefail.
 #
-# Shares the insights data path (lib/cmd/insights.sh helpers: _insights_window,
-# _insights_refresh, _insights_merged_json, _insights_model_label, ...). The
-# perf signal is the per-response latency list added to the cache in schema v7
-# (insights.jq): latency = [{day, model, dt_ms, out, ctx}], dt_ms = assistant.ts -
-# parent.ts (main thread only), ctx = input + cache_read + cache_creation tokens
-# (context-window occupancy). The merge attaches {repo, sessionId} per sample.
-#
-# Source abstraction (phase 2): perf reads a fixed shape (latency samples). Today
-# that shape comes from transcripts (estimated, no TTFT). When a local OTEL agent
-# is configured, claudii-otel will write the SAME shape from api_request events
-# (exact duration_ms + status_code errors + ttft). The renderer never changes;
-# only the source badge flips transcript -> otel.
+# Shares the insights plumbing (lib/cmd/insights.sh: _insights_window,
+# _insights_run, _insights_window_label, _insights_reject_tsv). The perf signal
+# is a list of latency samples {day, model, dt_ms, out, ctx, repo, sessionId}
+# (OTEL adds ttft_ms, success, attempt), ctx = input + cache_read +
+# cache_creation tokens (context-window occupancy). lib/perf_rows.jq (view) and
+# lib/perf_json.jq (--json) reduce it, the same for both sources:
+#   otel        perf.otel.enabled and samples in the window: exact duration_ms
+#               and ttft_ms from claude_code.llm_request spans, status codes
+#               from api_error logs (`claudii-otel build --render`).
+#   transcript  otherwise: the insights caches' latency list (lib/insights.jq),
+#               dt_ms = assistant.ts - parent.ts, main thread only, no TTFT.
+# The renderer never changes; only the source badge flips transcript -> otel.
 
 # Format milliseconds as a compact duration: "0.8s", "14.3s", "1m05s".
 _fmt_ms() {
@@ -25,8 +25,7 @@ _fmt_ms() {
   fi
 }
 
-# Perf data source is chosen in _cmd_perf: OTEL when perf.otel.enabled and the
-# local OTEL cache has samples in the window, else the transcript estimate.
+# The source (OTEL or the transcript estimate) is chosen in _perf_render.
 
 # One-line API health from the ClaudeStatus cache (bin/claudii-status writes it).
 # key=value lines: opus=ok|degraded|down. Absent file -> hint.
@@ -109,8 +108,9 @@ _cmd_perf() {
     printf 'Response-time percentiles (p50/p90/p99), output throughput (tok/s)\n'
     printf 'and a per-day latency trend, by model, context window and repo, plus\n'
     printf 'API health.\n'
-    printf 'Latency is estimated from transcript timestamps (assistant minus\n'
-    printf 'parent); --repo NAME narrows every section to one repository.\n'
+    printf 'Exact with perf.otel.enabled (claudii-otel setup), otherwise estimated\n'
+    printf 'from transcript timestamps (assistant minus parent). This host only,\n'
+    printf 'also with sync; --repo NAME narrows every section to one repository.\n'
     printf '%s\n' '--watch[=N] refreshes every N seconds (default: 30).'
     return 0
   fi
@@ -145,6 +145,12 @@ _perf_render() {
   # no latency sample — or when build fails — and perf falls back. perf is the
   # only command that needs the (large) latency list — the transcript merge
   # requests it explicitly; cache/tokens/tools/limits use the latency-free merge.
+  #
+  # This host only, whatever the source: OTEL events never leave the machine,
+  # so the transcript merge leaves the `claudii sync` mirrors out too
+  # (CLAUDII_LOCAL_ONLY) — otherwise the numbers would switch between "here"
+  # and "all hosts" with the source, and response times of different networks
+  # would land in one percentile.
   local src="transcript" _rows=""
   if [[ "$(_cfgget perf.otel.enabled 2>/dev/null)" == "true" ]]; then
     _rows=$("$CLAUDII_HOME/bin/claudii-otel" build --days "$days" --render "$mode" \
@@ -153,14 +159,14 @@ _perf_render() {
   fi
   if [[ "$src" == "transcript" ]]; then
     if [[ "$mode" == "json" ]]; then
-      _rows=$(_insights_run merge --days "$days" --with-latency 2>/dev/null \
+      _rows=$(CLAUDII_LOCAL_ONLY=1 _insights_run merge --days "$days" --with-latency 2>/dev/null \
         | jq -L "$lib" --argjson days "$days" --arg floor "$floor" --arg repo "$repo_filter" '
             include "perf_json"; perf_json($days; $floor; $repo; "transcript")' 2>/dev/null) || _rows=""
       [[ -z "$_rows" ]] && _rows=$(jq -n -L "$lib" --argjson days "$days" --arg floor "$floor" \
         --arg repo "$repo_filter" 'include "perf_json"; {} | perf_json($days; $floor; $repo; "transcript")')
     else
       # A bare {} is the merge of an empty cache.
-      _rows=$(_insights_run merge --days "$days" --with-latency 2>/dev/null \
+      _rows=$(CLAUDII_LOCAL_ONLY=1 _insights_run merge --days "$days" --with-latency 2>/dev/null \
         | jq -r -L "$lib" --arg floor "$floor" --arg repo "$repo_filter" '
             include "perf_rows"; if . == {} then empty else perf_rows($floor; $repo) end' 2>/dev/null) || _rows=""
       if [[ -z "$_rows" ]]; then
