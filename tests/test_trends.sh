@@ -310,3 +310,51 @@ if [[ "$_have_de_locale" == *de_DE.UTF-8* || "$_have_de_locale" == *de_DE.utf8* 
   unset _TRENDS_LOC_TMP _now_ts _trends_loc_json
 fi
 unset _have_de_locale
+
+# ── trends: a session spanning several days counts once ───────────────────────
+# "7d total", the avg API divisor and last_week.sessions used to sum the
+# per-day session counts, so one session active on 3 days counted 3 times and
+# avg API/session came out a third of the real figure. Fixture: ms-a runs on
+# 3 days in the rolling window (api 10 min per day, cumulative), ms-b only
+# today (10 min) → 40 min over 2 sessions = 20m/session. The old sum said
+# 4 sessions and 10m/session.
+_TRENDS_MS_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_MS_TMP")
+_now_ts=$(date +%s)
+hist_row "$_TRENDS_MS_TMP/history.tsv" "$(( _now_ts - 2 * 86400 ))" "claude-opus-4-8" "1.00" "40" "10" "ms-a" "1000" "100" "600000"
+hist_row "$_TRENDS_MS_TMP/history.tsv" "$(( _now_ts - 86400 ))"     "claude-opus-4-8" "2.00" "40" "10" "ms-a" "2000" "200" "1200000"
+hist_row "$_TRENDS_MS_TMP/history.tsv" "$_now_ts"                   "claude-opus-4-8" "3.00" "40" "10" "ms-a" "3000" "300" "1800000"
+hist_row "$_TRENDS_MS_TMP/history.tsv" "$(( _now_ts - 60 ))"        "claude-opus-4-8" "1.00" "40" "10" "ms-b" "1000" "100" "600000"
+_trends_ms_out=$(NO_COLOR=1 CLAUDII_CACHE_DIR="$_TRENDS_MS_TMP" bash "$CLAUDII_HOME/bin/claudii" trends 2>&1)
+assert_contains "trends: avg API divides by distinct sessions (20m, not 10m)" "20m/session (7d)" "$_trends_ms_out"
+_trends_ms_tot=$(printf '%s\n' "$_trends_ms_out" | sed $'s/\033\\[[0-9;]*m//g' | awk '/7d total/ {print $NF; exit}')
+assert_eq "trends: 7d total counts a 3-day session once (2 sessions)" "2" "$_trends_ms_tot"
+# The daily rows keep the per-day count: today both sessions ran.
+_trends_ms_today=$(CLAUDII_CACHE_DIR="$_TRENDS_MS_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>/dev/null \
+  | jq -r '.this_week[-1].sessions')
+assert_eq "trends --json: today's row still counts both sessions" "2" "$_trends_ms_today"
+unset _TRENDS_MS_TMP _now_ts _trends_ms_out _trends_ms_tot _trends_ms_today
+
+# ── trends --json: last_week is the previous calendar week, from/to named ─────
+# last_week is NOT the 7 days before the rolling this_week: it is the previous
+# full calendar week starting on cost.week_start (monday by default), and its
+# first/last day are in the object. One session on each of the last 13 days
+# covers that week whatever today is; it gains $1 a day, so the week costs
+# $7.00 and holds ONE session (the old per-day sum said 7).
+_TRENDS_LW_TMP="$(mktemp -d)"; _TRENDS_TMPDIRS+=("$_TRENDS_LW_TMP")
+_now_ts=$(date +%s)
+for _lw_k in 13 12 11 10 9 8 7 6 5 4 3 2 1; do
+  hist_row "$_TRENDS_LW_TMP/history.tsv" "$(( _now_ts - _lw_k * 86400 ))" "claude-opus-4-8" \
+    "$(( 14 - _lw_k )).00" "40" "10" "lw-sid" "$(( (14 - _lw_k) * 1000 ))" "0" "0"
+done
+_trends_lw_json=$(CLAUDII_CACHE_DIR="$_TRENDS_LW_TMP" bash "$CLAUDII_HOME/bin/claudii" trends --json 2>&1)
+# Day numbers via jq arithmetic — no locale-dependent weekday names.
+_trends_lw_chk=$(jq -r '
+  def dn: strptime("%Y-%m-%d") | mktime / 86400 | floor;
+  (.last_week.from | dn) as $f | (.last_week.to | dn) as $t | (.this_week[-1].date | dn) as $today
+  | [ ($t - $f),                       # a full week: 6 days apart
+      ((($f + 3) % 7) + 1),            # %u of from: 1 = Monday
+      (($t < $today) and ($t >= $today - 7)),   # the PREVIOUS week, not older
+      .last_week.sessions, (.last_week.cost * 100 | round) ] | map(tostring) | join(" ")' <<< "$_trends_lw_json" 2>&1)
+assert_eq "trends --json: last_week from/to span the previous Mon..Sun, 1 session, \$7" \
+  "6 1 true 1 700" "$_trends_lw_chk"
+unset _TRENDS_LW_TMP _now_ts _lw_k _trends_lw_json _trends_lw_chk

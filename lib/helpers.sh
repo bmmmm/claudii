@@ -346,7 +346,11 @@ _live_pids_init() {
     _LIVE_PIDS_KIND[$_i]="$_kind"
     _LIVE_PIDS_STATUS[$_i]="$_status"
     (( ++_i ))
-  done < <(jq -r '.[] | [.pid, (.kind // ""), (.status // "")] | @tsv' <<<"$_json" 2>/dev/null)
+  # Here-string of a command substitution, not `< <(jq …)`: the substitution
+  # is reaped before the loop starts, a process-substitution child is not and
+  # can exit (SIGCHLD) in the middle of a later printf — the EINTR the
+  # overview hit on macOS /bin/bash 3.2, see _cmd_default.
+  done <<< "$(jq -r '.[] | [.pid, (.kind // ""), (.status // "")] | @tsv' <<<"$_json" 2>/dev/null || true)"
   return 0
 }
 

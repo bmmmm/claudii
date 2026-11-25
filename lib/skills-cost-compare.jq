@@ -1,42 +1,23 @@
 # skills-cost-compare.jq — join two priced windows into comparison rows.
 # Called from _skills_cost_compare (lib/cmd/skills-cost.sh) with:
+#   printf '%s\n%s\n' <prior merged> <recent merged> |
 #   jq -n -L "$CLAUDII_HOME/lib" --arg k <attr_key> --arg kind <attr_kind>
-#      --argjson rates <rate table> --argjson prior <merged> --argjson recent <merged>
-#      -f lib/skills-cost-compare.jq
+#      --argjson rates <rate table> -f lib/skills-cost-compare.jq
+# Input: two merged insights JSON documents on stdin — the prior window first,
+# the recent one second (read with `input`; never --argjson, which hits the
+# 128 KiB per-argument limit on Linux once a window grows).
 # Output: JSON array of {name, calls_prior, calls_recent, out_per_call_*,
 # avg_usd_*, out_per_call_delta}, sorted by combined call volume.
 include "tier";
 
-# Per-row {name, calls, out_tok, tot_usd} for one window (same per-model
-# pricing + legacy-Sonnet residual as the single-window view in skills-cost-rows.jq,
-# both priced by usd() / model_usd() from lib/tier.jq).
+# Per-row {name, calls, out_tok, tot_usd} for one window, priced by attr_rows()
+# in lib/tier.jq — the same pricing as the single-window view.
 def rows($m):
-  ($m.attribution_models // {} | to_entries
-    | map((.key | split("|")) as $p | select($p[0] == $kind)
-        | {name:($p[1]//""), model:($p[2]//"unknown"),
-           in_tok:(.value.in_tok//0), out_tok:(.value.out_tok//0),
-           cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
-           cache_create_1h:(.value.cache_create_1h//0),
-           long_in_tok:(.value.long_in_tok//0), long_out_tok:(.value.long_out_tok//0),
-           long_cache_read:(.value.long_cache_read//0), long_cache_create:(.value.long_cache_create//0),
-           long_cache_create_1h:(.value.long_cache_create_1h//0)})) as $am
-  | ($m[$k] // {} | to_entries
-      | map({name:.key, calls:(.value.calls//0), in_tok:(.value.in_tok//0),
-             out_tok:(.value.out_tok//0), cache_read:(.value.cache_read//0), cache_create:(.value.cache_create//0),
-             cache_create_1h:(.value.cache_create_1h//0)}))
-  | map(. as $row
-      | ([$am[] | select(.name == $row.name)]) as $cand
-      | ($cand | map(model_usd($rates)) | add // 0) as $musd
-      | (([$row.in_tok          - ($cand|map(.in_tok)|add//0),          0]|max)) as $ri
-      | (([$row.out_tok         - ($cand|map(.out_tok)|add//0),         0]|max)) as $ro
-      | (([$row.cache_read      - ($cand|map(.cache_read)|add//0),      0]|max)) as $rcr
-      | (([$row.cache_create    - ($cand|map(.cache_create)|add//0),    0]|max)) as $rcc
-      | (([$row.cache_create_1h - ($cand|map(.cache_create_1h)|add//0), 0]|max)) as $rcc1h
-      | ({in_tok:$ri, out_tok:$ro, cache_read:$rcr, cache_create:$rcc, cache_create_1h:$rcc1h}
-         | usd($rates["sonnet-legacy"])) as $rusd
-      | {name:$row.name, calls:$row.calls, out_tok:$row.out_tok, tot_usd:($musd+$rusd)});
+  $m | attr_rows($kind; $k; $rates) | map({name, calls, out_tok, tot_usd});
 
-(rows($prior)) as $P
+input as $prior
+| input as $recent
+| (rows($prior)) as $P
 | (rows($recent)) as $R
 | ([$P[].name, $R[].name] | unique) as $names
 | $names | map(

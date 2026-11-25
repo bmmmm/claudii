@@ -22,10 +22,23 @@
 #   claudii-otel compact            # gzip closed days and build their rows/
 #   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
 #   claudii-otel doctor             # check receiver wiring + data freshness
-#   claudii-otel cache-dir          # print the OTEL data directory
 
 set -uo pipefail
-export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Resolve the checkout through symlinks (install.sh links claudii-status,
+# claudii-cc-statusline and claudii-insights into a bin dir, where
+# `dirname "$0"` named the wrong tree whenever the plugin env was missing:
+# a hook, cron, a shell without the plugin). Same loop as bin/claudii.
+if [[ -z "${CLAUDII_HOME:-}" ]]; then
+  _cl_self="$0" _cl_hops=0
+  while [[ -L "$_cl_self" ]] && (( _cl_hops++ < 40 )); do
+    _cl_link=$(readlink "$_cl_self")
+    [[ "$_cl_link" == /* ]] || _cl_link="$(dirname "$_cl_self")/$_cl_link"
+    _cl_self="$_cl_link"
+  done
+  CLAUDII_HOME="$(cd "$(dirname "$_cl_self")/.." && pwd)"
+  unset _cl_self _cl_hops _cl_link
+fi
+export CLAUDII_HOME
 command -v jq >/dev/null 2>&1 || { printf 'claudii-otel: jq not found — install jq\n' >&2; exit 1; }
 
 CACHE_BASE="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
@@ -68,7 +81,8 @@ _repomap() {
              if ($f | length) == 2 and $f[0] != "" and $f[1] != ""
              then .[$f[0]] = $f[1] else . end)' "$REPOMAP_LOG" 2>/dev/null) || map=""
   else
-    map=$(_insights_stream "$INSIGHTS_DIR" "$days" \
+    # Local caches only: OTEL events are this host's, a mirror holds none of them.
+    map=$(CLAUDII_LOCAL_ONLY=1 _insights_stream "$INSIGHTS_DIR" "$days" \
       | jq -cn 'reduce inputs as $s ({};
              if ($s.sessionId // null) != null and ($s.project.repo // "") != ""
              then .[$s.sessionId] = $s.project.repo else . end)' 2>/dev/null) || map=""
@@ -322,10 +336,46 @@ _cmd_build() {
   return "$rc"
 }
 
+# perf.otel.endpoint is both where Claude Code exports to (otel.env) and where
+# the receiver listens (plist, `claudii-otel receiver`). Only a loopback http
+# URL with an explicit port can be both — the receiver binds 127.0.0.1, never a
+# network address, and an exporter without a port would POST to :80. Sets
+# EP_URL (no trailing slash: the exporter appends /v1/logs), EP_HOST, EP_PORT.
+_endpoint() {
+  local url re='^http://(127\.0\.0\.1|localhost):([0-9]{1,5})/?$'
+  url=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.endpoint 2>/dev/null)
+  [[ -z "$url" ]] && url="http://127.0.0.1:4318"
+  if [[ "$url" =~ $re ]] && (( 10#${BASH_REMATCH[2]} >= 1 && 10#${BASH_REMATCH[2]} <= 65535 )); then
+    EP_URL="${url%/}"; EP_HOST=127.0.0.1; EP_PORT=$(( 10#${BASH_REMATCH[2]} ))
+    return 0
+  fi
+  printf 'claudii-otel: perf.otel.endpoint must be http://127.0.0.1:PORT or http://localhost:PORT — the receiver listens there, loopback only (got: %s)\n' "$url" >&2
+  return 1
+}
+
+# perf.otel.forward, checked: the receiver POSTs to it with urllib, which also
+# speaks file:// and ftp://. Sets FWD (empty = off).
+_forward() {
+  FWD=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.forward 2>/dev/null)
+  [[ -z "$FWD" || "$FWD" =~ ^https?://[^[:space:]]+$ ]] && return 0
+  printf 'claudii-otel: perf.otel.forward must be an http:// or https:// URL without spaces: %s\n' "$FWD" >&2
+  return 1
+}
+
+# The receiver in the foreground, wired like the launchd job: data dir, listen
+# address and forward come from claudii (cache dir + config), so it writes where
+# build/doctor read. Run bin/claudii-otel-receiver directly to set them by env.
 _cmd_receiver() {
   [[ -f "$RECEIVER" ]] || { printf 'claudii-otel: receiver not found: %s\n' "$RECEIVER" >&2; exit 1; }
   command -v python3 >/dev/null 2>&1 || { printf 'claudii-otel: python3 required for the receiver\n' >&2; exit 1; }
-  exec python3 "$RECEIVER" "$@"
+  local a
+  for a in "$@"; do
+    [[ "$a" == "--flatten" ]] && exec python3 "$RECEIVER" "$@"   # conversion: no server
+  done
+  _endpoint || exit 1
+  _forward || exit 1
+  CLAUDII_OTEL_DIR="$OTEL_DIR" CLAUDII_OTEL_HOST="$EP_HOST" CLAUDII_OTEL_PORT="$EP_PORT" \
+    CLAUDII_OTEL_FORWARD="$FWD" exec python3 "$RECEIVER" "$@"
 }
 
 _sha256() { shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1 || sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -348,16 +398,24 @@ _cmd_doctor() {
   fi
   printf '  otel dir     %s\n' "$OTEL_DIR"
   local now; now=$(date +%s)
+  local flag ep_ok=0 recv_up=0
+  flag=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.enabled 2>/dev/null)
+  if _endpoint 2>/dev/null; then
+    ep_ok=1
+    printf '  endpoint     %s (perf.otel.endpoint: Claude Code exports here, the receiver listens here)\n' "$EP_URL"
+  else
+    printf '  endpoint     INVALID perf.otel.endpoint — must be http://127.0.0.1:PORT or http://localhost:PORT\n'
+  fi
   # The running receiver reports through receiver.status (sha of the file it
   # loaded, last batch, forward counters); doctor compares that sha with the
   # repo's receiver so a stale copy or wrapper target is visible.
   if [[ -s "$STATUS_FILE" ]] && jq -e . "$STATUS_FILE" >/dev/null 2>&1; then
-    local s_sha s_pid s_last s_batches s_records s_wfail f_on f_ok f_failed f_dropped f_err f_err_at r_sha
+    local s_sha s_pid s_last s_batches s_records s_wfail s_listen s_rej s_rej_last f_on f_ok f_failed f_dropped f_err f_err_at r_sha
     # Empty fields become "-": with IFS=tab an empty field collapses and every
     # later field shifts (the empty-field trap).
-    IFS=$'\t' read -r s_sha s_pid s_last s_batches s_records s_wfail f_on f_ok f_failed f_dropped f_err_at f_err < <(
-      jq -r '[.sha, .pid, .last_batch, .batches, .records, .write_failed, .forward.enabled, .forward.ok,
-              .forward.failed, .forward.dropped, .forward.last_error_at, .forward.last_error]
+    IFS=$'\t' read -r s_sha s_pid s_last s_batches s_records s_wfail s_listen s_rej s_rej_last f_on f_ok f_failed f_dropped f_err_at f_err < <(
+      jq -r '[.sha, .pid, .last_batch, .batches, .records, .write_failed, .listen, .rejected, .last_rejected,
+              .forward.enabled, .forward.ok, .forward.failed, .forward.dropped, .forward.last_error_at, .forward.last_error]
              | map(if . == null or . == "" then "-" else . end) | @tsv' "$STATUS_FILE")
     r_sha=$(_sha256 "$RECEIVER")
     # Dead only on "No such process": a sandbox that denies signalling other
@@ -367,8 +425,10 @@ _cmd_doctor() {
     if [[ "$probe" == *"No such process"* ]]; then
       printf '  receiver     NOT RUNNING — receiver.status is from pid %s, which is gone' "$s_pid"
     elif [[ -n "$r_sha" && "$s_sha" == "$r_sha" ]]; then
+      recv_up=1
       printf '  receiver     sha matches bin/claudii-otel-receiver'
     else
+      recv_up=1
       printf '  receiver     DRIFT: running sha %s != repo %s — restart or rewrap the receiver' "${s_sha:0:12}" "${r_sha:0:12}"
     fi
     if [[ "${s_last:-0}" -gt 0 ]]; then
@@ -377,6 +437,13 @@ _cmd_doctor() {
       printf ' · no batch since start\n'
     fi
     [[ "${s_wfail:-0}" != "0" ]] && printf '  WRITE FAIL   %s failed write(s) — check disk space (receiver.status: last_write_error)\n' "$s_wfail"
+    # Refused requests (wrong path/host/type, over 32 MiB): a client that is not
+    # Claude Code's exporter, or an exporter set to an unsupported protocol.
+    [[ "$s_rej" != "-" && "$s_rej" != "0" ]] && printf '  REJECTED     %s request(s) refused · last: %s\n' "$s_rej" "$s_rej_last"
+    # "-": a receiver from before the listen field — nothing to compare.
+    if (( recv_up && ep_ok )) && [[ "$s_listen" != "-" && "$s_listen" != "$EP_HOST:$EP_PORT" ]]; then
+      printf '  MISMATCH     receiver listens on %s, perf.otel.endpoint is %s:%s — restart the receiver\n' "$s_listen" "$EP_HOST" "$EP_PORT"
+    fi
     if [[ "$f_on" == "true" ]]; then
       printf '  forward      ok %s · failed %s · dropped %s' "$f_ok" "$f_failed" "$f_dropped"
       [[ "$f_err" != "-" ]] && printf ' · last error %ds ago: %s' "$(( now - f_err_at ))" "$f_err"
@@ -411,7 +478,6 @@ _cmd_doctor() {
     n=$(printf '%s\0' "${rows[@]}" | { xargs -0 cat 2>/dev/null || true; } | grep -c '"kind":"lat"')
   fi
   printf '  samples      %s response(s) in %d compacted day(s)\n' "$n" "${#rows[@]}"
-  local fwd; fwd=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.forward 2>/dev/null)
   # Captures of earlier layouts are not read any more; print the conversion.
   if [[ -s "$OTEL_DIR/traces.jsonl" || -s "$OTEL_DIR/logs.jsonl" ]]; then
     printf '  legacy       traces.jsonl/logs.jsonl (single-file layout, not read) — convert once, then move them away:\n'
@@ -421,17 +487,63 @@ _cmd_doctor() {
     printf '  legacy       raw/ (day-file layout, not read) — convert once, then move it away:\n'
     _convert_hint "{ for f in $(printf '%q' "$OTEL_DIR")/raw/*.jsonl.gz; do gzip -dc \"\$f\"; done; cat $(printf '%q' "$OTEL_DIR")/raw/*.jsonl 2>/dev/null; }" conv
   fi
-  if [[ -r "$CACHE_BASE/otel.env" ]]; then
-    printf '  env wiring   %s (telemetry exported to the receiver)\n' "$CACHE_BASE/otel.env"
+  # The wiring has four parts that must agree — the flag (perf reads OTEL),
+  # otel.env (Claude Code exports, to where), the receiver (listens, where) and
+  # its launchd job. Each mismatch leaves perf silently on the transcript.
+  local envf="$CACHE_BASE/otel.env" env_ep
+  if [[ -r "$envf" ]]; then
+    printf '  env wiring   %s (telemetry exported to the receiver)\n' "$envf"
+    [[ "$flag" == "true" ]] \
+      || printf '  MISMATCH     otel.env is sourced but perf.otel.enabled is %s — perf ignores OTEL; run: claudii-otel setup (or: claudii-otel off)\n' "${flag:-unset}"
+    env_ep=$(sed -n 's/^export OTEL_EXPORTER_OTLP_ENDPOINT=//p' "$envf" | tail -n 1)
+    env_ep=${env_ep#\'}; env_ep=${env_ep%\'}
+    if (( ep_ok )) && [[ "$env_ep" != "$EP_URL" ]]; then
+      printf '  MISMATCH     otel.env exports to %s, perf.otel.endpoint is %s — run: claudii-otel setup\n' "${env_ep:-nothing}" "$EP_URL"
+    fi
+    grep -qx 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1' "$envf" \
+      || printf '  MISMATCH     otel.env lacks CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 — no llm_request spans, no samples; run: claudii-otel setup\n'
   else
     printf '  env wiring   off — run: claudii-otel setup\n'
+    [[ "$flag" == "true" ]] \
+      && printf '  MISMATCH     perf.otel.enabled is true but otel.env is missing — Claude Code exports nothing; run: claudii-otel setup\n'
   fi
-  if [[ -n "$fwd" ]]; then
-    printf '  forward cfg  %s (batches mirrored to the gateway)\n' "$fwd"
+  local label="com.claudii.otel-receiver"
+  local gen="$OTEL_DIR/$label.plist" inst="$HOME/Library/LaunchAgents/$label.plist" ld=""
+  if command -v launchctl >/dev/null 2>&1; then
+    ld="not loaded"
+    launchctl list "$label" >/dev/null 2>&1 && ld="loaded"
+    if [[ ! -e "$inst" ]]; then
+      printf '  launchd      %s · plist not installed (%s)\n' "$ld" "$inst"
+    elif [[ ! -r "$gen" ]]; then
+      printf '  launchd      %s · plist installed, none generated to compare — run: claudii-otel setup\n' "$ld"
+    elif cmp -s "$gen" "$inst"; then
+      printf '  launchd      %s · installed plist matches the generated one\n' "$ld"
+    else
+      printf '  launchd      %s · installed plist DIFFERS from %s — copy it again, then unload + load\n' "$ld" "$gen"
+    fi
+  else
+    printf '  launchd      n/a (no launchctl) — the receiver runs only when started: claudii-otel receiver\n'
+  fi
+  if [[ "$ld" == "loaded" ]] && (( ! recv_up )); then
+    printf '  MISMATCH     the launchd job is loaded but no receiver runs — see %s\n' "$OTEL_DIR/receiver.log"
+  elif [[ "$flag" == "true" ]] && (( ! recv_up )); then
+    printf '  MISMATCH     perf.otel.enabled is true but no receiver runs — load the plist, or run: claudii-otel receiver\n'
+  fi
+  if ! _forward 2>/dev/null; then
+    printf '  forward cfg  INVALID %s — must be an http:// or https:// URL\n' "$FWD"
+  elif [[ -n "$FWD" ]]; then
+    printf '  forward cfg  %s (batches mirrored to the gateway)\n' "$FWD"
   else
     printf '  forward cfg  off (local-only; set perf.otel.forward to fan out)\n'
   fi
 }
+
+# Config values go into two files that are not ours to interpret: otel.env is
+# SOURCED by every zsh (claudii.plugin.zsh), the plist is XML. Unquoted, a
+# forward URL like http://gw/?a=1&b=$(cmd) once ran cmd in every new shell and
+# broke the plist. jq is required anyway and does both escapes exactly.
+_shq()    { jq -rn --arg v "$1" '$v | @sh'; }     # POSIX single quotes (zsh + bash)
+_xmlesc() { jq -rn --arg v "$1" '$v | @html'; }   # & < > ' " as entities
 
 # Enable the OTEL path: flip the config flag, write the shell env file the plugin
 # sources (fork-free), and generate a launchd plist for a persistent receiver.
@@ -439,10 +551,10 @@ _cmd_doctor() {
 # nothing touches ~/Library/LaunchAgents without consent.
 _cmd_setup() {
   local cli="$CLAUDII_HOME/bin/claudii"
-  local endpoint beta forward
-  endpoint=$("$cli" config get perf.otel.endpoint 2>/dev/null); [[ -z "$endpoint" ]] && endpoint="http://127.0.0.1:4318"
-  beta=$("$cli" config get perf.otel.beta_traces 2>/dev/null)
-  forward=$("$cli" config get perf.otel.forward 2>/dev/null)
+  # Both checked before the flag flips: a refused setup changes nothing.
+  _endpoint || return 1
+  _forward || return 1
+  local forward="$FWD"
   "$cli" config set perf.otel.enabled true >/dev/null 2>&1
 
   mkdir -p "$OTEL_DIR"
@@ -455,9 +567,11 @@ _cmd_setup() {
     printf '%s\n' 'export OTEL_TRACES_EXPORTER=otlp'
     printf '%s\n' 'export OTEL_METRICS_EXPORTER=none'
     printf '%s\n' 'export OTEL_EXPORTER_OTLP_PROTOCOL=http/json'
-    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$endpoint"
-    [[ "$beta" == "true" ]] && printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
-    [[ -n "$forward" ]] && printf 'export CLAUDII_OTEL_FORWARD=%s\n' "$forward"
+    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$(_shq "$EP_URL")"
+    # Not optional: without it Claude Code emits no claude_code.llm_request span,
+    # and those spans are every latency/TTFT/success sample perf reads — perf
+    # would stay on the transcript estimate with the OTEL source switched on.
+    printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)
@@ -468,10 +582,13 @@ _cmd_setup() {
   # default PATH lacks it) — set in EnvironmentVariables below. Keep it +x.
   chmod +x "$RECEIVER" 2>/dev/null || true
   local plist="$OTEL_DIR/com.claudii.otel-receiver.plist"
-  # The receiver process needs CLAUDII_OTEL_FORWARD too (it does the teeing), so
-  # bake it into the plist env when configured.
+  # The receiver gets its whole wiring here (dir, listen address, forward) —
+  # the shells never need it, so otel.env carries only the exporter side.
   local fwd_xml=""
-  [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$forward"
+  [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$(_xmlesc "$forward")"
+  local x_recv x_path x_dir
+  x_recv=$(_xmlesc "$RECEIVER"); x_path=$(_xmlesc "$py_dir:/usr/bin:/bin:/usr/sbin:/sbin")
+  x_dir=$(_xmlesc "$OTEL_DIR")
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -480,17 +597,19 @@ _cmd_setup() {
   <key>Label</key><string>com.claudii.otel-receiver</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$RECEIVER</string>
+    <string>$x_recv</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>$py_dir:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>CLAUDII_OTEL_DIR</key><string>$OTEL_DIR</string>$fwd_xml
+    <key>PATH</key><string>$x_path</string>
+    <key>CLAUDII_OTEL_DIR</key><string>$x_dir</string>
+    <key>CLAUDII_OTEL_HOST</key><string>$EP_HOST</string>
+    <key>CLAUDII_OTEL_PORT</key><string>$EP_PORT</string>$fwd_xml
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>$OTEL_DIR/receiver.log</string>
-  <key>StandardOutPath</key><string>$OTEL_DIR/receiver.log</string>
+  <key>StandardErrorPath</key><string>$x_dir/receiver.log</string>
+  <key>StandardOutPath</key><string>$x_dir/receiver.log</string>
 </dict>
 </plist>
 PLIST
@@ -530,7 +649,6 @@ case "$cmd" in
   setup)     _cmd_setup "$@" ;;
   off)       _cmd_off "$@" ;;
   doctor)    _cmd_doctor "$@" ;;
-  cache-dir) printf '%s\n' "$OTEL_DIR" ;;
   -h|--help|help)
     cat <<'EOF'
 claudii-otel — fold local OTLP/JSON telemetry into the perf cache
@@ -547,7 +665,6 @@ Usage:
                                   `receiver --flatten DIR [--tag TAG]` converts
                                   OTLP batch lines on stdin into event files
   claudii-otel doctor             check receiver wiring + data freshness
-  claudii-otel cache-dir          print the OTEL data directory
 
 Fan-out (optional): set perf.otel.forward to an internal collector URL and the
 receiver mirrors every batch there (best-effort) for central retention.

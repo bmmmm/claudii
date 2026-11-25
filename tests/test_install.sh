@@ -38,6 +38,36 @@ for bin in claudii claudii-status claudii-cc-statusline claudii-insights; do
   assert_eq "install: $bin → $CLAUDII_HOME/bin/$bin" "$CLAUDII_HOME/bin/$bin" "$target"
 done
 
+# the linked binary runs without CLAUDII_HOME — it used to derive the checkout
+# from the link's own directory and die on "<bin dir>/../lib/visual.sh: No such
+# file". Also through a relative link to that link (two hops).
+_ver=$(sed -nE 's/^VERSION="([^"]+)"$/\1/p' "$CLAUDII_HOME/bin/claudii")
+_rc=0
+_out=$(cd / && env -u CLAUDII_HOME "$TEST_TMP/bin/claudii" version 2>&1) || _rc=$?
+assert_eq "install: linked claudii runs without CLAUDII_HOME (rc)" "0" "$_rc"
+assert_contains "install: linked claudii prints its version" "$_ver" "$_out"
+mkdir -p "$TEST_TMP/rel"
+ln -s ../bin/claudii "$TEST_TMP/rel/claudii"
+_rc=0
+_out=$(cd / && env -u CLAUDII_HOME "$TEST_TMP/rel/claudii" version 2>&1) || _rc=$?
+assert_eq "install: relative link chain resolves (rc)" "0" "$_rc"
+assert_contains "install: relative link chain prints its version" "$_ver" "$_out"
+# The linked helpers resolve their checkout the same way — they used to take
+# `dirname "$0"/..` and source lib/ from the bin dir's parent. Run each one
+# from the link without CLAUDII_HOME, against an isolated cache (a fresh
+# status-models keeps claudii-status off the network).
+_lk_cache="$TEST_TMP/lkcache"; mkdir -p "$_lk_cache" "$TEST_TMP/lkproj"
+printf 'opus=ok\nsonnet=ok\nhaiku=ok\nfable=ok\n' > "$_lk_cache/status-models"
+for _lk in "claudii-status --quiet" "claudii-insights" "claudii-cc-statusline"; do
+  _rc=0
+  _out=$(cd / && printf '{}' | env -u CLAUDII_HOME CLAUDII_CACHE_DIR="$_lk_cache" \
+    CLAUDE_PROJECTS_DIR="$TEST_TMP/lkproj" XDG_CONFIG_HOME="$TEST_TMP/config" \
+    $TEST_TMP/bin/$_lk 2>&1) || _rc=$?
+  assert_eq "install: linked ${_lk%% *} runs without CLAUDII_HOME (rc)" "0" "$_rc"
+  assert_not_contains "install: linked ${_lk%% *} finds its lib/" "No such file" "$_out"
+done
+unset _ver _rc _out _lk _lk_cache
+
 # source line added to zshrc
 zshrc=$(cat "$TEST_TMP/zshrc")
 assert_contains "install: source line in zshrc" "claudii.plugin.zsh" "$zshrc"

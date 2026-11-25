@@ -68,8 +68,6 @@ _cmd_cost_from_history() {
   # The insights rows (sessions priced from their tokens, see
   # lib/insights-cost-rows.jq) follow AFTER all history rows: stage 2 must know
   # every session history covers before it decides to keep an insights row.
-  # _COST_INSIGHTS=0 leaves them out (the forecast and the tests that pin the
-  # history-only arithmetic).
   {
     if (( ${#_history_files[@]} )); then
       LC_ALL=C awk -F'\t' \
@@ -82,11 +80,9 @@ _cmd_cost_from_history() {
         -f "$CLAUDII_HOME/lib/history_rows.awk" \
         "${_history_files[@]}"
     fi
-    if [[ "${_COST_INSIGHTS:-1}" == "1" ]]; then
-      _insights_stream_tagged "$_cache_dir/insights" \
-        | jq -rn -L "$CLAUDII_HOME/lib" --argjson rates "$_CLAUDII_RATES" \
-            -f "$CLAUDII_HOME/lib/insights-cost-rows.jq" 2>/dev/null || true
-    fi
+    _insights_stream_tagged "$_cache_dir/insights" \
+      | jq -rn -L "$CLAUDII_HOME/lib" --argjson rates "$_CLAUDII_RATES" \
+          -f "$CLAUDII_HOME/lib/insights-cost-rows.jq" 2>/dev/null || true
   } | LC_ALL=C awk -F'\t' \
     -v emit="$_emit2" \
     -v self="$(_sync_self_name)" \
@@ -287,7 +283,7 @@ ${_fmt_awk}
         model_display[model] = raw
 
       # Per-row spend increment, attributed to the model ACTIVE on this row.
-      # cost ($3) is the session-cumulative total (model-agnostic), so a per-model
+      # cost is the session-cumulative total (model-agnostic), so a per-model
       # cost series cannot be reconstructed — but each *increment* can be attributed
       # to whichever model was running when it was incurred. This fixes the
       # mixed-model-day bug where the whole-day delta was credited to the last
@@ -676,8 +672,9 @@ _cmd_cost() {
   fi
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 
-  # History (Flight Recorder) is the only data source — it carries correct
-  # daily-delta cost attribution. Monthly rotation: history-*.tsv + legacy
+  # History (Flight Recorder) is the primary data source — it carries correct
+  # daily-delta cost attribution; only sessions it has no rows for are priced
+  # from the insights caches (below). Monthly rotation: history-*.tsv + legacy
   # history.tsv. The old no-history fallback (summing cumulative session-cache
   # cost by file mtime) was removed in 0.21: it only ever applied before the
   # first statusline render wrote history, and its mtime-keyed "today"

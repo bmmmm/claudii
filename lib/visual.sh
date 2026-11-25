@@ -1,5 +1,5 @@
 # claudii visual language — POSIX-compatible (bash + zsh)
-# Symbol and color constants, plus a helper to print colored symbols.
+# Symbol and color constants, plus the theme loader that recolors them.
 # Source this file; never call it directly.
 
 # ── Symbols ──────────────────────────────────────────────────────────────────
@@ -19,8 +19,6 @@ CLAUDII_SYM_MONITORING="◎"      # incident: fix deployed, watching results
 CLAUDII_SYM_IDENTIFIED="⚐"     # incident: root cause found, fix in progress
 CLAUDII_SYM_INVESTIGATING="‼"  # incident: actively investigating, cause unknown
 CLAUDII_SYM_NOTE="ⓘ"           # incident note: status incident that does NOT affect any tracked model
-CLAUDII_SYM_VPN="⬡"         # VPN tunnel active (WireGuard)
-CLAUDII_SYM_TAILSCALE="⬢"   # Tailscale tunnel active
 CLAUDII_SYM_REPO="◆"        # github/gitlab repo (workspace.repo.* in CC 2.1.145+)
 CLAUDII_SYM_PACE_AHEAD="↑"  # pace: burning slower than linear (comfortable)
 CLAUDII_SYM_PACE_ON="="     # pace: on-pace (within ±15% of linear burn)
@@ -95,7 +93,9 @@ _claudii_theme_load() {
     fi
   fi
 
-  # 3. "default" theme = hardcoded values (already set at top of file) — skip jq
+  # 3. "default" theme = hardcoded values (already set at top of file) — skip jq.
+  # Its theme_presets entry in defaults.json is an empty object that only
+  # exists so `claudii config theme` lists and accepts the name.
   [ "$theme_name" = "default" ] && return 0
 
   # 4. Look up preset colors via jq from defaults file
@@ -110,7 +110,8 @@ _claudii_theme_load() {
   # Empty output means unknown preset — keep defaults
   [ -z "$colors" ] && return 0
 
-  # 5. Apply colors to CLAUDII_CLR_* variables
+  # 5. Apply colors to CLAUDII_CLR_* variables — these five keys are the whole
+  # preset schema; anything else under .colors is ignored.
   local line key code
   while IFS= read -r line; do
     key="${line%%=*}"

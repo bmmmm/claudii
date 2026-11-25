@@ -48,8 +48,7 @@ Written by `bin/claudii-status`. Two refreshers, both TTL-gated with PID-file de
    name in. A new dispatch arm goes red until the completions, the man page
    (`^name<TAB>` row) and the overview quick reference all carry it. Same
    for statusline segments.
-7. Wiki is auto-generated from the man page — never edit the wiki directly
-8. Update `CHANGELOG.md` unreleased block
+7. Update `CHANGELOG.md` unreleased block
 
 ## When removing or renaming a command
 

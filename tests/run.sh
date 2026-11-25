@@ -169,9 +169,11 @@ _run_single_test() {
     # session count by 12 and to pull avg API/session from 43m down to 39m.
     #
     # CLAUDII_CACHE_DIR is deliberately NOT set here. It outranks
-    # HOME/XDG_CACHE_HOME wherever it is read (lib/cmd/vpnii.sh:68 and the
-    # helpers), so a blanket value would defeat the tests that vary HOME per
-    # invocation on purpose — setting it turned 3 asserts in test_vpnii.sh red.
+    # HOME/XDG_CACHE_HOME wherever it is read, so a blanket value would defeat
+    # the tests that vary them per invocation on purpose: test_sync.sh plays
+    # several hosts that way (_sy), and one shared cache would merge them. The
+    # sandboxed XDG_CACHE_HOME already keeps the derived default out of the
+    # live cache.
     local _sandbox
     _sandbox=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_home.XXXXXX")
     export HOME="$_sandbox/home"
@@ -339,4 +341,5 @@ else
   echo ""
 fi
 
-exit $FAIL
+# Not `exit $FAIL`: exit codes are mod 256, so exactly 256 failures read as success.
+exit $(( FAIL > 0 ))

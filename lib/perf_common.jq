@@ -13,12 +13,9 @@ def toks($o; $d): if $d > 0 then ($o * 1000 / $d | floor) else 0 end;
 # Model name without the "[1m]" context-window suffix (endswith/slice instead
 # of a regex per row).
 def mname: if endswith("[1m]") then .[:-4] else . end;
-# Context-window bucket of a sample — numeric key for --json, sortable label
-# for the rendered rows. Keep the boundaries (50k/100k/200k/400k) in sync;
-# tests pin json/render label parity.
-def wkey_n: (.ctx // -1)
-  | if . < 0 then 9 elif . < 50000 then 1 elif . < 100000 then 2
-    elif . < 200000 then 3 elif . < 400000 then 4 else 5 end;
+# Context-window bucket of a sample: "<sort digit>_<label>" — the digit orders
+# the buckets in group_by, the label (.[2:]) is what both --json and the
+# rendered rows show. One definition, so the two cannot disagree.
 def wkey_s: (.ctx // -1)
   | if . < 0 then "9_unknown" elif . < 50000 then "1_<50k"
     elif . < 100000 then "2_50-100k" elif . < 200000 then "3_100-200k"

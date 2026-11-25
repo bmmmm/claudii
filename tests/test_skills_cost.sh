@@ -365,6 +365,56 @@ assert_eq "skills-cost per-model: sonnet-5-5 output at \$10/M"         "10.0000"
 assert_eq "skills-cost per-model: sonnet-5-5 cache create at \$2.50/M" "2.5000"  "$(_sc_pm_cell sonnet55cc-skill)"
 unset -f _sc_pm_cell
 
+# ── Test 11b: pre-4.5 list prices — their own tiers, not the family rate ─────
+# Opus 4 / 4.1 and Claude 3 Opus bill $15/$75 (Opus fell to $5/$25 only with
+# 4.5), Claude 3.5 Haiku $0.80/$4, Claude 3 Haiku $0.25/$1.25 with its own
+# cache prices ($0.03 read, $0.30 / $0.50 writes — not the 0.1x/1.25x/2x
+# multiples). They all used to land on "opus" ($5/$25) or "haiku-legacy"
+# ($1/$5). One bucket of 1M tokens per column; opus45 pins that the 4.5 minor
+# does not fall into the new branch, opus4date that a dated snapshot does.
+# Rows: name|model|in|out|cache_read|cache_create|cache_create_1h|expected $
+_SC_LP_ROWS='
+opus41-skill|claude-opus-4-1-20250805|1000000|0|0|0|0|15.0000
+opus41out-skill|claude-opus-4-1|0|1000000|0|0|0|75.0000
+opus41cr-skill|claude-opus-4-1|0|0|1000000|0|0|1.5000
+opus41cc-skill|claude-opus-4-1|0|0|0|1000000|0|18.7500
+opus41cc1h-skill|claude-opus-4-1|0|0|0|1000000|1000000|30.0000
+opus4date-skill|claude-opus-4-20250514|1000000|0|0|0|0|15.0000
+opus3-skill|claude-3-opus-20240229|1000000|0|0|0|0|15.0000
+opus45-skill|claude-opus-4-5-20251101|1000000|0|0|0|0|5.0000
+haiku35-skill|claude-3-5-haiku-20241022|1000000|0|0|0|0|0.8000
+haiku35out-skill|claude-3-5-haiku-20241022|0|1000000|0|0|0|4.0000
+haiku35cr-skill|claude-3-5-haiku-20241022|0|0|1000000|0|0|0.0800
+haiku35cc1h-skill|claude-3-5-haiku-20241022|0|0|0|1000000|1000000|1.6000
+haiku3-skill|claude-3-haiku-20240307|1000000|0|0|0|0|0.2500
+haiku3out-skill|claude-3-haiku-20240307|0|1000000|0|0|0|1.2500
+haiku3cr-skill|claude-3-haiku-20240307|0|0|1000000|0|0|0.0300
+haiku3cc-skill|claude-3-haiku-20240307|0|0|0|1000000|0|0.3000
+haiku3cc1h-skill|claude-3-haiku-20240307|0|0|0|1000000|1000000|0.5000
+haiku45-skill|claude-haiku-4-5|1000000|0|0|0|0|1.0000
+'
+_SC_LP_CACHE="$(mktemp -d)"; _SC_TMPDIRS+=("$_SC_LP_CACHE")
+mkdir -p "$_SC_LP_CACHE/insights"
+_sc_lp_skills='{}' _sc_lp_models='{}'
+while IFS='|' read -r _n _m _i _o _cr _cc _cc1h _exp; do
+  [[ -z "$_n" ]] && continue
+  _sc_lp_b="{\"calls\":1,\"in_tok\":$_i,\"out_tok\":$_o,\"cache_read\":$_cr,\"cache_create\":$_cc,\"cache_create_1h\":$_cc1h}"
+  _sc_lp_skills=$(jq -c --arg n "$_n" --argjson b "$_sc_lp_b" '. + {($n): $b}' <<< "$_sc_lp_skills")
+  _sc_lp_models=$(jq -c --arg k "skill|$_n|$_m" --argjson b "$_sc_lp_b" '. + {($k): $b}' <<< "$_sc_lp_models")
+done <<< "$_SC_LP_ROWS"
+_sc_write_fixture "$_SC_LP_CACHE/insights/sess-lp.json" "$_sc_lp_skills" '{}' '{}' "$_sc_lp_models"
+_sc_lp_json=$(CLAUDII_CACHE_DIR="$_SC_LP_CACHE" bash "$CLAUDII_HOME/bin/claudii" skills-cost --json 2>&1)
+while IFS='|' read -r _n _m _i _o _cr _cc _cc1h _exp; do
+  [[ -z "$_n" ]] && continue
+  assert_eq "skills-cost list price: $_n ($_m) == \$$_exp" "$_exp" \
+    "$(jq -r --arg n "$_n" '.rows[] | select(.name==$n) | .tot_usd' <<< "$_sc_lp_json" 2>/dev/null \
+       | LC_ALL=C awk '{printf "%.4f", $1}')"
+done <<< "$_SC_LP_ROWS"
+assert_contains "skills-cost meta.pricing names the Opus 4/4.1 rate" "Opus 4/4.1 and 3 \$15/\$75/M" \
+  "$(jq -r '.meta.pricing' <<< "$_sc_lp_json" 2>/dev/null)"
+unset _SC_LP_ROWS _SC_LP_CACHE _sc_lp_skills _sc_lp_models _sc_lp_b _sc_lp_json \
+      _n _m _i _o _cr _cc _cc1h _exp
+
 # ── Test 12: residual pricing — pre-v5 tokens (no per-model split) → Sonnet ───
 # Aggregate in_tok 1M; attribution_models covers only 600K on opus (v5), leaving
 # a 400K residual with no per-model attribution (the orphaned-v4 case). Cost =
@@ -496,15 +546,17 @@ assert_eq "skills-cost TTL: mixed split bills each part at its own rate (\$7.25)
 assert_eq "skills-cost TTL: total without a split falls back to the 5m rate (\$5/M)"  "5.0000" "$(_sc_ttl_cell ttlbare-skill)"
 assert_contains "skills-cost TTL: meta.pricing states the 1h rate" "2x for 1-hour" \
   "$(jq -r '.meta.pricing' <<< "$_sc_ttl_json" 2>/dev/null)"
-# The write multipliers have no exceptions — Anthropic's pricing table bills
-# 1.25× input (5m) and 2× (1h) on every model; the cache READ is the column
-# that varies. Check them on every _rates row, so a typo in one tier's cc or
-# cc1h goes red even where no bucket above prices that tier.
+# The write multipliers have one exception — Anthropic's pricing table bills
+# 1.25× input (5m) and 2× (1h) on every model but Claude 3 Haiku, whose 5m
+# write is $0.30 on a $0.25 input (1.2×; the 2× 1h write holds); the cache
+# READ is the column that varies. Check them on every _rates row, so a typo
+# in one tier's cc or cc1h goes red even where no bucket above prices that
+# tier. haiku-3's own cc is pinned by its list-price bucket in Test 11b.
 _sc_rates=$(sed -n "/^_CLAUDII_RATES='{/,/^}'/p" "$CLAUDII_HOME/lib/cmd/skills-cost.sh" \
   | sed -e "s/^_CLAUDII_RATES='{/{/" -e "s/^}'.*/}/")
 assert_eq "skills-cost _rates: every tier writes at 1.25x (cc) and 2x (cc1h) input" "ok" \
   "$(jq -r 'if length == 0 then "no rows parsed"
-            else [to_entries[] | select((.value.cc / .value.in - 1.25 | fabs) > 1e-9
+            else [to_entries[] | select(((.value.cc / .value.in - 1.25 | fabs) > 1e-9 and .key != "haiku-3")
                                         or (.value.cc1h / .value.in - 2 | fabs) > 1e-9) | .key]
                  | if length == 0 then "ok" else "off: " + join(", ") end end' <<< "$_sc_rates" 2>&1)"
 unset -f _sc_ttl_rec _sc_ttl_cell

@@ -13,6 +13,17 @@
 # Variables (passed via -v): emit, today, week_start, last_mon, last_sun,
 #   thirty, week_days, fmt, cyan, dim, pink, reset
 # Fields it needs in `emit`: day model cost sid in out api
+#
+# Two different weeks, both bound in _cmd_trends (lib/cmd/display.sh):
+#   week_start          today-6 — the ROLLING 7 days the chart, "7d total",
+#                       "avg API" and this_week* cover
+#   last_mon..last_sun  first/last day of the previous full CALENDAR week,
+#                       which starts on cost.week_start — with week_start=sun
+#                       "last_mon" is a Sunday; the names are the call site's.
+#                       Only the JSON last_week object reads them, and it
+#                       carries the two dates as from/to.
+# Session totals over a window count each session once, not once per day it
+# was active (day_sessions[] is the per-day count the daily rows show).
 
 BEGIN {
   # Without HR[] every $(HR[...]) below would degrade to $0 — a report that is
@@ -56,11 +67,16 @@ BEGIN {
   api_delta = attr_delta(api_baseline, sid, api_dur)
   if (api_delta > 0) day_api[day] += api_delta
 
+  # Distinct sessions per window, for the "7d total" row, the avg API
+  # divisor and last_week.sessions. Summing day_sessions[] instead counted a
+  # session once per day it ran, so a 3-day session tripled the divisor.
+  if (day >= week_start && !(sid in tw_sid_seen)) { tw_sid_seen[sid] = 1; ++tw_sessions }
+  if (day >= last_mon && day <= last_sun && !(sid in lw_sid_seen)) { lw_sid_seen[sid] = 1; ++lw_sessions }
+
   # Count each session once per (day, sid) for session counts and model split
   if (!((sid, day) in session_day_seen)) {
     session_day_seen[sid, day] = 1
     day_sessions[day]++
-    day_model_sessions[day, model]++
 
     if (day >= thirty && !((sid, "30d") in session_30d_seen)) {
       session_30d_seen[sid, "30d"] = 1
@@ -73,11 +89,13 @@ END {
   if (hr_missing) exit 2
 
   # ── Window aggregates ──
-  tw_cost = 0; tw_sessions = 0; tw_tok = 0; tw_api_ms = 0
-  lw_cost = 0; lw_sessions = 0; lw_tok = 0
+  # tw_sessions / lw_sessions: distinct sessions, counted in the main pass.
+  tw_cost = 0; tw_tok = 0; tw_api_ms = 0
+  lw_cost = 0; lw_tok = 0
+  tw_sessions += 0; lw_sessions += 0
   for (d in day_cost) {
-    if (d >= week_start) { tw_cost += day_cost[d]; tw_sessions += day_sessions[d] }
-    if (d >= last_mon && d <= last_sun) { lw_cost += day_cost[d]; lw_sessions += day_sessions[d] }
+    if (d >= week_start) tw_cost += day_cost[d]
+    if (d >= last_mon && d <= last_sun) lw_cost += day_cost[d]
   }
   for (d in day_tok) {
     if (d >= week_start) tw_tok += day_tok[d]
@@ -88,12 +106,6 @@ END {
   # Cost-based costliest day (30d) — kept only for the JSON contract.
   max_day_cost = 0; max_day = ""
   for (d in day_cost) if (d >= thirty && day_cost[d] > max_day_cost) { max_day_cost = day_cost[d]; max_day = d }
-
-  # tw_model_sessions (day_model_sessions keyed by day,model) — JSON only.
-  for (combo in day_model_sessions) {
-    split(combo, cp, SUBSEP)
-    if (cp[1] >= week_start) tw_model_sessions[cp[2]] += day_model_sessions[combo]
-  }
 
   # Parse week_days "date:name,..." into wd_date[1..n] / wd_name[1..n]
   n_days = split(week_days, _wd_parts, ",")
@@ -114,7 +126,10 @@ END {
     }
     printf "],"
     printf "\"this_week_total\":%.2f,\"this_week_tokens\":%d,", tw_cost, tw_tok
-    printf "\"last_week\":{\"cost\":%.2f,\"tokens\":%d,\"sessions\":%d},", lw_cost, lw_tok, lw_sessions
+    # last_week is the previous full calendar week (from/to), NOT the 7 days
+    # before this_week — the key name stays for the JSON contract.
+    printf "\"last_week\":{\"from\":\"%s\",\"to\":\"%s\",\"cost\":%.2f,\"tokens\":%d,\"sessions\":%d},", \
+      last_mon, last_sun, lw_cost, lw_tok, lw_sessions
     printf "\"model_split_30d\":{"
     first = 1
     for (m in model_sessions_30d) {
@@ -224,7 +239,8 @@ END {
     printf "  %sBusiest%s   %s %d \302\267 %s%s tok%s\n", \
       pink, reset, _mn[_md[2] + 0], _md[3] + 0, cyan, fmt_tok(max_tok), reset
   }
-  # avg API duration per session over the 7d window
+  # avg API duration per session over the 7d window — distinct sessions, so
+  # a session running across several days is one session, not several
   if (tw_sessions > 0 && tw_api_ms > 0) {
     avg_min = int(tw_api_ms / tw_sessions / 60000 + 0.5)
     if (avg_min >= 1) printf "  %savg API%s   %dm/session (7d)\n", pink, reset, avg_min

@@ -1,4 +1,4 @@
-.\" claudii manual — auto-synced to wiki via GitHub Actions
+.\" claudii manual — the single source of the CLI documentation
 .TH CLAUDII 1 "September 2, 2026" "claudii 0.29.0" "claudii manual"
 .
 .SH NAME
@@ -118,6 +118,12 @@ Show the alias table and run a live model health check.
 .B clorch / cle
 Example agent aliases — see
 .BR "claudii agents" .
+None ship by default
+.RB ( agents
+is empty). Each configured agent becomes a shell function of its name,
+unless the shell already resolves that name \(em a command, builtin, alias,
+reserved word or another function; such an agent is skipped and logged at
+.BR debug.level " warn."
 .
 .SH OPTIONS
 .TP
@@ -134,11 +140,7 @@ Available for:
 .BR \-h ", " \-\-help
 Print the command's own usage and exit 0 \(em for the commands under the exit
 status contract below. The rest still answer their own older conventions:
-.BR config
-prints the config,
-.B sessions
-ignores the flag, and
-.BR claudestatus ", " gc ", " pin " and " status
+.BR claudestatus " and " status
 print a usage line but exit 1.
 .PP
 When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
@@ -166,15 +168,9 @@ spec. Reported as
 .RB \(lq "claudii " cmd ": unknown option: " arg \(rq
 on standard error, never on standard output.
 .PP
-29 of the 46 dispatched commands are under this contract. The others
-.RB ( cc-statusline ", " claudestatus ", " config ", " dashboard ", " gc ,
-.BR insomnii ", " omlx ", " pin ", " search ", " session ,
-.BR session-dashboard ", " sessionline ", " sessions ", " status ,
-.BR unpin ", " vibemap ", " vpnii )
-still exit 0 or 1 on a bad argument. The list only shrinks:
+Every dispatched command is under this contract;
 .I tests/test_arg_contract.sh
-holds it as a ratchet and turns red if one is converted without being removed
-from it.
+walks the dispatch table and probes each one.
 .
 .SH DISPLAY LAYERS
 Three separate layers each serve a different scope:
@@ -182,14 +178,14 @@ Three separate layers each serve a different scope:
 .B ClaudeStatus (RPROMPT)
 Model health in the right-hand shell prompt. When every tracked model is
 healthy it collapses to a single
-.B claude \(dg
+.B claude \[u2713]
 \(em an unnamed model is assumed working. Only down or degraded models are
 named (Fable included); a plane-wide outage collapses to
 .BR "claude \(da" .
 Reads a local cache — no network calls in
 .IR precmd .
 Indicators:
-.B \(dg
+.B \[u2713]
 = ok,
 .B \(ti
 = degraded,
@@ -216,7 +212,12 @@ instead of an alarm.
 .TP
 .B Session Dashboard (above prompt)
 Per-session summary lines above the prompt, rendered via the precmd hook.
-Shows model, context %, token throughput, 5h rate limit + countdown.
+Each session line shows model, context % and token throughput. One extra line
+shows the account-wide 5h rate limit and its reset countdown (e.g.
+.BR 5h:63% " \[u21BA]4h9m" ),
+taken from the newest session sample whose window is still open \(em never one
+value per session. The number follows
+.BR statusline.rate_display .
 Only shown after
 .B claudii
 commands; suppressed after
@@ -286,8 +287,6 @@ Without argument: show current state.
 .BR "session-dashboard " [on|off]
 Toggle only the Session Dashboard above the prompt.
 Without argument: show current state.
-Deprecated alias:
-.BR dashboard .
 .TP
 .BR "cc-statusline " [on|off]
 Toggle only the CC-Statusline inside Claude Code.
@@ -394,6 +393,12 @@ Supports
 .BR \-\-json " and " \-\-tsv .
 Aliases:
 .BR se ", " ss .
+.br
+Usage:
+.BR "claudii sessions" " [" \-\-json " | " \-\-tsv "]"
+.br
+.B \-h
+prints it. Any other option exits 2.
 .TP
 .BI "sessions \-\-resume " id
 Resume a session by ID.
@@ -403,6 +408,7 @@ Equivalent to
 .B sessions-inactive
 Inactive (ended or stale) sessions with age, context, and rate-limit data.
 Shows badges: pinned, stale, or idle.
+Takes no arguments (an option exits 2).
 Alias:
 .BR si .
 .TP
@@ -420,12 +426,24 @@ token data and the context bar is omitted.
 .BI "pin " session-id
 Protect an inactive session from garbage collection.
 Matches by session ID substring (first match wins).
+Usage:
+.BI "claudii pin " session-id
+a dashed word is an option, never an id: \fB\-h\fR prints the usage, anything
+else exits 2.
 .TP
 .BI "unpin " session-id
 Remove GC protection from a pinned session.
+Same argument rules as
+.BR pin .
 .TP
 .B gc
 Remove stale session cache files.
+Usage:
+.RB "claudii gc [" "\-\-insights " DAYS " [" \-\-yes "]]"
+.B \-h
+prints it, any other argument (including a second
+.BR gc )
+exits 2.
 Pinned sessions are never removed.
 Run
 .B claudii si
@@ -716,9 +734,12 @@ counts both; the split comes from the transcript's
 (insights schema v11). Writes without it \(em caches built before v11,
 sessions whose transcript is gone \(em bill at the 5-minute rate.
 Version-aware within a tier:
-Sonnet 4.x / 3.x, Haiku 4.x / 3.x and Fable 5 keep their own older rates, and Opus 5.5 (now
-the default Opus) carries the newer, cheaper rate while older Opus ids keep the
-existing one. Haiku 5.5 is priced per request: $0.10/$0.50/M, and 5\(mu that
+Sonnet 4.x / 3.x, Haiku 4.x and Fable 5 keep their own older rates, and Opus 5.5 (now
+the default Opus) carries the newer, cheaper rate while Opus 4.5 to 5.1 keep
+$5/$25/M. The models before that bill their own list price: Opus 4 / 4.1 and
+Claude 3 Opus $15/$75/M, Claude 3.5 Haiku $0.80/$4/M, Claude 3 Haiku
+$0.25/$1.25/M (its cache columns are its own: read $0.03/M, writes
+$0.30/$0.50/M). Haiku 5.5 is priced per request: $0.10/$0.50/M, and 5\(mu that
 ($0.50/$2.50/M, every column) for a request whose prompt \(em input plus cache
 reads and cache writes \(em is over 100,000 tokens. The split is taken per
 response when the cache is built (insights schema v14); caches from before it
@@ -733,11 +754,26 @@ documents the rates and the residual fallback.
 Token-primary rolling 7-day chart: daily token bars (normalized to the busiest
 day) with spend as a dim side column, a 30-day model split by tokens, busiest
 day, average API duration per session, and the 7d-vs-30d token trend.
+A daily row counts the sessions active that day; the
+.B 7d total
+row and the API average count each session once, however many days it ran.
 Reads from
 .I ~/.cache/claudii/history-YYYY-MM.tsv
 (written by the CC-Statusline handler).
 Supports
-.BR \-\-json .
+.BR \-\-json :
+.B this_week
+is the rolling 7 days,
+.B last_week
+the previous full calendar week (it starts on
+.BR cost.week_start ),
+with its first and last day as
+.B from
+and
+.BR to ;
+its
+.B sessions
+counts distinct sessions.
 Alias:
 .BR t .
 .TP
@@ -904,6 +940,10 @@ of the formatted tables.
 Prompt-cache hit rate per day and per model (default: 7-day window).
 Aggregated from JSONL transcripts under
 .IR ~/.claude/projects .
+The per-day rows, the per-model split and the summary are all floored to
+exactly the window's calendar days, as in
+.BR tokens ;
+a session that started earlier contributes only its days inside the window.
 First run is slower (5\(en30 s) while the cache warms; subsequent runs
 only re-aggregate changed sessions.
 .RS
@@ -957,7 +997,9 @@ signal), a
 breakdown, and a one-line
 .B API health
 read from the ClaudeStatus cache. Throughput is output tokens over end-to-end
-time (includes wait).
+time (includes wait). Only this host's sessions count, with or without
+.B sync
+(see Several Hosts and Accounts).
 .PP
 With the optional OpenTelemetry source enabled
 .RB ( "claudii\-otel setup" ,
@@ -979,16 +1021,30 @@ breakdown by HTTP status code from
 events. The local receiver
 .RB ( "claudii\-otel receiver" )
 captures Claude Code's OTLP/JSON export under
-.IR ~/.cache/claudii/otel/ ;
-by default nothing leaves the machine. Setting
+.I otel/
+in the claudii cache
+.RI ( ~/.cache/claudii/otel/ ,
+or
+.B CLAUDII_CACHE_DIR
+when set). It listens on
+.IR perf.otel.endpoint ,
+the same URL Claude Code exports to, so the endpoint must be loopback with an
+explicit port
+(\fBhttp://127.0.0.1:\fIPORT\fR or \fBhttp://localhost:\fIPORT\fR);
+setup and the receiver refuse anything else. By default nothing leaves the
+machine. Setting
 .I perf.otel.forward
 to an internal collector URL makes the receiver additionally mirror each batch
 there (best-effort, for central retention on a shared gateway); claudii itself
 still reads only the local file. The active source is shown in the header
 .RB ( "source: otel" " vs " "source: transcript" ).
 .B claudii\-otel doctor
-reports whether the receiver, launchd job, and config flag agree and how fresh
-the captured data is \(em the first stop when
+reports whether the config flag,
+.IR otel.env ,
+the receiver (and the address it listens on) and the launchd job agree \(em
+each disagreement is a
+.B MISMATCH
+line \(em and how fresh the captured data is; the first stop when
 .B perf
 still shows
 .BR "source: transcript" .
@@ -1021,7 +1077,15 @@ does it on demand). The receiver also keeps
 .B doctor
 compares that sha with the repo's receiver and reports
 .B DRIFT
-when a stale copy is running. A capture from claudii 0.28 or earlier
+when a stale copy is running. Only OTLP requests are accepted \(em a POST to
+.IR /v1/logs ", " /v1/traces " or " /v1/metrics
+with a loopback Host header, JSON or protobuf, at most 32 MiB on the wire and
+after gzip decoding; anything else is refused, stores and forwards nothing,
+and is counted
+.RB ( REJECTED
+in
+.BR doctor ).
+A capture from claudii 0.28 or earlier
 .RI ( traces.jsonl / logs.jsonl )
 is not read any more;
 .B doctor
@@ -1064,6 +1128,11 @@ instead of the formatted tables.
 .TP
 .B config
 Show all config values.
+Usage:
+.RB "claudii config [" get | set | reset | export | import | theme "]"
+.br
+.B \-h
+prints it. An unknown subcommand exits 2 \(em it no longer prints the config.
 .TP
 .BI "config get " key
 Read a value using dot-notation.
@@ -1095,13 +1164,18 @@ Available:
 .B default
 (magenta accent, standard ANSI) and
 .B pastel
-(softer 256-color palette).
+(softer 256-color palette), or
+.B auto
+(pastel on a light terminal, default on a dark one \(em detected from
+.B COLORFGBG
+or the terminal program at each start).
 Stored as
 .B theme.name
 in
 .IR config.json .
 .TP
 .B agents
+Takes no arguments (an option exits 2).
 List configured agents as a table with columns
 .IR ALIAS ", " SKILL ", " MODEL ", " EFFORT ", " DESCRIPTION .
 With no agents configured, shows onboarding instructions instead.
@@ -1117,7 +1191,7 @@ claudii config set agents.clorch.description "Orchestrator"
 .fi
 .RE
 .TP
-.BI "search " "['query']"
+.BI "search " "['query'] [-- claude-flags]"
 Launch Claude Code in the configured search directory
 .RI ( search.dir ,
 default
@@ -1131,82 +1205,14 @@ from the start directory upwards.
 If a
 .I query
 is provided it is passed as the initial prompt.
-.
-.SS Local LLM (omlx / gateii)
-.TP
-.B "omlx status"
-Show whether the omlx segment is wired in, the
-.I active.json
-path, and oMLX server reachability.
-.TP
-.B "omlx connect"
-Detect a gateii install, store the path, and probe the server.
-.TP
-.B "omlx test"
-Render the cc-statusline against a synthetic
-.I active.json
-with the omlx segment.
-.TP
-.B "omlx disconnect"
-Remove the
-.B omlx
-entry from any custom
-.B statusline.lines
-layout.
-.PP
-Override the
-.I active.json
-path via
-.B CLAUDII_OMLX_ACTIVE
-or config key
-.BR statusline.omlx_active_path .
-.
-.SS VPN State (vpnii)
-Shows the active WireGuard tunnel name in the cc-statusline and RPROMPT.
-State file:
-.IR ~/.cache/claudii/vpnii .
-.B claudii vpnii
-wraps write/clear with privilege drop so the file is always user-owned.
-.PP
-Recommended wg-quick config:
-.PP
-.RS
-.EX
-[Interface]
-\&...
-PostUp  = claudii vpnii set HomeLab
-PreDown = claudii vpnii clear
-.EE
-.RE
-.TP
-.BI "vpnii set " "<name>"
-Mark tunnel
-.I name
-as active.
-Resolves the target user via
-.B SUDO_USER
-\(rA console owner \(rA
-.B $USER
-\(rA
-.BR CLAUDII_USER .
-.TP
-.B "vpnii clear"
-Remove the state file.
-Aliases:
-.BR "vpnii down" ", " "vpnii off" .
-.TP
-.B "vpnii show"
-Print the current tunnel name, or
-.I "no tunnel"
-when none is set.
-Alias:
-.BR "vpnii status" .
-.PP
-Tailscale is detected separately via interface scan
-(IPv4 in 100.64.0.0/10) and needs no state file \(em it renders as its own
-.B tailscale
-statusline segment, independent of
-.BR vpn .
+An option exits 2 (nothing is started) unless it follows a bare
+.BR \-\- :
+everything after that goes to
+.B claude
+untouched, e.g.
+.BR "claudii search \-\- \-\-continue" .
+.B \-h
+prints the usage.
 .
 .SS Several Hosts and Accounts (sync)
 Puts the sessions of other machines and accounts into this claudii's numbers.
@@ -1214,6 +1220,10 @@ Puts the sessions of other machines and accounts into this claudii's numbers.
 and
 .B session
 then count every synced host as if its sessions had run here.
+.B perf
+stays on this host: its OpenTelemetry source never leaves the machine, and
+response times measured over different networks do not belong in one
+percentile.
 .PP
 What travels is claudii's own condensed data, never a transcript: the
 per-session insights caches, the Flight Recorder history and the live-session
@@ -1322,6 +1332,10 @@ Schema:
 No prompt content is recorded.
 .TP
 .B vibemap
+Usage:
+.BR "claudii vibemap" " [" strip | grid | status | path | clear | help "]"
+.br
+An unknown subcommand or option exits 2.
 Last 30 days \[mu] 24-hour strip (default view).
 Today\[aq]s row is highlighted with a \[u25B6] marker and a cursor at the current hour.
 .TP
@@ -1350,8 +1364,16 @@ Enable:
 .TP
 .B explain
 Component overview with current status, data flow, and symbol legend.
-Aliases:
-.BR layers ", " components .
+The RPROMPT example and legend mirror the real prompt: models that share one
+state collapse to a single
+.B claude \[u2713]
+(or
+.BR "claude \(ti" ,
+.BR "claude \(da" ),
+and a mix lists only the affected models. Incident stages follow as
+\[u203C] (investigating), \[u2690] (identified), \[u25CE] (monitoring) and
+\[u24D8] (an incident touching none of the tracked models).
+Takes no arguments (an option exits 2).
 .TP
 .B restart
 Reload the plugin by sourcing
@@ -1379,7 +1401,9 @@ Alias:
 .TP
 .B doctor
 Installation health check: Claude Code, jq, CC-Statusline config, cache directory,
-completions, plugin load, cc-insomnii state, and version.
+completions, whether the calling shell has the plugin loaded (it exports
+.BR CLAUDII_HOME ),
+cc-insomnii state, and version.
 Supports
 .BR \-\-json .
 Alias:
@@ -1419,28 +1443,28 @@ context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2
 compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
 cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Native \fIprompt_cache.hit_ratio\fR on Claude Code 2.1.251+, derived from the context window on older builds
 cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price; a miss on the last request names its cause (\[u2668]4m\[u00B7]miss:tools, CC 2.1.260+). See below. Requires Claude Code 2.1.251+
-idle-compact	\[u21F2]\[u25D4] idle 16:30 \[u00B7] 38m	What happens if you stay away: the time Claude Code compacts the idle conversation (\[u21F2], 1h cache, >= 200K), else the time the prompt cache goes cold (\[u2668]). Glyph fills and colour warms toward it; animates with statusLine.refreshInterval. Opt-in. See below. Requires Claude Code 2.1.251+ (compaction: 2.1.290+)
+idle-compact	\[u21F2]\[u25D4] idle 16:30 \[u00B7] 38m	What happens if you stay away: the time Claude Code compacts the idle conversation (\[u21F2], 1h cache, >= 200K), else the time the prompt cache goes cold (\[u2668]). Glyph fills and colour warms toward it; animates with statusLine.refreshInterval. Opt-in. See below. Requires Claude Code 2.1.251+ (compaction on by default: 2.1.332+)
 response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
-rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
+rate-5h	5h:17% \[u21BA]4h9m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
 cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
-tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M/B suffixes
+tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M suffixes
 lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
-duration	1h 23m	Wall-clock session duration (dim)
+duration	\[u23F1] 1h23m	Wall-clock session duration (dim)
 api-duration	api:45m	Time waiting for Claude API responses (dim)
-burn-eta	ETA:180m	Estimated time until 5h limit exhausted (dim; requires >= 3 min session)
-pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs linear: \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
+burn-eta	ETA:180m	Estimated time until the 5h limit is used up at the window's average rate so far (dim). Counts the window's elapsed time, not the session's; needs the reset time and >= 3 min into the window; omitted when the window resets first
+pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs a linear burn across the 5h window (same inputs as burn-eta): \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
 cron	\[u23F0] 42m	Time until next scheduled cron run (from Stop-hook session_crons). Opt-in only.
 bg-tasks	\[u2699] 2bg	Number of background tasks pending (from Stop-hook bg_tasks). Opt-in only.
 compactions	\[u267B]2	Compactions this session survived (detected via context-usage collapse). Opt-in only.
-delta-5h	\[u03B4]5h:+12%	5h rate change since session start
-delta-7d	\[u03B4]7d:+3%	7d rate change since session start
+delta-5h	\[u0394]5h:+12%	5h rate change since session start; restarts with a new 5h window
+delta-7d	\[u0394]7d:+3%	7d rate change since session start; restarts with a new 7d window
 cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
 session-name	my-feature	Custom session name (from /rename or --name)
-worktree	feat/login \[u23B7] main	Worktree + branch (dim) \(em the one this session runs in
+worktree	feat/login \[u2387] main	Worktree + branch (dim) \(em the one this session runs in
 worktrees	\[u2442]3 \[u232B]1	Linked worktrees in this repo (cyan), prunable ones called out as \[u232B]P (yellow). See below
 dir	\[u2302] my-app	Working directory basename (dim)
-github	\[u25C6] bmmmm/claudii #42	GitHub repo + active PR number (Claude Code 2.1.145+)
+github	\[u25C6] bmmmm/claudii #42	GitHub repo (Claude Code 2.1.145+) + active PR number (\fIpr.number\fR, Claude Code 2.1.332+; older builds: \fIworkspace.repo.pr_number\fR)
 remotes	\[u21E1]fj\[u00B7]gh	Where the repo is published (from git remotes) \(em \fBfj\fR self-hosted forge (any non-GitHub host) / \fBgh\fR GitHub / \fBlocal\fR no remote
 git-sync	\[u25CF]2 \[u2191]1 \[u2193]1	Working-copy sync state vs.\& upstream. See the colour key below
 branch	\[u2387] main	Current branch (dim; yellow when uncommitted work sits on main/master/trunk, or on a detached HEAD). See below
@@ -1448,11 +1472,9 @@ ci	CI \[u2713]	Newest GitHub Actions run on this branch. See below
 sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.lines\fR): yellow \[u26A0]N for N OTHER live Claude Code sessions working in the same project/repo \(em including sessions in subdirectories or \fB.claude/worktrees/*\fR of it \(em so a session notices a parallel one moving git state under it. Empty when alone. Reads the existing per-session cache files (no process polling); the file scan only runs when \fBsessions\fR is in the active layout.
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
-vpn	\[u2B21] HomeLab	Active WireGuard tunnel name, from the \fBvpnii\fR state file. Empty when no tunnel is active
-tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Its own segment \(em not glued to \fBvpn\fR \(em so the two can sit on different lines
-claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
-omlx	\[u26A1] digest qwen3-30b-a3b 42s	Active local-agent run from \fBgateii\fR's \fIactive.json\fR \(em task, model and age. Hidden once the run is older than 300s
-proxy	\[u21C4] gateii	Where this session's API traffic goes, read from \fIANTHROPIC_BASE_URL\fR in the project's \fB.claude/settings.local.json\fR (\fBgateii\fR for localhost:8888, otherwise the host). Dim \[u2192] api when that file exists without the key; empty when it does not
+tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Empty when no interface holds a tailnet address
+claude-status	[claude \[u2713]] 3m	Model health from the ClaudeStatus cache for the models in \fBstatusline.models\fR: \fBclaude\fR \[u2713] when all are up (\[u2193] all down, ~ all degraded), otherwise only the affected ones, e.g. [Opus \[u2193] Haiku ~]; then the cache age and the incident glyph described under ClaudeStatus (RPROMPT). Auto-refreshes when older than status.cache_ttl
+proxy	\[u21C4] localhost:8888	Where this session's API traffic goes: host and port of \fIANTHROPIC_BASE_URL\fR, from the environment Claude Code passes on (settings \fBenv\fR included), else the project's \fB.claude/settings.local.json\fR. Never shows credentials or the path; empty when no base URL is set
 bumpii	\[u2B06] 2 \[u2709] 8	Pending tool updates and unread release news, from the \fBbumpii\fR(1)-backed cache. Opt-in. See below
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
 .TE
@@ -1511,19 +1533,23 @@ recent release tags, not a version-number diff \(em because Claude Code's
 release numbers are not sequential (a tag gets skipped/yanked now and then),
 so
 .RI "\[u201C]" 2.1.233\ vs.\&\ 2.1.231 "\[u201D] "
-is not reliably \[u201C]2 releases\[u201D]. A
+is not reliably \[u201C]2 releases\[u201D]. An older version missing from
+the list counts the listed releases newer than it. A
 .B +?
-means the installed version fell out of the cached window \(em definitely
-outdated, count unknown \(em rather than a fabricated number. No cache yet
-(first run, or the background check never having succeeded) renders the
-plain dim version, same as up to date, until there is an actual answer. No
-render ever makes a network call:
+means the installed version is older than the whole cached window \(em
+definitely outdated, count unknown \(em rather than a fabricated number. A
+version newer than the cached latest (a release the cache has not seen yet)
+or one that does not compare as dotted digits (a pre-release suffix) renders
+plain dim, as current. No cache yet (first run, or the background check
+never having succeeded) renders the plain dim version too, until there is
+an actual answer. No render ever makes a network call:
 .BR claudii-cc-update-refresh (1)
 maintains
 .I status-cc-version
 in the background under the TTL
 .RB ( cc_version.cache_ttl ,
-default 3600s), asking GitHub's public releases API for
+default 3600s; at most 300s while the installed version is newer than the
+cached latest), asking GitHub's public releases API for
 .IR anthropics/claude-code .
 The cache schema (
 .IR latest= / tags= / checked= )
@@ -1679,28 +1705,17 @@ what happens if you leave the session alone \(em and when. Two cases, one
 segment:
 .IP
 .B \[u21F2] idle
-\(em Claude Code will compact the conversation on its own. Claude Code
-2.1.290+ does that about 54 minutes after the last request, shortly before
-its prompt cache expires, when all of these hold: Anthropic has the feature
-switched on for the account (the cached feature flag
-.I tengu_sunny_locket
-in
-.B ~/.claude.json
-has mode
-.B compact
-or, since 2.1.300,
-.B compact_on_return
-\(em the summary is written at that time and swapped in when you come back,
-which also needs
-.B precomputeCompactionEnabled
-(default true); absent or
-.B log
-means off); the conversation is on the one-hour cache TTL
+\(em Claude Code will compact the conversation on its own. Since 2.1.332 it
+does that by default, about 54 minutes after the last request, shortly before
+its prompt cache expires, when all of these hold: the conversation is on the
+one-hour cache TTL
 .RI ( prompt_cache.ttl " = 1h);"
 its context \(em the last request's input, cache and output tokens \(em holds
 at least
 .B CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS
-tokens (else the flag's minTokens, else 200000; never below 100000);
+tokens (else 200000; never below 100000; read like Claude Code reads it:
+plain digits, digit groups such as 150_000 or 150,000, or a whole number in
+scientific notation such as 1.5e5 \(em anything else is ignored);
 .B DISABLE_COMPACT
 and
 .B DISABLE_AUTO_COMPACT
@@ -1716,22 +1731,14 @@ when no settings file sets it); and Claude Code would not skip it for the
 rate limit \(em a used-up 5h or 7d limit, or the warning band it derives from
 the same used percentage and reset time (5h: 90% used while at most 72% of the
 window has passed; 7d: 75%, 50% or 25% while at most 60%, 35% or 15% has
-passed; the payload rounds to one decimal, so a value within 0.05 points of a
-threshold may tip either way). Claude Code exposes no field for the moment, so
-it is derived:
+passed \(em and since 2.1.332 only at 70% used or more; the payload rounds to
+one decimal, so a value within 0.05 points of a threshold may tip either way).
+Claude Code exposes no field for the moment, so it is derived:
 .I prompt_cache.expires_at
-minus (1 \- fireAtFraction) \(mu 1 h, i.e. 6 minutes at the default fraction
-0.9 (the flag may set 0.5\(en0.95).
+minus 6 minutes (0.9 of the one-hour lifetime).
 .IP
 The settings follow Claude Code's order, later wins: user, project, local,
-.B claude \-\-settings
-(file or inline JSON; the last one given; a relative file against the launch
-directory, in a worktree session its original directory; read once per session
-from the
-.B claude
-process's command line, together with
-.BR \-\-setting-sources ,
-which drops the files it does not list), then managed. Managed is the highest
+then managed. Managed is the highest
 admin source that carries a policy key \(em the server-managed cache
 .RB ( remote-settings.json ,
 only while the session talks to Anthropic's API: not with
@@ -1751,18 +1758,19 @@ per-user before device), the managed settings files
 \(em or all of them layered when
 .B "managedSourcesBehavior: merge"
 is set in the highest source that carries it or a policy key. A broken file
-is skipped. Not visible to the segment: a warning the server sends on its own
-(surpassed-threshold header), a
+is skipped. Not visible to the segment: settings passed with
+.B claude \-\-settings
+or limited with
+.BR \-\-setting-sources ,
+a warning the server sends on its own (surpassed-threshold header), a
 .BR policyHelper ,
-and a
-.B \-\-settings
-path that contains a space.
+and Claude Code holding off while you are at the keyboard.
 .IP
 .B \[u2668] warm
 /
 .B cold
-\(em in every other warm-cache case (feature off for the account, context too
-small, compaction switched off, near the rate limit, 5-minute cache, or the
+\(em in every other warm-cache case (context too small, compaction
+switched off, near the rate limit, 5-minute cache, or the
 compaction moment already passed), the moment that matters is the prompt
 cache going cold, after which the next request re-caches the whole context:
 .RB "\[u2668]\[u25D1] warm 16:36 \[u00B7] 30m" .
@@ -1930,6 +1938,24 @@ from
 .B statusline.bedtime
 (default
 .IR 23:00 ).
+Three switches, all
+.B true
+by default, go along as
+.BR CC_INSOMNII_SHAME ,
+.B CC_INSOMNII_MOTIVATION
+and
+.BR CC_INSOMNII_RAINBOW :
+.B statusline.shame
+(the bedtime-shaming messages),
+.B statusline.motivation
+(the motivational messages) and
+.B statusline.rainbow
+(the rainbow colouring). Only a boolean
+.B false
+turns one off (as
+.B claudii config set
+writes it); what each one does is up to
+.BR cc-insomnii (1).
 .PP
 .B cron / Stop-hook integration:
 .B claudii-stop-hook
@@ -2049,6 +2075,9 @@ statusline.separator	tight	Segment separator: \fBtight\fR (\(dq │ \(dq) or \fB
 statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
 statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
 statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
+statusline.shame	true	cc-insomnii bedtime-shaming messages (only boolean \fBfalse\fR turns it off)
+statusline.motivation	true	cc-insomnii motivational messages (only boolean \fBfalse\fR turns it off)
+statusline.rainbow	true	cc-insomnii rainbow colouring (only boolean \fBfalse\fR turns it off)
 session-dashboard.enabled	off	Session Dashboard above prompt: on/off
 notifications.enabled	false	terminalSequence alerts from hooks (master switch)
 notifications.model_down	true	Window-title alert when a model is down
@@ -2063,9 +2092,8 @@ debug.level	off	Log level: off/error/warn/info/debug
 vibemap.enabled	false	Opt-in activity tracking
 vibemap.overview	true	Show Activity strip in claudii overview
 perf.otel.enabled	false	Exact latency via OpenTelemetry (opt-in); off = transcript estimate
-perf.otel.endpoint	http://127.0.0.1:4318	OTLP/HTTP receiver bind address
-perf.otel.beta_traces	true	Capture the claude_code.llm_request span (TTFT)
-perf.otel.forward	(empty)	Mirror OTLP batches to a central collector URL; empty = local only
+perf.otel.endpoint	http://127.0.0.1:4318	Where Claude Code exports and the receiver listens; loopback only (127.0.0.1 or localhost, explicit port)
+perf.otel.forward	(empty)	Mirror OTLP batches to a central collector (http:// or https:// URL); empty = local only
 overview.sections	account…commands	Overview section order + selection (array)
 sync.name	(empty)	Name this claudii pushes under; empty = user@host
 sync.hosts.\fIname\fR.ssh	\(em	ssh target of a synced host (\fBclaudii sync add\fR)
@@ -2077,21 +2105,33 @@ sync.hosts.\fIname\fR.mode	pull	\fBpull\fR, \fBpush\fR or \fBboth\fR
 .I "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
 (override:
 .BR CLAUDII_CACHE_DIR ).
-Contains one line per model:
+Contains one line per model in
+.B statusline.models
+(default: opus, sonnet, haiku, fable):
 .PP
 .RS
 .nf
 opus=ok
 sonnet=down
 haiku=ok
+fable=ok
 .fi
 .RE
 .PP
+Two optional marker lines may follow:
+.B _api=unreachable
+(the status API could not be fetched; the model lines are the all-ok fallback)
+and
+.B _incident=<stage>
+(investigating, identified or monitoring \(em an open incident, whether or not
+it touches a tracked model).
+.PP
 Refreshed automatically in the background when older than
 .B status.cache_ttl
-seconds. While a model is down or degraded the interval is shortened to a
-fifth (minimum 60s) so a recovery is picked up quickly; an unreachable status
-API keeps the base interval.
+seconds, by the shell prompt hook and by the CC-Statusline (the shell prompt
+hook waits twice as long while everything is healthy). While a model is down
+or degraded the interval is shortened to a fifth (minimum 60s) so a recovery
+is picked up quickly; an unreachable status API keeps the base interval.
 .PP
 Every state transition (e.g. opus ok\(->degraded) is appended to
 .I status-history.tsv
@@ -2219,13 +2259,8 @@ _
 \[u2591]	progress bar empty	dim
 .TE
 .PP
-Internal:
-.B _claudii_sym
-.RI ( lib/visual.sh )
-accepts names
-.RB ( active ", " inactive ", " warn ", " error ", " ok ", " down ", " degraded ", " sep )
-and prints the colored symbol.
-Constants:
+Constants
+.RI ( lib/visual.sh ):
 .B CLAUDII_SYM_*
 (symbols),
 .B CLAUDII_CLR_*

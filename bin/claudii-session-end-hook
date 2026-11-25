@@ -7,13 +7,31 @@
 # Wire into ~/.claude/settings.json:
 #   "hooks": { "SessionEnd": [{ "type": "command", "command": "claudii-session-end-hook" }] }
 
-export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Resolve the checkout through symlinks (install.sh links claudii-status,
+# claudii-cc-statusline and claudii-insights into a bin dir, where
+# `dirname "$0"` named the wrong tree whenever the plugin env was missing:
+# a hook, cron, a shell without the plugin). Same loop as bin/claudii.
+if [[ -z "${CLAUDII_HOME:-}" ]]; then
+  _cl_self="$0" _cl_hops=0
+  while [[ -L "$_cl_self" ]] && (( _cl_hops++ < 40 )); do
+    _cl_link=$(readlink "$_cl_self")
+    [[ "$_cl_link" == /* ]] || _cl_link="$(dirname "$_cl_self")/$_cl_link"
+    _cl_self="$_cl_link"
+  done
+  CLAUDII_HOME="$(cd "$(dirname "$_cl_self")/.." && pwd)"
+  unset _cl_self _cl_hops _cl_link
+fi
+export CLAUDII_HOME
 # shellcheck source=lib/log.sh
 source "$CLAUDII_HOME/lib/log.sh"
 
 command -v jq >/dev/null 2>&1 || { printf 'claudii-session-end-hook: jq not found — install jq\n' >&2; exit 1; }
 
-read -r json
+# Slurp ALL of stdin, not just the first line — a pretty-printed (multi-line)
+# payload made `read -r` hand jq half a JSON document. -d '' reads to EOF and
+# returns non-zero there, hence the `|| true` (bash 3.2 safe, same as
+# bin/claudii-cc-statusline).
+IFS= read -r -d '' json || true
 
 _cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
 umask 077

@@ -1,12 +1,12 @@
 name: CI
 
-# Fast pre-mirror gate on the self-hosted Forgejo runner (nutc). Runs the
-# Linux / C-locale leg of the test suite in seconds, right where you push —
+# Pre-mirror gate on the self-hosted Forgejo runner (nutc). Runs the Linux /
+# C-locale leg of the test suite (3–7 min on the shared runner) where you push —
 # before the Forgejo→GitHub mirror carries the commit to the full GitHub
 # matrix (macOS + ubuntu, C + de_DE.UTF-8). This catches OS/locale-agnostic
 # breakage immediately; macOS- and de_DE-specific cases (onetrueawk comma
 # locale, BSD date %a) stay GitHub-only — there is no self-hosted Mac. So
-# this is a speed gate, not a coverage replacement: a green run here does
+# this is an early gate, not a coverage replacement: a green run here does
 # not imply the macOS legs are green.
 #
 # `runs-on: docker` matches the runner's registered label, whose default
@@ -31,10 +31,13 @@ concurrency:
 jobs:
   test:
     runs-on: docker
+    # The suite takes 3–7 min here (up to ~7.5 min under load); 20 caps a hung
+    # test without cutting a slow but healthy run.
+    timeout-minutes: 20
     container:
       image: data.forgejo.org/oci/node:22-bookworm
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
 

@@ -1,4 +1,4 @@
-# touches: bin/claudii lib/cmd/system.sh
+# touches: bin/claudii lib/cmd/system.sh config/defaults.json bin/claudii-cc-statusline
 # test_cc_statusline_preset.sh — `claudii cc-statusline preset` E2E tests
 
 TEST_TMP="$CLAUDII_TEST_TMP/test_cc_statusline_preset"
@@ -39,10 +39,10 @@ assert_eq "preset focused: second line uses compact context" "context,compact-et
 assert_contains "preset focused: second line has rate-5h"     "rate-5h"     "$second_line"
 assert_contains "preset focused: second line has rate-7d"     "rate-7d"     "$second_line"
 
-# Third line: claude-status + vpn + tailscale (env)
+# Third line: claude-status + tailscale (env)
 third_line=$(jq -r '.statusline.lines[2] | join(",")' "$CFG")
 assert_contains "preset focused: third line has claude-status" "claude-status" "$third_line"
-assert_contains "preset focused: third line has vpn"           "vpn"           "$third_line"
+assert_eq "preset focused: third line is health + tailscale" "claude-status,tailscale" "$third_line"
 assert_contains "preset focused: third line has tailscale"     "tailscale"     "$third_line"
 
 # Insomnii is NOT a segment in focused — it owns its own first line via the wrapper
@@ -72,8 +72,28 @@ assert_eq "preset calm: second line is just context-bar" "context-bar" "$second_
 output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline preset default 2>&1)
 assert_contains "preset default: confirms" "default" "$output"
 
-line_count=$(jq '.statusline.lines | length' "$CFG")
-assert_eq "preset default: 5 lines (shipped layout)" "5" "$line_count"
+# default drops the user's layout instead of writing a copy of the shipped
+# one — the copy had drifted (it lacked cache-ttl). The effective layout is
+# then defaults.json's, and the renderer's built-in fallback must match it.
+assert_eq "preset default: .statusline.lines removed from user config" "false" \
+  "$(jq '.statusline | has("lines")' "$CFG")"
+assert_eq "preset default: effective layout is defaults.json's" \
+  "$(jq -c '.statusline.lines' "$CLAUDII_HOME/config/defaults.json")" \
+  "$(HOME="$TEST_TMP" bash "$CLI" config get statusline.lines 2>&1)"
+_def_csv=$(jq -r '.statusline.lines | map(join(",")) | join("\n")' "$CLAUDII_HOME/config/defaults.json")
+_bin_csv=$(awk '/^_DEFAULT_LINES="/ { f = 1; sub(/^_DEFAULT_LINES="/, "") }
+  f { if (sub(/"$/, "")) { print; exit } print }' "$CLAUDII_HOME/bin/claudii-cc-statusline")
+assert_eq "preset default: renderer fallback layout matches defaults.json" "$_def_csv" "$_bin_csv"
+unset _def_csv _bin_csv
+
+# No preset ships a removed segment (omlx, vpn)
+for _p in focused calm; do
+  HOME="$TEST_TMP" bash "$CLI" cc-statusline preset "$_p" >/dev/null 2>&1
+  _segs=",$(jq -r '[.statusline.lines[][]] | join(",")' "$CFG"),"
+  assert_not_contains "preset $_p: no omlx segment" ",omlx," "$_segs"
+  assert_not_contains "preset $_p: no vpn segment"  ",vpn,"  "$_segs"
+done
+unset _p _segs
 
 # ── preset unknown: errors ──
 

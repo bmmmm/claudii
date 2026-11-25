@@ -1,6 +1,6 @@
 # window.awk — usage inside one Anthropic weekly rate-limit window.
 #
-# Reads raw history rows (the 11-col layout bin/claudii-cc-statusline writes)
+# Reads raw history rows (the layout bin/claudii-cc-statusline writes)
 # and sums the increments falling inside [window_start, now]. Rows BEFORE the
 # window are still processed on purpose: attr_delta() carries a per-session
 # baseline, and without the earlier rows the first in-window row of a
@@ -9,17 +9,14 @@
 # Because every row carries its own epoch, a session straddling the boundary
 # splits row-exactly; no proportional splitting logic is needed.
 #
-# Requires attr_delta() from lib/attribution.awk, prepended by the caller
-# (lib/cmd/week.sh string-interpolates the two files into one program).
+# Requires lib/history_cols.awk and lib/attribution.awk (attr_delta) loaded
+# first: awk -f history_cols.awk -f attribution.awk -f window.awk (lib/cmd/week.sh).
 #
 # Variables (-v): window_start — epoch of the window's first second. That is
 # the ONLY binding; everything else this program uses comes from the row.
 #
-# Columns: the schema is declared in lib/history_cols.awk (HC_SCHEMA) — ts,
-# cost, sid, in, out and rate7d. The positional reads below still spell the
-# indices out because this program's call site (lib/cmd/week.sh) does not load
-# history_cols.awk; tests/test_history_cols.sh pins them against the schema, so
-# a divergence goes red instead of silently summing the wrong column.
+# Columns: read by name through lib/history_cols.awk (HC_SCHEMA) — ts, cost,
+# sid, in, out and rate7d.
 #
 # Emits one TSV line:
 #   tok  cost  sessions  limit_lo  limit_med  limit_hi  pairs  cents
@@ -61,17 +58,28 @@ function _wq(a, lo, hi,   i, j, p, t, m) {
   _wq(a, i, hi)
 }
 
+BEGIN {
+  # Without HC[] every $HC_* below would degrade to $0 — numbers that are
+  # quietly wrong rather than absent. (exit from BEGIN still runs END, hence
+  # the flag; END bails before it prints anything.)
+  if (!("ts" in HC)) {
+    print "window.awk: needs -f lib/history_cols.awk loaded first" > "/dev/stderr"
+    hc_missing = 1
+    exit 2
+  }
+}
+
 { gsub(/\r/, "") }   # strip CR — history files synced across platforms carry CRLF
-NF < 6 { next }
-$1 == "timestamp" || $1 == "" || $6 == "" { next }
+NF < HC_MINCOL { next }
+$HC_TS == "timestamp" || $HC_TS == "" || $HC_SID == "" { next }
 
 {
-  ts = $1 + 0
+  ts = $HC_TS + 0
   if (ts == 0) next
 
-  sid = $6
-  cinc = attr_delta(cost_baseline, sid, $3 + 0)
-  tinc = attr_delta(tok_baseline, sid, ($7 == "" ? 0 : $7 + 0) + ($8 == "" ? 0 : $8 + 0))
+  sid = $HC_SID
+  cinc = attr_delta(cost_baseline, sid, $HC_COST + 0)
+  tinc = attr_delta(tok_baseline, sid, ($HC_IN == "" ? 0 : $HC_IN + 0) + ($HC_OUT == "" ? 0 : $HC_OUT + 0))
 
   if (ts < window_start) next
 
@@ -79,18 +87,19 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
   win_tok  += tinc
   if (cinc > 0 || tinc > 0) seen_sid[sid] = 1
 
-  # Calibration support point. Column 10 is empty for rows written before this
-  # feature shipped, so guard rather than coerce. Bucket to whole percent:
+  # Calibration support point. The rate7d column is empty (or absent) for rows
+  # written before this feature shipped, so guard rather than coerce. Bucket to whole percent:
   # the field is 1%-granular in practice but has been seen carrying a decimal
   # ("71.2"), and an unbucketed float would multiply the support points
   # without adding information.
-  if ($10 != "") {
-    pct = int($10 + 0)
+  if ($HC_RATE_7D != "") {
+    pct = int($HC_RATE_7D + 0)
     if (pct > 0 && !(pct in sup_tok)) sup_tok[pct] = win_tok
   }
 }
 
 END {
+  if (hc_missing) exit 2
   n = 0
   for (s in seen_sid) n++
 

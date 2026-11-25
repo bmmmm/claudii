@@ -9,7 +9,7 @@ rules stay in `AGENTS.md`.
 
 ```
 claudii.plugin.zsh      # Entry point (sources lib/)
-bin/claudii             # CLI dispatcher (~304 lines; helpers live in lib/helpers.sh)
+bin/claudii             # CLI dispatcher (~300 lines; helpers live in lib/helpers.sh)
 bin/claudii-status         # ClaudeStatus health checker (components API + RSS)
 bin/claudii-cc-statusline  # In-session statusline handler (bash+jq, reads stdin JSON)
 bin/claudii-insights       # JSONL aggregator → per-session insights cache (aggregate/merge/gc)
@@ -19,6 +19,7 @@ bin/claudii-otel           # OTLP control (setup/off/receiver/doctor/build/compa
 bin/claudii-otel-receiver  # Python OTLP/HTTP receiver → flat records in ~/.cache/claudii/otel/events/<kind>-<UTC day>.ndjson (+ receiver.status; --flatten converts old captures)
 bin/claudii-bumpii-refresh # Background refresher for the bumpii segment (pending updates + release inbox)
 bin/claudii-ci-refresh     # Background refresher for the ci segment (gh run list → per-repo+branch cache)
+bin/claudii-cc-update-refresh # Background refresher for the cc-version segment (GitHub releases → latest + recent tags)
 lib/cmd/system.sh       # Commands: on/off, claudestatus, session-dashboard, status, cc-statusline, insomnii, update, doctor
 lib/cmd/sessions.sh     # Commands: sessions, sessions-inactive, pin, gc
 lib/cmd/cost.sh         # Commands: cost, cost --forecast, cost --window (history aggregation, D-grid + amount-sorted bars)
@@ -29,9 +30,7 @@ lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/cmd/insights.sh     # Commands: cache, tokens, tools, limits, session (insights-cache views; cycleable window + --json)
 lib/cmd/perf.sh         # Command: perf (response-time p50/p90/p99, tok/s, latency trend; OTLP metrics or transcript estimate)
-lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
-lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
 lib/cmd/sync.sh         # Command: sync (other hosts' insights/history/live sessions → cache/hosts/<name>/, over ssh)
 lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
 lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _sparkline, _cache_hit_pct)
@@ -41,7 +40,7 @@ lib/history_rows.awk    # The ONE stage-1 normalizer (CR strip, row filter, epoc
 lib/trends.awk          # awk program for trends aggregation
 lib/attribution.awk     # attr_delta() — shared per-session cost/token delta heuristic
 lib/window.awk          # week/cost --window — in-window tokens/cost + quota calibration pair (epoch-gated, uses attr_delta)
-lib/window_bounds.awk   # week --history — weekly windows actually observed (distinct reset_7d in col 11, >=3 sightings)
+lib/window_bounds.awk   # week --history — weekly windows actually observed (distinct reset_7d read by name via HC[], >=3 sightings)
 lib/window_history.awk  # week --history — tokens/cost bucketed into consecutive windows
 lib/model_tier.awk      # tier_label() — awk-side model→tier collapse (cost/trends)
 lib/forecast.awk        # cost --forecast — 5h burn slope + month-end projection
@@ -55,6 +54,7 @@ lib/perf_rows.jq        # jq module: merged shape → claudii perf's tagged TSV 
 lib/perf_json.jq        # jq module: merged shape → claudii perf --json
 lib/insights.jq         # per-session JSONL aggregation program (claudii-insights)
 lib/insights-merge.jq   # merge program: cache files → one aggregate (claudii-insights merge)
+lib/insights-cost-rows.jq # cost's insights side: session token buckets priced at _CLAUDII_RATES → cost-stage-2 rows
 lib/insights_stream.sh  # _insights_stream: insights caches (+ synced host mirrors) → stdout, window-bounded, never argv
 lib/search_dir.sh       # _claudii_search_dir: search/clq workspace, default ~/search (bash + zsh), created on use
 lib/repos.jq            # per-repo session rollup (claudii repos — active time vs wall-clock span)
@@ -68,7 +68,6 @@ lib/spinner.sh          # Spinner animation (BG job, label file)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
-lib/vpnii.zsh           # VPN/Tailscale RPROMPT segment
 lib/visual.sh           # Color/symbol constants + theme loader (CLAUDII_CLR_*, CLAUDII_SYM_*)
 lib/log.sh              # Shared logging (bash + zsh)
 config/defaults.json    # Shipped defaults

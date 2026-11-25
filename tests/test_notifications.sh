@@ -124,6 +124,17 @@ if [[ -x /bin/bash ]]; then
   assert_eq "system bash 3.2: session-end-hook emits valid JSON" "0" "$_nt_jq_rc"
 fi
 
+# ── 6b. Multi-line (pretty-printed) JSON on stdin is read in full ───────────
+# `read -r` kept only the first line: jq saw "{" and the session id (and with it
+# the cached cost) was lost.
+_nt_setup
+printf '{"notifications":{"enabled":true}}\n' > "$_nt_cfg/claudii/config.json"
+printf 'cost=3.25\nmodel=Opus\n' > "$_nt_cache/session-notifml0"
+_nt_out=$(printf '{\n  "session_id": "notifml0abc",\n  "reason": "logout"\n}\n' \
+  | CLAUDII_CACHE_DIR="$_nt_cache" XDG_CONFIG_HOME="$_nt_cfg" bash "$SE" 2>/dev/null)
+_nt_seq=$(jq -r '.terminalSequence' <<< "$_nt_out" 2>/dev/null)
+assert_contains "session-end: multi-line JSON → session cost found" 'cost $3.25' "$_nt_seq"
+
 # ── 7. defaults.json ships the notifications block (master off) ─────────────
 _nt_def=$(jq -r '.notifications.enabled' "$CLAUDII_HOME/config/defaults.json" 2>/dev/null)
 assert_eq "defaults.json: notifications.enabled is false" "false" "$_nt_def"

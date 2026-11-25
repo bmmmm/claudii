@@ -91,7 +91,7 @@ assert_eq "empty json doesn't crash" "0" "$?"
 # Cache hit ratio (⚡) — shown when cache_read_input_tokens > 0
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000,"cache_creation_input_tokens":0}},"cost":{"total_cost_usd":0.20,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
 assert_contains "cache hit shows lightning bolt" "⚡" "$output"
-assert_contains "cache hit shows percentage" "33%" "$output"
+assert_contains "cache hit shows percentage" "50%" "$output"
 
 # Cache hit ratio — NOT shown when cache_read is 0
 output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":0,"cache_creation_input_tokens":500}},"cost":{"total_cost_usd":0.10,"total_duration_ms":60000}}' | bash "$SL" 2>&1)
@@ -139,6 +139,27 @@ assert_contains "session cache has worktree=" "worktree=my-feature-branch" "$_ca
 assert_contains "session cache has agent=" "agent=agent-42" "$_cache_contents"
 # tok= = cumulative input+output (1000 + 200) — read by the token-first dashboard / se.
 assert_contains "session cache has tok= (input+output)" "tok=1200" "$_cache_contents"
+
+# Session totals: total_input_tokens/total_output_tokens are the LAST request's
+# usage (CC 2.1.330+), so the statusline sums them one request at a time.
+_tk_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_tk_dir")
+_tk() {  # <total_in> <cache_read> <out>
+  printf '{"session_id":"toksum-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":%s,"total_output_tokens":%s,"context_window_size":200000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"cost":{"total_cost_usd":0.05}}' "$1" "$3" "$2" "$3" \
+    | CLAUDII_CACHE_DIR="$_tk_dir" bash "$SL" 2>/dev/null
+}
+_tk_get() { grep "^$1=" "$_tk_dir/session-toksum-0" | cut -d= -f2; }
+_tk 50000 40000 300 >/dev/null
+assert_eq "tok sum: first request seeds the totals" "50300" "$(_tk_get tok)"
+_tk 50000 40000 300 >/dev/null
+assert_eq "tok sum: an idle re-render of the same request adds nothing" "50300" "$(_tk_get tok)"
+_tk 50000 40000 900 >/dev/null
+assert_eq "tok sum: rising output of the same request replaces its share" "50900" "$(_tk_get tok)"
+_tk_out=$(_tk 60000 50000 200 | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "tok sum: a new request adds its input and output" "110000:1100" "$(_tk_get tok_in):$(_tk_get tok_out)"
+assert_contains "tok sum: tokens segment shows the session input total" "110.0K↑" "$_tk_out"
+assert_contains "tok sum: history row carries the running totals" $'\t110000\t1100\t' \
+  "$(tail -1 "$_tk_dir"/history-*.tsv)"
+unset -f _tk _tk_get; unset _tk_out
 
 # Worktree segment rendered: name + ⎇ branch in output (via custom config with worktree segment)
 mkdir -p "$CLAUDII_TEST_TMP"
@@ -199,6 +220,17 @@ _reset_soon=$(( $(date +%s) + 180 ))
 output_soon=$(echo "{\"model\":{\"display_name\":\"Opus\"},\"context_window\":{\"used_percentage\":47,\"total_input_tokens\":64900,\"total_output_tokens\":121100,\"context_window_size\":200000},\"cost\":{\"total_cost_usd\":12.53,\"total_duration_ms\":3600000},\"rate_limits\":{\"five_hour\":{\"used_percentage\":67,\"resets_at\":${_reset_soon}},\"seven_day\":{\"used_percentage\":65}}}" | COLUMNS=150 bash "$SL" 2>&1)
 assert_eq "reset countdown < 5min + rate>=50%: green color code present" "1" "$(printf '%s' "$output_soon" | grep -c $'\033\[0;32m↺' || true)"
 
+# Reset text is the shared _fmt_rel: whole minutes rounded down, "<1m" in the
+# last minute. The old local formatter rounded below 1h only — 59m40s read
+# "60m", and the last 30 s showed no countdown at all.
+_rst_json() { printf '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":%s}}}' "$1"; }
+strip=$(_rst_json $(( $(date +%s) + 3580 )) | bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "reset 59m40s → ↺59m (rounded down)" "↺59m" "$strip"
+assert_not_contains "reset 59m40s → never ↺60m" "↺60m" "$strip"
+strip=$(_rst_json $(( $(date +%s) + 20 )) | bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "reset in the last minute → ↺<1m" "↺<1m" "$strip"
+unset -f _rst_json
+
 # Burn-ETA removed — "~Xmin" must NOT appear in output
 output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":47,"total_input_tokens":64900,"total_output_tokens":121100,"context_window_size":200000},"cost":{"total_cost_usd":12.53,"total_duration_ms":3600000},"rate_limits":{"five_hour":{"used_percentage":67},"seven_day":{"used_percentage":65}}}' | COLUMNS=150 bash "$SL" 2>&1)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
@@ -217,16 +249,63 @@ assert_eq "7d delta not shown in sessionline output" "0" "$(echo "$strip" | grep
 _cache_7d="$(cat "$_test_cache_dir/session-test7dde" 2>/dev/null)"
 assert_contains "7d_start cached from first call" "rate_7d_start=60" "$_cache_7d"
 
-# burn_eta written to session cache (non-empty when rate > 0 and duration > 0)
+# delta-5h/7d baselines restart with the window: a rollover is a new window,
+# not a −N% delta, and an unreadable cached baseline must not reach $(( )).
+_dl_dir="$(mktemp -d "$CLAUDII_TEST_TMP/dl-XXXXXX")"; _SL_TMPDIRS+=("$_dl_dir")
+mkdir -p "$_dl_dir/cfg/claudii" "$_dl_dir/cache"
+printf '{"statusline":{"lines":[["delta-5h","delta-7d"]]}}\n' > "$_dl_dir/cfg/claudii/config.json"
+_dl() {  # session 5h% 5h-reset 7d% 7d-reset → rendered line (colors stripped); stderr to $_dl_dir/err
+  printf '{"session_id":"%s","model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' "$@" \
+    | XDG_CONFIG_HOME="$_dl_dir/cfg" CLAUDII_CACHE_DIR="$_dl_dir/cache" bash "$SL" 2>"$_dl_dir/err" \
+    | sed 's/\x1b\[[0-9;]*m//g'
+}
+_dl_r5=$(( $(date +%s) + 9000 )); _dl_r7=$(( $(date +%s) + 300000 ))
+_dl deltawin-0001 20 "$_dl_r5" 40 "$_dl_r7" > /dev/null
+assert_eq "delta: growth inside the window shows" "Δ5h:+10% │ Δ7d:+2%" \
+  "$(_dl deltawin-0001 30 "$_dl_r5" 42 "$_dl_r7" | sed 's/ *$//')"
+assert_eq "delta: a 5h rollover restarts the baseline (no −25%)" "Δ7d:+3%" \
+  "$(_dl deltawin-0001 5 $(( _dl_r5 + 18000 )) 43 "$_dl_r7" | sed 's/ *$//')"
+assert_contains "delta: the new 5h baseline is cached" "rate_5h_start=5" "$(cat "$_dl_dir/cache/session-deltawin")"
+assert_eq "delta: growth counts from the new window" "Δ5h:+4% │ Δ7d:+3%" \
+  "$(_dl deltawin-0001 9 $(( _dl_r5 + 18000 )) 43 "$_dl_r7" | sed 's/ *$//')"
+# A cached reset already in the past is a rollover too (payload without a new reset yet).
+printf 'reset_5h=%s\nrate_5h_start=50\nrate_7d_start=40\nreset_7d=%s\n' "$(( $(date +%s) - 100 ))" "$_dl_r7" \
+  > "$_dl_dir/cache/session-deltapas"
+assert_eq "delta: a passed cached reset restarts the baseline" "Δ7d:+1%" \
+  "$(_dl deltapas-0001 3 null 41 "$_dl_r7" | sed 's/ *$//')"
+# Garbage baseline: no arithmetic error, baseline re-seeded.
+printf 'rate_5h_start=abc\nreset_5h=%s\nrate_7d_start=4x\nreset_7d=%s\n' "$_dl_r5" "$_dl_r7" > "$_dl_dir/cache/session-deltagar"
+_dl deltagar-0001 12 "$_dl_r5" 30 "$_dl_r7" > /dev/null
+assert_eq "delta: a garbage baseline writes nothing to stderr" "" "$(cat "$_dl_dir/err")"
+assert_contains "delta: a garbage baseline is re-seeded" "rate_5h_start=12" "$(cat "$_dl_dir/cache/session-deltagar")"
+unset -f _dl; unset _dl_dir _dl_r5 _dl_r7
+
+# burn_eta / pace run on the 5h window's clock (account-wide limit), not on the
+# session's duration: elapsed = 18000 − (resets_at − now).
 _test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")
-echo '{"session_id":"testburneta1","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":70},"seven_day":{"used_percentage":65}}}' \
-  | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" 2>/dev/null >/dev/null
-_cache_be="$(cat "$_test_cache_dir/session-testburn" 2>/dev/null)"
-assert_contains "burn_eta key present in session cache" "burn_eta=" "$_cache_be"
-_burn_val="$(echo "$_cache_be" | grep '^burn_eta=' | cut -d= -f2)"
-[[ "$_burn_val" =~ ^[0-9]+$ ]] \
-  && assert_eq "burn_eta is a non-empty integer" "true" "true" \
-  || assert_eq "burn_eta is a non-empty integer" "true" "false (got: $_burn_val)"
+_be_json() {  # session-id duration-ms 5h-used% [resets_at]
+  local _rl='{"used_percentage":'"$3"'}'
+  [[ -n "${4:-}" ]] && _rl='{"used_percentage":'"$3"',"resets_at":'"$4"'}'
+  printf '{"session_id":"%s","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"total_input_tokens":5000,"total_output_tokens":1000,"context_window_size":200000},"cost":{"total_cost_usd":0.50,"total_duration_ms":%s},"rate_limits":{"five_hour":%s,"seven_day":{"used_percentage":65}}}' "$1" "$2" "$_rl"
+}
+_be_key() { grep "^$2=" "$_test_cache_dir/session-${1:0:8}" 2>/dev/null | cut -d= -f2; }
+# 30 min into the window at 70%: (100 − 70) / (70 / 30) = 12.9 → 13 min.
+_be_json testburneta1 1800000 70 $(( $(date +%s) + 16200 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: minutes to the limit at the window's average rate" "13" "$(_be_key testburneta1 burn_eta)"
+assert_eq "burn_eta: 70% after 30 of 300 min is behind linear" "behind" "$(_be_key testburneta1 pace)"
+# The audit probe: a 4-minute session, 60% used, reset in 1 h. The window is
+# 4 h old, so the limit is not near (160 min > 60 min left: no ETA) and 60% is
+# under the linear 80% (ahead) — dividing by the session's 4 min said "ETA:3m",
+# "behind".
+_be_json testburneta2 240000 60 $(( $(date +%s) + 3600 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: an ETA past the reset is dropped" "" "$(_be_key testburneta2 burn_eta)"
+assert_eq "burn_eta: pace counts the window's elapsed time, not the session's" "ahead" "$(_be_key testburneta2 pace)"
+_be_json testburneta3 1800000 70 | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: no resets_at → no ETA" "" "$(_be_key testburneta3 burn_eta)"
+assert_eq "burn_eta: no resets_at → no pace" "" "$(_be_key testburneta3 pace)"
+_be_json testburneta4 1800000 70 $(( $(date +%s) - 60 )) | CLAUDII_CACHE_DIR="$_test_cache_dir" bash "$SL" >/dev/null 2>&1
+assert_eq "burn_eta: a reset already past → no ETA" "" "$(_be_key testburneta4 burn_eta)"
+unset -f _be_json _be_key
 
 # 7d-Countdown — shown when reset_7d is set (< 1h → Xm format)
 _reset_7d_soon=$(( $(date +%s) + 2700 ))
@@ -286,8 +365,8 @@ output=$(echo '{"model":{"display_name":"Opus"},"session_name":"omlx","context_w
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "session_name shown as @name fallback" "@omlx" "$strip"
 
-# burn-eta visible: session with duration + high rate_5h → ETA appears on line 2
-output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80},"seven_day":{"used_percentage":60}}}' \
+# burn-eta visible: 10 min into the 5h window at 80% → ETA appears on line 2
+output=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":70,"total_input_tokens":50000,"total_output_tokens":10000,"context_window_size":200000},"cost":{"total_cost_usd":2.00,"total_duration_ms":600000},"rate_limits":{"five_hour":{"used_percentage":80,"resets_at":'"$(( $(date +%s) + 17400 ))"'},"seven_day":{"used_percentage":60}}}' \
   | bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "burn-eta ETA visible on line 2" "1" "$(echo "$strip" | grep -c 'ETA:' || true)"
@@ -315,8 +394,7 @@ strip_1M=$(echo "$output_1M" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "_tok(1000000) = 1.0M" "1.0M↑" "$strip_1M"
 
 # ── Tailscale segment reads the ~30s TTL cache (no per-render ifconfig fork) ──
-# Its own segment (not glued to `vpn`), so a layout can place WireGuard and
-# Tailscale on different lines. Deterministic: pre-seed $cache/vpnii-ts with a
+# Deterministic: pre-seed $cache/vpnii-ts with a
 # fresh epoch so the ifconfig probe is skipped entirely and the cached
 # up/down value drives the segment.
 _ts_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ts_cfg_dir")
@@ -352,26 +430,6 @@ assert_eq "tailscale: gated out of layout → no ifconfig probe" "absent" \
   "$([[ -f "$_ts_gate_cache/vpnii-ts" ]] && echo present || echo absent)"
 
 unset _ts_cfg_dir _ts_cache_dir _ts_json output strip _ts_gate_cfg _ts_gate_cache
-
-# ── vpn segment is WireGuard-only now — independent of tailscale ──
-_vpn_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cfg_dir")
-mkdir -p "$_vpn_cfg_dir/claudii"
-printf '{"statusline":{"lines":[["vpn"]]}}\n' > "$_vpn_cfg_dir/claudii/config.json"
-_vpn_cache_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_vpn_cache_dir")
-_vpn_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
-
-# Tailscale up, but `vpn` alone must not show "ts" — the segments are split now.
-printf '%s 1\n' "$(date +%s)" > "$_vpn_cache_dir/vpnii-ts"
-output=$(echo "$_vpn_json" | XDG_CONFIG_HOME="$_vpn_cfg_dir" CLAUDII_CACHE_DIR="$_vpn_cache_dir" bash "$SL" 2>/dev/null)
-assert_eq "vpn: tailscale up but vpn segment alone stays empty" "" "$output"
-
-# WireGuard tunnel active → vpn shows the tunnel name.
-printf 'HomeLab\n' > "$_vpn_cache_dir/vpnii"
-output=$(echo "$_vpn_json" | XDG_CONFIG_HOME="$_vpn_cfg_dir" CLAUDII_CACHE_DIR="$_vpn_cache_dir" bash "$SL" 2>/dev/null)
-strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "vpn: WireGuard tunnel name shown" "HomeLab" "$strip"
-
-unset _vpn_cfg_dir _vpn_cache_dir _vpn_json output strip
 
 # No bc in the script
 assert_eq "no bc subprocess in claudii-cc-statusline" "0" "$(grep -c '\bbc\b' "$CLAUDII_HOME/bin/claudii-cc-statusline" || true)"
@@ -525,7 +583,7 @@ unset -f _cx_run; unset _cx_raw
 printf '{"statusline":{"lines":[["context-bar","cache-hit"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _ch_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
 _ch=$(echo "$_ch_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "cache-hit segment renders ⚡33%" "⚡33%" "$_ch"
+assert_contains "cache-hit segment renders ⚡50%" "⚡50%" "$_ch"
 # …and the context-bar next to it no longer carries its own copy.
 assert_eq "cache-hit appears exactly once" "1" "$(printf '%s' "$_ch" | grep -o '⚡' | grep -c . || true)"
 printf '{"statusline":{"lines":[["context-bar"]]}}\n' > "$_cx_cfg/claudii/config.json"
@@ -539,7 +597,8 @@ unset _ch _ch_json
 # object leaves cache-ttl empty (older CC) while cache-hit falls back.
 printf '{"statusline":{"lines":[["cache-hit","cache-ttl"]]}}\n' > "$_cx_cfg/claudii/config.json"
 _pc_now=$(date +%s)
-# Native hit_ratio 0.73 beats the derived 33% the context_window values imply.
+# Native hit_ratio 0.73 beats the derived 50% the context_window values imply
+# (total_input_tokens already includes the 5000 cache reads).
 _pc_json="{\"model\":{\"display_name\":\"Sonnet\"},\"context_window\":{\"used_percentage\":30,\"total_input_tokens\":10000,\"total_output_tokens\":2000,\"context_window_size\":200000,\"current_usage\":{\"cache_read_input_tokens\":5000}},\"cost\":{\"total_cost_usd\":0.2},\"prompt_cache\":{\"warm\":true,\"caching_observed\":true,\"hit_ratio\":0.73,\"expires_at\":$(( _pc_now + 250 )),\"recache_tokens_if_cold\":312000}}"
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "cache-hit: native hit_ratio wins over derivation" "⚡73%" "$_pc"
@@ -553,7 +612,7 @@ assert_contains "cache-hit: native ratio works without cache_read" "⚡42%" "$_p
 _pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000,"current_usage":{"cache_read_input_tokens":5000}},"cost":{"total_cost_usd":0.2}}'
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cache-ttl: absent object renders nothing" "0" "$(printf '%s' "$_pc" | grep -c '♨' || true)"
-assert_contains "cache-hit: absent object falls back to derivation" "⚡33%" "$_pc"
+assert_contains "cache-hit: absent object falls back to derivation" "⚡50%" "$_pc"
 # caching never observed (provider without cache reporting) → no cold noise.
 _pc_json='{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":30,"total_input_tokens":10000,"total_output_tokens":2000,"context_window_size":200000},"cost":{"total_cost_usd":0.2},"prompt_cache":{"warm":false,"caching_observed":false,"hit_ratio":0}}'
 _pc=$(echo "$_pc_json" | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
@@ -663,25 +722,29 @@ printf '{"session_id":"refresh2-0000","model":{"display_name":"Opus"},"context_w
   | XDG_CONFIG_HOME="$_rf_cfg" CLAUDII_CACHE_DIR="$_rf_cfg/cache" bash "$SL" > /dev/null 2>&1
 assert_eq "refresh: an output-token change alone writes a row" "4" "$(_rf_hist)"
 assert_contains "refresh: the written row carries every column" $'\t41\t1999999999' "$(tail -1 "$_rf_cfg/cache"/history-*.tsv)"
+# vibemap rides the same dedup: idle re-renders are not activity.
+printf '{"statusline":{"lines":[["model"]]},"vibemap":{"enabled":true}}\n' > "$_rf_cfg/claudii/config.json"
+_rf_vm() { grep -c $'\trefresh2\t' "$_rf_cfg/cache/vibemap.tsv" 2>/dev/null || true; }
+_rf2 2.0; _rf2 2.0; _rf2 2.0
+assert_eq "vibemap: identical renders append one row" "1" "$(_rf_vm)"
+_rf2 2.5
+assert_eq "vibemap: a changed render appends at once" "2" "$(_rf_vm)"
+unset -f _rf_vm
 unset -f _rf _rf2 _rf_hist; unset _rf_cfg _rf_i
 
-# ── idle-compact: CC 2.1.290+ compacts a 1h-TTL conversation >= 200K tokens
-# at fireAtFraction (0.9) of the cache lifetime, i.e. expires_at − 6 min, but
-# only while the cached GrowthBook flag tengu_sunny_locket says "compact" ─────
+# ── idle-compact: CC 2.1.332 compacts a 1h-TTL conversation >= 200K tokens at
+# 0.9 of the cache lifetime, i.e. expires_at − 6 min — on by default, no flag ─
 _ic_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_ic_cfg")
 mkdir -p "$_ic_cfg/claudii" "$_ic_cfg/cc" "$_ic_cfg/proj/.claude" "$_ic_cfg/managed/managed-settings.d" "$_ic_cfg/home/.claude" "$_ic_cfg/prefs/$(id -un)"
 printf '{"statusline":{"lines":[["idle-compact"]]}}\n' > "$_ic_cfg/claudii/config.json"
-# expires_at − 360 lands on second :59, so an off-by-one offset (359 from a
-# float floor of (1 − 0.9) × 3600) flips the rendered minute.
+# expires_at − 360 lands on second :59, so an off-by-one offset (359) flips
+# the rendered minute.
 _ic_exp=$(( $(date +%s) + 3500 )); _ic_exp=$(( _ic_exp - (_ic_exp - 360) % 60 + 59 ))
 _ic_at() { LC_ALL=C date -r $(( _ic_exp - $1 )) +%H:%M 2>/dev/null || LC_ALL=C date -d "@$(( _ic_exp - $1 ))" +%H:%M; }
 _ic_want=$(_ic_at 360)
-# .claude.json as CC writes it: no trailing newline. $1 = the flag object,
-# $2 = extra top-level fields (",k:v").
-# The default lives in a variable: a brace-bearing ${1:-{...}} word expands
-# differently under /bin/bash 3.2.
-_ic_flag_on='{"mode":"compact"}'
-_ic_global() { printf '{"cachedGrowthBookFeatures":{"tengu_sunny_locket":%s}%s}' "${1:-$_ic_flag_on}" "${2:-}" > "${3:-$_ic_cfg/cc}/.claude.json"; }
+# .claude.json as CC writes it: no trailing newline. $1 = extra top-level
+# fields (",k:v"), $2 = the directory.
+_ic_global() { printf '{"numStartups":1%s}' "${1:-}" > "${2:-$_ic_cfg/cc}/.claude.json"; }
 _ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at] [5h used%] [rate_limits json]
   # Brace-bearing defaults go through a variable: ${7:-{...}} expands
   # differently under /bin/bash 3.2.
@@ -690,7 +753,7 @@ _ic_json() {  # ttl cache-read-tokens warm [output-tokens] [expires_at] [5h used
   printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":%s,"cache_creation_input_tokens":0,"output_tokens":%s}},"prompt_cache":{"warm":%s,"ttl":"%s","expires_at":%s},"rate_limits":%s}' \
     "$_ic_cfg/proj" "$2" "${4:-0}" "$3" "$1" "${5:-$_ic_exp}" "$_rl"
 }
-_ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CC_CMDLINE="" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
+_ic_run() { env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" "$@" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
 _ic_global
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_contains "idle-compact: 1h TTL over 200K shows expires_at − 6 min" " idle $_ic_want" "$_ic"
@@ -706,56 +769,47 @@ _ic=$(_ic_json 1h 195000 true 9000 | _ic_run)
 assert_contains "idle-compact: output tokens count toward the context" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run)
 assert_not_contains "idle-compact: a time already passed is not shown" "idle" "$_ic"
-# The feature flag gates everything: absent, "log" (dry run) and "off" are off.
+# No feature flag any more: neither a missing .claude.json nor a stale
+# GrowthBook cache from an older CC turns it off.
 rm -f "$_ic_cfg/cc/.claude.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: no .claude.json (no flag cache) shows no compaction" "idle" "$_ic"
-_ic_global 'null'
+assert_contains "idle-compact: no .claude.json still shows (on by default)" " idle $_ic_want" "$_ic"
+_ic_global ',"cachedGrowthBookFeatures":{"tengu_sunny_locket":{"mode":"off"}}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: absent flag shows no compaction" "idle" "$_ic"
-_ic_global '{"mode":"log"}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: flag mode log (dry run) shows no compaction" "idle" "$_ic"
-_ic_global '{"mode":"off"}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: flag mode off shows no compaction" "idle" "$_ic"
-_ic_global '{"mode":"compact_on_return"}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: flag mode compact_on_return (CC 2.1.300) shows too" " idle $_ic_want" "$_ic"
-_ic_global '{"mode":"compact","fireAtFraction":0.5}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: flag fireAtFraction moves the time" " idle $(_ic_at 1800)" "$_ic"
-_ic_global '{"mode":"compact","fireAtFraction":0.99}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: fireAtFraction is clamped to 0.95" " idle $(_ic_at 180)" "$_ic"
-_ic_global '{"mode":"compact","fireAtFraction":0.1}'
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: fireAtFraction is clamped to 0.5" " idle $(_ic_at 1800)" "$_ic"
-# Threshold: env, else the flag's minTokens, else 200000; floor 100000.
-_ic_global '{"mode":"compact","minTokens":150000}'
-_ic=$(_ic_json 1h 160000 true | _ic_run)
-assert_contains "idle-compact: flag minTokens lowers the bar" " idle $_ic_want" "$_ic"
-_ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=170000)
-assert_not_contains "idle-compact: env threshold beats the flag" "idle" "$_ic"
-_ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
-assert_contains "idle-compact: invalid env threshold is ignored (flag applies)" " idle $_ic_want" "$_ic"
-_ic_global '{"mode":"compact","minTokens":-5}'
-_ic=$(_ic_json 1h 150000 true | _ic_run)
-assert_contains "idle-compact: a negative flag minTokens is raised to 100K, not dropped" " idle $_ic_want" "$_ic"
-_ic_global '{"mode":"compact","minTokens":150010.5}'
-_ic=$(_ic_json 1h 150000 true | _ic_run)
-assert_not_contains "idle-compact: a fractional flag minTokens is not rounded down" "idle" "$_ic"
+assert_contains "idle-compact: a stale tengu_sunny_locket flag cache is ignored" " idle $_ic_want" "$_ic"
 _ic_global
+# Threshold: max(100000, CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS ?? 200000).
 _ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120000)
 assert_contains "idle-compact: env threshold lowers the bar" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=170000)
+assert_not_contains "idle-compact: env threshold above the context shows no compaction" "idle" "$_ic"
 _ic=$(_ic_json 1h 99989 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1000)
 assert_not_contains "idle-compact: env threshold is floored at 100K (99999 silent)" "idle" "$_ic"
 _ic=$(_ic_json 1h 99990 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1000)
 assert_contains "idle-compact: env threshold floor is inclusive (100000 shows)" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
 assert_contains "idle-compact: invalid env threshold falls back to 200K" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 160000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=abc)
+assert_not_contains "idle-compact: invalid env threshold falls back to 200K (160K silent)" "idle" "$_ic"
 _ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=0300000)
 assert_not_contains "idle-compact: leading-zero threshold parses as decimal" "idle" "$_ic"
+# CC's integer parse: trimmed, +sign, digit groups, integral scientific notation.
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=" +120000 ")
+assert_contains "idle-compact: env threshold is trimmed and takes a + sign" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120_000)
+assert_contains "idle-compact: env threshold 120_000 (digit groups)" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120,000)
+assert_contains "idle-compact: env threshold 120,000 (digit groups)" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=120,000_000)
+assert_not_contains "idle-compact: mixed group separators are ignored (200K applies)" "idle" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1.2e5)
+assert_contains "idle-compact: env threshold 1.2e5 (scientific)" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=1.25)
+assert_not_contains "idle-compact: a fractional env threshold is ignored (200K applies)" "idle" "$_ic"
+_ic=$(_ic_json 1h 150000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=-5)
+assert_not_contains "idle-compact: a negative env threshold is ignored (200K applies)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=99999999999999999999)
+assert_not_contains "idle-compact: a huge env threshold never compacts" "idle" "$_ic"
 # Env off-switches.
 _ic=$(_ic_json 1h 250000 true | _ic_run DISABLE_AUTO_COMPACT=1)
 assert_not_contains "idle-compact: DISABLE_AUTO_COMPACT turns compaction off" "idle" "$_ic"
@@ -771,10 +825,10 @@ assert_not_contains "idle-compact: a reached 7d limit shows no compaction too" "
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 99.5 | _ic_run)
 assert_contains "idle-compact: below the limit still shows" " idle $_ic_want" "$_ic"
 # Legacy autoCompactEnabled in .claude.json — the only key read from there.
-_ic_global '' ',"idleCompaction":false'
+_ic_global ',"idleCompaction":false'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_contains "idle-compact: .claude.json carries only the legacy autoCompactEnabled" " idle $_ic_want" "$_ic"
-_ic_global '' ',"autoCompactEnabled":false'
+_ic_global ',"autoCompactEnabled":false'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: legacy autoCompactEnabled:false in .claude.json turns compaction off" "idle" "$_ic"
 printf '{"autoCompactEnabled":true}' > "$_ic_cfg/cc/settings.json"
@@ -826,40 +880,12 @@ assert_contains "idle-compact: drop-ins sort in C order even under LC_ALL" " idl
 rm -f "$_ic_cfg/cc/settings.json" "$_ic_cfg/managed/managed-settings.json" "$_ic_cfg/managed/managed-settings.d/"*.json
 # Project dir = $HOME: ~/.claude/settings.json is both the user and the project
 # file. The same path twice must not change the outcome.
-_ic_global '' '' "$_ic_cfg/home/.claude"
+_ic_global '' "$_ic_cfg/home/.claude"
 printf '{"idleCompaction":false}' > "$_ic_cfg/home/.claude/settings.json"
 _ic=$(_ic_json 1h 250000 true | sed "s|$_ic_cfg/proj|$_ic_cfg/home|" | _ic_run CLAUDE_CONFIG_DIR="$_ic_cfg/home/.claude")
 assert_not_contains "idle-compact: user file = project file keeps its value" "idle" "$_ic"
 _ic_global
 rm -f "$_ic_cfg/home/.claude/settings.json"
-# --settings (flagSettings): above local, below managed. The command line is
-# the claude ancestor's, stood in for by CLAUDII_CC_CMDLINE.
-printf '{"idleCompaction":true}' > "$_ic_cfg/proj/.claude/settings.local.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"env":{"A":"1"},"idleCompaction":false} --resume abc')
-assert_not_contains "idle-compact: inline --settings JSON (nested braces) beats local settings" "idle" "$_ic"
-printf '{"idleCompaction":false}' > "$_ic_cfg/flag.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
-assert_not_contains "idle-compact: a --settings file is read" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --model opus --settings=$_ic_cfg/flag.json -c")
-assert_not_contains "idle-compact: --settings=<file> form is read" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --resume abc")
-assert_contains "idle-compact: no --settings leaves the files in charge" " idle $_ic_want" "$_ic"
-printf '{"idleCompaction":true}' > "$_ic_cfg/managed/managed-settings.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
-assert_contains "idle-compact: managed beats --settings" " idle $_ic_want" "$_ic"
-rm -f "$_ic_cfg/proj/.claude/settings.local.json" "$_ic_cfg/managed/managed-settings.json"
-# The parsed --settings value is carried in the session cache: a later render
-# without the ancestor's command line (reuse path) still applies it.
-mkdir -p "$_ic_cfg/cache"
-_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
-  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/flag.json")
-assert_contains "idle-compact: session cache persists cc_settings=" "cc_settings=$_ic_cfg/flag.json" "$(cat "$_ic_cfg/cache/session-icsess01" 2>/dev/null)"
-_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
-  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" env -u CLAUDII_CC_CMDLINE)
-assert_not_contains "idle-compact: cached --settings applies on a later render" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess01-0000",/' \
-  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE="claude")
-assert_contains "idle-compact: no --settings is cached as none" "cc_settings=-" "$(cat "$_ic_cfg/cache/session-icsess01" 2>/dev/null)"
 # Managed sources: remote cache > MDM plist > files. "first-wins" (default)
 # takes the highest source carrying any policy key — even an unrelated one.
 printf '{"idleCompaction":false}' > "$_ic_cfg/managed/managed-settings.json"
@@ -908,9 +934,10 @@ if command -v plutil >/dev/null 2>&1; then
   unset -f _ic_plist
 fi
 rm -f "$_ic_cfg/managed/managed-settings.json"
-# Rate-limit warning band — CC 2.1.300 derives allowed_warning itself from
+# Rate-limit warning band — CC derives allowed_warning itself from
 # utilization + resets_at (5h: >= 90% while <= 72% of the window passed; 7d:
-# >= 75/50/25% while <= 60/35/15% passed) and then skips the fire.
+# >= 75/50/25% while <= 60/35/15% passed) and then skips the fire; since
+# 2.1.332 only when at least 70% is used.
 _ic_now=$(date +%s)
 _ic_rl() { printf '{"%s":{"used_percentage":%s,"resets_at":%s}}' "$1" "$2" $(( _ic_now + $3 )); }
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 92 9000)" | _ic_run)
@@ -920,23 +947,20 @@ assert_contains "idle-compact: 5h at 92% late in the window (80% passed) is no w
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl five_hour 89 9000)" | _ic_run)
 assert_contains "idle-compact: 5h at 89% is under the warning threshold" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 561600)" | _ic_run)
-assert_not_contains "idle-compact: 7d at 30% on day one is a warning (25% tier)" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 30 172800)" | _ic_run)
-assert_contains "idle-compact: 7d at 30% with 5 of 7 days passed is no warning" " idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 7d at 30% on day one warns, but below 70% it no longer blocks" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 423360)" | _ic_run)
-assert_not_contains "idle-compact: 7d at 60% with 30% passed is a warning (50% tier)" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 60 362880)" | _ic_run)
-assert_contains "idle-compact: 7d at 60% with 40% passed is no warning" " idle $_ic_want" "$_ic"
+assert_contains "idle-compact: 7d at 60% with 30% passed warns, but below 70% it no longer blocks" " idle $_ic_want" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 72 423360)" | _ic_run)
+assert_not_contains "idle-compact: 7d at 72% with 30% passed is a blocking warning (50% tier)" "idle" "$_ic"
+_ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 72 362880)" | _ic_run)
+assert_contains "idle-compact: 7d at 72% with 40% passed is no warning" " idle $_ic_want" "$_ic"
 _ic=$(_ic_json 1h 250000 true 0 "$_ic_exp" 0 "$(_ic_rl seven_day 80 272160)" | _ic_run)
 assert_not_contains "idle-compact: 7d at 80% with 55% passed is a warning (75% tier)" "idle" "$_ic"
-# compact_on_return also needs precomputeCompactionEnabled.
+# precomputeCompactionEnabled gates only a host-less session; the
+# interactive REPL always has a host.
 printf '{"precomputeCompactionEnabled":false}' > "$_ic_cfg/cc/settings.json"
-_ic_global '{"mode":"compact_on_return"}'
 _ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_not_contains "idle-compact: compact_on_return without precompute compaction shows no compaction" "idle" "$_ic"
-_ic_global
-_ic=$(_ic_json 1h 250000 true | _ic_run)
-assert_contains "idle-compact: plain compact does not need precompute compaction" " idle $_ic_want" "$_ic"
+assert_contains "idle-compact: precomputeCompactionEnabled:false does not stop it" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/settings.json"
 # Server-managed cache: only while the session talks to Anthropic's API.
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/remote-settings.json"
@@ -965,34 +989,6 @@ printf '{"idleCompaction":true,"managedSourcesBehavior":"merge"}' > "$_ic_cfg/cc
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_contains "idle-compact: under merge the higher-ranked source wins a conflict" " idle $_ic_want" "$_ic"
 rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/managed/managed-settings.json"
-# --settings parsing: relative path against the launch directory (project_dir),
-# not the current cwd; the last occurrence wins; braces inside strings.
-printf '{"idleCompaction":false}' > "$_ic_cfg/proj/rel.json"
-printf '{"idleCompaction":true}' > "$_ic_cfg/on.json"
-_ic=$(_ic_json 1h 250000 true | sed "s|\"workspace\":{|\"workspace\":{\"current_dir\":\"$_ic_cfg/proj/sub\",|" \
-  | _ic_run CLAUDII_CC_CMDLINE="claude --settings rel.json")
-assert_not_contains "idle-compact: a relative --settings path resolves against the launch directory" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings $_ic_cfg/on.json --settings=$_ic_cfg/flag.json")
-assert_not_contains "idle-compact: the last --settings wins (= form last)" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings=$_ic_cfg/flag.json --settings $_ic_cfg/on.json")
-assert_contains "idle-compact: the last --settings wins (space form last)" " idle $_ic_want" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo }"},"idleCompaction":false}')
-assert_not_contains "idle-compact: a brace inside a JSON string does not cut inline --settings" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE='claude --settings {"statusLine":{"command":"echo \"}\""},"idleCompaction":false}')
-assert_not_contains "idle-compact: an escaped quote does not end the JSON string early" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --settings=$_ic_cfg/on.json --settings $_ic_cfg/on.json --settings=$_ic_cfg/flag.json")
-assert_not_contains "idle-compact: the last of three mixed --settings wins" "idle" "$_ic"
-_ic=$(_ic_json 1h 250000 true | sed 's/^{/{"session_id":"icsess02-0000",/' \
-  | _ic_run CLAUDII_CACHE_DIR="$_ic_cfg/cache" CLAUDII_CC_CMDLINE='claude --settings {"env":{"SOME_TOKEN":"s3cr3t"},"idleCompaction":false}')
-assert_not_contains "idle-compact: inline --settings env values stay out of the session cache" "s3cr3t" "$(cat "$_ic_cfg/cache/session-icsess02" 2>/dev/null)"
-assert_contains "idle-compact: inline --settings caches only the keys it reads" 'cc_settings={"idleCompaction":false}' "$(cat "$_ic_cfg/cache/session-icsess02" 2>/dev/null)"
-# --setting-sources drops the files it does not list.
-printf '{"idleCompaction":false}' > "$_ic_cfg/proj/.claude/settings.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,local")
-assert_contains "idle-compact: --setting-sources without project ignores project settings" " idle $_ic_want" "$_ic"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user,project")
-assert_not_contains "idle-compact: --setting-sources with project keeps project settings" "idle" "$_ic"
-rm -f "$_ic_cfg/proj/.claude/settings.json"
 # Remote eligibility: CC compares the base URL's host only; three more
 # third-party providers skip the remote cache too.
 printf '{"idleCompaction":false}' > "$_ic_cfg/cc/remote-settings.json"
@@ -1012,22 +1008,6 @@ printf '{"permissions":{"allow":{}}}' > "$_ic_cfg/cc/remote-settings.json"
 _ic=$(_ic_json 1h 250000 true | _ic_run)
 assert_not_contains "idle-compact: nested empty objects are no policy key" "idle" "$_ic"
 rm -f "$_ic_cfg/cc/remote-settings.json" "$_ic_cfg/managed/managed-settings.json"
-# --setting-sources: trimmed names across a ps-joined space; empty = no files.
-printf '{"idleCompaction":false}' > "$_ic_cfg/proj/.claude/settings.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources user, project --resume abc")
-assert_not_contains "idle-compact: --setting-sources 'user, project' keeps project" "idle" "$_ic"
-rm -f "$_ic_cfg/proj/.claude/settings.json"
-printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
-_ic=$(_ic_json 1h 250000 true | _ic_run CLAUDII_CC_CMDLINE="claude --setting-sources  --resume abc")
-assert_contains "idle-compact: an empty --setting-sources loads no settings file" " idle $_ic_want" "$_ic"
-rm -f "$_ic_cfg/cc/settings.json"
-# A relative --settings path in a worktree session: the launch directory is
-# worktree.original_cwd.
-mkdir -p "$_ic_cfg/launch"
-printf '{"idleCompaction":false}' > "$_ic_cfg/launch/wt.json"
-_ic=$(_ic_json 1h 250000 true | sed "s|^{|{\"worktree\":{\"original_cwd\":\"$_ic_cfg/launch\"},|" \
-  | _ic_run CLAUDII_CC_CMDLINE="claude --worktree x --settings wt.json")
-assert_not_contains "idle-compact: a relative --settings path in a worktree resolves against original_cwd" "idle" "$_ic"
 # MDM: a per-user profile that lints but will not convert (a date value)
 # falls through to the device profile; a corrupt one stops the search.
 if command -v plutil >/dev/null 2>&1; then
@@ -1054,7 +1034,7 @@ _ic_anim() {  # ttl seconds-left [extra env...] → raw segment (session anim000
   local _ttl=$1 _left=$2; shift 2
   printf '{"session_id":"anim0001-0000","model":{"display_name":"Opus"},"context_window":{"used_percentage":30,"context_window_size":1000000,"current_usage":{"input_tokens":10,"cache_read_input_tokens":250000,"cache_creation_input_tokens":0,"output_tokens":0}},"prompt_cache":{"warm":true,"ttl":"%s","expires_at":%s}}' \
     "$_ttl" $(( $(date +%s) + _left )) \
-    | env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CC_CMDLINE="" CLAUDII_CACHE_DIR="$_ic_cfg/anim" "$@" bash "$SL" 2>/dev/null
+    | env -u DISABLE_AUTO_COMPACT -u DISABLE_COMPACT -u CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS XDG_CONFIG_HOME="$_ic_cfg" CLAUDE_CONFIG_DIR="$_ic_cfg/cc" CLAUDII_MANAGED_SETTINGS_DIR="$_ic_cfg/managed" CLAUDII_MANAGED_PREFS_DIR="$_ic_cfg/prefs" CLAUDII_CACHE_DIR="$_ic_cfg/anim" "$@" bash "$SL" 2>/dev/null
 }
 _ic_plain() { sed 's/\x1b\[[0-9;]*m//g'; }
 mkdir -p "$_ic_cfg/anim"
@@ -1073,17 +1053,17 @@ _ic_a=$(_ic_anim 1h 600); _ic_b=$(_ic_anim 1h 600)
 assert_contains "idle-compact anim: the last 10% blink — one frame red full" $'\033[0;31m⇲●' "$_ic_a$_ic_b"
 assert_contains "idle-compact anim: the last 10% blink — the other yellow" $'\033[0;33m⇲◕' "$_ic_a$_ic_b"
 assert_eq "idle-compact anim: consecutive renders differ while blinking" "1" "$([[ "$_ic_a" != "$_ic_b" ]] && echo 1 || echo 0)"
-# Flag off: the segment shows the cache going cold instead, at expires_at.
-_ic_global '{"mode":"off"}'
+# Switched off: the segment shows the cache going cold instead, at expires_at.
+printf '{"idleCompaction":false}' > "$_ic_cfg/cc/settings.json"
 _ic_cold_at=$(_ic_at 0)
 _ic=$(_ic_json 1h 250000 true | _ic_run | _ic_plain)
-assert_contains "idle-compact: flag off shows the cache going cold at expires_at" "♨○ warm $_ic_cold_at" "$_ic"
-assert_not_contains "idle-compact: flag off never claims a compaction" "idle" "$_ic"
+assert_contains "idle-compact: idleCompaction off shows the cache going cold at expires_at" "♨○ warm $_ic_cold_at" "$_ic"
+assert_not_contains "idle-compact: idleCompaction off never claims a compaction" "idle" "$_ic"
 _ic=$(_ic_anim 5m 150 | _ic_plain)
 assert_contains "idle-compact: a 5m cache scales the glyph to its own lifetime" "♨◑ warm" "$_ic"
 _ic=$(_ic_json 1h 250000 false | _ic_run | _ic_plain)
 assert_eq "idle-compact: a cold cache shows nothing" "" "$_ic"
-_ic_global
+rm -f "$_ic_cfg/cc/settings.json"
 # The cold fallback appears exactly where no compaction will run …
 _ic=$(_ic_json 1h 250000 true 0 $(( $(date +%s) + 300 )) | _ic_run | _ic_plain)
 assert_contains "idle-compact: past the compaction time, a warm cache still shows going cold" " cold " "$_ic"
@@ -1118,7 +1098,7 @@ _ic=$(_ic_anim 5m 60 | _ic_plain)
 assert_contains "idle-compact: a 5m cache past 75% turns cold" " cold " "$_ic"
 unset _ic_cfg2
 unset -f _ic_anim _ic_plain; unset _ic_a _ic_b _ic_cold_at
-unset -f _ic_json _ic_run _ic_global _ic_at; unset _ic _ic_cfg _ic_exp _ic_want _ic_flag_on
+unset -f _ic_json _ic_run _ic_global _ic_at; unset _ic _ic_cfg _ic_exp _ic_want
 
 # ── multi-line stdin payload (read -r used to take only the first line) ─────
 # A pretty-printed payload must parse like the compact one, not fall through
@@ -1138,14 +1118,31 @@ assert_contains "multi-line JSON: model parsed" "Opus" "$_ml"
 assert_contains "multi-line JSON: context parsed (40 raw → 48%)" "48%" "$_ml"
 unset _ml _ml_json
 
-# ── proxy segment jq is layout-gated ─────────────────────────────────────────
-# Layout without proxy → no "→ api"/⇄ output even when a settings.local.json
-# with no ANTHROPIC_BASE_URL exists in cwd (the jq must not run at all).
-printf '{"statusline":{"lines":[["model"]]}}\n' > "$_cx_cfg/claudii/config.json"
-_px=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
-  | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
-assert_eq "proxy: gated out of layout (no → api)" "0" "$(printf '%s' "$_px" | grep -c 'api' || true)"
-unset _px
+# ── proxy segment: ANTHROPIC_BASE_URL's host:port, environment first ─────────
+_px_dir="$(mktemp -d "$CLAUDII_TEST_TMP/px-XXXXXX")"; _SL_TMPDIRS+=("$_px_dir")
+mkdir -p "$_px_dir/cfg/claudii" "$_px_dir/proj/.claude" "$_px_dir/bare/.claude"
+printf '{"statusline":{"lines":[["proxy"]]}}\n' > "$_px_dir/cfg/claudii/config.json"
+printf '{"env":{"ANTHROPIC_BASE_URL":"https://settings.example:9443/v1"}}\n' > "$_px_dir/proj/.claude/settings.local.json"
+printf '{"permissions":{}}\n' > "$_px_dir/bare/.claude/settings.local.json"
+_px() {  # project-dir [VAR=value…] → rendered line, colors stripped
+  local _d="$1"; shift
+  printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"}}' "$_d" \
+    | env -u ANTHROPIC_BASE_URL "$@" XDG_CONFIG_HOME="$_px_dir/cfg" bash "$SL" 2>/dev/null \
+    | sed 's/\x1b\[[0-9;]*m//g'
+}
+assert_eq "proxy: localhost shows host:port, no gateii special case" "⇄ localhost:8888" \
+  "$(_px "$_px_dir/bare" ANTHROPIC_BASE_URL=http://localhost:8888)"
+assert_eq "proxy: credentials and path never render" "⇄ proxy.example:8443" \
+  "$(_px "$_px_dir/bare" ANTHROPIC_BASE_URL=https://user:s3cret@proxy.example:8443/v1)"
+assert_eq "proxy: the environment wins over settings.local.json" "⇄ env.example" \
+  "$(_px "$_px_dir/proj" ANTHROPIC_BASE_URL=https://env.example)"
+assert_eq "proxy: settings.local.json is the fallback" "⇄ settings.example:9443" \
+  "$(_px "$_px_dir/proj")"
+assert_eq "proxy: no base URL anywhere → empty (no → api)" "" "$(_px "$_px_dir/bare")"
+printf '{"statusline":{"lines":[["model"]]}}\n' > "$_px_dir/cfg/claudii/config.json"
+assert_not_contains "proxy: gated out of layout" "⇄" \
+  "$(_px "$_px_dir/proj" ANTHROPIC_BASE_URL=https://env.example)"
+unset -f _px; unset _px_dir
 
 # ── worktrees segment — linked worktrees of the current repo (⑂N ⌫P) ─────────
 # Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives
@@ -1431,43 +1428,8 @@ assert_not_contains "_tok awk injection: no PWNED in output" "PWNED_TOK" "$outpu
 assert_contains "_tok awk injection: statusline still renders" "claude" "$output"
 unset _inj_cfg_dir _inj_cache_dir
 
-# omlx segment — reads gateii's data/agents/active.json (or env override)
-# Empty when path missing or stale (>5 min old). Fresh entries render
-# ⚡ task model age. Bench-prefixed task names are passed through verbatim.
-_omlx_dir="$(mktemp -d "$CLAUDII_TEST_TMP/omlx-XXXXXX")"; _SL_TMPDIRS+=("$_omlx_dir")
-_omlx_cfg="$_omlx_dir/cfg"; mkdir -p "$_omlx_cfg/claudii"
-printf '{"statusline":{"lines":[["model","omlx"]],"omlx_active_path":"%s/active.json"}}\n' "$_omlx_dir" > "$_omlx_cfg/claudii/config.json"
-_min_json='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"context_window_size":200000}}'
-
-# Missing file → no segment
-CLAUDII_OMLX_ACTIVE=/nonexistent/x.json output=$(echo "$_min_json" | bash "$SL" 2>&1)
-assert_not_contains "omlx: no file → no ⚡" "⚡" "$output"
-
-# Stale file (>5 min) → no segment
-_old=$(( $(date +%s) - 1000 ))
-printf '{"task":"commit-msg","model":"Qwen3.5-9B-MLX-4bit","started_epoch":%s}\n' "$_old" > "$_omlx_dir/active.json"
-output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
-assert_not_contains "omlx: stale file → no ⚡" "⚡" "$output"
-
-# Fresh file → ⚡ + task + short model + age
-_now_ts=$(date +%s)
-printf '{"task":"commit-msg","model":"Qwen3.5-9B-MLX-4bit","started_epoch":%s}\n' "$_now_ts" > "$_omlx_dir/active.json"
-output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
-strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "omlx: fresh → ⚡"           "⚡"          "$strip"
-assert_contains "omlx: task name shown"      "commit-msg" "$strip"
-assert_contains "omlx: model name compacted" "Qwen3.5-9B" "$strip"
-assert_not_contains "omlx: MLX-4bit suffix stripped" "MLX-4bit" "$strip"
-
-# Bench-prefixed task → passed through
-printf '{"task":"bench:summarize-file (3/3)","model":"gemma-4-e2b-it-4bit","started_epoch":%s}\n' "$_now_ts" > "$_omlx_dir/active.json"
-output=$(echo "$_min_json" | XDG_CONFIG_HOME="$_omlx_cfg" bash "$SL" 2>&1)
-strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_contains "omlx: bench prefix passes through" "bench:summarize-file" "$strip"
-assert_contains "omlx: gemma-it-4bit suffix stripped" "gemma-4-e2b" "$strip"
-assert_not_contains "omlx: gemma -it-4bit removed"   "-it-4bit"     "$strip"
-
-# github segment — workspace.repo.{owner,name,pr_number} from CC 2.1.145+
+# github segment — workspace.repo.{owner,name} from CC 2.1.145+; the PR is the
+# top-level pr.number (CC 2.1.332), older builds put it in workspace.repo.pr_number
 _gh_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/gh-XXXXXX")"; _SL_TMPDIRS+=("$_gh_cfg")
 mkdir -p "$_gh_cfg/claudii"
 printf '{"statusline":{"lines":[["model","github"]]}}\n' > "$_gh_cfg/claudii/config.json"
@@ -1480,6 +1442,22 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "github: shows owner/name"  "bmmmm/claudii" "$strip"
 assert_contains "github: shows ◆ marker"    "◆"             "$strip"
 assert_contains "github: shows #pr_number"  "#42"           "$strip"
+
+# CC 2.1.332 shape: workspace.repo = {host,owner,name}, the PR at top-level pr
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":7,"url":"https://github.com/bmmmm/claudii/pull/7","review_state":"approved"},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "github: shows the top-level pr.number (CC 2.1.332)" "bmmmm/claudii #7" "$strip"
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii","pr_number":42}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":7},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: pr.number wins over workspace.repo.pr_number" "#7"  "$strip"
+assert_not_contains "github: the older field is only a fallback"           "#42" "$strip"
+# pr.kind "mr" (GitLab merge request) renders as !N, not as a PR's #N
+_j=$(jq -cn --argjson w '{"repo":{"host":"gitlab.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":12,"kind":"mr"},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+strip=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: a merge request renders as !N" "bmmmm/claudii !12" "$strip"
+assert_not_contains "github: a merge request is no #N"      "#12"               "$strip"
 
 # Repo without PR: still shows owner/name but no #
 _j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')
@@ -1557,43 +1535,94 @@ output=$(echo "$_jold" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_ca
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_eq "cc-version: fell off cached window → red +?" "v1.0.0 +?" "$strip"
 
+# Installed newer than the cached latest (a release the cache has not seen
+# yet): current, not "+?" — the cache is what is behind.
+_jnew=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.92","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_jnew" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_eq "cc-version: newer than cached latest → plain version" "v2.1.92" "$strip"
+assert_not_contains "cc-version: newer than cached latest → not red" $'\033[0;31m' "$output"
+# Numeric, not lexical: 2.1.100 is newer than 2.1.91.
+_j100=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.100","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j100" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+assert_eq "cc-version: 2.1.100 vs latest 2.1.91 → current (numeric compare)" "v2.1.100" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+# Not comparable (pre-release suffix): no claim either way.
+_jpre=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.92-beta.1","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_jpre" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_unknown" bash "$SL" 2>&1)
+assert_eq "cc-version: unparsable version → plain, no +?" "v2.1.92-beta.1" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+# Older and inside the window but not listed (a yanked tag): count the listed
+# releases newer than it.
+_j89=$(jq -cn '{"model":{"display_name":"Opus"},"version":"2.1.89","context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j89" | XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_2behind" bash "$SL" 2>&1)
+assert_eq "cc-version: unlisted version inside the window → count of newer releases" "v2.1.89 +2" \
+  "$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+
+# A newer install re-checks after 5 min, past the refresher's own TTL. Stub
+# refresher in a scratch CLAUDII_HOME, so nothing touches the network.
+_ccv_home="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-home-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_home")
+mkdir -p "$_ccv_home/bin"
+ln -s "$CLAUDII_HOME/lib" "$_ccv_home/lib"; ln -s "$CLAUDII_HOME/config" "$_ccv_home/config"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/args"\n' "$_ccv_home" > "$_ccv_home/bin/claudii-cc-update-refresh"
+chmod +x "$_ccv_home/bin/claudii-cc-update-refresh"
+_ccv_cache_stale="$(mktemp -d "$CLAUDII_TEST_TMP/ccv-cache-XXXXXX")"; _SL_TMPDIRS+=("$_ccv_cache_stale")
+printf 'latest=2.1.91\ntags=2.1.91,2.1.90,2.1.89\nchecked=1\n' > "$_ccv_cache_stale/status-cc-version"
+_ccv_ts=$(date -v-600S +%Y%m%d%H%M.%S 2>/dev/null || date -d "600 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
+if [[ -n "$_ccv_ts" ]]; then
+  touch -t "$_ccv_ts" "$_ccv_cache_stale/status-cc-version"
+  _ccv_wait() { local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [[ -s "$_ccv_home/args" ]] && return; sleep 0.1; done; }
+  # A listed version with a 10-min-old cache: inside the 1h TTL → no refresh.
+  echo "$_j" | CLAUDII_HOME="$_ccv_home" XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_stale" bash "$SL" > /dev/null 2>&1
+  echo "$_jnew" | CLAUDII_HOME="$_ccv_home" XDG_CONFIG_HOME="$_ccv_cfg" CLAUDII_CACHE_DIR="$_ccv_cache_stale" bash "$SL" > /dev/null 2>&1
+  _ccv_wait
+  assert_eq "cc-version: newer install → exactly one forced refresh" "1" \
+    "$(grep -c -- '--force' "$_ccv_home/args" 2>/dev/null || echo 0)"
+  assert_eq "cc-version: the older install never spawned a refresh" "1" \
+    "$(wc -l < "$_ccv_home/args" 2>/dev/null | tr -d ' ')"
+  unset -f _ccv_wait
+fi
+unset _jnew _j100 _jpre _j89 _ccv_home _ccv_cache_stale _ccv_ts
+
 # ── Pace tri-state segment tests ───────────────────────────────────────────────
 _pace_cfg_dir="$(mktemp -d "$CLAUDII_TEST_TMP/XXXXXX")"; _SL_TMPDIRS+=("$_pace_cfg_dir")
 mkdir -p "$_pace_cfg_dir/claudii"
 printf '{"statusline":{"lines":[["pace"]]}}\n' > "$_pace_cfg_dir/claudii/config.json"
+# 30 min into the 5h window (linear = 10%); the session's own duration is irrelevant.
+_pace_r30=$(( $(date +%s) + 16200 )); _pace_r1=$(( $(date +%s) + 17940 ))
 
-# ahead: session 30min, linear=10%, actual=5% → 5 < 10×0.85=8.5 → ahead (↑)
-# 30min = 1800000ms; linear = 30/300*100 = 10%; rate_5h=5% → 5 < 8.5 → ahead
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+# ahead: window 30min, linear=10%, actual=5% → 5 < 10×0.85=8.5 → ahead (↑)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":10}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace ahead: ↑ shown" "↑" "$strip"
 
-# behind: session 30min, linear=10%, actual=20% → 20 > 10×1.15=11.5 → behind (↓)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":20},"seven_day":{"used_percentage":30}}}' \
+# behind: window 30min, linear=10%, actual=20% → 20 > 10×1.15=11.5 → behind (↓)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":30}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace behind: ↓ shown" "↓" "$strip"
 
-# on_pace: session 30min, linear=10%, actual=10% → exactly on-pace (=)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+# on_pace: window 30min, linear=10%, actual=10% → exactly on-pace (=)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":20}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "pace on_pace: = shown" "=" "$strip"
 
-# no data: session < 3min → pace segment empty (below gate)
-output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":60000},"rate_limits":{"five_hour":{"used_percentage":10},"seven_day":{"used_percentage":20}}}' \
+# no data: window < 3min old → pace segment empty (below gate)
+output=$(echo '{"model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":'"$_pace_r1"'},"seven_day":{"used_percentage":20}}}' \
   | XDG_CONFIG_HOME="$_pace_cfg_dir" bash "$SL" 2>/dev/null)
 strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
-assert_not_contains "pace: no glyph when session < 3min" "↑" "$strip"
-assert_not_contains "pace: no ↓ when session < 3min"     "↓" "$strip"
+assert_not_contains "pace: no glyph when the window is < 3min old" "↑" "$strip"
+assert_not_contains "pace: no ↓ when the window is < 3min old"     "↓" "$strip"
 
 # pace persisted in session cache file
 _pace_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_pace_cache_dir")
-echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5},"seven_day":{"used_percentage":10}}}' \
+echo '{"session_id":"testpace999","model":{"display_name":"Sonnet"},"context_window":{"used_percentage":10,"total_input_tokens":500,"total_output_tokens":100,"context_window_size":200000},"cost":{"total_cost_usd":0.05,"total_duration_ms":1800000},"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":'"$_pace_r30"'},"seven_day":{"used_percentage":10}}}' \
   | CLAUDII_CACHE_DIR="$_pace_cache_dir" bash "$SL" 2>/dev/null >/dev/null
 _cache_pace="$(cat "$_pace_cache_dir/session-testpace" 2>/dev/null)"
 assert_contains "pace=ahead written to session cache" "pace=ahead" "$_cache_pace"
+unset _pace_r30 _pace_r1
 
 # ── Cron segment tests ────────────────────────────────────────────────────────
 # cron segment: renders ⏰ <relative> when next_cron_at is in the future
@@ -1747,6 +1776,13 @@ echo '{"model":{"display_name":"Opus"}}' \
 _ins_env=$(cat "$_ins_dir/env.out" 2>/dev/null)
 assert_contains "insomnii env: absent keys fall back to shame=true"   "shame=true" "$_ins_env"
 assert_contains "insomnii env: absent keys fall back to rainbow=true" "rainbow=true" "$_ins_env"
+# The same three switches are declared in config/defaults.json, so
+# `claudii config get` reports what the renderer forwards instead of nothing.
+assert_eq "insomnii switches: defaults.json declares all three as true" "true true true" \
+  "$(jq -r '.statusline | "\(.shame) \(.motivation) \(.rainbow)"' "$CLAUDII_HOME/config/defaults.json")"
+assert_eq "insomnii switches: config get falls back to the default" "true" \
+  "$(HOME="$_ins_dir" XDG_CONFIG_HOME="$_ins_dir/cfg" CLAUDII_CACHE_DIR="$_ins_dir/cache" \
+     bash "$CLAUDII_HOME/bin/claudii" config get statusline.motivation 2>/dev/null)"
 
 # Regression 2, other half: a corrupt config no longer reaches cc-insomnii at
 # all. The failed jq leaves the layout at the shipped default, which has no

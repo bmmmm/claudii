@@ -30,7 +30,6 @@ export CLAUDII_HOME="${0:A:h}"
 autoload -Uz add-zsh-hook
 add-zsh-hook -d precmd   _claudii_rprompt    2>/dev/null
 add-zsh-hook -d precmd   _claudii_statusline 2>/dev/null
-add-zsh-hook -d precmd   _vpnii_precmd       2>/dev/null
 add-zsh-hook -d preexec  _claudii_preexec    2>/dev/null
 RPROMPT=""
 
@@ -44,7 +43,6 @@ source "$CLAUDII_HOME/lib/config.zsh"
 source "$CLAUDII_HOME/lib/search_dir.sh"
 source "$CLAUDII_HOME/lib/functions.zsh"
 source "$CLAUDII_HOME/lib/statusline.zsh"
-source "$CLAUDII_HOME/lib/vpnii.zsh"
 
 # OTEL telemetry env — written by `claudii-otel setup` (opt-in). A bare file
 # test (no jq fork) so shells pay nothing when the OTEL source is off; when on,

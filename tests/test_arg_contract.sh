@@ -18,21 +18,11 @@
 _AC_CLI="$CLAUDII_HOME/bin/claudii"
 
 # ── Commands not yet under the contract ──────────────────────────────────────
-# Their argument parsers live in lib/cmd/{system,sessions,display,config,omlx,
-# vpnii,vibemap,perf}.sh, outside the change that introduced this gate. The list
-# is a RATCHET, not an excuse: the loop below asserts that each of these still
-# FAILS the contract, so converting one without deleting it from here turns this
-# test red. It can only shrink.
-_AC_PENDING=" cc-statusline claudestatus config dashboard gc insomnii omlx pin search session session-dashboard sessionline sessions status unpin vibemap vpnii "
-
-# Two arms exec into another command, so the message names the TARGET. That is
-# the honest answer for an alias — `claudii layers` IS `claudii explain`.
-_ac_expect_name() {
-  case "$1" in
-    layers|components) printf 'explain' ;;
-    *)                 printf '%s' "$1" ;;
-  esac
-}
+# Empty since every dispatched command was converted. Kept as a RATCHET, not an
+# excuse: the loop below asserts that each entry still FAILS the contract, so a
+# command listed here and then converted turns this test red. It can only
+# shrink — do not add to it; convert the command instead.
+_AC_PENDING=" "
 
 # ── Derive the command list from the dispatch case ───────────────────────────
 _AC_BLOCK=$(LC_ALL=C sed -n '/^  # System commands$/,/^esac$/p' "$_AC_CLI")
@@ -73,7 +63,7 @@ _ac_probe() {
 _ac_covered=0
 for _ac_cmd in $_AC_CMDS; do
   _ac_probe "$_ac_cmd"
-  _ac_want="claudii $(_ac_expect_name "$_ac_cmd"): unknown option: --bogus"
+  _ac_want="claudii $_ac_cmd: unknown option: --bogus"
   case "$_AC_PENDING" in
     *" $_ac_cmd "*)
       # Ratchet: a pending command must still MISS the contract. When someone
@@ -90,10 +80,10 @@ for _ac_cmd in $_AC_CMDS; do
   esac
 done
 
-# The gate must not pass by covering nothing: 27 commands were converted, so a
-# refactor that quietly drops arms out of the walk shows up here.
-assert_eq "the contract covers at least 25 dispatched commands" "0" \
-  "$([ "$_ac_covered" -ge 25 ] && echo 0 || echo 1)"
+# The gate must not pass by covering nothing: all 39 commands are converted, so
+# a refactor that quietly drops arms out of the walk shows up here.
+assert_eq "the contract covers at least 39 dispatched commands" "0" \
+  "$([ "$_ac_covered" -ge 39 ] && echo 0 || echo 1)"
 
 # Every name in _AC_PENDING must still be a real dispatch arm — otherwise a
 # renamed or deleted command leaves a stale exemption behind that silently
@@ -158,3 +148,16 @@ rm -rf "$_AC_STUB" "$_AC_SB"
 unset _AC_CLI _AC_PENDING _AC_BLOCK _AC_CMDS _AC_STUB _AC_SB _AC_RC _AC_ERR _AC_NOARG _AC_GUARD
 unset _ac_covered _ac_cmd _ac_want _ac_hit _ac_stale _ac_p _ac_stdout _ac_ret
 unset _ac_n _ac_ungated _t
+
+# ── -h/--help on the commands converted last: usage on stdout, rc 0 ──────────
+for _ac_cmd in cc-statusline claudestatus insomnii session session-dashboard status; do
+  _ac_sb=$(mktemp -d "${TMPDIR:-/tmp}/claudii_ac_h.XXXXXX")
+  mkdir -p "$_ac_sb/home" "$_ac_sb/cfg" "$_ac_sb/cache"
+  _ac_out=$(HOME="$_ac_sb/home" XDG_CONFIG_HOME="$_ac_sb/cfg" XDG_CACHE_HOME="$_ac_sb/cache" \
+    CLAUDII_CACHE_DIR="$_ac_sb/cache/claudii" \
+    bash "$CLAUDII_HOME/bin/claudii" "$_ac_cmd" --help 2>/dev/null); _ac_rc=$?
+  rm -rf "$_ac_sb"
+  assert_eq "$_ac_cmd --help: exit 0" "0" "$_ac_rc"
+  assert_contains "$_ac_cmd --help: usage on stdout" "Usage: claudii $_ac_cmd" "$_ac_out"
+done
+unset _ac_sb _ac_out _ac_rc

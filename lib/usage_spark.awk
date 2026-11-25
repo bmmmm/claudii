@@ -1,6 +1,7 @@
 # usage_spark.awk — daily input+output token totals for a rolling N-day window,
 # from the cost/trends history TSV. Uses the shared per-session delta
-# attribution (attr_delta from attribution.awk, loaded via -f before this file)
+# attribution (attr_delta from attribution.awk; history_cols.awk and
+# attribution.awk are loaded via -f before this file)
 # so a long-running session is not counted cumulatively. Emits a fixed-width
 # value series (oldest -> newest, zero-filled) plus a summary line, for the
 # bare-overview usage sparkline. Day bucketing is by LOCAL calendar day
@@ -11,11 +12,8 @@
 #   tz_offset=<secs>     signed local UTC offset (date +%z). Default 0 (UTC).
 #   ndays=<n>            window length in days. Default 30.
 #
-# History TSV columns: declared in lib/history_cols.awk (HC_SCHEMA) — this
-# program reads ts, sid, in and out. They are spelled out positionally below
-# because the call site (lib/cmd/overview.sh) loads only attribution.awk and
-# this file; tests/test_history_cols.sh pins them against the schema, so a
-# divergence goes red rather than silently bucketing the wrong column.
+# History TSV columns: read by name through lib/history_cols.awk (HC_SCHEMA)
+# — ts, sid, in and out.
 # Output (stdout):
 #   line 1: ndays space-separated integers (in+out tokens per day, oldest first)
 #   line 2: max<TAB>today<TAB>total<TAB>active_days<TAB>peak_idx<TAB>today_sessions
@@ -27,10 +25,19 @@
 
 BEGIN {
   FS = "\t"
+  # Without HC[] every $HC_* below would degrade to $0 — numbers that are
+  # quietly wrong rather than absent. (exit from BEGIN still runs END, hence
+  # the flag; END bails before it prints anything.)
+  if (!("ts" in HC)) {
+    print "usage_spark.awk: needs -f lib/history_cols.awk loaded first" > "/dev/stderr"
+    hc_missing = 1
+    exit 2
+  }
   if (ndays == "" || ndays + 0 == 0) ndays = 30
   tz_offset = tz_offset + 0
   if (today_epoch == "" || today_epoch + 0 == 0) {
     print "usage_spark.awk: needs -v today_epoch=<epoch>" > "/dev/stderr"
+    hc_missing = 1   # same bail-out: END must not print a zero series
     exit 2
   }
   today_day = int((today_epoch + tz_offset) / 86400)
@@ -38,12 +45,12 @@ BEGIN {
 }
 
 { gsub(/\r/, "") }            # strip CR for cross-platform TSV (CRLF from synced files)
-NF < 6 { next }               # guard against short/malformed rows
-$1 == "timestamp" || $1 == "" || $6 == "" { next }
+NF < HC_MINCOL { next }       # guard against short/malformed rows
+$HC_TS == "timestamp" || $HC_TS == "" || $HC_SID == "" { next }
 {
-  ts = $1 + 0; if (ts == 0) next
-  sid = $6
-  tok = ($7 == "" ? 0 : $7 + 0) + ($8 == "" ? 0 : $8 + 0)
+  ts = $HC_TS + 0; if (ts == 0) next
+  sid = $HC_SID
+  tok = ($HC_IN == "" ? 0 : $HC_IN + 0) + ($HC_OUT == "" ? 0 : $HC_OUT + 0)
   tinc = attr_delta(base, sid, tok)
   if (tinc <= 0) next
   day = int((ts + tz_offset) / 86400)
@@ -54,6 +61,7 @@ $1 == "timestamp" || $1 == "" || $6 == "" { next }
 }
 
 END {
+  if (hc_missing) exit 2
   max = 0; peak = 0; active = 0; series = ""
   for (i = 0; i < ndays; i++) {
     v = (i in daily) ? daily[i] : 0

@@ -12,7 +12,8 @@ _week_observed() {
   local _dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _collect_history_files "$_dir"
   (( ${#_HIST_FILES[@]} )) || return 1
-  LC_ALL=C awk -F'\t' -f "$CLAUDII_HOME/lib/window_bounds.awk" "${_HIST_FILES[@]}" 2>/dev/null \
+  LC_ALL=C awk -F'\t' -f "$CLAUDII_HOME/lib/history_cols.awk" \
+    -f "$CLAUDII_HOME/lib/window_bounds.awk" "${_HIST_FILES[@]}" 2>/dev/null \
     | LC_ALL=C sort -t"$(printf '\t')" -k2,2n
 }
 
@@ -105,16 +106,14 @@ _week_stats() {
   _collect_history_files "$_dir" $(( _WW_START - 2592000 ))
   (( ${#_HIST_FILES[@]} )) || return 1
 
-  local _attr_awk; _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
-  local _win_awk;  _win_awk=$(<"$CLAUDII_HOME/lib/window.awk")
-
   # LC_ALL=C, not LC_NUMERIC: a comma locale makes onetrueawk truncate
   # "12.34"+0 at the radix, corrupting the cost sum itself — not just its
   # rendering (see the locale+awk lesson).
   local _row
   _row=$(LC_ALL=C awk -F'\t' -v window_start="$_WW_START" \
-    "${_attr_awk}
-${_win_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
+    -f "$CLAUDII_HOME/lib/attribution.awk" \
+    -f "$CLAUDII_HOME/lib/window.awk" "${_HIST_FILES[@]}" 2>/dev/null)
   [[ -n "$_row" ]] || return 1
 
   local _lim_lo _lim_med _lim_hi _lim_pairs
@@ -296,12 +295,11 @@ _week_history_rows() {
   _collect_history_files "$_dir" $(( ${_b[0]} - 2592000 ))
   (( ${#_HIST_FILES[@]} )) || return 1
 
-  local _attr_awk; _attr_awk=$(<"$CLAUDII_HOME/lib/attribution.awk")
-  local _hist_awk; _hist_awk=$(<"$CLAUDII_HOME/lib/window_history.awk")
   local _rows
   _rows=$(LC_ALL=C awk -F'\t' -v bounds="$_bounds" \
-    "${_attr_awk}
-${_hist_awk}" "${_HIST_FILES[@]}" 2>/dev/null)
+    -f "$CLAUDII_HOME/lib/history_cols.awk" \
+    -f "$CLAUDII_HOME/lib/attribution.awk" \
+    -f "$CLAUDII_HOME/lib/window_history.awk" "${_HIST_FILES[@]}" 2>/dev/null)
   [[ -n "$_rows" ]] || return 1
 
   _WH_ROWS="$_rows"

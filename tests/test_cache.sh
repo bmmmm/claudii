@@ -45,6 +45,17 @@ assert_contains "cache: hit rate suffix"   "hit rate"           "$_CACHE_OUT"
 # Rounded display is "87.5%" — verify it's printed somewhere in the summary.
 assert_contains "cache: overall hit rate ≈ 87.5%" "87.5%" "$_CACHE_OUT"
 
+# Bars come from the shared _bar_c (lib/render.sh) — 20 cells, theme symbols —
+# not a private copy: 95% → 19 full + 1 empty, 80% → 16 full + 4 empty.
+_CACHE_OPUS_LINE=$(grep 'Opus 4.7' <<< "$_CACHE_OUT")
+_CACHE_SONNET_LINE=$(grep 'Sonnet 4.6' <<< "$_CACHE_OUT")
+# (Captured output is not a TTY, so it carries no colour codes.)
+assert_contains "cache: Opus bar is 19 full + 1 empty cells (95%)" \
+  " ███████████████████░ " "$_CACHE_OPUS_LINE"
+assert_contains "cache: Sonnet bar is 16 full + 4 empty cells (80%)" \
+  " ████████████████░░░░ " "$_CACHE_SONNET_LINE"
+unset _CACHE_OPUS_LINE _CACHE_SONNET_LINE
+
 # Verify cache directory got populated.
 assert_eq "cache: per-session JSON cache exists" "1" \
   "$([ -s "$_CACHE_CACHE/insights/$_SID.json" ] && echo 1 || echo 0)"
@@ -114,13 +125,14 @@ assert_eq "cache (non-object lines): assistant message still aggregated" "1" "$_
 
 # ── Model-label map: new + older versions all resolve (model-update guard) ──
 # Source insights.sh (pure function defs, no side effects) to call the label fn
-# directly. Adding a new model means adding a case here AND in
-# _insights_model_label — keep them in lock-step. NOT a subshell: assert_eq
-# increments the run.sh PASS/FAIL counters in the current scope.
+# directly. The version comes from the id, so a model nobody listed still gets
+# its full label (opus 9.9 below). The cross-implementation fixtures live in
+# tests/test_model_label_agreement.sh. NOT a subshell: assert_eq increments the
+# run.sh PASS/FAIL counters in the current scope.
 source "$CLAUDII_HOME/lib/cmd/insights.sh" 2>/dev/null
 assert_eq "label: fable 5.1 (latest)" "Fable 5.1"  "$(_insights_model_label claude-fable-5-1)"
 assert_eq "label: fable 5 (older)"    "Fable 5"    "$(_insights_model_label claude-fable-5)"
-assert_eq "label: unknown fable->tier" "Fable"     "$(_insights_model_label claude-fable-9)"
+assert_eq "label: unlisted fable 9"    "Fable 9"   "$(_insights_model_label claude-fable-9)"
 assert_eq "label: opus 5.5 (latest)"  "Opus 5.5"   "$(_insights_model_label claude-opus-5-5)"
 assert_eq "label: opus 5 (older)"     "Opus 5"     "$(_insights_model_label claude-opus-5)"
 assert_eq "label: opus 4.8 (older)"   "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
@@ -129,7 +141,9 @@ assert_eq "label: opus 4.6 (older)"   "Opus 4.6"   "$(_insights_model_label clau
 assert_eq "label: sonnet 5 (latest)"  "Sonnet 5"   "$(_insights_model_label claude-sonnet-5)"
 assert_eq "label: sonnet 4.6 (older)" "Sonnet 4.6" "$(_insights_model_label claude-sonnet-4-6)"
 assert_eq "label: haiku 4.5"          "Haiku 4.5"  "$(_insights_model_label claude-haiku-4-5)"
-assert_eq "label: unknown opus->tier" "Opus"       "$(_insights_model_label claude-opus-9-9)"
+assert_eq "label: unlisted opus 9.9"  "Opus 9.9"   "$(_insights_model_label claude-opus-9-9)"
+assert_eq "label: opus 5.1 (not 5)"   "Opus 5.1"   "$(_insights_model_label claude-opus-5-1)"
+assert_eq "label: no version -> tier" "Opus"       "$(_insights_model_label opus)"
 
 unset _SID _TS _JSONL _CACHE_OUT _CACHE_RC _CACHE_OUT_30 _EMPTY_OUT _BAD_RC
 
@@ -232,3 +246,41 @@ _sa_deploy_out2=$(jq -r '.attribution_skills.deploy.out_tok // "missing"' \
 assert_eq "subagent aggregate: subagent-only update re-aggregates parent (35+7)" "42" "$_sa_deploy_out2"
 rm -rf "$_sa_base"
 unset _sa_base _sa_deploy_out _sa_deploy_out2
+
+# ── The window cuts the days, not just the sessions ────────────────────────
+# The merge admits a session by last_seen, so a session that started 11 days
+# ago and is still running is IN a 7-day merge with its whole history. `tokens`
+# drops the days before the window's calendar floor; `cache` used to show them
+# (per day, per model and in the summary). Clock pinned to 2026-06-25T12:00Z
+# via CLAUDII_NOW: the 7-day floor is 2026-06-19.
+_CACHE_FL_PROJ="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_CACHE_FL_PROJ")
+_CACHE_FL_CACHE="$(mktemp -d)"; _CACHE_TMPDIRS+=("$_CACHE_FL_CACHE")
+mkdir -p "$_CACHE_FL_PROJ/-test-project-floor"
+_CACHE_FL_SID="77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+{
+  # 11 days back: Opus, 900/1000 cache reads (90%) — outside a 7-day window.
+  printf '{"type":"assistant","timestamp":"2026-06-14T12:00:00Z","sessionId":"%s","message":{"id":"m-old","role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":900,"cache_creation_input_tokens":0}}}\n' "$_CACHE_FL_SID"
+  # Today: Sonnet, 500/1000 (50%).
+  printf '{"type":"assistant","timestamp":"2026-06-25T10:00:00Z","sessionId":"%s","message":{"id":"m-new","role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":500,"output_tokens":10,"cache_read_input_tokens":500,"cache_creation_input_tokens":0}}}\n' "$_CACHE_FL_SID"
+} > "$_CACHE_FL_PROJ/-test-project-floor/$_CACHE_FL_SID.jsonl"
+_cache_fl() {
+  CLAUDE_PROJECTS_DIR="$_CACHE_FL_PROJ" CLAUDII_CACHE_DIR="$_CACHE_FL_CACHE" CLAUDII_NOW=1782388800 \
+    bash "$CLAUDII_HOME/bin/claudii" cache "$@" 2>&1
+}
+_CACHE_FL_J7=$(_cache_fl --json)
+assert_eq "cache --json (7d): only in-window days" "2026-06-25" \
+  "$(jq -r '[.per_day[].day] | join(",")' <<< "$_CACHE_FL_J7")"
+assert_eq "cache --json (7d): per_model drops the pre-window model" "claude-sonnet-4-6" \
+  "$(jq -r '[.per_model[].model] | join(",")' <<< "$_CACHE_FL_J7")"
+assert_eq "cache --json (7d): summary counts only in-window tokens" "500 1000 50" \
+  "$(jq -r '.summary | "\(.cache_read) \(.total) \(.hit_pct)"' <<< "$_CACHE_FL_J7")"
+_CACHE_FL_J30=$(_cache_fl --json --days 30)
+assert_eq "cache --json (30d): the older day is back" "1400 2000 70" \
+  "$(jq -r '.summary | "\(.cache_read) \(.total) \(.hit_pct)"' <<< "$_CACHE_FL_J30")"
+assert_eq "cache --json (30d): both models" "2" \
+  "$(jq -r '.per_model | length' <<< "$_CACHE_FL_J30")"
+_CACHE_FL_P7=$(_cache_fl)
+assert_not_contains "cache (7d): pre-window model not listed" "Opus 4.7" "$_CACHE_FL_P7"
+assert_contains "cache (7d): summary uses the window's hit rate" "50.0% hit rate" "$_CACHE_FL_P7"
+unset -f _cache_fl
+unset _CACHE_FL_PROJ _CACHE_FL_CACHE _CACHE_FL_SID _CACHE_FL_J7 _CACHE_FL_J30 _CACHE_FL_P7

@@ -189,6 +189,67 @@ assert_contains "config theme unknown gives error" "Unknown theme" "$output"
 bash "$CLAUDII_HOME/bin/claudii" config theme unknown_xyz >/dev/null 2>&1 && _theme_exit=0 || _theme_exit=$?
 assert_eq "config theme unknown exits non-zero" "1" "$_theme_exit"
 
+# config theme auto — accepted (lib/visual.sh resolves it to pastel/default)
+bash "$CLAUDII_HOME/bin/claudii" config theme auto >/dev/null 2>&1 && _theme_exit=0 || _theme_exit=$?
+assert_eq "config theme auto: accepted (exit 0)" "0" "$_theme_exit"
+assert_eq "config theme auto: sets theme.name" "auto" \
+  "$(jq -r '.theme.name' "$XDG_CONFIG_HOME/claudii/config.json" 2>/dev/null)"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config theme 2>&1)
+assert_contains "config theme list: auto is offered and marked active" "* auto" "$output"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config theme unknown_xyz 2>&1 || true)
+assert_contains "config theme unknown: error offers auto" "auto," "$output"
+bash "$CLAUDII_HOME/bin/claudii" config theme default >/dev/null 2>&1
+
+# ── Exit-code contract: help and unknown subcommands ─────────────────────────
+# `config -h` and a mistyped subcommand used to fall into the print-the-config
+# arm: the whole user config on stdout, rc 0.
+output=$(bash "$CLAUDII_HOME/bin/claudii" config -h 2>/dev/null); _c_rc=$?
+assert_eq "config -h: exit 0" "0" "$_c_rc"
+assert_contains "config -h: prints usage on stdout" "Usage: claudii config" "$output"
+assert_not_contains "config -h: does not dump the user config" "theme_presets" "$output"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config gett 2>/dev/null); _c_rc=$?
+assert_eq "config <typo>: exit 2" "2" "$_c_rc"
+assert_eq "config <typo>: nothing on stdout (no config dump)" "" "$output"
+output=$(bash "$CLAUDII_HOME/bin/claudii" config gett 2>&1 >/dev/null)
+assert_contains "config <typo>: contract message" "claudii config: unknown option: gett" "$output"
+# Bare `config` still prints the config
+output=$(bash "$CLAUDII_HOME/bin/claudii" config 2>&1)
+assert_contains "config (bare): still prints the user config" "User config:" "$output"
+# config get still resolves hyphenated keys and falls back to defaults
+output=$(bash "$CLAUDII_HOME/bin/claudii" config get session-dashboard.enabled 2>&1)
+assert_eq "config get: hyphenated key resolves" "$(jq -r '."session-dashboard".enabled | tostring' "$CLAUDII_HOME/config/defaults.json")" "$output"
+# No global leakage from the sourced handler
+_leak=$(CLAUDII_HOME="$CLAUDII_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" bash -c '
+  source "$CLAUDII_HOME/lib/visual.sh"; source "$CLAUDII_HOME/lib/helpers.sh"
+  source "$CLAUDII_HOME/lib/cmd/insights.sh"; source "$CLAUDII_HOME/lib/cmd/config.sh"
+  _cmd_config config get fallback.enabled >/dev/null
+  _cmd_config config -h >/dev/null
+  _cmd_config config --bogus >/dev/null 2>&1; echo "rc=$?"
+  printf "leak:%s\n" "${_segs+set}${key+set}${jq_path+set}${val+set}"
+' 2>&1)
+assert_contains "config handler: returns 2 on a bad subcommand without exiting" "rc=2" "$_leak"
+assert_contains "config handler: no variables leak into the caller" "leak:" "$_leak"
+assert_not_contains "config handler: _segs/key/jq_path/val stay local" "leak:set" "$_leak"
+
+# ── search: the same contract (it used to forward every flag to claude) ──────
+_s_stub=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_search.XXXXXX")
+printf '#!/bin/bash\nprintf "ARGS:%%s\\n" "$*" > "%s/args"\n' "$_s_stub" > "$_s_stub/claude"
+chmod +x "$_s_stub/claude"
+output=$(PATH="$_s_stub:$PATH" bash "$CLAUDII_HOME/bin/claudii" search --bogus 2>&1 >/dev/null); _s_rc=$?
+assert_eq "search --bogus: exit 2" "2" "$_s_rc"
+assert_contains "search --bogus: contract message" "claudii search: unknown option: --bogus" "$output"
+assert_eq "search --bogus: claude never started" "no" "$([[ -f "$_s_stub/args" ]] && echo yes || echo no)"
+output=$(PATH="$_s_stub:$PATH" bash "$CLAUDII_HOME/bin/claudii" search -h 2>&1); _s_rc=$?
+assert_eq "search -h: exit 0" "0" "$_s_rc"
+assert_contains "search -h: usage on stdout" "Usage: claudii search" "$output"
+assert_eq "search -h: claude never started" "no" "$([[ -f "$_s_stub/args" ]] && echo yes || echo no)"
+HOME="$XDG_CONFIG_HOME/home" PATH="$_s_stub:$PATH" bash "$CLAUDII_HOME/bin/claudii" search "where is x" -- --continue >/dev/null 2>&1
+assert_contains "search: query and post-- flags reach claude, the -- itself does not" \
+  "where is x --continue" "$(cat "$_s_stub/args" 2>/dev/null)"
+assert_not_contains "search: the bare -- is consumed" " -- " "$(cat "$_s_stub/args" 2>/dev/null)"
+rm -rf "$_s_stub" "${XDG_CONFIG_HOME:?}/home"
+unset _s_stub _s_rc _c_rc _leak
+
 
 # ── Theme loading tests ──────────────────────────────────────────────────────
 

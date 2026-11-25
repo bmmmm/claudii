@@ -70,3 +70,42 @@ assert_eq "bulk: a symlinked insights dir is read" "$_BULK_N" \
 _BULK_PINNED=$(CLAUDII_NOW="$(date +%s)" _bulk_env bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 2>&1)
 assert_eq "bulk: pinned clock reads every cache" "$(( _BULK_N + 1 ))" \
   "$(jq -r '.sessions' <<< "$_BULK_PINNED" 2>/dev/null)"
+
+# ── a merged aggregate past 128 KiB ─────────────────────────────────────────
+# The views get the MERGED JSON, not the file list — and that grows with the
+# window too: one limit hit per session (each tagged with its long session id),
+# one model and one tool name per session. It used to travel as ONE
+# `--argjson m` argument into cache/tokens/tools/limits --json and both
+# `skills-cost --compare` windows; past Linux's 128 KiB per-argument cap jq
+# never started (rc 126, "Argument list too long").
+_BULK_BIG="$_BULK_DIR/big"
+mkdir -p "$_BULK_BIG/insights"
+_BULK_BIG_N=1500
+_BULK_DAY=$(date -u +%Y-%m-%d)
+for (( _i = 0; _i < _BULK_BIG_N; _i++ )); do
+  printf '{"sessionId":"%s-b%d","first_seen":"%s","last_seen":"%s","messages":1,"limit_hits":[{"timestamp":"%s","model":"claude-opus-4-7"}],"days":{"%s|claude-bulk-%s-%d":{"in_tok":10,"out_tok":5,"cache_read":90,"cache_create":0}},"models":{"claude-bulk-%s-%d":{"in_tok":10,"cache_read":90,"cache_create":0}},"tools":{"tool-%s-%d":1},"attribution_skills":{"bulk-skill":{"calls":1,"in_tok":10,"out_tok":5,"cache_read":90,"cache_create":0}},"attribution_models":{"skill|bulk-skill|claude-sonnet-4-6":{"calls":1,"in_tok":10,"out_tok":5,"cache_read":90,"cache_create":0}}}\n' \
+    "${_BULK_PAD:0:100}" "$_i" "$_BULK_TS" "$_BULK_TS" "$_BULK_TS" \
+    "$_BULK_DAY" "${_BULK_PAD:0:50}" "$_i" "${_BULK_PAD:0:50}" "$_i" "${_BULK_PAD:0:50}" "$_i" \
+    > "$_BULK_BIG/insights/big-${_i}.json"
+done
+_bulk_big() {
+  CLAUDII_CACHE_DIR="$_BULK_BIG" CLAUDE_PROJECTS_DIR="$_BULK_DIR/projects" "$@"
+}
+_BULK_BIG_BYTES=$(_bulk_big bash "$CLAUDII_HOME/bin/claudii-insights" merge --days 7 2>/dev/null | wc -c)
+assert_eq "bulk: the merged fixture really is past 128 KiB" "1" \
+  "$(( _BULK_BIG_BYTES > 131072 ? 1 : 0 ))"
+
+_bulk_view() {   # <expected> <jq filter> <claudii args...>
+  local _want="$1" _filter="$2"; shift 2
+  local _out _rc=0
+  _out=$(_bulk_big bash "$CLAUDII_HOME/bin/claudii" "$@" 2>&1) || _rc=$?
+  assert_eq "bulk: $* exits 0 on a merge past 128 KiB" "0" "$_rc"
+  assert_eq "bulk: $* reads the whole merge ($_filter)" "$_want" \
+    "$(jq -r "$_filter" <<< "$_out" 2>/dev/null)"
+}
+_bulk_view "$_BULK_BIG_N" '.per_model | length' cache --json
+_bulk_view "$_BULK_BIG_N" '.by_model | length'  tokens --json
+_bulk_view "$_BULK_BIG_N" '.tools | length'     tools --json
+_bulk_view "$_BULK_BIG_N" '.total'              limits --json
+_bulk_view "$_BULK_BIG_N" '.rows[0].calls_recent' skills-cost --compare 1:1 --json
+unset -f _bulk_big _bulk_view
