@@ -64,23 +64,8 @@ function claudii_config_get {
   echo "$val"
 }
 
-function _claudii_log {
-  local level="$1"; shift
-  local current="${CLAUDII_LOG_LEVEL:-off}"
-  [[ "$current" == "off" ]] && return
-
-  local -A _lvl=(off 0 error 1 warn 2 info 3 debug 4)
-  (( ${_lvl[$level]:-0} > ${_lvl[$current]:-0} )) && return
-
-  local color
-  case "$level" in
-    error) color=$'\033[0;31m' ;;
-    warn)  color=$'\033[0;33m' ;;
-    info)  color=$'\033[0;36m' ;;
-    debug) color=$'\033[0;90m' ;;
-  esac
-  printf "%s[claudii:%s] %s"$'\033[0m\n' "$color" "$level" "$*" >&2
-}
+# _claudii_log lives in lib/log.sh (sourced by claudii.plugin.zsh before this
+# file); a zsh copy here used to shadow it.
 
 # Boot: load defaults immediately (once), user config on first access
 _claudii_defaults_load

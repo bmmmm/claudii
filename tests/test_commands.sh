@@ -268,6 +268,7 @@ if command -v zsh >/dev/null 2>&1; then
     typeset -gA _CLAUDII_METRICS
     zmodload zsh/datetime 2>/dev/null; zmodload zsh/mathfunc 2>/dev/null
     source "$CLAUDII_HOME/lib/visual.sh" 2>/dev/null
+    source "$CLAUDII_HOME/lib/log.sh"
     source "$CLAUDII_HOME/lib/config.zsh" 2>/dev/null
     source "$CLAUDII_HOME/lib/functions.zsh"
     for a in hk sn op orc; do

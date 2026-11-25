@@ -154,6 +154,10 @@ function _claudii_launch {
 # Register alias shell functions dynamically from config (aliases.*)
 # Creates functions like cl, clo, clm, clq, clf — no hardcoded list.
 function _claudii_register_aliases {
+  # First config read of a shell start: loads the cache, which also syncs
+  # CLAUDII_LOG_LEVEL — without it the debug line below resolved the level by
+  # forking jq (lib/log.sh's lazy path) on every shell start.
+  _claudii_cache_load
   local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
   [[ -f "$config" ]] || return
   local aliases_json
