@@ -216,7 +216,12 @@ instead of an alarm.
 .TP
 .B Session Dashboard (above prompt)
 Per-session summary lines above the prompt, rendered via the precmd hook.
-Shows model, context %, token throughput, 5h rate limit + countdown.
+Each session line shows model, context % and token throughput. One extra line
+shows the account-wide 5h rate limit and its reset countdown (e.g.
+.BR 5h:63% " \[u21BA]4h9m" ),
+taken from the newest session sample whose window is still open \(em never one
+value per session. The number follows
+.BR statusline.rate_display .
 Only shown after
 .B claudii
 commands; suppressed after
@@ -2077,21 +2082,33 @@ sync.hosts.\fIname\fR.mode	pull	\fBpull\fR, \fBpush\fR or \fBboth\fR
 .I "${XDG_CACHE_HOME:-~/.cache}/claudii/status-models"
 (override:
 .BR CLAUDII_CACHE_DIR ).
-Contains one line per model:
+Contains one line per model in
+.B statusline.models
+(default: opus, sonnet, haiku, fable):
 .PP
 .RS
 .nf
 opus=ok
 sonnet=down
 haiku=ok
+fable=ok
 .fi
 .RE
 .PP
+Two optional marker lines may follow:
+.B _api=unreachable
+(the status API could not be fetched; the model lines are the all-ok fallback)
+and
+.B _incident=<stage>
+(investigating, identified or monitoring \(em an open incident, whether or not
+it touches a tracked model).
+.PP
 Refreshed automatically in the background when older than
 .B status.cache_ttl
-seconds. While a model is down or degraded the interval is shortened to a
-fifth (minimum 60s) so a recovery is picked up quickly; an unreachable status
-API keeps the base interval.
+seconds, by the shell prompt hook and by the CC-Statusline (the shell prompt
+hook waits twice as long while everything is healthy). While a model is down
+or degraded the interval is shortened to a fifth (minimum 60s) so a recovery
+is picked up quickly; an unreachable status API keeps the base interval.
 .PP
 Every state transition (e.g. opus ok\(->degraded) is appended to
 .I status-history.tsv

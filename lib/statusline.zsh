@@ -1,6 +1,8 @@
 # claudii statusline — RPROMPT with per-model health + session dashboard
 # shellcheck source=lib/visual.sh
 source "${CLAUDII_HOME}/lib/visual.sh"
+# shellcheck source=lib/timefmt.sh
+source "${CLAUDII_HOME}/lib/timefmt.sh"   # _fmt_rel for the dashboard's 5h countdown
 
 # _CLAUDII_USER_PROMPT is set by claudii.plugin.zsh before sourcing libs —
 # do not set it here, that would overwrite the value captured before config.zsh/functions.zsh ran.
@@ -12,8 +14,6 @@ typeset -g _CLAUDII_DOLLAR='$'
 # Set to 1 by se/si/sessions commands — suppresses session dashboard for that cycle
 typeset -gi _CLAUDII_SHOWED_SESSIONS=0
 typeset -g _CLAUDII_LAST_CMD=""
-# PID of the last background status-fetch job — used to skip redundant spawns
-typeset -g _CLAUDII_STATUS_PID=""
 # Set while _claudii_statusline is executing — reentrancy guard
 typeset -g _CLAUDII_PRECMD_RUNNING=""
 
@@ -52,9 +52,8 @@ function _claudii_statusline {
 # Uses PID file for dedup — ( cmd & ) subshell pattern prevents [N] PID job-control leak.
 function _claudii_status_spawn {
   local _pid_file="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}/status.pid"
-  # Check _CLAUDII_STATUS_PID (in-memory) or PID file
-  local _check_pid="${_CLAUDII_STATUS_PID:-}"
-  if [[ -z "$_check_pid" && -f "$_pid_file" ]]; then
+  local _check_pid=""
+  if [[ -f "$_pid_file" ]]; then
     { _check_pid=$(<"$_pid_file"); } 2>/dev/null
   fi
   if [[ -n "$_check_pid" ]] && kill -0 "$_check_pid" 2>/dev/null; then
@@ -76,7 +75,6 @@ function _claudii_status_spawn {
   fi
   # ( cmd & ) — subshell exits immediately, grandchild is orphaned to init.
   # PID written by claudii-status itself (see --pid-file). No $! available with this pattern.
-  _CLAUDII_STATUS_PID=""
   ( "$CLAUDII_HOME/bin/claudii-status" --quiet --pid-file "$_pid_file" &>/dev/null & )
 }
 
@@ -207,7 +205,9 @@ function _claudii_statusline_render {
 }
 
 typeset -ga _CLAUDII_SDASH_MODELS _CLAUDII_SDASH_CTXS _CLAUDII_SDASH_TOKS
-typeset -ga _CLAUDII_SDASH_5HS _CLAUDII_SDASH_R5HS
+# The 5h rate limit is account-wide, so it is one value for the whole dashboard
+# (not one per session): used% and reset epoch of the newest usable sample.
+typeset -g _CLAUDII_SDASH_RATE5H="" _CLAUDII_SDASH_RESET5H=""
 typeset -gi _CLAUDII_SDASH_COUNT=0
 
 # Token short-form (K/M/B) for the dashboard — mirrors lib/render.sh _fmt_tok
@@ -233,17 +233,17 @@ function _claudii_fmt_tok {
   fi
 }
 
-# Iterates session cache files, populates _CLAUDII_DASH_* arrays.
-# Returns 0 if active sessions found, 1 if none.
+# Iterates session cache files, populates _CLAUDII_SDASH_* arrays and the
+# account-wide 5h sample. Returns 0 if active sessions found, 1 if none.
 function _claudii_collect_sessions {
   local _cache_base="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
   _CLAUDII_SDASH_MODELS=() _CLAUDII_SDASH_CTXS=() _CLAUDII_SDASH_TOKS=()
-  _CLAUDII_SDASH_5HS=() _CLAUDII_SDASH_R5HS=()
+  _CLAUDII_SDASH_RATE5H="" _CLAUDII_SDASH_RESET5H=""
   _CLAUDII_SDASH_COUNT=0
 
   local -A _sfst
-  local _sf _sf_mt _sf_age sc s_ppid
-  local s_model s_ctx s_tok s_5h s_r5h _best_r5h="" _best_r5h_mt=0
+  local _sf _sf_mt _sf_age sc s_ppid _now=${EPOCHSECONDS:-$(date +%s)}
+  local s_model s_ctx s_tok s_5h s_r5h _best_mt=0
   for _sf in "$_cache_base"/session-*(N); do
     [[ "$_sf" == *.tmp.* ]] && continue
     _sf_mt=0
@@ -253,7 +253,7 @@ function _claudii_collect_sessions {
     else
       _sf_mt=$(stat -f%m "$_sf" 2>/dev/null || stat -c%Y "$_sf" 2>/dev/null || echo 0)
     fi
-    _sf_age=$(( ${EPOCHSECONDS:-$(date +%s)} - _sf_mt ))
+    _sf_age=$(( _now - _sf_mt ))
 
     sc=""
     { sc=$(<"$_sf"); } 2>/dev/null
@@ -283,30 +283,33 @@ function _claudii_collect_sessions {
     _CLAUDII_SDASH_MODELS+=("$s_model")
     _CLAUDII_SDASH_CTXS+=("$s_ctx")
     _CLAUDII_SDASH_TOKS+=("$s_tok")
-    _CLAUDII_SDASH_5HS+=("$s_5h")
-    _CLAUDII_SDASH_R5HS+=("$s_r5h")
-    # Keep the reset_5h from the FRESHEST session (max mtime), not the glob-last
-    # one — the account-wide 5h window can have rolled between two samples, and
-    # glob order is by session id, not freshness. Mirrors the freshest-wins
-    # logic in lib/functions.zsh _claudii_rl_warn.
-    [[ -n "$s_r5h" && "$s_r5h" =~ ^[0-9]+$ ]] && (( _sf_mt > _best_r5h_mt )) \
-      && { _best_r5h="$s_r5h"; _best_r5h_mt=$_sf_mt; }
     (( ++_CLAUDII_SDASH_COUNT ))
+
+    # Account-wide 5h sample: the NEWEST (max mtime) session file that carries a
+    # usable rate wins — glob order is by session id, not freshness, so an older
+    # sibling must not override a newer sample. A sample is usable while its
+    # window is still open (reset_5h in the future); without a reset epoch it
+    # must be fresh (<=300s, same cutoff as lib/functions.zsh _claudii_rl_warn).
+    # Mirrors that function's newest-sample-wins rule.
+    [[ "$s_5h" =~ ^[0-9]+(\.[0-9]+)?$ ]] || continue
+    if [[ "$s_r5h" =~ ^[0-9]+$ && "$s_r5h" != 0 ]]; then
+      (( s_r5h > _now )) || continue
+    else
+      s_r5h=""
+      (( _sf_age <= 300 )) || continue
+    fi
+    if (( _sf_mt > _best_mt )); then
+      _best_mt=$_sf_mt
+      _CLAUDII_SDASH_RATE5H="$s_5h"
+      _CLAUDII_SDASH_RESET5H="$s_r5h"
+    fi
   done
-  # Backfill missing reset_5h — all sessions share the same account reset time
-  if [[ -n "$_best_r5h" ]]; then
-    local _bi
-    for (( _bi=1; _bi<=${#_CLAUDII_SDASH_R5HS}; _bi++ )); do
-      [[ -z "${_CLAUDII_SDASH_R5HS[$_bi]}" ]] && _CLAUDII_SDASH_R5HS[$_bi]="$_best_r5h"
-    done
-  fi
   (( _CLAUDII_SDASH_COUNT > 0 ))
 }
 
 function _claudii_session_dashboard {
-  local _dash_mode="${_CLAUDII_CFG_CACHE[session-dashboard.enabled]:-${_CLAUDII_DEF_CACHE[session-dashboard.enabled]:-${_CLAUDII_CFG_CACHE[dashboard.enabled]:-${_CLAUDII_DEF_CACHE[dashboard.enabled]:-auto}}}}"
-  # "auto"/"on"/"true" enable; off/false/0 disable. (auto is the default-on
-  # sentinel — don't flip to an != on/true whitelist or it breaks the default.)
+  local _dash_mode="${_CLAUDII_CFG_CACHE[session-dashboard.enabled]:-${_CLAUDII_DEF_CACHE[session-dashboard.enabled]:-off}}"
+  # off/false/0 disable; anything else (on/true, or a legacy "auto") enables.
   if [[ "$_dash_mode" == off || "$_dash_mode" == false || "$_dash_mode" == 0 ]]; then
     PROMPT="${_CLAUDII_USER_PROMPT}"; return
   fi
@@ -339,7 +342,7 @@ function _claudii_session_dashboard {
 
   # Declare all loop-local variables before the loop (avoids zsh local-in-loop stdout leak)
   local _dash_lines="" _now=${EPOCHSECONDS:-$(date +%s)}
-  local _di _line _ctx _tok _tf _r5h _r5h_int _r5h_disp _r5h_clr _rst _rem
+  local _di _line _ctx _tok _tf
   for (( _di=1; _di<=_CLAUDII_SDASH_COUNT; _di++ )); do
     _line="  %F{8}${_CLAUDII_SDASH_MODELS[$_di]}"
     _ctx="${_CLAUDII_SDASH_CTXS[$_di]%.*}"
@@ -349,25 +352,28 @@ function _claudii_session_dashboard {
     if [[ -n "$_tok" && "$_tok" != "0" && "$_tok" != "null" ]]; then
       _tf=$(_claudii_fmt_tok "$_tok") && [[ -n "$_tf" ]] && _line+="  ${_tf} tok"
     fi
-    _r5h="${_CLAUDII_SDASH_5HS[$_di]}"
-    if [[ -n "$_r5h" && "$_r5h" != "null" ]]; then
-      _r5h_int=${_r5h%.*}
-      _r5h_disp=$_r5h_int
-      [[ "$_rate_disp" == "remaining" ]] && _r5h_disp=$(( 100 - _r5h_int ))
-      if (( _r5h_int >= 80 )); then _r5h_clr="%F{red}"
-      elif (( _r5h_int >= 50 )); then _r5h_clr="%F{yellow}"
-      else _r5h_clr="%F{green}"
-      fi
-      _line+="%f  ${_r5h_clr}5h${_rate_mark}:${_r5h_disp}%%"
-      _rst="${_CLAUDII_SDASH_R5HS[$_di]}"
-      if [[ -n "$_rst" && "$_rst" =~ ^[0-9]+$ ]]; then
-        _rem=$(( _rst - _now ))
-        (( _rem > 0 )) && _line+=" ↺$(( _rem / 60 ))m"
-      fi
-    fi
     _line+="%f"
     _dash_lines+="${_line}"$'\n'
   done
+
+  # The 5h limit is account-wide — one line for the whole dashboard, taken from
+  # the newest usable session sample (see _claudii_collect_sessions), never
+  # one possibly-stale value per session.
+  if [[ -n "$_CLAUDII_SDASH_RATE5H" ]]; then
+    local _r5h_int=${_CLAUDII_SDASH_RATE5H%.*} _r5h_disp _r5h_clr _rem
+    _r5h_disp=$_r5h_int
+    [[ "$_rate_disp" == "remaining" ]] && _r5h_disp=$(( 100 - _r5h_int ))
+    if (( _r5h_int >= 80 )); then _r5h_clr="%F{red}"
+    elif (( _r5h_int >= 50 )); then _r5h_clr="%F{yellow}"
+    else _r5h_clr="%F{green}"
+    fi
+    _line="  ${_r5h_clr}5h${_rate_mark}:${_r5h_disp}%%"
+    if [[ -n "$_CLAUDII_SDASH_RESET5H" ]]; then
+      _fmt_rel $(( _CLAUDII_SDASH_RESET5H - _now ))
+      [[ -n "$_REL_FMT" ]] && _line+=" ↺${_REL_FMT}"
+    fi
+    _dash_lines+="${_line}%f"$'\n'
+  fi
 
   PROMPT="${_dash_lines}${_CLAUDII_USER_PROMPT}"
 }

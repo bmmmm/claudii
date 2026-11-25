@@ -80,3 +80,14 @@ _sh_exit8=$(echo '{"session_crons":[{"next_run_at":9999999999}]}' \
 assert_eq "stop-hook: missing session_id → exit 0" "0" "$_sh_exit8"
 _sh_files8=$(ls "$_sh_tmp8/" 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "stop-hook: missing session_id → no cache file" "0" "$_sh_files8"
+
+# ── Multi-line (pretty-printed) JSON on stdin is read in full ───────────────
+# `read -r` kept only the first line, so a pretty-printed payload reached jq as
+# "{" and the hook wrote nothing.
+_sh_tmp9="$(mktemp -d)"; _SH_TMPDIRS+=("$_sh_tmp9")
+_future9=$(( $(date +%s) + 1800 ))
+printf '{\n  "session_id": "stophook0099",\n  "session_crons": [\n    {"next_run_at": %s}\n  ],\n  "background_tasks": [\n    {"id": "t1"}\n  ]\n}\n' "$_future9" \
+  | CLAUDII_CACHE_DIR="$_sh_tmp9" bash "$SH" 2>/dev/null
+_sh_contents9="$(cat "$_sh_tmp9/session-stophook" 2>/dev/null)"
+assert_contains "stop-hook: multi-line JSON → next_cron_at written" "next_cron_at=${_future9}" "$_sh_contents9"
+assert_contains "stop-hook: multi-line JSON → bg_tasks written" "bg_tasks=1" "$_sh_contents9"
