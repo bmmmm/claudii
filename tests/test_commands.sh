@@ -401,6 +401,20 @@ assert_eq "theme: changelog no longer paints the default accent" "0" "$_th_defau
 rm -rf "$_TH_BASE"
 unset _TH_BASE _TH_XDG _TH_CACHE _th_out _th_pastel _th_default
 
+# -- theme preset schema = what the loader maps ---------------------------------
+# defaults.json once shipped a theme.colors block, preset names and
+# reset_warn/reset_crit colors that nothing read. The loader's case in
+# lib/visual.sh maps exactly these five keys; anything else is dead config.
+_th_keys=$(jq -r '[.theme_presets[] | (.colors // {}) | keys[]] | unique | join(",")' \
+  "$CLAUDII_HOME/config/defaults.json")
+assert_eq "theme presets: only loader-mapped color keys" \
+  "accent,rate_crit,rate_ok,rate_warn,reset_ok" "$_th_keys"
+assert_eq "theme presets: default stays listable" "true" \
+  "$(jq '.theme_presets | has("default")' "$CLAUDII_HOME/config/defaults.json")"
+assert_eq "theme: no unread theme.colors block" "null" \
+  "$(jq -c '.theme.colors' "$CLAUDII_HOME/config/defaults.json")"
+unset _th_keys
+
 # -- a failing handler in a sourced file must not take the shell down ----------
 # lib/cmd/*.sh are SOURCED into bin/claudii, so a bare `exit 1` in a _cmd_*
 # handler killed the whole process -- skipping _spinner_stop and leaving a

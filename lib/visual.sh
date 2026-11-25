@@ -1,5 +1,5 @@
 # claudii visual language — POSIX-compatible (bash + zsh)
-# Symbol and color constants, plus a helper to print colored symbols.
+# Symbol and color constants, plus the theme loader that recolors them.
 # Source this file; never call it directly.
 
 # ── Symbols ──────────────────────────────────────────────────────────────────
@@ -93,7 +93,9 @@ _claudii_theme_load() {
     fi
   fi
 
-  # 3. "default" theme = hardcoded values (already set at top of file) — skip jq
+  # 3. "default" theme = hardcoded values (already set at top of file) — skip jq.
+  # Its theme_presets entry in defaults.json is an empty object that only
+  # exists so `claudii config theme` lists and accepts the name.
   [ "$theme_name" = "default" ] && return 0
 
   # 4. Look up preset colors via jq from defaults file
@@ -108,7 +110,8 @@ _claudii_theme_load() {
   # Empty output means unknown preset — keep defaults
   [ -z "$colors" ] && return 0
 
-  # 5. Apply colors to CLAUDII_CLR_* variables
+  # 5. Apply colors to CLAUDII_CLR_* variables — these five keys are the whole
+  # preset schema; anything else under .colors is ignored.
   local line key code
   while IFS= read -r line; do
     key="${line%%=*}"

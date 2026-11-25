@@ -104,40 +104,17 @@
     "op":      { "model": "opus",   "effort": "high",                           "description": "Opus high — foundation tasks, complex multi-file changes with cross-cutting concerns" }
   },
   "theme": {
-    "name": "default",
-    "colors": {
-      "accent":     "38;5;213",
-      "rate_ok":    "0;32",
-      "rate_warn":  "0;33",
-      "rate_crit":  "0;31",
-      "reset_ok":   "2",
-      "reset_warn": "0;33",
-      "reset_crit": "0;31"
-    }
+    "name": "default"
   },
   "theme_presets": {
-    "default": {
-      "name": "default",
-      "colors": {
-        "accent":     "38;5;213",
-        "rate_ok":    "0;32",
-        "rate_warn":  "0;33",
-        "rate_crit":  "0;31",
-        "reset_ok":   "2",
-        "reset_warn": "0;33",
-        "reset_crit": "0;31"
-      }
-    },
+    "default": {},
     "pastel": {
-      "name": "pastel",
       "colors": {
-        "accent":     "38;5;219",
-        "rate_ok":    "38;5;114",
-        "rate_warn":  "38;5;221",
-        "rate_crit":  "38;5;210",
-        "reset_ok":   "2",
-        "reset_warn": "38;5;221",
-        "reset_crit": "38;5;210"
+        "accent":    "38;5;219",
+        "rate_ok":   "38;5;114",
+        "rate_warn": "38;5;221",
+        "rate_crit": "38;5;210",
+        "reset_ok":  "2"
       }
     }
   }
