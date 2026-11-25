@@ -92,18 +92,6 @@ Ein Wert, der an der Uhrzeit hängt, entwertet genau das.
   announced in Dec 2024 is no longer in effect. Competitors that still surface
   it (claude-pulse, PeakClaude) are tracking a defunct rule. Nothing to mirror.
 - **Active statusLine-hijack-detection** (2026-05-20) — `claudii doctor` already checks
-  `.statusLine.command` (`lib/cmd/system.sh:400-411`) and warns on foreign values.
+  `.statusLine.command` (`_cmd_doctor` in `lib/cmd/system.sh`) and warns on foreign values.
   Running the check on every render would mean jq-on-settings.json per precmd,
   which is the wrong perf trade for an edge case.
-- **Cleaning the private identities out of the public history** (2026-09-02) — three
-  of 703 commits on `main` were authored under a private identity instead of the
-  public one: two as a local bot account (`9913b6a`, `311713a`) and one under a
-  private mail address (`063e063`). Old commits also hold absolute home paths and
-  the private forge host. (Deliberately not spelled out here: the pre-push gate
-  scans tracked files, and naming the values would put them back into the working
-  copy — `git log --format=%ae main | sort -u` shows them.) The **working copy is
-  clean**; this is history alone, public for months. Removing it means
-  `leak-response`: a history rewrite plus deleting and rebuilding the GitHub repo,
-  because a force-push leaves the old objects reachable there. Price: **32
-  releases** and the stars. Forks are 0, so the path is technically open —
-  revisit only if the identities ever matter more than the release history.
