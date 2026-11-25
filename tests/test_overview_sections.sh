@@ -30,8 +30,11 @@ assert_contains "agents: hint is an invocable command" "claudii agents" "$_ovs_o
 
 # Commands section: grouped quick reference, items are real subcommands
 assert_contains "commands: vibemap discoverable" "vibemap" "$_ovs_out"
-assert_contains "commands: omlx discoverable"    "omlx"    "$_ovs_out"
-assert_contains "commands: vpnii discoverable"   "vpnii"   "$_ovs_out"
+# omlx and vpnii are gone from the quick reference (their commands are being
+# retired); the config group keeps the rest.
+assert_not_contains "commands: omlx no longer listed"  "omlx"  "$_ovs_out"
+assert_not_contains "commands: vpnii no longer listed" "vpnii" "$_ovs_out"
+assert_contains "commands: config group items" "config · agents · search · sync" "$_ovs_out"
 assert_contains "commands: skills-cost listed"   "skills-cost" "$_ovs_out"
 assert_contains "commands: prefix rule stated"   "claudii <command>" "$_ovs_out"
 # Unified taxonomy: the `insights` group restores the analytics commands the old
@@ -112,6 +115,38 @@ grep -qE '[A-Za-z][A-Za-z.]* [0-9][0-9]:[0-9][0-9]' <<< "$_ovs_acct" && _ok=1 ||
 assert_eq "account: 7d reset wall-clock carries a weekday prefix" "1" "$_ok"
 rm -f "$_ovs_tmp/cache/session-acct"
 unset _ovs_rnow _ovs_acct _ovs_times _ok
+
+# ── No stdout until every prefetch child is reaped ───────────────────────────
+# bash 3.2 (macOS /bin/bash) takes SIGCHLD without SA_RESTART: a child exiting
+# while the overview printf blocks on a pipe/tty failed it with "write error:
+# Interrupted system call". The header used to go out right after the three
+# background kicks. A stub `claude` makes the agents fetch slow and drop a
+# marker just before it exits; the reader checks the marker the moment the
+# first line arrives. Linux bash restarts the write, so the EINTR itself does
+# not reproduce here — the ordering is what the fix guarantees.
+_ovs_stub="$_ovs_tmp/stub"; mkdir -p "$_ovs_stub"
+_ovs_mark="$_ovs_tmp/agents-done"
+cat > "$_ovs_stub/claude" <<EOF
+#!/bin/sh
+[ "\$1" = agents ] || exit 0
+sleep 0.6
+: > "$_ovs_mark"
+echo '[]'
+EOF
+chmod +x "$_ovs_stub/claude"
+cp "$CLAUDII_HOME/config/defaults.json" "$_ovs_xdg/claudii/config.json"
+_ovs_order=$(PATH="$_ovs_stub:$PATH" CLAUDII_CACHE_DIR="$_ovs_tmp/cache" XDG_CONFIG_HOME="$_ovs_xdg" \
+    bash "$CLAUDII_HOME/bin/claudii" 2>"$_ovs_tmp/ov.err" \
+  | { IFS= read -r _l; if [ -e "$_ovs_mark" ]; then echo after; else echo before; fi; cat >/dev/null; }
+  echo "rc=${PIPESTATUS[0]}")
+assert_contains "overview: first byte only after the agents fetch exited" "after" "$_ovs_order"
+assert_contains "overview: exits 0 with a slow agents fetch" "rc=0" "$_ovs_order"
+assert_not_contains "overview: no write error on stderr" "write error" "$(cat "$_ovs_tmp/ov.err")"
+# The agents section must not read through a process substitution either: its
+# child is not reaped by the loop and can exit during a later printf.
+assert_eq "overview: no process substitution in lib/cmd/overview.sh" "0" \
+  "$(grep -v '^[[:space:]]*#' "$CLAUDII_HOME/lib/cmd/overview.sh" | grep -c '< <(' || true)"
+unset _ovs_stub _ovs_mark _ovs_order _l
 
 rm -rf "$_ovs_tmp"
 unset _ovs_tmp _ovs_xdg _ovs_out _ovs_out2 _ovs_out3 _ovs_svc_line _ovs_acct_line _ovs_ordered _sec

@@ -147,6 +147,7 @@ unset _lint_postinc
 # inside "session-dashboard", and a substring check would pass for a command
 # that has no entry at all.
 OV_EXEMPT=(dashboard sessions sessions-inactive layers)   # aliases; targets are listed
+OV_EXEMPT+=(omlx vpnii)   # being retired, off the overview already — drop with their dispatch arms
 _OV_FN=$(LC_ALL=C sed -n '/^_ov_render_commands()/,/^}/p' "$CLAUDII_HOME/lib/cmd/overview.sh")
 _OV_ITEMS=$(printf '%s\n' "$_OV_FN" \
   | LC_ALL=C sed -n 's/.*"\([^"]*\)"[[:space:]]*$/\1/p' \
