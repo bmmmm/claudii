@@ -52,9 +52,8 @@ Dense metrics on every turn via the native `statusLine` hook:
 ```
 Opus xhigh ▲  ████████░░  ⚡73%
 5h:28%  7d:12%  eta:4h  +47/-12
-api:23m  12.4k↑ 4.2k↓  23m  feature-branch  ⌂ gateii
-Opus ✓  Sonnet ✓  Haiku ✓  Fable ✓  │  @orchestrate
-⚡ commit-msg Qwen3.5-9B 2s
+api:23m  12.4k↑ 4.2k↓  23m  feature-branch  ⇄ localhost:8080
+claude ✓  │  @orchestrate
 ```
 
 The model segment shows the active **effort mode** — the high-end modes (`xhigh`,
@@ -63,7 +62,7 @@ Code's menu mode (= `xhigh` effort plus standing consent to launch multi-agent
 workflows); claudii renders it whether Claude Code reports `ultracode` or the
 underlying `xhigh`.
 
-Layout, segments, and conditionals (`vpn`, `omlx`, `proxy`, `worktree` only render when relevant) are documented in `man claudii`. Multi-line layouts need Claude Code ≥ 2.1.141 — earlier versions dropped or corrupted statusline rows longer than the terminal width (fixed upstream). The `clock` segment is provided by the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin (when installed) — it escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string past 1h overdue, with `breathing-pulse`, `char-decay`, `matrix-rain-drip`, and `glyph-swarm` modes once you cross +3h. Without cc-insomnii the `clock` segment renders nothing — pure CC-Statusline still works fine for everything else.
+Layout, segments, and conditionals (`proxy`, `tailscale`, `worktree` only render when relevant) are documented in `man claudii`. Multi-line layouts need Claude Code ≥ 2.1.141 — earlier versions dropped or corrupted statusline rows longer than the terminal width (fixed upstream). The `clock` segment is provided by the standalone [`cc-insomnii`](https://github.com/bmmmm/cc-insomnii) plugin (when installed) — it escalates from a quiet `☾ 22:14` to a per-character rainbow + rotating glyph + rotating shame string past 1h overdue, with `breathing-pulse`, `char-decay`, `matrix-rain-drip`, and `glyph-swarm` modes once you cross +3h. Without cc-insomnii the `clock` segment renders nothing — pure CC-Statusline still works fine for everything else.
 
 ### 2. Session Dashboard — above your shell prompt
 Appears automatically after `claudii` commands when sessions are active:

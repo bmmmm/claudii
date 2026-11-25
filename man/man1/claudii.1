@@ -1,4 +1,4 @@
-.\" claudii manual — auto-synced to wiki via GitHub Actions
+.\" claudii manual — the single source of the CLI documentation
 .TH CLAUDII 1 "September 2, 2026" "claudii 0.29.0" "claudii manual"
 .
 .SH NAME
@@ -182,14 +182,14 @@ Three separate layers each serve a different scope:
 .B ClaudeStatus (RPROMPT)
 Model health in the right-hand shell prompt. When every tracked model is
 healthy it collapses to a single
-.B claude \(dg
+.B claude \[u2713]
 \(em an unnamed model is assumed working. Only down or degraded models are
 named (Fable included); a plane-wide outage collapses to
 .BR "claude \(da" .
 Reads a local cache — no network calls in
 .IR precmd .
 Indicators:
-.B \(dg
+.B \[u2713]
 = ok,
 .B \(ti
 = degraded,
@@ -2057,6 +2057,9 @@ statusline.separator	tight	Segment separator: \fBtight\fR (\(dq │ \(dq) or \fB
 statusline.rate_display	used	Rate display: \fBused\fR or \fBremaining\fR
 statusline.bedtime	23:00	Bedtime threshold (HH:MM, forwarded to cc-insomnii)
 statusline.insomnii	auto	cc-insomnii delegation: \fBauto\fR/on/off
+statusline.shame	true	cc-insomnii bedtime-shaming messages (only boolean \fBfalse\fR turns it off)
+statusline.motivation	true	cc-insomnii motivational messages (only boolean \fBfalse\fR turns it off)
+statusline.rainbow	true	cc-insomnii rainbow colouring (only boolean \fBfalse\fR turns it off)
 session-dashboard.enabled	off	Session Dashboard above prompt: on/off
 notifications.enabled	false	terminalSequence alerts from hooks (master switch)
 notifications.model_down	true	Window-title alert when a model is down
