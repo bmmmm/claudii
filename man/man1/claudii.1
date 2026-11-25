@@ -1132,53 +1132,6 @@ If a
 .I query
 is provided it is passed as the initial prompt.
 .
-.SS VPN State (vpnii)
-Shows the active WireGuard tunnel name in the cc-statusline and RPROMPT.
-State file:
-.IR ~/.cache/claudii/vpnii .
-.B claudii vpnii
-wraps write/clear with privilege drop so the file is always user-owned.
-.PP
-Recommended wg-quick config:
-.PP
-.RS
-.EX
-[Interface]
-\&...
-PostUp  = claudii vpnii set HomeLab
-PreDown = claudii vpnii clear
-.EE
-.RE
-.TP
-.BI "vpnii set " "<name>"
-Mark tunnel
-.I name
-as active.
-Resolves the target user via
-.B SUDO_USER
-\(rA console owner \(rA
-.B $USER
-\(rA
-.BR CLAUDII_USER .
-.TP
-.B "vpnii clear"
-Remove the state file.
-Aliases:
-.BR "vpnii down" ", " "vpnii off" .
-.TP
-.B "vpnii show"
-Print the current tunnel name, or
-.I "no tunnel"
-when none is set.
-Alias:
-.BR "vpnii status" .
-.PP
-Tailscale is detected separately via interface scan
-(IPv4 in 100.64.0.0/10) and needs no state file \(em it renders as its own
-.B tailscale
-statusline segment, independent of
-.BR vpn .
-.
 .SS Several Hosts and Accounts (sync)
 Puts the sessions of other machines and accounts into this claudii's numbers.
 .BR tokens ", " cost ", " trends ", " week ", " tools ", " limits ", " cache ", " repos ", " skills-cost

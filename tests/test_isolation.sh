@@ -26,7 +26,7 @@ assert_eq "XDG_CONFIG_HOME is sandboxed" "0" \
 
 # CLAUDII_CACHE_DIR must stay UNSET: it outranks HOME/XDG_CACHE_HOME wherever
 # it is read, so setting it globally would silently defeat every test that
-# varies HOME per invocation (test_vpnii.sh does, deliberately).
+# varies them per invocation (test_sync.sh plays several hosts that way).
 assert_eq "CLAUDII_CACHE_DIR is left unset for tests to own" "" \
   "${CLAUDII_CACHE_DIR:-}"
 

@@ -19,8 +19,6 @@ CLAUDII_SYM_MONITORING="◎"      # incident: fix deployed, watching results
 CLAUDII_SYM_IDENTIFIED="⚐"     # incident: root cause found, fix in progress
 CLAUDII_SYM_INVESTIGATING="‼"  # incident: actively investigating, cause unknown
 CLAUDII_SYM_NOTE="ⓘ"           # incident note: status incident that does NOT affect any tracked model
-CLAUDII_SYM_VPN="⬡"         # VPN tunnel active (WireGuard)
-CLAUDII_SYM_TAILSCALE="⬢"   # Tailscale tunnel active
 CLAUDII_SYM_REPO="◆"        # github/gitlab repo (workspace.repo.* in CC 2.1.145+)
 CLAUDII_SYM_PACE_AHEAD="↑"  # pace: burning slower than linear (comfortable)
 CLAUDII_SYM_PACE_ON="="     # pace: on-pace (within ±15% of linear burn)

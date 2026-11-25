@@ -49,7 +49,7 @@ ALIASES=$(LC_ALL=C printf '%s\n' "$_ALIAS_BLOCK" \
 _UNDOCUMENTED_OK=" help --help -h 42 sessionline install-sessionline components "
 
 # The man page marks commands up in several legitimate roff forms — `.B name`,
-# `.BR "name " [on|off]`, `.BI "pin " session-id`, `.SS VPN State (vpnii)`.
+# `.BR "name " [on|off]`, `.BI "pin " session-id`, `.SS Activity Heatmap (vibemap)`.
 # Chasing that with ever-longer regexes is how a gate ends up matching nothing
 # and reporting everything as fine (the first draft of this check used BRE
 # `\|`, which BSD grep does not support, and "documented" silently became

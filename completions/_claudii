@@ -51,7 +51,6 @@ _claudii() {
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
-        'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
         'sync:Merge sessions from other hosts and accounts over ssh — status / add / rm'
         'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
@@ -254,17 +253,6 @@ _claudii() {
           sync_hosts=(${(f)"$(jq -r '(.sync.hosts // {}) | keys[]' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null)"})
           _describe 'sync command' sync_opts
           (( ${#sync_hosts} )) && _describe 'configured host' sync_hosts
-          ;;
-
-        vpnii)
-          local -a vpnii_opts
-          vpnii_opts=(
-            'set:Mark VPN tunnel active — claudii vpnii set <name>'
-            'clear:Mark VPN as down (alias: down/off)'
-            'show:Print current tunnel name (alias: status)'
-            '--user:Override target user for set/clear (default: SUDO_USER → console → $USER)'
-          )
-          _describe 'vpnii command' vpnii_opts
           ;;
 
         vibemap)

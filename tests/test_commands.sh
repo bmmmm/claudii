@@ -375,8 +375,8 @@ unset _AC_BASE _AC_XDG _AC_CACHE _ac_out _ac_has
 
 # -- theme reaches commands that never call _cfg_init --------------------------
 # _claudii_theme_load only ever ran from inside _cfg_init, and nine commands
-# (gc, pin, unpin, vibemap, vpnii, cc-statusline, update, version, changelog)
-# never reach _cfg_init -- so they painted in the hardcoded default palette no
+# (gc, pin, unpin, vibemap, vpnii — since removed —, cc-statusline, update,
+# version, changelog) never reach _cfg_init -- so they painted in the hardcoded default palette no
 # matter what theme.name said. bin/claudii now boots the theme centrally
 # (_claudii_boot, before the dispatch case). `changelog` stands in for the nine:
 # it emits the accent colour and calls no _cfg_init of its own.

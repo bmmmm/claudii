@@ -92,7 +92,6 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Config & Integrations${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
-  printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf "    %-33s $d %s\n" "sync [NAME|status|add|rm]"       "merge sessions from other hosts and accounts (ssh)"
   printf '\n'
@@ -132,7 +131,6 @@ source "$CLAUDII_HOME/lib/cmd/overview.sh"
 source "$CLAUDII_HOME/lib/cmd/skills-cost.sh"
 source "$CLAUDII_HOME/lib/cmd/display.sh"
 source "$CLAUDII_HOME/lib/cmd/config.sh"
-source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
 source "$CLAUDII_HOME/lib/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/insights.sh"
@@ -279,7 +277,6 @@ case "${1:-}" in
   config)              _cmd_config "$@"       ;;
   agents)              _cmd_agents            ;;
   search)              _cmd_search "$@"       ;;
-  vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;
   sync)                _cmd_sync "${@:2}"     ;;
 
