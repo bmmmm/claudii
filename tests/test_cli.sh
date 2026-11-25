@@ -57,12 +57,12 @@ doc_exit=$(CLAUDII_HOME="$DOCTOR_TMP/fake-home" bash "$CLAUDII_HOME/bin/claudii"
 assert_eq "doctor: exits non-zero when checks fail" "1" "$doc_exit"
 rm -rf "$DOCTOR_TMP"
 
-# layers: must not show obsolete 'show model' command
-layers_out=$(bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
-assert_eq "layers: no obsolete 'show model' reference" "0" "$(echo "$layers_out" | grep -c 'show model' || true)"
-assert_contains "layers: shows ClaudeStatus" "ClaudeStatus" "$layers_out"
+# explain: must not show obsolete 'show model' command
+layers_out=$(bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
+assert_eq "explain: no obsolete 'show model' reference" "0" "$(echo "$layers_out" | grep -c 'show model' || true)"
+assert_contains "explain: shows ClaudeStatus" "ClaudeStatus" "$layers_out"
 
-# session-dashboard: on/off only (+ backward-compat alias 'dashboard')
+# session-dashboard: on/off only
 DASH_CLI_TMP="$(mktemp -d)"
 export CLAUDII_CACHE_DIR="$DASH_CLI_TMP"
 export XDG_CONFIG_HOME="$DASH_CLI_TMP"
@@ -79,9 +79,9 @@ assert_matches "session-dashboard on: success message" "enabled|on|Session Dashb
 out=$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto 2>&1 || true)
 assert_eq "session-dashboard auto: unknown subcommand error" "1" "$(bash "$CLAUDII_HOME/bin/claudii" session-dashboard auto >/dev/null 2>&1; echo $?)"
 
-# deprecated 'dashboard' alias must still work
-out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1)
-assert_matches "dashboard alias: still works (deprecated)" "enabled|on|Session Dashboard" "$out"
+# the deprecated 'dashboard' alias is gone
+out=$(bash "$CLAUDII_HOME/bin/claudii" dashboard on 2>&1 || true)
+assert_contains "dashboard alias: removed" "Unknown command: dashboard" "$out"
 
 # dash command should be removed (use session-dashboard instead)
 dash_out=$(bash "$CLAUDII_HOME/bin/claudii" dash 2>&1 || true)

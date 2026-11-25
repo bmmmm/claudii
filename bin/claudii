@@ -98,7 +98,7 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
-  printf "    %-33s $d %s\n" "explain (layers)"               "components, symbols & data flow"
+  printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf "    %-33s $d %s\n" "update"                          "update to latest version"
   printf "    %-33s $d %s\n" "version"                         "show version number"
   printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
@@ -202,14 +202,13 @@ _claudii_boot "${1:-}"
 # this dispatcher only sources).
 #
 # --json/--tsv are already stripped into $_FORMAT above, so `doctor --json`
-# still arrives here as a bare `doctor`. `layers`/`components` are absent on
-# purpose: they exec into `explain`, which is on the list, so they inherit it.
+# still arrives here as a bare `doctor`.
 #
 # Nothing derives this list, so it can rot — tests/test_arg_contract.sh walks
 # EVERY arm of the dispatch case below and fails on the first one that does not
 # answer rc 2, which is what keeps it honest.
 case "${1:-}" in
-  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|install-sessionline|help|--help|-h)
+  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|help|--help|-h)
     if [[ $# -gt 1 ]]; then _cli_unknown_opt "$1" "$2" || exit $?; fi
     ;;
 esac
@@ -232,12 +231,9 @@ case "${1:-}" in
   off)                 _cmd_off               ;;
   claudestatus)        _cmd_claudestatus "$@"        ;;
   session-dashboard)   _cmd_session_dashboard "$@"   ;;
-  dashboard)           _cmd_session_dashboard "$@"   ;; # deprecated alias
   status)              _cmd_status "$@"       ;;
   cc-statusline)       _cmd_cc_statusline "$@" ;;
   insomnii)            _cmd_insomnii "$@"      ;;
-  sessionline)         exec "$0" cc-statusline "${@:2}" ;;
-  install-sessionline) exec "$0" cc-statusline on ;;
   update)              _cmd_update            ;;
   doctor)              _cmd_doctor            ;;
 
@@ -268,7 +264,6 @@ case "${1:-}" in
   limits)              _cmd_limits "${@:2}"   ;;
   session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;
-  layers|components)   exec "$0" explain "${@:2}" ;;
   version)             _cmd_version           ;;
   changelog)           _cmd_changelog         ;;
   42)                  _cmd_42                ;;

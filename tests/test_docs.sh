@@ -45,8 +45,7 @@ ALIASES=$(LC_ALL=C printf '%s\n' "$_ALIAS_BLOCK" \
 # command forces the choice instead of defaulting to undocumented.
 #   help/-h/--help : the man page is the help
 #   42             : easter egg
-#   sessionline, install-sessionline, components : backwards-compat shims
-_UNDOCUMENTED_OK=" help --help -h 42 sessionline install-sessionline components "
+_UNDOCUMENTED_OK=" help --help -h 42 "
 
 # The man page marks commands up in several legitimate roff forms — `.B name`,
 # `.BR "name " [on|off]`, `.BI "pin " session-id`, `.SS Activity Heatmap (vibemap)`.
@@ -146,7 +145,7 @@ unset _lint_postinc
 # Matching is on the "·"-separated items, not a substring: "session" occurs
 # inside "session-dashboard", and a substring check would pass for a command
 # that has no entry at all.
-OV_EXEMPT=(dashboard sessions sessions-inactive layers)   # aliases; targets are listed
+OV_EXEMPT=(sessions sessions-inactive)   # listed by their shorthands se · si
 _OV_FN=$(LC_ALL=C sed -n '/^_ov_render_commands()/,/^}/p' "$CLAUDII_HOME/lib/cmd/overview.sh")
 _OV_ITEMS=$(printf '%s\n' "$_OV_FN" \
   | LC_ALL=C sed -n 's/.*"\([^"]*\)"[[:space:]]*$/\1/p' \

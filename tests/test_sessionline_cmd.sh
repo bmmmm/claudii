@@ -1,5 +1,6 @@
 # touches: bin/claudii lib/cmd/system.sh
-# test_sessionline_cmd.sh — claudii sessionline on/off/status E2E tests
+# test_sessionline_cmd.sh — claudii cc-statusline on/off/status E2E tests,
+# plus the removed compatibility aliases
 
 TEST_TMP="$CLAUDII_TEST_TMP/test_sessionline_cmd"
 rm -rf "$TEST_TMP"
@@ -14,66 +15,70 @@ jq '.statusline.insomnii = "off"' "$XDG_CONFIG_HOME/claudii/config.json" > "$XDG
   && mv "$XDG_CONFIG_HOME/claudii/config.json.tmp" "$XDG_CONFIG_HOME/claudii/config.json"
 
 CLI="$CLAUDII_HOME/bin/claudii"
-FAKE_SETTINGS="$TEST_TMP/claude_settings.json"
 
-# ── sessionline status: settings file missing ──
+# ── status: settings file missing ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: missing settings shows info" "not configured" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline 2>&1)
+assert_contains "cc-statusline: missing settings shows info" "not configured" "$output"
 
-# ── sessionline on: settings file missing → error ──
+# ── on: settings file missing → error ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1 || true)
-assert_contains "sessionline on: missing settings exits with error" "not found" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline on 2>&1 || true)
+assert_contains "cc-statusline on: missing settings exits with error" "not found" "$output"
 
 # ── prepare fake settings.json ──
 
 mkdir -p "$TEST_TMP/.claude"
 echo '{}' > "$TEST_TMP/.claude/settings.json"
 
-# ── sessionline on: adds statusLine ──
+# ── on: adds statusLine ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline on: reports enabled" "enabled" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline on 2>&1)
+assert_contains "cc-statusline on: reports enabled" "enabled" "$output"
 
-# Verify settings.json now contains statusLine
 val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
-assert_eq "sessionline on: settings.json has command" "claudii-cc-statusline" "$val"
+assert_eq "cc-statusline on: settings.json has command" "claudii-cc-statusline" "$val"
 
-# ── sessionline on: idempotent ──
+# ── on: idempotent ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline on: already active" "already" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline on 2>&1)
+assert_contains "cc-statusline on: already active" "already" "$output"
 
-# ── sessionline status: shows active ──
+# ── status: shows active ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: shows active" "active" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline 2>&1)
+assert_contains "cc-statusline: shows active" "active" "$output"
+assert_contains "cc-statusline: plain command labelled plain" "plain" "$output"
 
-# ── sessionline off: removes statusLine ──
+# ── off: removes statusLine ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline off 2>&1)
-assert_contains "sessionline off: reports disabled" "disabled" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline off 2>&1)
+assert_contains "cc-statusline off: reports disabled" "disabled" "$output"
 
 val=$(jq 'has("statusLine")' "$TEST_TMP/.claude/settings.json")
-assert_eq "sessionline off: statusLine removed" "false" "$val"
+assert_eq "cc-statusline off: statusLine removed" "false" "$val"
 
-# ── sessionline off: idempotent ──
+# ── off: idempotent ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline off 2>&1)
-assert_contains "sessionline off: already off → not configured msg" "not configured" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline off 2>&1)
+assert_contains "cc-statusline off: already off → not configured msg" "not configured" "$output"
 
-# ── sessionline status: shows not configured after off ──
+# ── status: shows not configured after off ──
 
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline 2>&1)
-assert_contains "sessionline: not configured after off" "not configured" "$output"
+output=$(HOME="$TEST_TMP" bash "$CLI" cc-statusline 2>&1)
+assert_contains "cc-statusline: not configured after off" "not configured" "$output"
 
-# ── backwards compat: sessionline shim → cc-statusline ──
-
-output=$(HOME="$TEST_TMP" bash "$CLI" sessionline on 2>&1)
-assert_contains "sessionline shim: routes to cc-statusline on → enabled" "enabled" "$output"
-val=$(jq -r '.statusLine.command' "$TEST_TMP/.claude/settings.json")
-assert_eq "sessionline shim: sets command" "claudii-cc-statusline" "$val"
+# ── removed compatibility aliases ──
+# sessionline / install-sessionline (→ cc-statusline), dashboard
+# (→ session-dashboard) and layers / components (→ explain) are gone; each
+# must now answer like any unknown command instead of silently routing.
+for _alias in sessionline install-sessionline dashboard layers components; do
+  _rc=0
+  output=$(HOME="$TEST_TMP" bash "$CLI" "$_alias" 2>&1) || _rc=$?
+  assert_eq "removed alias $_alias: exit 1" "1" "$_rc"
+  assert_contains "removed alias $_alias: unknown command" "Unknown command: $_alias" "$output"
+done
+unset _alias _rc
 
 # Cleanup
 rm -rf "$TEST_TMP"

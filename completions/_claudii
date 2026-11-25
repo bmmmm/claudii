@@ -20,7 +20,6 @@ _claudii() {
         'off:Disable all display layers'
         'claudestatus:Toggle ClaudeStatus RPROMPT (on/off)'
         'session-dashboard:Toggle Session Dashboard above prompt (on/off)'
-        'dashboard:Toggle Session Dashboard above prompt (on/off) [deprecated, use session-dashboard]'
         'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
         'status:Live model health check / set refresh interval'
         'sessions:Active sessions, costs, rate limits'
@@ -43,7 +42,6 @@ _claudii() {
         'limits:Rate-limit hits — when they happened and which model ran (7d default)'
         'cache:Prompt-cache hit rate per day and per model (7d default)'
         'explain:Components, symbols & data flow'
-        'layers:Alias for explain'
         'version:Show version number'
         'changelog:Release notes for current version'
         'doctor:Check claudii installation health'
@@ -106,7 +104,7 @@ _claudii() {
           _describe 'insomnii subcommand' ins_subs
           ;;
 
-        session-dashboard|dashboard)
+        session-dashboard)
           local -a dash_cmds
           dash_cmds=(
             'on:Enable session dashboard'
@@ -216,7 +214,7 @@ _claudii() {
           _describe 'session id' _ids
           ;;
 
-        cc-statusline|sessionline)
+        cc-statusline)
           case $words[3] in
             preset)
               local -a sl_presets

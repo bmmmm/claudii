@@ -1,5 +1,5 @@
 # touches: lib/cmd/config.sh lib/cmd/system.sh lib/cmd/display.sh bin/claudii
-# test_commands.sh — coverage for config, agents, claudestatus, cc-statusline, layers
+# test_commands.sh — coverage for config, agents, claudestatus, cc-statusline, explain
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 # Create a fresh isolated temp env: XDG_CONFIG_HOME + CLAUDII_CACHE_DIR
@@ -316,40 +316,40 @@ assert_matches "agents: output has effort info" "xhigh|high|medium|low|max" "$_a
 rm -rf "$_ag_base"
 unset _AG_BASE _AG_XDG _ag_xdg _ag_base _ag_out _ag_json _ag_json_ok _ag_exit
 
-# ── layers ────────────────────────────────────────────────────────────────────
+# ── explain ───────────────────────────────────────────────────────────────────
 
 _make_cfg_tmp _LY
 _ly_xdg="$_LY_XDG"
 _ly_base="$_LY_BASE"
 
 # HOME points at the empty temp base (no ~/.claude/settings.json) so the render
-# is deterministic — without it, layers reads the developer's real settings.json
+# is deterministic — without it, explain reads the developer's real settings.json
 # and a malformed one crashes the command mid-render (regression guard).
 _ly_out=$(HOME="$_ly_base" XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
-  bash "$CLAUDII_HOME/bin/claudii" layers 2>&1)
+  bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
 
 # No literal ANSI escapes
-assert_no_literal_ansi "layers: no literal \\033 in output" "$_ly_out"
+assert_no_literal_ansi "explain: no literal \\033 in output" "$_ly_out"
 
 # Mentions ClaudeStatus and Dashboard (the three layers)
-assert_contains "layers: shows ClaudeStatus" "ClaudeStatus" "$_ly_out"
-assert_contains "layers: shows Dashboard" "Dashboard" "$_ly_out"
-assert_contains "layers: shows CC-Statusline" "CC-Statusline" "$_ly_out"
+assert_contains "explain: shows ClaudeStatus" "ClaudeStatus" "$_ly_out"
+assert_contains "explain: shows Dashboard" "Dashboard" "$_ly_out"
+assert_contains "explain: shows CC-Statusline" "CC-Statusline" "$_ly_out"
 
 # Does NOT mention the old 'show model' command (regression)
 _ly_show_model=$(printf '%s' "$_ly_out" | grep -c 'show model' || true)
-assert_eq "layers: no obsolete 'show model' reference" "0" "$_ly_show_model"
+assert_eq "explain: no obsolete 'show model' reference" "0" "$_ly_show_model"
 
 # Exit 0
 _ly_exit=$(HOME="$_ly_base" XDG_CONFIG_HOME="$_ly_xdg" CLAUDII_CACHE_DIR="$_LY_CACHE" \
-  bash "$CLAUDII_HOME/bin/claudii" layers >/dev/null 2>&1; echo $?)
-assert_eq "layers: exit 0" "0" "$_ly_exit"
+  bash "$CLAUDII_HOME/bin/claudii" explain >/dev/null 2>&1; echo $?)
+assert_eq "explain: exit 0" "0" "$_ly_exit"
 
-# layers: mentions commands to toggle layers
-assert_matches "layers: toggle commands shown" "on/off|cc-statusline|claudestatus" "$_ly_out"
+# explain: mentions commands to toggle layers
+assert_matches "explain: toggle commands shown" "on/off|cc-statusline|claudestatus" "$_ly_out"
 
-# layers: Data Flow section present
-assert_contains "layers: Data Flow section" "Data Flow" "$_ly_out"
+# explain: Data Flow section present
+assert_contains "explain: Data Flow section" "Data Flow" "$_ly_out"
 
 rm -rf "$_ly_base"
 unset _LY_BASE _LY_XDG _LY_CACHE _ly_xdg _ly_base _ly_out _ly_show_model _ly_exit
@@ -359,7 +359,7 @@ unset _LY_BASE _LY_XDG _LY_CACHE _ly_xdg _ly_base _ly_out _ly_show_model _ly_exi
 # here is a pipe). CLAUDII_FORCE_COLOR=1 must opt back in.
 
 _make_cfg_tmp _AC
-# HOME isolated (empty base, no ~/.claude/settings.json) — see the layers note above.
+# HOME isolated (empty base, no ~/.claude/settings.json) — see the explain note above.
 _ac_out=$(HOME="$_AC_BASE" XDG_CONFIG_HOME="$_AC_XDG" CLAUDII_CACHE_DIR="$_AC_CACHE" \
   bash "$CLAUDII_HOME/bin/claudii" explain 2>&1)
 grep -q $'\033\[' <<< "$_ac_out" && _ac_has=1 || _ac_has=0
