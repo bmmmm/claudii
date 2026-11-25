@@ -1419,7 +1419,7 @@ context-bar	\[u2588]\[u2588]\[u2588]\[u2588]\[u2588]\[u2591]\[u2591]\[u2591]\[u2
 compact-eta	\[u21F2]18m	Time until the compact point at the current context burn rate. See below
 cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Native \fIprompt_cache.hit_ratio\fR on Claude Code 2.1.251+, derived from the context window on older builds
 cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price; a miss on the last request names its cause (\[u2668]4m\[u00B7]miss:tools, CC 2.1.260+). See below. Requires Claude Code 2.1.251+
-idle-compact	\[u21F2]\[u25D4] idle 16:30 \[u00B7] 38m	What happens if you stay away: the time Claude Code compacts the idle conversation (\[u21F2], 1h cache, >= 200K), else the time the prompt cache goes cold (\[u2668]). Glyph fills and colour warms toward it; animates with statusLine.refreshInterval. Opt-in. See below. Requires Claude Code 2.1.251+ (compaction: 2.1.290+)
+idle-compact	\[u21F2]\[u25D4] idle 16:30 \[u00B7] 38m	What happens if you stay away: the time Claude Code compacts the idle conversation (\[u21F2], 1h cache, >= 200K), else the time the prompt cache goes cold (\[u2668]). Glyph fills and colour warms toward it; animates with statusLine.refreshInterval. Opt-in. See below. Requires Claude Code 2.1.251+ (compaction on by default: 2.1.332+)
 response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
 rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
@@ -1679,28 +1679,17 @@ what happens if you leave the session alone \(em and when. Two cases, one
 segment:
 .IP
 .B \[u21F2] idle
-\(em Claude Code will compact the conversation on its own. Claude Code
-2.1.290+ does that about 54 minutes after the last request, shortly before
-its prompt cache expires, when all of these hold: Anthropic has the feature
-switched on for the account (the cached feature flag
-.I tengu_sunny_locket
-in
-.B ~/.claude.json
-has mode
-.B compact
-or, since 2.1.300,
-.B compact_on_return
-\(em the summary is written at that time and swapped in when you come back,
-which also needs
-.B precomputeCompactionEnabled
-(default true); absent or
-.B log
-means off); the conversation is on the one-hour cache TTL
+\(em Claude Code will compact the conversation on its own. Since 2.1.332 it
+does that by default, about 54 minutes after the last request, shortly before
+its prompt cache expires, when all of these hold: the conversation is on the
+one-hour cache TTL
 .RI ( prompt_cache.ttl " = 1h);"
 its context \(em the last request's input, cache and output tokens \(em holds
 at least
 .B CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS
-tokens (else the flag's minTokens, else 200000; never below 100000);
+tokens (else 200000; never below 100000; read like Claude Code reads it:
+plain digits, digit groups such as 150_000 or 150,000, or a whole number in
+scientific notation such as 1.5e5 \(em anything else is ignored);
 .B DISABLE_COMPACT
 and
 .B DISABLE_AUTO_COMPACT
@@ -1716,22 +1705,14 @@ when no settings file sets it); and Claude Code would not skip it for the
 rate limit \(em a used-up 5h or 7d limit, or the warning band it derives from
 the same used percentage and reset time (5h: 90% used while at most 72% of the
 window has passed; 7d: 75%, 50% or 25% while at most 60%, 35% or 15% has
-passed; the payload rounds to one decimal, so a value within 0.05 points of a
-threshold may tip either way). Claude Code exposes no field for the moment, so
-it is derived:
+passed \(em and since 2.1.332 only at 70% used or more; the payload rounds to
+one decimal, so a value within 0.05 points of a threshold may tip either way).
+Claude Code exposes no field for the moment, so it is derived:
 .I prompt_cache.expires_at
-minus (1 \- fireAtFraction) \(mu 1 h, i.e. 6 minutes at the default fraction
-0.9 (the flag may set 0.5\(en0.95).
+minus 6 minutes (0.9 of the one-hour lifetime).
 .IP
 The settings follow Claude Code's order, later wins: user, project, local,
-.B claude \-\-settings
-(file or inline JSON; the last one given; a relative file against the launch
-directory, in a worktree session its original directory; read once per session
-from the
-.B claude
-process's command line, together with
-.BR \-\-setting-sources ,
-which drops the files it does not list), then managed. Managed is the highest
+then managed. Managed is the highest
 admin source that carries a policy key \(em the server-managed cache
 .RB ( remote-settings.json ,
 only while the session talks to Anthropic's API: not with
@@ -1751,18 +1732,19 @@ per-user before device), the managed settings files
 \(em or all of them layered when
 .B "managedSourcesBehavior: merge"
 is set in the highest source that carries it or a policy key. A broken file
-is skipped. Not visible to the segment: a warning the server sends on its own
-(surpassed-threshold header), a
+is skipped. Not visible to the segment: settings passed with
+.B claude \-\-settings
+or limited with
+.BR \-\-setting-sources ,
+a warning the server sends on its own (surpassed-threshold header), a
 .BR policyHelper ,
-and a
-.B \-\-settings
-path that contains a space.
+and Claude Code holding off while you are at the keyboard.
 .IP
 .B \[u2668] warm
 /
 .B cold
-\(em in every other warm-cache case (feature off for the account, context too
-small, compaction switched off, near the rate limit, 5-minute cache, or the
+\(em in every other warm-cache case (context too small, compaction
+switched off, near the rate limit, 5-minute cache, or the
 compaction moment already passed), the moment that matters is the prompt
 cache going cold, after which the next request re-caches the whole context:
 .RB "\[u2668]\[u25D1] warm 16:36 \[u00B7] 30m" .
