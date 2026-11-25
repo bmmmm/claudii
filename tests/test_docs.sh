@@ -162,6 +162,21 @@ for cmd in $DISPATCHED; do
 done
 unset _OV_FN _OV_ITEMS _skip _x
 
+# ── Window words: completions offer every word _insights_window accepts ─────
+# tokens/tools/limits/cache take today|day, week, month, quarter, year (plus
+# <N>d / --days); the completion used to offer only the today/7d/30d/90d/year
+# spellings. Derived from the case in lib/cmd/insights.sh, so a new word there
+# goes red here until the completion carries it.
+_win_words=$(sed -n '/^_insights_window() {/,/^}/p' "$CLAUDII_HOME/lib/cmd/insights.sh" \
+  | sed -nE 's/^[[:space:]]+([a-z|]+)\)[[:space:]]+_wv=.*/\1/p' | tr '|' '\n')
+_win_comp=$(sed -n '/^        tokens|tools|limits|cache)/,/_describe/p' "$CLAUDII_HOME/completions/_claudii")
+assert_eq "window words: found in _insights_window" "today day week month quarter year" \
+  "$(paste -sd' ' - <<< "$_win_words")"
+for _ww in $_win_words; do
+  assert_contains "completions: tokens/tools/limits/cache offer '$_ww'" "'$_ww:" "$_win_comp"
+done
+unset _win_words _win_comp _ww
+
 # ── Static lint: `producer | grep -q` SIGPIPE regression ────────────────────
 # `producer | grep -q` returns 141 under `pipefail`: grep -q exits on the match,
 # the producer's next write gets EPIPE. It fires when the match lands on an
