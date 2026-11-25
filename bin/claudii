@@ -6,7 +6,23 @@
 
 set -euo pipefail
 
-export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+# 1 when the calling shell already exported CLAUDII_HOME (claudii.plugin.zsh
+# does) — doctor's "plugin loaded" check; the export below hides it otherwise.
+_CLAUDII_HOME_INHERITED="${CLAUDII_HOME:+1}"
+# Resolve the checkout through symlinks: install.sh links this file into
+# /usr/local/bin, where `dirname "$0"` named /usr/local and every source below
+# failed. One readlink per hop — macOS readlink has no -f; 40 hops ends a loop.
+if [[ -z "${CLAUDII_HOME:-}" ]]; then
+  _cl_self="$0" _cl_hops=0
+  while [[ -L "$_cl_self" ]] && (( _cl_hops++ < 40 )); do
+    _cl_link=$(readlink "$_cl_self")
+    [[ "$_cl_link" == /* ]] || _cl_link="$(dirname "$_cl_self")/$_cl_link"
+    _cl_self="$_cl_link"
+  done
+  CLAUDII_HOME="$(cd "$(dirname "$_cl_self")/.." && pwd)"
+  unset _cl_self _cl_hops _cl_link
+fi
+export CLAUDII_HOME
 source "$CLAUDII_HOME/lib/visual.sh"
 source "$CLAUDII_HOME/lib/spinner.sh"
 source "$CLAUDII_HOME/lib/helpers.sh"
@@ -92,15 +108,13 @@ usage() {
   printf "  ${CLAUDII_CLR_ACCENT}Config & Integrations${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "config [get|set|reset|export|import]" "manage configuration"
   printf "    %-33s $d %s\n" "agents"                          "configured agents (alias→skill)"
-  printf "    %-33s $d %s\n" "omlx [status|connect|test|disconnect]" "local-LLM (gateii/oMLX) integration"
-  printf "    %-33s $d %s\n" "vpnii [set|clear|show]"          "VPN state file (wg-quick hooks)"
   printf "    %-33s $d %s\n" "search ['query']"                "launch Claude in search mode"
   printf "    %-33s $d %s\n" "sync [NAME|status|add|rm]"       "merge sessions from other hosts and accounts (ssh)"
   printf '\n'
   printf "  ${CLAUDII_CLR_ACCENT}System${CLAUDII_CLR_RESET}\n"
   printf "    %-33s $d %s\n" "status (s) [5m|15m|30m|60m]"     "live model check · refresh interval"
   printf "    %-33s $d %s\n" "doctor (d)"                      "installation health check"
-  printf "    %-33s $d %s\n" "explain (layers)"               "components, symbols & data flow"
+  printf "    %-33s $d %s\n" "explain"                         "components, symbols & data flow"
   printf "    %-33s $d %s\n" "update"                          "update to latest version"
   printf "    %-33s $d %s\n" "version"                         "show version number"
   printf "    %-33s $d %s\n" "changelog"                       "release notes for current version"
@@ -133,8 +147,6 @@ source "$CLAUDII_HOME/lib/cmd/overview.sh"
 source "$CLAUDII_HOME/lib/cmd/skills-cost.sh"
 source "$CLAUDII_HOME/lib/cmd/display.sh"
 source "$CLAUDII_HOME/lib/cmd/config.sh"
-source "$CLAUDII_HOME/lib/cmd/omlx.sh"
-source "$CLAUDII_HOME/lib/cmd/vpnii.sh"
 source "$CLAUDII_HOME/lib/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/vibemap.sh"
 source "$CLAUDII_HOME/lib/cmd/insights.sh"
@@ -143,34 +155,21 @@ source "$CLAUDII_HOME/lib/cmd/week.sh"
 source "$CLAUDII_HOME/lib/cmd/sync.sh"
 
 # Centralized config+theme boot — every command needs CLAUDII_CLR_* painted
-# with the user's theme.name before it prints a single line, but nine
-# commands (gc, pin, unpin, vibemap, vpnii, cc-statusline, update, version,
-# changelog) never reached _cfg_init (the only place that called
-# _claudii_theme_load) because their handlers don't touch config at all —
-# they rendered in the hardcoded default palette regardless of theme.name.
-# Rather than sprinkle `_cfg_init` into each new colorless-until-now handler
-# (whack-a-mole — the next command added would just repeat the bug), the
-# dispatcher now loads it once, centrally, before the case below runs. Every
-# handler still gets CONFIG/CONFIG_DIR/DEFAULTS/theme exactly as if it had
-# called _cfg_init itself first.
+# with the user's theme.name before it prints a single line. Handlers that
+# never touch config (gc, pin, unpin, vibemap, cc-statusline, update,
+# changelog) used to render in the default palette, because only _cfg_init
+# loaded the theme. Loading it once here, before the case below, covers every
+# handler, including the next one added.
 #
-# `version` is deliberately excluded: it never emits a color (plain `echo
-# "$VERSION"`, or an uncolored jq object under --json), so painting the
-# theme for it would be a jq fork bought for zero visible effect — the one
-# case explicitly cost-sensitive enough to matter (scripts/completions may
-# shell out to `claudii version` repeatedly). Every other command pays at
-# most one theme-load jq fork it didn't already pay elsewhere; commands that
-# already call `_cfg_init` in their own handler (se, cost, doctor, …) now
-# resolve the theme twice per invocation — accepted since `_claudii_theme_load`
-# and `_cfg_init` live in lib/helpers.sh/lib/visual.sh, outside this fix's
-# Touches, so no cross-process memoization was available to dedupe it.
+# `version` is deliberately excluded: it never emits a color, and scripts and
+# completions shell out to it repeatedly, so the theme-load jq fork would buy
+# nothing. Handlers that also call _cfg_init themselves (se, cost, doctor, …)
+# resolve the theme twice — accepted.
 #
 # Deliberately NOT the full `_cfg_init`: that also mkdir -p's the config dir
-# and cp's config/defaults.json into place on a first run (real forks, only
-# useful when a handler is about to WRITE config) — dead weight for the
-# read-only, colored-output-only nine this exists to fix. Handlers that need
-# real config access (writes, _cfgget lookups, …) still call the full
-# `_cfg_init` themselves, unchanged.
+# and copies config/defaults.json into place on a first run, which only a
+# handler about to WRITE config needs. Those handlers still call `_cfg_init`
+# themselves.
 _claudii_boot() {
   case "${1:-}" in
     version) return 0 ;;
@@ -206,14 +205,13 @@ _claudii_boot "${1:-}"
 # this dispatcher only sources).
 #
 # --json/--tsv are already stripped into $_FORMAT above, so `doctor --json`
-# still arrives here as a bare `doctor`. `layers`/`components` are absent on
-# purpose: they exec into `explain`, which is on the list, so they inherit it.
+# still arrives here as a bare `doctor`.
 #
 # Nothing derives this list, so it can rot — tests/test_arg_contract.sh walks
 # EVERY arm of the dispatch case below and fails on the first one that does not
 # answer rc 2, which is what keeps it honest.
 case "${1:-}" in
-  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|install-sessionline|help|--help|-h)
+  on|off|update|doctor|sessions-inactive|trends|explain|version|changelog|42|agents|restart|help|--help|-h)
     if [[ $# -gt 1 ]]; then _cli_unknown_opt "$1" "$2" || exit $?; fi
     ;;
 esac
@@ -225,23 +223,19 @@ esac
 # its parser looped over the full "$@" including the literal "cost", so it had
 # to tolerate every token it did not recognise.
 #
-# The arms still passing "$@" (status, config, omlx, session-dashboard, …) hand
-# their arguments to handlers in lib/cmd/{system,sessions,display,config,omlx,
-# vpnii,vibemap,perf}.sh, which index $2 themselves; converting them means
-# editing those files, which is outside this change's scope. They are the same
-# set tests/test_arg_contract.sh still lists as not yet under the contract.
+# The arms still passing "$@" (status, config, session-dashboard, …) hand it
+# to handlers that index $2 themselves. Except for perf, which skips $1 itself
+# and already meets the contract, they are on tests/test_arg_contract.sh's
+# list of commands not yet under it.
 case "${1:-}" in
   # System commands
   on)                  _cmd_on                ;;
   off)                 _cmd_off               ;;
   claudestatus)        _cmd_claudestatus "$@"        ;;
   session-dashboard)   _cmd_session_dashboard "$@"   ;;
-  dashboard)           _cmd_session_dashboard "$@"   ;; # deprecated alias
   status)              _cmd_status "$@"       ;;
   cc-statusline)       _cmd_cc_statusline "$@" ;;
   insomnii)            _cmd_insomnii "$@"      ;;
-  sessionline)         exec "$0" cc-statusline "${@:2}" ;;
-  install-sessionline) exec "$0" cc-statusline on ;;
   update)              _cmd_update            ;;
   doctor)              _cmd_doctor            ;;
 
@@ -268,11 +262,10 @@ case "${1:-}" in
   tokens)              _cmd_tokens "${@:2}"   ;;
   tools)               _cmd_tools "${@:2}"    ;;
   repos)               _cmd_repos "${@:2}"    ;;
-  perf)                _cmd_perf "$@"         ;;  # still "$@": lib/cmd/perf.sh is outside this change's scope
+  perf)                _cmd_perf "$@"         ;;  # "$@": _cmd_perf skips $1 itself
   limits)              _cmd_limits "${@:2}"   ;;
   session)             _cmd_session "${@:2}"  ;;
   explain)             _cmd_explain           ;;
-  layers|components)   exec "$0" explain "${@:2}" ;;
   version)             _cmd_version           ;;
   changelog)           _cmd_changelog         ;;
   42)                  _cmd_42                ;;
@@ -281,8 +274,6 @@ case "${1:-}" in
   config)              _cmd_config "$@"       ;;
   agents)              _cmd_agents            ;;
   search)              _cmd_search "$@"       ;;
-  omlx)                _cmd_omlx "$@"         ;;
-  vpnii)               _cmd_vpnii "$@"        ;;
   vibemap)             _cmd_vibemap "$@"      ;;
   sync)                _cmd_sync "${@:2}"     ;;
 

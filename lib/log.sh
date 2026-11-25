@@ -1,19 +1,24 @@
-# claudii logging — source this in bash scripts
+# claudii logging — the one _claudii_log, shared by bash (bin/*) and zsh
+# (claudii.plugin.zsh sources it before lib/config.zsh).
 # Usage: _claudii_log <level> <message>
 # Levels: off error warn info debug
-# Override via CLAUDII_LOG_LEVEL env var
+# Level source: CLAUDII_LOG_LEVEL if set (the zsh plugin syncs it from
+# debug.level on every config reload), else debug.level resolved lazily via jq
+# once per process.
 
 # Capture home at source-time so the function has it without CLAUDII_HOME being exported
 _CLAUDII_LOG_HOME="${CLAUDII_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+# Level name → number in _CLAUDII_LOG_N. Sets a variable instead of echoing:
+# a $(...) per comparison forked twice per log line, and the zsh plugin logs
+# from precmd.
 _claudii_log_num() {
   case "$1" in
-    off)   echo 0 ;;
-    error) echo 1 ;;
-    warn)  echo 2 ;;
-    info)  echo 3 ;;
-    debug) echo 4 ;;
-    *)     echo 0 ;;
+    error) _CLAUDII_LOG_N=1 ;;
+    warn)  _CLAUDII_LOG_N=2 ;;
+    info)  _CLAUDII_LOG_N=3 ;;
+    debug) _CLAUDII_LOG_N=4 ;;
+    *)     _CLAUDII_LOG_N=0 ;;
   esac
 }
 
@@ -34,7 +39,10 @@ _claudii_log() {
   fi
 
   [[ "$current" == "off" ]] && return 0
-  (( $(_claudii_log_num "$level") > $(_claudii_log_num "$current") )) && return 0
+  local _want
+  _claudii_log_num "$level";   _want=$_CLAUDII_LOG_N
+  _claudii_log_num "$current"
+  (( _want > _CLAUDII_LOG_N )) && return 0
 
   local color
   case "$level" in

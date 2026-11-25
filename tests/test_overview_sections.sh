@@ -13,7 +13,12 @@ _ovs_plain() { _ovs_run | sed 's/\x1b\[[0-9;]*m//g'; }
 mkdir -p "$_ovs_tmp/cache"
 
 # ── Default sections (from defaults.json) ────────────────────────────────────
-cp "$CLAUDII_HOME/config/defaults.json" "$_ovs_xdg/claudii/config.json"
+# defaults.json ships no agents ("agents": {}), so the Agents section gets a
+# small fixture: one haiku, one sonnet/max, one opus agent.
+jq '.agents = {"hk": {"model": "haiku", "effort": "high"},
+               "snmax": {"model": "sonnet", "effort": "max"},
+               "op": {"model": "opus", "effort": "high"}}' \
+  "$CLAUDII_HOME/config/defaults.json" > "$_ovs_xdg/claudii/config.json"
 _ovs_out=$(_ovs_plain)
 
 for _sec in Account Usage Sessions Agents Services Commands; do
@@ -30,8 +35,8 @@ assert_contains "agents: hint is an invocable command" "claudii agents" "$_ovs_o
 
 # Commands section: grouped quick reference, items are real subcommands
 assert_contains "commands: vibemap discoverable" "vibemap" "$_ovs_out"
-assert_contains "commands: omlx discoverable"    "omlx"    "$_ovs_out"
-assert_contains "commands: vpnii discoverable"   "vpnii"   "$_ovs_out"
+assert_not_contains "commands: removed omlx not listed"  "omlx"  "$_ovs_out"
+assert_not_contains "commands: removed vpnii not listed" "vpnii" "$_ovs_out"
 assert_contains "commands: skills-cost listed"   "skills-cost" "$_ovs_out"
 assert_contains "commands: prefix rule stated"   "claudii <command>" "$_ovs_out"
 # Unified taxonomy: the `insights` group restores the analytics commands the old

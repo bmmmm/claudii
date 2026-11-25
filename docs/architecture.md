@@ -29,9 +29,7 @@ lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/cmd/insights.sh     # Commands: cache, tokens, tools, limits, session (insights-cache views; cycleable window + --json)
 lib/cmd/perf.sh         # Command: perf (response-time p50/p90/p99, tok/s, latency trend; OTLP metrics or transcript estimate)
-lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
-lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
 lib/cmd/sync.sh         # Command: sync (other hosts' insights/history/live sessions → cache/hosts/<name>/, over ssh)
 lib/helpers.sh          # Shared bash helpers (_cfgget, _parse_session_cache, _mtime, …)
 lib/render.sh           # Shared bash renderers (_fmt_tok, _render_bar_row, _sparkline, _cache_hit_pct)
@@ -68,7 +66,6 @@ lib/spinner.sh          # Spinner animation (BG job, label file)
 lib/config.zsh          # Config loader (jq, falls back to defaults)
 lib/functions.zsh       # cl/clo/clm/clq/clh with auto-fallback
 lib/statusline.zsh      # RPROMPT precmd hook
-lib/vpnii.zsh           # VPN/Tailscale RPROMPT segment
 lib/visual.sh           # Color/symbol constants + theme loader (CLAUDII_CLR_*, CLAUDII_SYM_*)
 lib/log.sh              # Shared logging (bash + zsh)
 config/defaults.json    # Shipped defaults

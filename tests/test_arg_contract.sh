@@ -18,21 +18,12 @@
 _AC_CLI="$CLAUDII_HOME/bin/claudii"
 
 # ── Commands not yet under the contract ──────────────────────────────────────
-# Their argument parsers live in lib/cmd/{system,sessions,display,config,omlx,
-# vpnii,vibemap,perf}.sh, outside the change that introduced this gate. The list
+# Their argument parsers live in lib/cmd/{system,sessions,display,config,
+# vibemap,perf}.sh, outside the change that introduced this gate. The list
 # is a RATCHET, not an excuse: the loop below asserts that each of these still
 # FAILS the contract, so converting one without deleting it from here turns this
 # test red. It can only shrink.
-_AC_PENDING=" cc-statusline claudestatus dashboard insomnii omlx session session-dashboard sessionline status vpnii "
-
-# Two arms exec into another command, so the message names the TARGET. That is
-# the honest answer for an alias — `claudii layers` IS `claudii explain`.
-_ac_expect_name() {
-  case "$1" in
-    layers|components) printf 'explain' ;;
-    *)                 printf '%s' "$1" ;;
-  esac
-}
+_AC_PENDING=" cc-statusline claudestatus insomnii session session-dashboard status "
 
 # ── Derive the command list from the dispatch case ───────────────────────────
 _AC_BLOCK=$(LC_ALL=C sed -n '/^  # System commands$/,/^esac$/p' "$_AC_CLI")
@@ -73,7 +64,7 @@ _ac_probe() {
 _ac_covered=0
 for _ac_cmd in $_AC_CMDS; do
   _ac_probe "$_ac_cmd"
-  _ac_want="claudii $(_ac_expect_name "$_ac_cmd"): unknown option: --bogus"
+  _ac_want="claudii $_ac_cmd: unknown option: --bogus"
   case "$_AC_PENDING" in
     *" $_ac_cmd "*)
       # Ratchet: a pending command must still MISS the contract. When someone

@@ -20,7 +20,6 @@ _claudii() {
         'off:Disable all display layers'
         'claudestatus:Toggle ClaudeStatus RPROMPT (on/off)'
         'session-dashboard:Toggle Session Dashboard above prompt (on/off)'
-        'dashboard:Toggle Session Dashboard above prompt (on/off) [deprecated, use session-dashboard]'
         'cc-statusline:Toggle Sessionline inside Claude Code (on/off)'
         'status:Live model health check / set refresh interval'
         'sessions:Active sessions, costs, rate limits'
@@ -43,7 +42,6 @@ _claudii() {
         'limits:Rate-limit hits — when they happened and which model ran (7d default)'
         'cache:Prompt-cache hit rate per day and per model (7d default)'
         'explain:Components, symbols & data flow'
-        'layers:Alias for explain'
         'version:Show version number'
         'changelog:Release notes for current version'
         'doctor:Check claudii installation health'
@@ -51,8 +49,6 @@ _claudii() {
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
-        'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
-        'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
         'sync:Merge sessions from other hosts and accounts over ssh — status / add / rm'
         'gc:Clean up stale session cache files (--insights DAYS prunes orphaned insights caches)'
@@ -108,7 +104,7 @@ _claudii() {
           _describe 'insomnii subcommand' ins_subs
           ;;
 
-        session-dashboard|dashboard)
+        session-dashboard)
           local -a dash_cmds
           dash_cmds=(
             'on:Enable session dashboard'
@@ -164,11 +160,17 @@ _claudii() {
 
         tokens|tools|limits|cache)
           local -a win_opts
+          # Every window word _insights_window (lib/cmd/insights.sh) accepts;
+          # test_docs.sh keeps this list in step with its case.
           win_opts=(
             'today:Last 24 hours'
+            'day:Last 24 hours (same as today)'
             '7d:Last 7 days (default)'
+            'week:Last 7 days (same as 7d)'
             '30d:Last 30 days'
+            'month:Last 30 days (same as 30d)'
             '90d:Last 90 days'
+            'quarter:Last 90 days (same as 90d)'
             'year:Last 365 days'
             '--days:Explicit rolling window in days'
             '--json:Structured JSON output'
@@ -218,14 +220,14 @@ _claudii() {
           _describe 'session id' _ids
           ;;
 
-        cc-statusline|sessionline)
+        cc-statusline)
           case $words[3] in
             preset)
               local -a sl_presets
               sl_presets=(
-                'focused:Dense 2-line layout (model+dir+ctx+rates / clock+health+vpn)'
+                'focused:Dense 3-line layout (model+dir+branch / context+rates / health+tailscale)'
                 'calm:Bare 2-line layout (model / context-bar)'
-                'default:Restore shipped 5-line layout (all segments)'
+                'default:Drop statusline.lines so the shipped layout applies'
               )
               _describe 'cc-statusline preset' sl_presets
               ;;
@@ -239,17 +241,6 @@ _claudii() {
               _describe 'cc-statusline option' sl_opts
               ;;
           esac
-          ;;
-
-        omlx)
-          local -a omlx_opts
-          omlx_opts=(
-            'status:Show whether omlx integration is wired up (default)'
-            'connect:Walk through the setup — detect gateii path, verify omlx server'
-            'disconnect:Remove the omlx segment from custom statusline layouts'
-            'test:Render the statusline against a synthetic active.json'
-          )
-          _describe 'omlx command' omlx_opts
           ;;
 
         sync)
@@ -266,17 +257,6 @@ _claudii() {
           sync_hosts=(${(f)"$(jq -r '(.sync.hosts // {}) | keys[]' "${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json" 2>/dev/null)"})
           _describe 'sync command' sync_opts
           (( ${#sync_hosts} )) && _describe 'configured host' sync_hosts
-          ;;
-
-        vpnii)
-          local -a vpnii_opts
-          vpnii_opts=(
-            'set:Mark VPN tunnel active — claudii vpnii set <name>'
-            'clear:Mark VPN as down (alias: down/off)'
-            'show:Print current tunnel name (alias: status)'
-            '--user:Override target user for set/clear (default: SUDO_USER → console → $USER)'
-          )
-          _describe 'vpnii command' vpnii_opts
           ;;
 
         vibemap)
@@ -319,7 +299,6 @@ _claudii() {
                 'statusline.max_width:Hard per-line column budget; over-budget segments are dropped with a … (0 = off)'
                 'statusline.max_label:Max characters for branch/dir/worktree/session/agent names (default 20, 0 = off)'
                 'statusline.separator:Segment separator width — tight (default) or wide'
-                'statusline.omlx_active_path:Path to gateii data/agents/active.json for the omlx segment'
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'

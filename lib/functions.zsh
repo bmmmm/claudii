@@ -154,7 +154,11 @@ function _claudii_launch {
 # Register alias shell functions dynamically from config (aliases.*)
 # Creates functions like cl, clo, clm, clq, clf — no hardcoded list.
 function _claudii_register_aliases {
-  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  # First config read of a shell start: loads the cache, which also syncs
+  # CLAUDII_LOG_LEVEL — without it the debug line below resolved the level by
+  # forking jq (lib/log.sh's lazy path) on every shell start.
+  _claudii_cache_load
+  local config="$CLAUDII_CONFIG"
   [[ -f "$config" ]] || return
   local aliases_json
   aliases_json=$(jq -r '.aliases // {} | keys[]' "$config" 2>/dev/null) || return
@@ -228,11 +232,31 @@ function _claudii_agent_launch {
   claude --model "$model" --effort "$effort" --name "$agent_name" --append-system-prompt "$prompt" "$@"
 }
 
+# True when NAME already means something to the shell; sets _CLAUDII_TAKEN_AS
+# to what (reserved word, builtin, alias, command, function). Hash lookups
+# only — no `whence` subshell per agent on every shell start. A function whose
+# body is one of our agent launchers does not count (plugin re-sourced).
+function _claudii_agent_name_taken {
+  local name="$1"
+  _CLAUDII_TAKEN_AS=""
+  if (( ${reswords[(Ie)$name]} )); then _CLAUDII_TAKEN_AS="reserved word"
+  elif (( ${+builtins[$name]} )); then _CLAUDII_TAKEN_AS="builtin"
+  elif (( ${+aliases[$name]} ));  then _CLAUDII_TAKEN_AS="alias"
+  elif (( ${+functions[$name]} )); then
+    [[ "${functions[$name]}" == *_claudii_agent_launch* ]] && return 1
+    _CLAUDII_TAKEN_AS="function"
+  elif (( ${+commands[$name]} )); then _CLAUDII_TAKEN_AS="command (${commands[$name]})"
+  else
+    return 1
+  fi
+  return 0
+}
+
 # Register agent aliases from config (agents.*.skill/model/effort)
 # Creates shell functions dynamically — no hardcoded aliases
 function _claudii_register_agents {
   _claudii_cache_load
-  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  local config="$CLAUDII_CONFIG"
   [[ -f "$config" ]] || return
 
   # US (0x1F) separator, not tab: zsh `read` treats tab as IFS-whitespace and
@@ -249,6 +273,15 @@ function _claudii_register_agents {
     [[ -z "$name" ]] && continue
     [[ "$name"   =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$  ]] || { echo "claudii: invalid agent name: $name"   >&2; continue; }
     [[ "$name" == claudii || "$name" == claude || "$name" == clh || "$name" == clre ]] && { echo "claudii: reserved name: $name" >&2; continue; }
+    # Never shadow something the shell already resolves: an agent named `sh`
+    # or `op` used to replace /bin/sh or the 1Password CLI in every shell.
+    # Our own earlier registration (plugin re-sourced) may be replaced. Only a
+    # log line (silent at the default debug.level=off): the clash would
+    # otherwise repeat on every shell start.
+    if _claudii_agent_name_taken "$name"; then
+      _claudii_log warn "agent alias not registered: $name is already a ${_CLAUDII_TAKEN_AS}"
+      continue
+    fi
     # skill is optional — agents without one (hk/sn/op/…) register as plain
     # model/effort launchers. Skipping them entirely left every skill-less
     # default agent advertised by `claudii agents` but unregistered (command
