@@ -39,20 +39,28 @@ _claudii_spinner() {
   esac
 }
 
+# ── Shared label-read helper ─────────────────────────────────────────────────
+# Sets _label from CLAUDII_SPINNER_LABEL_FILE; truncates to 45 chars max.
+# If the label changed since last call, prints a newline (scrolling-log effect).
+# Caller must declare _label and _prev_label as locals before the loop.
+_claudii_spinner_read_label() {
+  _label="Loading"
+  if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
+    { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
+    if [[ -z "$_label" ]]; then _label="Loading"
+    elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
+  fi
+  [[ "$_label" != "$_prev_label" && -n "$_prev_label" ]] && printf '\n' >&2
+  _prev_label="$_label"
+}
+
 # ── ASCII fallback (dumb terminals, no UTF-8) ────────────────────────────────
 _claudii_spinner_ascii() {
   trap 'printf "\r\033[K" >&2' EXIT
   trap 'exit 0' TERM
   local frames=('|' '/' '-' '\') i=0 _label _prev_label=""
   while true; do
-    _label="Loading"
-    if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
-      { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
-      if [[ -z "$_label" ]]; then _label="Loading"
-      elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
-    fi
-    [[ "$_label" != "$_prev_label" && -n "$_prev_label" ]] && printf '\n' >&2
-    _prev_label="$_label"
+    _claudii_spinner_read_label
     printf '\r%s %s %s' "${frames[$((i % 4))]}" "$_label" "${frames[$((i % 4))]}" >&2
     sleep 0.1
     (( ++i ))
@@ -86,16 +94,9 @@ _claudii_spinner_beam() {
   local nb=10 i=0 _label _prev_label=""  # braille cycle length
 
   while true; do
-    # Dynamic label: file path being processed, or "Loading" as fallback
-    _label="Loading"
-    if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
-      { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
-      if [[ -z "$_label" ]]; then _label="Loading"
-      elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
-    fi
-    # New file → new line (creates a scrolling log effect)
-    [[ "$_label" != "$_prev_label" && -n "$_prev_label" ]] && printf '\n' >&2
-    _prev_label="$_label"
+    # Dynamic label: file path being processed, or "Loading" as fallback.
+    # A changed label starts a new line (scrolling-log effect).
+    _claudii_spinner_read_label
 
     # Color indices: left at i%nc, right at (i + nc - pd) % nc
     local li=$(( i % nc ))
@@ -115,21 +116,6 @@ _claudii_spinner_beam() {
     sleep 0.1
     (( ++i ))
   done
-}
-
-# ── Shared label-read helper ─────────────────────────────────────────────────
-# Sets _label from CLAUDII_SPINNER_LABEL_FILE; truncates to 45 chars max.
-# If the label changed since last call, prints a newline (scrolling-log effect).
-# Caller must declare _label and _prev_label as locals before the loop.
-_claudii_spinner_read_label() {
-  _label="Loading"
-  if [[ -n "${CLAUDII_SPINNER_LABEL_FILE:-}" && -r "${CLAUDII_SPINNER_LABEL_FILE}" ]]; then
-    { IFS= read -r _label || true; } < "$CLAUDII_SPINNER_LABEL_FILE"
-    if [[ -z "$_label" ]]; then _label="Loading"
-    elif (( ${#_label} > 45 )); then _label="…${_label: -44}"; fi
-  fi
-  [[ "$_label" != "$_prev_label" && -n "$_prev_label" ]] && printf '\n' >&2
-  _prev_label="$_label"
 }
 
 # ── Dots: pure braille rotation, dim/cyan ────────────────────────────────────
@@ -221,7 +207,10 @@ _claudii_spinner_orbit() {
 }
 
 # ── Wave: full-width scrolling block-element hill (previous default) ─────────
-# Kept as an alternative mode. Wider visual, more "ambient".
+# Kept as an alternative mode. Wider visual, more "ambient". The label (from
+# CLAUDII_SPINNER_LABEL_FILE, like every other mode) sits left of the wave; the
+# wave takes whatever width the current label leaves, so the line stays one
+# terminal row wide.
 _claudii_spinner_wave() {
   trap 'printf "\r\033[K" >&2' EXIT
   trap 'exit 0' TERM
@@ -229,23 +218,23 @@ _claudii_spinner_wave() {
   local cols="${COLUMNS:-80}"
   local dim="${CLAUDII_CLR_DIM:-}" reset="${CLAUDII_CLR_RESET:-}"
   local braille=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local label=" Loading  "   # 10 chars
-  local prefix_len=11
-  local wave_cols=$(( cols - prefix_len ))
-  (( wave_cols < 4 )) && wave_cols=4
-
   local wave='▁▂▃▄▅▆▇█▇▆▅▄▃▂▁ '
   local wlen=16
+  # Long enough for the widest slice (the whole row) plus the scroll offset.
   local pattern=''
-  while (( ${#pattern} < wave_cols + wlen )); do
+  while (( ${#pattern} < cols + wlen )); do
     pattern+="$wave"
   done
 
-  local i=0
+  local i=0 _label _prev_label="" wave_cols
   while true; do
-    printf '\r%s%s%s%s%s' \
-      "$dim" "${braille[$((i % 10))]}" "$label" "${pattern:$i:$wave_cols}" "$reset" >&2
+    _claudii_spinner_read_label
+    # braille + space + label + two spaces = ${#_label} + 4 columns of prefix
+    wave_cols=$(( cols - ${#_label} - 4 ))
+    (( wave_cols < 4 )) && wave_cols=4
+    printf '\r%s%s %s  %s%s' \
+      "$dim" "${braille[$((i % 10))]}" "$_label" "${pattern:$((i % wlen)):$wave_cols}" "$reset" >&2
     sleep 0.08
-    i=$(( (i + 1) % wlen ))
+    (( ++i ))
   done
 }
