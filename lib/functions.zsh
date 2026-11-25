@@ -158,7 +158,7 @@ function _claudii_register_aliases {
   # CLAUDII_LOG_LEVEL — without it the debug line below resolved the level by
   # forking jq (lib/log.sh's lazy path) on every shell start.
   _claudii_cache_load
-  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  local config="$CLAUDII_CONFIG"
   [[ -f "$config" ]] || return
   local aliases_json
   aliases_json=$(jq -r '.aliases // {} | keys[]' "$config" 2>/dev/null) || return
@@ -236,7 +236,7 @@ function _claudii_agent_launch {
 # Creates shell functions dynamically — no hardcoded aliases
 function _claudii_register_agents {
   _claudii_cache_load
-  local config="${CLAUDII_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/claudii/config.json}"
+  local config="$CLAUDII_CONFIG"
   [[ -f "$config" ]] || return
 
   # US (0x1F) separator, not tab: zsh `read` treats tab as IFS-whitespace and
