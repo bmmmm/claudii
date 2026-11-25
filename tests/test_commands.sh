@@ -480,3 +480,21 @@ _em_out=$(HOME="$_EM_BASE" XDG_CONFIG_HOME="$_EM_XDG" CLAUDII_CACHE_DIR="$_EM_CA
 assert_contains "explain: renders to completion despite bad settings.json" "Data Flow" "$_em_out"
 rm -rf "$_EM_BASE"
 unset _EM_BASE _EM_XDG _EM_CACHE _em_exit _em_out
+
+# ── doctor: "plugin loaded" means the calling shell exported CLAUDII_HOME ─────
+# bin/claudii exports CLAUDII_HOME for itself, so the old check — is it set? —
+# reported ok even when no shell had ever sourced claudii.plugin.zsh. Now it
+# asks whether the caller already had it (the plugin exports it).
+_make_cfg_tmp _DP
+_dp_status() {
+  jq -r '.[] | select(.check == "plugin") | .status' <<< "$1" 2>/dev/null
+}
+_dp_out=$(env -u CLAUDII_HOME HOME="$_DP_BASE" XDG_CONFIG_HOME="$_DP_XDG" CLAUDII_CACHE_DIR="$_DP_CACHE" \
+  bash "$CLAUDII_HOME/bin/claudii" doctor --json 2>/dev/null)
+assert_eq "doctor: plugin warn when the caller has no CLAUDII_HOME" "warn" "$(_dp_status "$_dp_out")"
+_dp_out=$(HOME="$_DP_BASE" XDG_CONFIG_HOME="$_DP_XDG" CLAUDII_CACHE_DIR="$_DP_CACHE" \
+  CLAUDII_HOME="$CLAUDII_HOME" bash "$CLAUDII_HOME/bin/claudii" doctor --json 2>/dev/null)
+assert_eq "doctor: plugin ok when the caller exported CLAUDII_HOME" "ok" "$(_dp_status "$_dp_out")"
+rm -rf "$_DP_BASE"
+unset _DP_BASE _DP_XDG _DP_CACHE _dp_out
+unset -f _dp_status

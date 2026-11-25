@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# 1 when the calling shell already exported CLAUDII_HOME (claudii.plugin.zsh
+# does) — doctor's "plugin loaded" check; the export below hides it otherwise.
+_CLAUDII_HOME_INHERITED="${CLAUDII_HOME:+1}"
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 source "$CLAUDII_HOME/lib/visual.sh"
 source "$CLAUDII_HOME/lib/spinner.sh"

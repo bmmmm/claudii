@@ -567,13 +567,10 @@ _cmd_doctor() {
     _dc_add "claude_code" "fail" "Claude Code not found — install from https://claude.ai/download"
   fi
 
-  # 2. jq
-  if command -v jq >/dev/null 2>&1; then
-    jq_ver=$(jq --version 2>/dev/null || echo "unknown")
-    _dc_add "jq" "ok" "jq $jq_ver"
-  else
-    _dc_add "jq" "fail" "jq not installed — brew install jq"
-  fi
+  # 2. jq — always present here: bin/claudii exits before dispatch without it,
+  # so this row only reports the version.
+  jq_ver=$(jq --version 2>/dev/null || echo "unknown")
+  _dc_add "jq" "ok" "jq $jq_ver"
 
   # 3. CC-Statusline config
   settings="${HOME}/.claude/settings.json"
@@ -625,11 +622,14 @@ _cmd_doctor() {
     _dc_add "completions" "fail" "Completions not found — add to .zshrc: fpath+=($comp_dir)"
   fi
 
-  # 6. Plugin loaded
-  if [[ -n "${CLAUDII_HOME:-}" ]]; then
-    _dc_add "plugin" "ok" "Plugin loaded (CLAUDII_HOME=$CLAUDII_HOME)"
+  # 6. Plugin loaded in the calling shell. Testing CLAUDII_HOME itself was
+  # always ok — bin/claudii exports it for itself before dispatch. What tells
+  # is whether the caller already had it: claudii.plugin.zsh exports it, and
+  # bin/claudii records that in _CLAUDII_HOME_INHERITED.
+  if [[ "${_CLAUDII_HOME_INHERITED:-}" == 1 ]]; then
+    _dc_add "plugin" "ok" "Plugin loaded in this shell (CLAUDII_HOME=$CLAUDII_HOME)"
   else
-    _dc_add "plugin" "warn" "CLAUDII_HOME not set — source claudii.plugin.zsh in .zshrc"
+    _dc_add "plugin" "warn" "Plugin not loaded in this shell — add to ~/.zshrc: source \"$CLAUDII_HOME/claudii.plugin.zsh\""
   fi
 
   # 7. insomnii — optional standalone bedtime statusline. When detected,
