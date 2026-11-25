@@ -1057,14 +1057,31 @@ assert_contains "multi-line JSON: model parsed" "Opus" "$_ml"
 assert_contains "multi-line JSON: context parsed (40 raw → 48%)" "48%" "$_ml"
 unset _ml _ml_json
 
-# ── proxy segment jq is layout-gated ─────────────────────────────────────────
-# Layout without proxy → no "→ api"/⇄ output even when a settings.local.json
-# with no ANTHROPIC_BASE_URL exists in cwd (the jq must not run at all).
-printf '{"statusline":{"lines":[["model"]]}}\n' > "$_cx_cfg/claudii/config.json"
-_px=$(echo '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":10,"total_input_tokens":1,"total_output_tokens":1,"context_window_size":200000},"cost":{"total_cost_usd":0.1}}' \
-  | XDG_CONFIG_HOME="$_cx_cfg" bash "$SL" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
-assert_eq "proxy: gated out of layout (no → api)" "0" "$(printf '%s' "$_px" | grep -c 'api' || true)"
-unset _px
+# ── proxy segment: ANTHROPIC_BASE_URL's host:port, environment first ─────────
+_px_dir="$(mktemp -d "$CLAUDII_TEST_TMP/px-XXXXXX")"; _SL_TMPDIRS+=("$_px_dir")
+mkdir -p "$_px_dir/cfg/claudii" "$_px_dir/proj/.claude" "$_px_dir/bare/.claude"
+printf '{"statusline":{"lines":[["proxy"]]}}\n' > "$_px_dir/cfg/claudii/config.json"
+printf '{"env":{"ANTHROPIC_BASE_URL":"https://settings.example:9443/v1"}}\n' > "$_px_dir/proj/.claude/settings.local.json"
+printf '{"permissions":{}}\n' > "$_px_dir/bare/.claude/settings.local.json"
+_px() {  # project-dir [VAR=value…] → rendered line, colors stripped
+  local _d="$1"; shift
+  printf '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"%s"}}' "$_d" \
+    | env -u ANTHROPIC_BASE_URL "$@" XDG_CONFIG_HOME="$_px_dir/cfg" bash "$SL" 2>/dev/null \
+    | sed 's/\x1b\[[0-9;]*m//g'
+}
+assert_eq "proxy: localhost shows host:port, no gateii special case" "⇄ localhost:8888" \
+  "$(_px "$_px_dir/bare" ANTHROPIC_BASE_URL=http://localhost:8888)"
+assert_eq "proxy: credentials and path never render" "⇄ proxy.example:8443" \
+  "$(_px "$_px_dir/bare" ANTHROPIC_BASE_URL=https://user:s3cret@proxy.example:8443/v1)"
+assert_eq "proxy: the environment wins over settings.local.json" "⇄ env.example" \
+  "$(_px "$_px_dir/proj" ANTHROPIC_BASE_URL=https://env.example)"
+assert_eq "proxy: settings.local.json is the fallback" "⇄ settings.example:9443" \
+  "$(_px "$_px_dir/proj")"
+assert_eq "proxy: no base URL anywhere → empty (no → api)" "" "$(_px "$_px_dir/bare")"
+printf '{"statusline":{"lines":[["model"]]}}\n' > "$_px_dir/cfg/claudii/config.json"
+assert_not_contains "proxy: gated out of layout" "⇄" \
+  "$(_px "$_px_dir/proj" ANTHROPIC_BASE_URL=https://env.example)"
+unset -f _px; unset _px_dir
 
 # ── worktrees segment — linked worktrees of the current repo (⑂N ⌫P) ─────────
 # Same throwaway-repo discipline as the remotes/git-sync blocks: the repo lives

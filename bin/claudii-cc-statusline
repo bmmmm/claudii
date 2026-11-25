@@ -2000,28 +2000,29 @@ if (( ! _ts_have )); then
 fi
 (( _ts_up == 0 )) && _seg_tailscale="${GREEN}⬢${RST} ${DIM}ts${RST}"
 
-# Proxy — non-empty only when ANTHROPIC_BASE_URL is set in .claude/settings.local.json.
+# Proxy — where this session's API traffic goes: ANTHROPIC_BASE_URL's
+# host:port, empty when no base URL is set. Claude Code copies every settings
+# file's `env` into its own environment before it spawns this script, so the
+# environment is the answer (and also covers the shell and user-level
+# settings); the project's .claude/settings.local.json is only read when the
+# variable is absent — a render outside Claude Code, or a session that predates
+# the edit. Credentials in the URL (user:pass@) and the path never render.
 _seg_proxy=""
-for _p in \
-  "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
-  "${cwd:+${cwd}/.claude/settings.local.json}" \
-  ".claude/settings.local.json"; do
-  [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
-done
-# Gated on layout membership like the other fork-owning segments — this jq
-# used to run on every render whenever a settings.local.json existed.
-if _in_layout proxy && [[ -n "${_proxy_settings:-}" && -f "$_proxy_settings" ]]; then
-  _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // ""' "$_proxy_settings" 2>/dev/null)
-  if [[ -n "$_proxy_url" ]]; then
-    if [[ "$_proxy_url" == "http://localhost:8888" ]]; then
-      _proxy_label="gateii"
-    else
-      _proxy_label="${_proxy_url#http://}"; _proxy_label="${_proxy_label#https://}"; _proxy_label="${_proxy_label%%/*}"
-    fi
-    _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
-  else
-    _seg_proxy="${DIM}→ api${RST}"
+if _in_layout proxy; then
+  _proxy_url="${ANTHROPIC_BASE_URL:-}"
+  if [[ -z "$_proxy_url" ]]; then
+    _proxy_settings=""
+    for _p in \
+      "${workspace_project_dir:+${workspace_project_dir}/.claude/settings.local.json}" \
+      "${cwd:+${cwd}/.claude/settings.local.json}" \
+      ".claude/settings.local.json"; do
+      [[ -n "$_p" && -f "$_p" ]] && { _proxy_settings=$_p; break; }
+    done
+    [[ -n "$_proxy_settings" ]] && \
+      _proxy_url=$(jq -r '.env.ANTHROPIC_BASE_URL // "" | strings' "$_proxy_settings" 2>/dev/null)
   fi
+  _proxy_label="${_proxy_url#*://}"; _proxy_label="${_proxy_label%%[/?#]*}"; _proxy_label="${_proxy_label##*@}"
+  [[ -n "$_proxy_label" ]] && _seg_proxy="${CYAN}⇄${RST} ${YELLOW}${_proxy_label}${RST}"
 fi
 
 # bumpii — pending tool updates (⬆) and unread release news (✉), read from
