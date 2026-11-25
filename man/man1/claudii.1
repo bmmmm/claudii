@@ -1421,23 +1421,23 @@ cache-hit	\[u26A1]73%	Prompt-cache hit ratio (green >= 60%, yellow < 30%). Nativ
 cache-ttl	\[u2668]4m	Prompt-cache TTL: countdown until the cached prefix goes cold (yellow <= 2 min); cold shows the re-cache price; a miss on the last request names its cause (\[u2668]4m\[u00B7]miss:tools, CC 2.1.260+). See below. Requires Claude Code 2.1.251+
 idle-compact	\[u21F2]\[u25D4] idle 16:30 \[u00B7] 38m	What happens if you stay away: the time Claude Code compacts the idle conversation (\[u21F2], 1h cache, >= 200K), else the time the prompt cache goes cold (\[u2668]). Glyph fills and colour warms toward it; animates with statusLine.refreshInterval. Opt-in. See below. Requires Claude Code 2.1.251+ (compaction on by default: 2.1.332+)
 response	\[u21AF]4.1s	API time the last response took (dim < 15s, yellow >= 30s, red >= 60s). See below
-rate-5h	5h:17% \[u21BA]249m	5h rate limit + reset countdown (Pro/Max plans only)
+rate-5h	5h:17% \[u21BA]4h9m	5h rate limit + reset countdown (Pro/Max plans only)
 rate-7d	7d:50% \[u21BA]3d15h	7d rate limit + reset countdown
 cost	$0.42	Session cost in USD (dim \(em demoted by the token-first shift); omitted when zero
-tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M/B suffixes
+tokens	42.1K\(ua 8.3K\(da	Input / output tokens (cyan \(em primary throughput signal); K/M suffixes
 lines-changed	+823 \-201	Git lines added (green) / removed (red); session total
-duration	1h 23m	Wall-clock session duration (dim)
+duration	\[u23F1] 1h23m	Wall-clock session duration (dim)
 api-duration	api:45m	Time waiting for Claude API responses (dim)
 burn-eta	ETA:180m	Estimated time until the 5h limit is used up at the window's average rate so far (dim). Counts the window's elapsed time, not the session's; needs the reset time and >= 3 min into the window; omitted when the window resets first
 pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs a linear burn across the 5h window (same inputs as burn-eta): \[u2191] ahead (green), = on-pace (dim), \[u2193] behind (yellow). Opt-in only.
 cron	\[u23F0] 42m	Time until next scheduled cron run (from Stop-hook session_crons). Opt-in only.
 bg-tasks	\[u2699] 2bg	Number of background tasks pending (from Stop-hook bg_tasks). Opt-in only.
 compactions	\[u267B]2	Compactions this session survived (detected via context-usage collapse). Opt-in only.
-delta-5h	\[u03B4]5h:+12%	5h rate change since session start; restarts with a new 5h window
-delta-7d	\[u03B4]7d:+3%	7d rate change since session start; restarts with a new 7d window
+delta-5h	\[u0394]5h:+12%	5h rate change since session start; restarts with a new 5h window
+delta-7d	\[u0394]7d:+3%	7d rate change since session start; restarts with a new 7d window
 cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
 session-name	my-feature	Custom session name (from /rename or --name)
-worktree	feat/login \[u23B7] main	Worktree + branch (dim) \(em the one this session runs in
+worktree	feat/login \[u2387] main	Worktree + branch (dim) \(em the one this session runs in
 worktrees	\[u2442]3 \[u232B]1	Linked worktrees in this repo (cyan), prunable ones called out as \[u232B]P (yellow). See below
 dir	\[u2302] my-app	Working directory basename (dim)
 github	\[u25C6] bmmmm/claudii #42	GitHub repo (Claude Code 2.1.145+) + active PR number (\fIpr.number\fR, Claude Code 2.1.332+; older builds: \fIworkspace.repo.pr_number\fR)
@@ -1449,7 +1449,7 @@ sessions	\[u26A0]2	Opt-in (not in the default layout; add via \fBstatusline.line
 agent	@orc	Agent name prefixed @ (dim)
 ruler	\(em\(em\(em\(em	Horizontal rule filling remaining terminal width
 tailscale	\[u2B22] ts	Tailscale reachability (CGNAT 100.64.0.0/10 interface scan, cached ~30s). Empty when no interface holds a tailnet address
-claude-status	Opus \[u2713]  Sonnet \[u2713]  Haiku \[u2713]  Fable \[u2713]	Model health from ClaudeStatus cache (auto-refreshes when older than status.cache_ttl)
+claude-status	[claude \[u2713]] 3m	Model health from the ClaudeStatus cache for the models in \fBstatusline.models\fR: \fBclaude\fR \[u2713] when all are up (\[u2193] all down, ~ all degraded), otherwise only the affected ones, e.g. [Opus \[u2193] Haiku ~]; then the cache age and the incident glyph described under ClaudeStatus (RPROMPT). Auto-refreshes when older than status.cache_ttl
 proxy	\[u21C4] localhost:8888	Where this session's API traffic goes: host and port of \fIANTHROPIC_BASE_URL\fR, from the environment Claude Code passes on (settings \fBenv\fR included), else the project's \fB.claude/settings.local.json\fR. Never shows credentials or the path; empty when no base URL is set
 bumpii	\[u2B06] 2 \[u2709] 8	Pending tool updates and unread release news, from the \fBbumpii\fR(1)-backed cache. Opt-in. See below
 clock	\[u263E] 23:30 +30m	Local time + bedtime nudge; delegates to \fBcc-insomnii\fR(1) when installed
