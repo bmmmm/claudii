@@ -354,8 +354,6 @@ _cache_get() {
   fi
   _CG="$fallback"
 }
-_rate_7d_start=""; [[ -n "$rate_7d" && "$rate_7d" != "null" ]] && { _cache_get rate_7d_start "$rate_7d"; _rate_7d_start="$_CG"; }
-_rate_5h_start=""; [[ -n "$rate_5h" && "$rate_5h" != "null" ]] && { _cache_get rate_5h_start "$rate_5h"; _rate_5h_start="$_CG"; }
 _cache_get last_duration_ms ""; _last_duration_ms="$_CG"
 # idle-compact animation frame: flips on every render (statusLine.refreshInterval
 # re-renders while idle), persisted so the blink alternates at any interval.
@@ -434,6 +432,30 @@ fi
 # true in the meantime. `claudii perf` has the aggregates; this is the live
 # signal that separates "the model is thinking" from "the API is slow today".
 read -r _now _date_ym <<< "$(date '+%s %Y-%m')"
+# delta-5h/7d baselines: the used% at this session's first render in the
+# current window. A new window (its reset moved by more than a minute — a
+# rollover, or another account after /login — or the cached reset has
+# passed) or an unreadable baseline restarts it at the current value, so the
+# drop to a fresh window never shows as a delta. → _CG
+_rate_start() {  # <5h|7d> <used%> <resets_at>
+  local _cur=$2 _rs=${3%.*} _st _prs
+  _CG=""
+  [[ -n "$_cur" && "$_cur" != "null" ]] || return 0
+  _cache_get "rate_${1}_start" "$_cur"; _st=$_CG
+  _cache_get "reset_${1}" ""; _prs=${_CG%.*}
+  if [[ ! "${_st%.*}" =~ ^[0-9]+$ ]]; then
+    _st=$_cur
+  elif [[ "$_prs" =~ ^[0-9]+$ ]]; then
+    if [[ "$_rs" =~ ^[0-9]+$ ]] && (( _rs - _prs > 60 || _prs - _rs > 60 )); then
+      _st=$_cur
+    elif (( _prs <= _now )); then
+      _st=$_cur
+    fi
+  fi
+  _CG=$_st
+}
+_rate_start 5h "$rate_5h" "$reset_5h"; _rate_5h_start=$_CG
+_rate_start 7d "$rate_7d" "$reset_7d"; _rate_7d_start=$_CG
 _cache_get last_api_duration_ms ""; _prev_api_total="$_CG"
 _cache_get last_api_delta "";       _api_delta="$_CG"
 _ad=0
@@ -1406,7 +1428,7 @@ fi
 _mk_delta_seg() {
   _seg_result=""
   local label=$1 cur=$2 start=$3
-  [[ -z "$start" || "$start" == "null" || -z "$cur" || "$cur" == "null" ]] && return
+  [[ "${start%.*}" =~ ^[0-9]+$ && "${cur%.*}" =~ ^[0-9]+$ ]] || return
   local d disp sign clr
   d=$(( ${cur%.*} - ${start%.*} ))
   disp=$d

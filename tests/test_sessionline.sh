@@ -228,6 +228,37 @@ assert_eq "7d delta not shown in sessionline output" "0" "$(echo "$strip" | grep
 _cache_7d="$(cat "$_test_cache_dir/session-test7dde" 2>/dev/null)"
 assert_contains "7d_start cached from first call" "rate_7d_start=60" "$_cache_7d"
 
+# delta-5h/7d baselines restart with the window: a rollover is a new window,
+# not a −N% delta, and an unreadable cached baseline must not reach $(( )).
+_dl_dir="$(mktemp -d "$CLAUDII_TEST_TMP/dl-XXXXXX")"; _SL_TMPDIRS+=("$_dl_dir")
+mkdir -p "$_dl_dir/cfg/claudii" "$_dl_dir/cache"
+printf '{"statusline":{"lines":[["delta-5h","delta-7d"]]}}\n' > "$_dl_dir/cfg/claudii/config.json"
+_dl() {  # session 5h% 5h-reset 7d% 7d-reset → rendered line (colors stripped); stderr to $_dl_dir/err
+  printf '{"session_id":"%s","model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' "$@" \
+    | XDG_CONFIG_HOME="$_dl_dir/cfg" CLAUDII_CACHE_DIR="$_dl_dir/cache" bash "$SL" 2>"$_dl_dir/err" \
+    | sed 's/\x1b\[[0-9;]*m//g'
+}
+_dl_r5=$(( $(date +%s) + 9000 )); _dl_r7=$(( $(date +%s) + 300000 ))
+_dl deltawin-0001 20 "$_dl_r5" 40 "$_dl_r7" > /dev/null
+assert_eq "delta: growth inside the window shows" "Δ5h:+10% │ Δ7d:+2%" \
+  "$(_dl deltawin-0001 30 "$_dl_r5" 42 "$_dl_r7" | sed 's/ *$//')"
+assert_eq "delta: a 5h rollover restarts the baseline (no −25%)" "Δ7d:+3%" \
+  "$(_dl deltawin-0001 5 $(( _dl_r5 + 18000 )) 43 "$_dl_r7" | sed 's/ *$//')"
+assert_contains "delta: the new 5h baseline is cached" "rate_5h_start=5" "$(cat "$_dl_dir/cache/session-deltawin")"
+assert_eq "delta: growth counts from the new window" "Δ5h:+4% │ Δ7d:+3%" \
+  "$(_dl deltawin-0001 9 $(( _dl_r5 + 18000 )) 43 "$_dl_r7" | sed 's/ *$//')"
+# A cached reset already in the past is a rollover too (payload without a new reset yet).
+printf 'reset_5h=%s\nrate_5h_start=50\nrate_7d_start=40\nreset_7d=%s\n' "$(( $(date +%s) - 100 ))" "$_dl_r7" \
+  > "$_dl_dir/cache/session-deltapas"
+assert_eq "delta: a passed cached reset restarts the baseline" "Δ7d:+1%" \
+  "$(_dl deltapas-0001 3 null 41 "$_dl_r7" | sed 's/ *$//')"
+# Garbage baseline: no arithmetic error, baseline re-seeded.
+printf 'rate_5h_start=abc\nreset_5h=%s\nrate_7d_start=4x\nreset_7d=%s\n' "$_dl_r5" "$_dl_r7" > "$_dl_dir/cache/session-deltagar"
+_dl deltagar-0001 12 "$_dl_r5" 30 "$_dl_r7" > /dev/null
+assert_eq "delta: a garbage baseline writes nothing to stderr" "" "$(cat "$_dl_dir/err")"
+assert_contains "delta: a garbage baseline is re-seeded" "rate_5h_start=12" "$(cat "$_dl_dir/cache/session-deltagar")"
+unset -f _dl; unset _dl_dir _dl_r5 _dl_r7
+
 # burn_eta / pace run on the 5h window's clock (account-wide limit), not on the
 # session's duration: elapsed = 18000 − (resets_at − now).
 _test_cache_dir="$(mktemp -d)"; _SL_TMPDIRS+=("$_test_cache_dir")

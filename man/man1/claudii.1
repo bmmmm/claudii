@@ -1433,8 +1433,8 @@ pace	\[u2191] / = / \[u2193]	Burn-pace tri-state vs a linear burn across the 5h 
 cron	\[u23F0] 42m	Time until next scheduled cron run (from Stop-hook session_crons). Opt-in only.
 bg-tasks	\[u2699] 2bg	Number of background tasks pending (from Stop-hook bg_tasks). Opt-in only.
 compactions	\[u267B]2	Compactions this session survived (detected via context-usage collapse). Opt-in only.
-delta-5h	\[u03B4]5h:+12%	5h rate change since session start
-delta-7d	\[u03B4]7d:+3%	7d rate change since session start
+delta-5h	\[u03B4]5h:+12%	5h rate change since session start; restarts with a new 5h window
+delta-7d	\[u03B4]7d:+3%	7d rate change since session start; restarts with a new 7d window
 cache-create	\[u270E]1.2K	Tokens written into prompt cache this session
 session-name	my-feature	Custom session name (from /rename or --name)
 worktree	feat/login \[u23B7] main	Worktree + branch (dim) \(em the one this session runs in
