@@ -46,6 +46,8 @@ _SYNC_RESERVED=" add rm remove status ls export import state help "
 _SYNC_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._@-]*$'
 _SYNC_HIST_RE='^history(-[0-9][0-9][0-9][0-9]-[0-9][0-9])?\.tsv$'
 _SYNC_ID_RE='^[0-9a-f]{32}$'
+# Field separator for rows that may hold empty fields (see _sync_hosts_load).
+_SYNC_US=$'\037'
 
 _sync_cache_dir() { printf '%s' "${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"; }
 
@@ -537,18 +539,21 @@ _sync_push() {
 # ── Configured hosts ─────────────────────────────────────────────────────────
 
 # Fills parallel arrays (bash 3.2: no declare -A) from config.json sync.hosts.
+# US-delimited, not tab: tab is IFS whitespace, so an empty field (a host
+# without ssh) collapsed and shifted the rest — cmd became the ssh target,
+# mode the cmd. US is not whitespace: empty fields stay where they are.
 _SH_NAMES=() _SH_SSH=() _SH_CMD=() _SH_MODE=()
 _sync_hosts_load() {
   _SH_NAMES=() _SH_SSH=() _SH_CMD=() _SH_MODE=()
   local n s c m i=0
   [[ -f "$CONFIG" ]] || return 0
-  while IFS=$'\t' read -r n s c m; do
+  while IFS="$_SYNC_US" read -r n s c m; do
     [[ -n "$n" ]] || continue
     _SH_NAMES[$i]="$n"; _SH_SSH[$i]="$s"; _SH_CMD[$i]="${c:-claudii}"; _SH_MODE[$i]="${m:-pull}"
     (( ++i ))
   done < <(jq -r '(.sync.hosts // {}) | to_entries[]
                   | [.key, (.value.ssh // ""), (.value.cmd // "claudii"), (.value.mode // "pull")]
-                  | @tsv' "$CONFIG" 2>/dev/null)
+                  | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' "$CONFIG" 2>/dev/null)
   return 0
 }
 
@@ -651,6 +656,12 @@ _sync_run() {
       printf 'claudii sync: %s has no ssh target (sync.hosts.%s.ssh)\n' "$n" "$n" >&2
       (( ++fails )); continue
     fi
+    # Anything else would match neither branch below and "succeed" silently.
+    case "$m" in
+      pull|push|both) ;;
+      *) printf 'claudii sync: %s: unknown mode %s (sync.hosts.%s.mode: pull, push or both)\n' "$n" "$m" "$n" >&2
+         (( ++fails )); continue ;;
+    esac
     if [[ "$m" == "pull" || "$m" == "both" ]]; then
       t0=$(date +%s); rc=0
       _sync_pull "$n" "$t" "$c" || rc=$?
@@ -714,9 +725,9 @@ _sync_mirror_stats() {
 }
 
 # Live sessions of one mirror: model, ctx%, project dir — from the mirrored
-# session caches whose id the source listed as live. US-delimited, not tab: an
-# empty ctx% would collapse under IFS=$'\t' and shift the project into it.
-_SYNC_US=$'\037'
+# session caches whose id the source listed as live. US-delimited (_SYNC_US),
+# not tab: an empty ctx% would collapse under IFS=$'\t' and shift the project
+# into it.
 _sync_live_rows() {
   local mirror="$1" f sid model ctx proj
   [[ -s "$mirror/live" && -d "$mirror/sessions" ]] || return 0

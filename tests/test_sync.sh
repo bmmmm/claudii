@@ -88,6 +88,21 @@ assert_eq "sync add: a subcommand name is refused (exit 2)" "2" "$?"
 _sy dst sync add box -oProxyCommand=x >/dev/null 2>&1
 assert_eq "sync add: an ssh target that is an option is refused (exit 2)" "2" "$?"
 
+# A hand-written host entry without ssh: the empty field must not shift the
+# others (cmd read as the target, mode as the cmd) — the host is reported as
+# having no target and ssh never runs.
+_SY_HCFG="$_SY_ROOT/dst/.config/claudii/config.json"
+mkdir -p "${_SY_HCFG%/*}"
+_SY_HBAK=""; [[ -f "$_SY_HCFG" ]] && _SY_HBAK=$(cat "$_SY_HCFG")
+printf '%s\n' '{"sync":{"hosts":{"bare":{"mode":"push"},"typo":{"ssh":"src","mode":"pusj"}}}}' > "$_SY_HCFG"
+_err=$(HOME="$_SY_ROOT/dst" XDG_CACHE_HOME="$_SY_ROOT/dst/.cache" XDG_CONFIG_HOME="$_SY_ROOT/dst/.config" \
+  CLAUDII_SSH="$_SY_ROOT/ssh-forbidden" bash "$CLAUDII_HOME/bin/claudii" sync --quiet 2>&1); _rc=$?
+assert_eq "host without ssh: sync exits 1" "1" "$_rc"
+assert_contains "host without ssh: says the target is missing" "bare has no ssh target" "$_err"
+assert_contains "host with an unknown mode: named, not skipped silently" "typo: unknown mode pusj" "$_err"
+assert_not_contains "host without ssh: ssh is never invoked" "ssh-forbidden" "$_err"
+if [[ -n "$_SY_HBAK" ]]; then printf '%s\n' "$_SY_HBAK" > "$_SY_HCFG"; else rm -f "$_SY_HCFG"; fi
+
 # ── 1. pull ──────────────────────────────────────────────────────────────────
 _sy dst sync add box src --cmd "$_SY_CMD" >/dev/null
 assert_eq "sync add: host stored in config" "src" \
