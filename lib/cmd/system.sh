@@ -145,7 +145,6 @@ _cmd_session_dashboard() {
       ;;
     "")
       current=$(_cfgget session-dashboard.enabled)
-      [[ -z "$current" ]] && current=$(_cfgget dashboard.enabled)
       current="${current:-off}"
       if [[ "$current" == "off" ]]; then
         echo -e "Session Dashboard: ${CLAUDII_CLR_YELLOW}off${CLAUDII_CLR_RESET}  (claudii session-dashboard on to enable)"
