@@ -979,8 +979,18 @@ breakdown by HTTP status code from
 events. The local receiver
 .RB ( "claudii\-otel receiver" )
 captures Claude Code's OTLP/JSON export under
-.IR ~/.cache/claudii/otel/ ;
-by default nothing leaves the machine. Setting
+.I otel/
+in the claudii cache
+.RI ( ~/.cache/claudii/otel/ ,
+or
+.B CLAUDII_CACHE_DIR
+when set). It listens on
+.IR perf.otel.endpoint ,
+the same URL Claude Code exports to, so the endpoint must be loopback with an
+explicit port
+(\fBhttp://127.0.0.1:\fIPORT\fR or \fBhttp://localhost:\fIPORT\fR);
+setup and the receiver refuse anything else. By default nothing leaves the
+machine. Setting
 .I perf.otel.forward
 to an internal collector URL makes the receiver additionally mirror each batch
 there (best-effort, for central retention on a shared gateway); claudii itself
@@ -2063,9 +2073,9 @@ debug.level	off	Log level: off/error/warn/info/debug
 vibemap.enabled	false	Opt-in activity tracking
 vibemap.overview	true	Show Activity strip in claudii overview
 perf.otel.enabled	false	Exact latency via OpenTelemetry (opt-in); off = transcript estimate
-perf.otel.endpoint	http://127.0.0.1:4318	OTLP/HTTP receiver bind address
+perf.otel.endpoint	http://127.0.0.1:4318	Where Claude Code exports and the receiver listens; loopback only (127.0.0.1 or localhost, explicit port)
 perf.otel.beta_traces	true	Capture the claude_code.llm_request span (TTFT)
-perf.otel.forward	(empty)	Mirror OTLP batches to a central collector URL; empty = local only
+perf.otel.forward	(empty)	Mirror OTLP batches to a central collector (http:// or https:// URL); empty = local only
 overview.sections	account…commands	Overview section order + selection (array)
 sync.name	(empty)	Name this claudii pushes under; empty = user@host
 sync.hosts.\fIname\fR.ssh	\(em	ssh target of a synced host (\fBclaudii sync add\fR)

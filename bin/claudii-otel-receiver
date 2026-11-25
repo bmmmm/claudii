@@ -60,6 +60,9 @@ Conversion / tests:
     serves live ingest, the tests and the conversion.
 
 Security: binds 127.0.0.1 only, so nothing on the network can push events in.
+`claudii-otel receiver` and the launchd plist set dir, host and port from
+claudii (cache dir, perf.otel.endpoint) — the env defaults below are for a
+direct run.
 Files stay on-box (0700 dir); the identity constants are not stored locally.
 
 Env:
@@ -646,6 +649,7 @@ def main(argv=None):
         threading.Thread(target=_forward_worker, daemon=True).start()
     srv = ThreadingHTTPServer((host, port), Handler)
     with _WLOCK:
+        _STATUS["listen"] = "%s:%d" % (host, port)  # doctor compares it with perf.otel.endpoint
         status_write(force=True)
     _log("listening on %s:%d  ->  %s  (sha %s)" % (host, port, EVENTS_DIR, _STATUS["sha"][:12]))
     if FORWARD:

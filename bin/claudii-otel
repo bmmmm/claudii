@@ -322,10 +322,46 @@ _cmd_build() {
   return "$rc"
 }
 
+# perf.otel.endpoint is both where Claude Code exports to (otel.env) and where
+# the receiver listens (plist, `claudii-otel receiver`). Only a loopback http
+# URL with an explicit port can be both — the receiver binds 127.0.0.1, never a
+# network address, and an exporter without a port would POST to :80. Sets
+# EP_URL (no trailing slash: the exporter appends /v1/logs), EP_HOST, EP_PORT.
+_endpoint() {
+  local url re='^http://(127\.0\.0\.1|localhost):([0-9]{1,5})/?$'
+  url=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.endpoint 2>/dev/null)
+  [[ -z "$url" ]] && url="http://127.0.0.1:4318"
+  if [[ "$url" =~ $re ]] && (( 10#${BASH_REMATCH[2]} >= 1 && 10#${BASH_REMATCH[2]} <= 65535 )); then
+    EP_URL="${url%/}"; EP_HOST=127.0.0.1; EP_PORT=$(( 10#${BASH_REMATCH[2]} ))
+    return 0
+  fi
+  printf 'claudii-otel: perf.otel.endpoint must be http://127.0.0.1:PORT or http://localhost:PORT — the receiver listens there, loopback only (got: %s)\n' "$url" >&2
+  return 1
+}
+
+# perf.otel.forward, checked: the receiver POSTs to it with urllib, which also
+# speaks file:// and ftp://. Sets FWD (empty = off).
+_forward() {
+  FWD=$("$CLAUDII_HOME/bin/claudii" config get perf.otel.forward 2>/dev/null)
+  [[ -z "$FWD" || "$FWD" =~ ^https?://[^[:space:]]+$ ]] && return 0
+  printf 'claudii-otel: perf.otel.forward must be an http:// or https:// URL without spaces: %s\n' "$FWD" >&2
+  return 1
+}
+
+# The receiver in the foreground, wired like the launchd job: data dir, listen
+# address and forward come from claudii (cache dir + config), so it writes where
+# build/doctor read. Run bin/claudii-otel-receiver directly to set them by env.
 _cmd_receiver() {
   [[ -f "$RECEIVER" ]] || { printf 'claudii-otel: receiver not found: %s\n' "$RECEIVER" >&2; exit 1; }
   command -v python3 >/dev/null 2>&1 || { printf 'claudii-otel: python3 required for the receiver\n' >&2; exit 1; }
-  exec python3 "$RECEIVER" "$@"
+  local a
+  for a in "$@"; do
+    [[ "$a" == "--flatten" ]] && exec python3 "$RECEIVER" "$@"   # conversion: no server
+  done
+  _endpoint || exit 1
+  _forward || exit 1
+  CLAUDII_OTEL_DIR="$OTEL_DIR" CLAUDII_OTEL_HOST="$EP_HOST" CLAUDII_OTEL_PORT="$EP_PORT" \
+    CLAUDII_OTEL_FORWARD="$FWD" exec python3 "$RECEIVER" "$@"
 }
 
 _sha256() { shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1 || sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -435,7 +471,7 @@ _cmd_doctor() {
 
 # Config values go into two files that are not ours to interpret: otel.env is
 # SOURCED by every zsh (claudii.plugin.zsh), the plist is XML. Unquoted, a
-# forward URL like http://gw/?a=1&b=$(cmd) ran cmd in every new shell and
+# forward URL like http://gw/?a=1&b=$(cmd) once ran cmd in every new shell and
 # broke the plist. jq is required anyway and does both escapes exactly.
 _shq()    { jq -rn --arg v "$1" '$v | @sh'; }     # POSIX single quotes (zsh + bash)
 _xmlesc() { jq -rn --arg v "$1" '$v | @html'; }   # & < > ' " as entities
@@ -446,15 +482,12 @@ _xmlesc() { jq -rn --arg v "$1" '$v | @html'; }   # & < > ' " as entities
 # nothing touches ~/Library/LaunchAgents without consent.
 _cmd_setup() {
   local cli="$CLAUDII_HOME/bin/claudii"
-  local endpoint beta forward
-  endpoint=$("$cli" config get perf.otel.endpoint 2>/dev/null); [[ -z "$endpoint" ]] && endpoint="http://127.0.0.1:4318"
+  local beta
+  # Both checked before the flag flips: a refused setup changes nothing.
+  _endpoint || return 1
+  _forward || return 1
+  local forward="$FWD"
   beta=$("$cli" config get perf.otel.beta_traces 2>/dev/null)
-  forward=$("$cli" config get perf.otel.forward 2>/dev/null)
-  # The receiver POSTs to it with urllib, which also speaks file:// and ftp://.
-  if [[ -n "$forward" && ! "$forward" =~ ^https?://[^[:space:]]+$ ]]; then
-    printf 'claudii-otel: perf.otel.forward must be an http:// or https:// URL without spaces: %s\n' "$forward" >&2
-    return 1
-  fi
   "$cli" config set perf.otel.enabled true >/dev/null 2>&1
 
   mkdir -p "$OTEL_DIR"
@@ -467,9 +500,8 @@ _cmd_setup() {
     printf '%s\n' 'export OTEL_TRACES_EXPORTER=otlp'
     printf '%s\n' 'export OTEL_METRICS_EXPORTER=none'
     printf '%s\n' 'export OTEL_EXPORTER_OTLP_PROTOCOL=http/json'
-    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$(_shq "$endpoint")"
+    printf 'export OTEL_EXPORTER_OTLP_ENDPOINT=%s\n' "$(_shq "$EP_URL")"
     [[ "$beta" == "true" ]] && printf '%s\n' 'export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1'
-    [[ -n "$forward" ]] && printf 'export CLAUDII_OTEL_FORWARD=%s\n' "$(_shq "$forward")"
   } > "$envf"
 
   local py; py=$(command -v python3 || echo /usr/bin/python3)
@@ -480,8 +512,8 @@ _cmd_setup() {
   # default PATH lacks it) — set in EnvironmentVariables below. Keep it +x.
   chmod +x "$RECEIVER" 2>/dev/null || true
   local plist="$OTEL_DIR/com.claudii.otel-receiver.plist"
-  # The receiver process needs CLAUDII_OTEL_FORWARD too (it does the teeing), so
-  # bake it into the plist env when configured.
+  # The receiver gets its whole wiring here (dir, listen address, forward) —
+  # the shells never need it, so otel.env carries only the exporter side.
   local fwd_xml=""
   [[ -n "$forward" ]] && printf -v fwd_xml '\n    <key>CLAUDII_OTEL_FORWARD</key><string>%s</string>' "$(_xmlesc "$forward")"
   local x_recv x_path x_dir
@@ -500,7 +532,9 @@ _cmd_setup() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$x_path</string>
-    <key>CLAUDII_OTEL_DIR</key><string>$x_dir</string>$fwd_xml
+    <key>CLAUDII_OTEL_DIR</key><string>$x_dir</string>
+    <key>CLAUDII_OTEL_HOST</key><string>$EP_HOST</string>
+    <key>CLAUDII_OTEL_PORT</key><string>$EP_PORT</string>$fwd_xml
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
