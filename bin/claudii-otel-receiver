@@ -121,7 +121,6 @@ IDENTITY = frozenset(("user.email", "user.id", "user.account_uuid",
 MAX_BODY = 32 * 1024 * 1024
 OTLP_PATHS = frozenset(("/v1/logs", "/v1/traces", "/v1/metrics"))
 OTLP_CTYPES = frozenset(("application/json", "application/x-protobuf"))
-KINDS = ("llm", "err", "api", "tool", "hook", "other", "unparsed")
 
 # One lock for every append and for the status file: ThreadingHTTPServer runs
 # handlers concurrently, and two threads appending to one file interleave.
@@ -285,7 +284,7 @@ def _dump(rec):
     return s
 
 
-def flatten(batch, now_ns=None):
+def flatten(batch):
     """OTLP batch (parsed JSON) → [(kind, t_ns_str_or_None, line)].
 
     Raises on a shape it cannot walk (caller files the raw body as unparsed).
@@ -311,15 +310,15 @@ def flatten(batch, now_ns=None):
                     out.append((kind_of("span", rec["_name"]), rec["_t"], _dump(rec)))
     if not out and not ("resourceLogs" in batch or "resourceSpans" in batch):
         sig = "metrics" if "resourceMetrics" in batch else "other"
-        rec = {"_sig": sig, "_t": str(now_ns if now_ns is not None else time.time_ns())}
+        rec = {"_sig": sig, "_t": str(time.time_ns())}
         rec["_raw"] = _scrub(batch)
         out.append(("other", rec["_t"], _dump(rec)))
     return out
 
 
-def unparsed_line(body, path="", ctype="", encoding="", now_ns=None):
+def unparsed_line(body, path="", ctype="", encoding=""):
     """The raw body as one JSON line: UTF-8 text verbatim, else base64."""
-    rec = {"_sig": "unparsed", "_t": str(now_ns if now_ns is not None else time.time_ns()),
+    rec = {"_sig": "unparsed", "_t": str(time.time_ns()),
            "path": path, "content_type": ctype, "encoding": encoding, "bytes": len(body)}
     try:
         rec["body"] = body.decode("utf-8")
@@ -613,11 +612,11 @@ class TagExists(Exception):
     """The out-dir already holds files of this tag (a previous or interrupted run)."""
 
 
-def flatten_stream(lines_in, out_dir, tag="conv", fallback_day=None):
+def flatten_stream(lines_in, out_dir, tag="conv"):
     """OTLP batch lines → <out-dir>/<kind>-<day>.<tag>.ndjson, dated by each
     record's own timestamp. Returns a summary dict. Lines that are the old
     receiver's empty `_unparsed` markers (bytes 0) are skipped; other
-    unparsable lines go to unparsed-<day>.<tag>.ndjson under the fallback day.
+    unparsable lines (and undated records) go under today's UTC day.
 
     Safe next to a live `claudii-otel compact`: every file is written as
     `<name>.part` (which neither compact nor build pick up) and renamed at the
@@ -625,7 +624,7 @@ def flatten_stream(lines_in, out_dir, tag="conv", fallback_day=None):
     file from under an open handle. A rerun would append a second copy of
     every record, so the run refuses when any file of the tag — final or
     .part — already exists (TagExists)."""
-    fallback_day = fallback_day or time.strftime("%Y-%m-%d", time.gmtime())
+    fallback_day = time.strftime("%Y-%m-%d", time.gmtime())
     os.makedirs(out_dir, exist_ok=True)
     suffix = ".%s.ndjson" % tag
     present = [n for n in os.listdir(out_dir)

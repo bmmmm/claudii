@@ -31,9 +31,9 @@ def perf_json($days; $floor; $repo; $src):
                   p90_ms: pct($g.d; 0.9),
                   tok_s: toks($g.o; $g.t), samples: $g.n })
         | sort_by(-.samples) ),
-      by_window: ( $L | group_by(wkey_n)
+      by_window: ( $L | group_by(wkey_s)
         | map(perf_group as $g
-              | { bucket: ({"1":"<50k","2":"50-100k","3":"100-200k","4":"200-400k","5":"400k+","9":"unknown"}[.[0] | wkey_n | tostring]),
+              | { bucket: (.[0] | wkey_s | .[2:]),
                   p50_ms: pct($g.d; 0.5), p90_ms: pct($g.d; 0.9),
                   p99_ms: pct($g.d; 0.99),
                   tok_s: toks($g.o; $g.t), samples: $g.n }) ),

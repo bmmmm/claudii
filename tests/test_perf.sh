@@ -248,10 +248,9 @@ assert_contains "perf otel: API errors section"        "API errors"        "$_OT
 assert_contains "perf otel: 429 rendered"              "429"               "$_OTEL_OUT"
 assert_not_contains "perf otel: selftest not rendered" "selftest"          "$_OTEL_OUT"
 
-# json/render boundary parity: the ctx-bucket set is encoded twice (numeric wk +
-# label map in perf_json, string keys in the render W-rows — both in lib/perf_common.jq), so pin that every
-# --json bucket label also appears in the rendered output for one fixture — a
-# boundary/label edit to only one block then trips this.
+# json/render bucket parity: both take the label from wkey_s (lib/perf_common.jq);
+# pin that every --json bucket label also appears in the rendered output, so a
+# renderer that relabels or drops a bucket trips this.
 # grep on a here-string, not `printf | grep -qF`: under run.sh's pipefail,
 # grep -q exits at the first match, printf takes SIGPIPE, and the pipeline
 # returns 141 — so a bucket that IS present reads as missing and the parity

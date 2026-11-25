@@ -22,7 +22,6 @@
 #   claudii-otel compact            # gzip closed days and build their rows/
 #   claudii-otel receiver [args]    # exec the local OTLP receiver (foreground)
 #   claudii-otel doctor             # check receiver wiring + data freshness
-#   claudii-otel cache-dir          # print the OTEL data directory
 
 set -uo pipefail
 export CLAUDII_HOME="${CLAUDII_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -635,7 +634,6 @@ case "$cmd" in
   setup)     _cmd_setup "$@" ;;
   off)       _cmd_off "$@" ;;
   doctor)    _cmd_doctor "$@" ;;
-  cache-dir) printf '%s\n' "$OTEL_DIR" ;;
   -h|--help|help)
     cat <<'EOF'
 claudii-otel — fold local OTLP/JSON telemetry into the perf cache
@@ -652,7 +650,6 @@ Usage:
                                   `receiver --flatten DIR [--tag TAG]` converts
                                   OTLP batch lines on stdin into event files
   claudii-otel doctor             check receiver wiring + data freshness
-  claudii-otel cache-dir          print the OTEL data directory
 
 Fan-out (optional): set perf.otel.forward to an internal collector URL and the
 receiver mirrors every batch there (best-effort) for central retention.
