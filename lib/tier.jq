@@ -1,7 +1,9 @@
-# tier.jq — jq module: map a raw model id to a rate-table tier key, and price
-# a token bucket at that tier's rates (usd, at the bottom).
-# Included by lib/skills-cost-rows.jq and lib/skills-cost-compare.jq via
-# `include "tier";` (callers pass -L "$CLAUDII_HOME/lib").
+# tier.jq — jq module: map a raw model id to a rate-table tier key (tier), to
+# its family and display label (family, model_label), and price a token
+# bucket at its tier's rates (usd, model_usd, at the bottom).
+# Included by lib/skills-cost-rows.jq, lib/skills-cost-compare.jq and
+# lib/insights-cost-rows.jq via `include "tier";` (callers pass
+# -L "$CLAUDII_HOME/lib").
 # Most-specific first; unknown → sonnet (the historical blended default).
 # Word-anchored like lib/model_tier.awk's tier_label() — a glued substring
 # ("myopusx") must not classify as a tier. Keep in sync with the _rates table
@@ -47,6 +49,37 @@ def tier($m):
               ($l | test("(^|[^a-z0-9])3([-.][0-9])?[- ]sonnet([^a-z]|$)"))) then "sonnet-legacy"
     elif ($l | test("(^|[^a-z])sonnet[- ]5[- ]5($|[^0-9.-])")) then "sonnet-5-5"
     else "sonnet" end;
+
+# The model family, word-anchored like tier(): "Fable" (Mythos included),
+# "Opus", "Sonnet", "Haiku", or "" for anything else. Same answer as
+# tier_label() in lib/model_tier.awk for every Claude id; "" where awk hands an
+# unknown id back.
+def family($m):
+  ($m // "" | ascii_downcase) as $l
+  | if   ($l | test("(^|[^a-z])(fable|mythos)([^a-z]|$)")) then "Fable"
+    elif ($l | test("(^|[^a-z])opus([^a-z]|$)"))   then "Opus"
+    elif ($l | test("(^|[^a-z])sonnet([^a-z]|$)")) then "Sonnet"
+    elif ($l | test("(^|[^a-z])haiku([^a-z]|$)"))  then "Haiku"
+    else "" end;
+
+# Display label: family + the version the id carries — "claude-opus-5-1" ->
+# "Opus 5.1", "claude-3-5-haiku-20241022" -> "Haiku 3.5", "opus" -> "Opus".
+# A single-digit minor only, so a trailing date is not read as one. Mythos
+# labels as "Fable" without a version. The jq twin of _insights_model_label in
+# lib/cmd/insights.sh — tests/test_model_label_agreement.sh pins the two to
+# the same string; "" for a non-Claude id (bash passes it through).
+def model_label($m):
+  family($m) as $t
+  | ($m // "" | ascii_downcase) as $l
+  | if $t == "" then ""
+    elif ($l | test("mythos")) then "Fable"
+    else ( ($l | capture("(fable|opus|sonnet|haiku)-(?<a>[0-9])(-(?<b>[0-9]))?($|[^0-9])"))
+           // ($l | capture("(^|[^a-z0-9])(?<a>[0-9])(-(?<b>[0-9]))?-(fable|opus|sonnet|haiku)"))
+           // null ) as $c
+      | if $c == null then $t
+        elif $c.b == null then "\($t) \($c.a)"
+        else "\($t) \($c.a).\($c.b)" end
+    end;
 
 # Price one token bucket {in_tok, out_tok, cache_read, cache_create,
 # cache_create_1h} (all numbers — callers default missing keys to 0) at the

@@ -52,63 +52,61 @@ _insights_host_label() {
 # Short-number formatting (B/M/K) now lives in lib/render.sh as _fmt_tok
 # (pure bash, no per-call awk fork). Call sites below use it directly.
 
-# Map full model id to short label.
-# When a new model ships, add its versioned case ABOVE the bare fallback
-# (most-specific-first; the bare *opus*/*sonnet*/*haiku* lines must stay last).
-# Older versions are kept on purpose so historical cost/insights data still
-# resolves to a friendly label. See "When a new Claude model ships" in CLAUDE.md.
+# Map a model id to its display label: family + version — "Opus 5.5",
+# "Opus 5.1", "Fable 5.2", "Sonnet 4", "Haiku 3.5". The version is read from
+# the id, not looked up, so a new model needs no case here:
+#   claude-<family>-<major>[-<minor>]   every id since Claude 4
+#   claude-<major>[-<minor>]-<family>   the Claude 3 ids (claude-3-5-haiku-…)
+# A single-digit minor only: a trailing date ("claude-sonnet-4-20250514") is
+# not a minor version. No version in the id → the bare family ("opus" →
+# "Opus"). Mythos labels as "Fable" without a version: it is the Fable tier
+# under another access program (Project Glasswing), billed and grouped as
+# Fable by lib/model_tier.awk, lib/tier.jq and the _rates table in
+# lib/cmd/skills-cost.sh. bin/claudii-status carries the family in
+# _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
 #
 # THE single bash model->label map. lib/cmd/overview.sh's _norm_model_short
 # delegates here (it only collapses the version off) instead of keeping a second
 # case list — the two used to drift, and `claudii` and `claudii perf` printed
-# different strings for the SAME status-cache line. The awk sibling
-# (lib/model_tier.awk `tier_label`) and the jq sibling (lib/tier.jq `tier`) stay
-# separate implementations — different languages, not duplication worth removing
-# — but tests/test_model_label_agreement.sh pins all four against one fixture
-# list so a drift like that goes red instead of shipping.
+# different strings for the SAME status-cache line. Its jq twin is label() in
+# lib/tier.jq (the cost rows' model column); the awk tier_label() in
+# lib/model_tier.awk and jq tier() collapse to the tier. Different languages,
+# not duplication worth removing — tests/test_model_label_agreement.sh pins
+# all five against one fixture list so a drift goes red instead of shipping.
+# (The last one: this function knew a fixed version list and printed
+# claude-opus-5-1 as "Opus 5" while the jq twin said "Opus 5.1".)
 #
-# Case-folded first, like tolower()/ascii_downcase() in those two siblings, so a
+# Case-folded first, like tolower()/ascii_downcase() in those siblings, so a
 # capitalised id resolves instead of dropping through to the raw passthrough
 # (_norm_model_short matched case-insensitively and callers still rely on that).
 # bash 3.2 has no ${var,,} and the fold costs a fork, so it only runs when the
 # input actually carries an uppercase letter — real model ids ("claude-opus-4-8")
 # and the status-cache family keys never pay it. [[:upper:]], not [A-Z]: bracket
-# RANGES are locale-collated and CI has a de_DE leg.
+# RANGES are locale-collated and CI has a de_DE leg (hence [[:digit:]] below).
+# The version patterns run against "_<id>_" so neither needs an anchor inside
+# a group.
+_IML_RE_FAM_VER='(fable|opus|sonnet|haiku)-([[:digit:]])(-([[:digit:]]))?[^[:digit:]]'
+_IML_RE_VER_FAM='[^[:alnum:]]([[:digit:]])(-([[:digit:]]))?-(fable|opus|sonnet|haiku)'
 _insights_model_label() {
-  local _m="$1"
+  local _m="$1" _fam _ver=""
   case "$_m" in
     *[[:upper:]]*) _m=$(LC_ALL=C tr '[:upper:]' '[:lower:]' <<< "$_m") ;;
   esac
   case "$_m" in
-    *fable-5-1*)  printf 'Fable 5.1'  ;;
-    *fable-5*)    printf 'Fable 5'    ;;
-    *fable*)      printf 'Fable'      ;;
-    # Mythos is the Fable tier under a different access program (Project
-    # Glasswing): claude-mythos-5-1 has the same 1M window and the same
-    # $10/$50 per MTok as claude-fable-5-1, which is why lib/model_tier.awk,
-    # lib/tier.jq and the _rates table in lib/cmd/skills-cost.sh all bill and
-    # label it as Fable. Bash was the only one of the four that did not know
-    # the alias, so `claudii perf` printed a bare "mythos" where the overview
-    # printed "Fable". No version is claimed here — the tier is what the three
-    # siblings agree on. bin/claudii-status carries the family in
-    # _KNOWN_MODEL_FAMILIES, so it really can reach the status cache.
-    *mythos*)     printf 'Fable'      ;;
-    *opus-5-5*)   printf 'Opus 5.5'   ;;
-    *opus-5*)     printf 'Opus 5'     ;;
-    *opus-4-8*)   printf 'Opus 4.8'   ;;
-    *opus-4-7*)   printf 'Opus 4.7'   ;;
-    *opus-4-6*)   printf 'Opus 4.6'   ;;
-    *opus*)       printf 'Opus'       ;;
-    *sonnet-5-5*) printf 'Sonnet 5.5' ;;
-    *sonnet-5*)   printf 'Sonnet 5'   ;;
-    *sonnet-4-6*) printf 'Sonnet 4.6' ;;
-    *sonnet*)     printf 'Sonnet'     ;;
-    *haiku-5-5*)  printf 'Haiku 5.5'  ;;
-    *haiku-4-5*)  printf 'Haiku 4.5'  ;;
-    *haiku*)      printf 'Haiku'      ;;
-    '<synthetic>'|synthetic) printf 'synthetic' ;;
-    *)            printf '%s' "$1"    ;;
+    *mythos*) printf 'Fable'; return 0 ;;
+    *fable*)  _fam='Fable'  ;;
+    *opus*)   _fam='Opus'   ;;
+    *sonnet*) _fam='Sonnet' ;;
+    *haiku*)  _fam='Haiku'  ;;
+    '<synthetic>'|synthetic) printf 'synthetic'; return 0 ;;
+    *)        printf '%s' "$1"; return 0 ;;
   esac
+  if [[ "_${_m}_" =~ $_IML_RE_FAM_VER ]]; then
+    _ver=" ${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
+  elif [[ "_${_m}_" =~ $_IML_RE_VER_FAM ]]; then
+    _ver=" ${BASH_REMATCH[1]}${BASH_REMATCH[3]:+.${BASH_REMATCH[3]}}"
+  fi
+  printf '%s%s' "$_fam" "$_ver"
 }
 
 # Map ISO date (YYYY-MM-DD) to "Today" or a strftime label (default %a, the

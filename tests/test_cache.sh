@@ -125,13 +125,14 @@ assert_eq "cache (non-object lines): assistant message still aggregated" "1" "$_
 
 # ── Model-label map: new + older versions all resolve (model-update guard) ──
 # Source insights.sh (pure function defs, no side effects) to call the label fn
-# directly. Adding a new model means adding a case here AND in
-# _insights_model_label — keep them in lock-step. NOT a subshell: assert_eq
-# increments the run.sh PASS/FAIL counters in the current scope.
+# directly. The version comes from the id, so a model nobody listed still gets
+# its full label (opus 9.9 below). The cross-implementation fixtures live in
+# tests/test_model_label_agreement.sh. NOT a subshell: assert_eq increments the
+# run.sh PASS/FAIL counters in the current scope.
 source "$CLAUDII_HOME/lib/cmd/insights.sh" 2>/dev/null
 assert_eq "label: fable 5.1 (latest)" "Fable 5.1"  "$(_insights_model_label claude-fable-5-1)"
 assert_eq "label: fable 5 (older)"    "Fable 5"    "$(_insights_model_label claude-fable-5)"
-assert_eq "label: unknown fable->tier" "Fable"     "$(_insights_model_label claude-fable-9)"
+assert_eq "label: unlisted fable 9"    "Fable 9"   "$(_insights_model_label claude-fable-9)"
 assert_eq "label: opus 5.5 (latest)"  "Opus 5.5"   "$(_insights_model_label claude-opus-5-5)"
 assert_eq "label: opus 5 (older)"     "Opus 5"     "$(_insights_model_label claude-opus-5)"
 assert_eq "label: opus 4.8 (older)"   "Opus 4.8"   "$(_insights_model_label claude-opus-4-8)"
@@ -140,7 +141,9 @@ assert_eq "label: opus 4.6 (older)"   "Opus 4.6"   "$(_insights_model_label clau
 assert_eq "label: sonnet 5 (latest)"  "Sonnet 5"   "$(_insights_model_label claude-sonnet-5)"
 assert_eq "label: sonnet 4.6 (older)" "Sonnet 4.6" "$(_insights_model_label claude-sonnet-4-6)"
 assert_eq "label: haiku 4.5"          "Haiku 4.5"  "$(_insights_model_label claude-haiku-4-5)"
-assert_eq "label: unknown opus->tier" "Opus"       "$(_insights_model_label claude-opus-9-9)"
+assert_eq "label: unlisted opus 9.9"  "Opus 9.9"   "$(_insights_model_label claude-opus-9-9)"
+assert_eq "label: opus 5.1 (not 5)"   "Opus 5.1"   "$(_insights_model_label claude-opus-5-1)"
+assert_eq "label: no version -> tier" "Opus"       "$(_insights_model_label opus)"
 
 unset _SID _TS _JSONL _CACHE_OUT _CACHE_RC _CACHE_OUT_30 _EMPTY_OUT _BAD_RC
 

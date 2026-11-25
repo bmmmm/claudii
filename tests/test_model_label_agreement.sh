@@ -1,19 +1,23 @@
 # touches: lib/cmd/insights.sh lib/cmd/overview.sh lib/cmd/perf.sh lib/model_tier.awk lib/tier.jq
 
-# test_model_label_agreement.sh — the four model->label implementations agree.
+# test_model_label_agreement.sh — the five model->label implementations agree.
 #
-# There are four of them and they used to drift silently:
+# There are five of them and they used to drift silently:
 #   bash  _insights_model_label  (lib/cmd/insights.sh)  versioned display label
 #   bash  _norm_model_short      (lib/cmd/overview.sh)  tier collapse, delegates
 #   awk   tier_label()           (lib/model_tier.awk)   tier, cost/trends legends
 #   jq    tier()                 (lib/tier.jq)          rate-table key
+#   jq    model_label()          (lib/tier.jq)          versioned label, cost rows
 #
 # awk and jq stay separate implementations on purpose — different languages,
 # not duplication worth removing. What they need is this: ONE fixture list, run
-# through all four, with every agreement AND every deliberate divergence pinned.
+# through all five, with every agreement AND every deliberate divergence pinned.
 # The drift that motivated the file: bash did not know the Mythos->Fable alias
 # that the other three did, so `claudii` printed "Fable" and `claudii perf`
-# printed "mythos" for the SAME status-cache line.
+# printed "mythos" for the SAME status-cache line. The next one: bash kept a
+# fixed version list and labelled claude-opus-5-1 "Opus 5" where the jq label
+# (then a private def in lib/insights-cost-rows.jq) said "Opus 5.1". The rule
+# both follow now: family + the version the id carries, minor included.
 
 # ── Runners ──────────────────────────────────────────────────────────────────
 # insights.sh + overview.sh are pure function definitions when sourced (no side
@@ -42,22 +46,32 @@ _mla_awk() { LC_ALL=C awk -v m="$1" "$_MLA_TIER_AWK"' BEGIN { print tier_label(m
 
 # jq: the module as its consumers include it (-L "$CLAUDII_HOME/lib").
 _mla_jq() { jq -L "$CLAUDII_HOME/lib" -rn --arg m "$1" 'include "tier"; tier($m)'; }
+_mla_jql() { jq -L "$CLAUDII_HOME/lib" -rn --arg m "$1" 'include "tier"; model_label($m)'; }
 
 # ── The fixture list — one row per real model family ─────────────────────────
-# Columns: model-id | bash label | bash tier | awk tier | jq rate key
-# Kept as a here-doc rather than an array so a new model is one readable line.
+# Columns: model-id | label | bash tier | awk tier | jq rate key
+# "label" is what BOTH versioned implementations (bash _insights_model_label,
+# jq model_label) must print. Kept as a here-doc rather than an array so a new
+# model is one readable line.
 # The jq column is lower-case by design (it keys the _rates table in
 # lib/cmd/skills-cost.sh); the agreement assert compares it case-folded.
 _MLA_ROWS='
 claude-opus-5-5|Opus 5.5|Opus|Opus|opus-5-5
+claude-opus-5-1|Opus 5.1|Opus|Opus|opus
 claude-opus-5|Opus 5|Opus|Opus|opus
 claude-opus-4-8|Opus 4.8|Opus|Opus|opus
 claude-opus-4-7|Opus 4.7|Opus|Opus|opus
+claude-opus-4-7[1m]|Opus 4.7|Opus|Opus|opus
 claude-sonnet-5-5|Sonnet 5.5|Sonnet|Sonnet|sonnet-5-5
 claude-sonnet-5|Sonnet 5|Sonnet|Sonnet|sonnet
 claude-sonnet-4-6|Sonnet 4.6|Sonnet|Sonnet|sonnet-legacy
+claude-sonnet-4-5-20250929|Sonnet 4.5|Sonnet|Sonnet|sonnet-legacy
+claude-sonnet-4-20250514|Sonnet 4|Sonnet|Sonnet|sonnet-legacy
+claude-3-5-sonnet-20241022|Sonnet 3.5|Sonnet|Sonnet|sonnet-legacy
 claude-haiku-5-5|Haiku 5.5|Haiku|Haiku|haiku
 claude-haiku-4-5|Haiku 4.5|Haiku|Haiku|haiku-legacy
+claude-haiku-4-5-20251001|Haiku 4.5|Haiku|Haiku|haiku-legacy
+claude-fable-5-2|Fable 5.2|Fable|Fable|fable
 claude-fable-5-1|Fable 5.1|Fable|Fable|fable
 claude-fable-5|Fable 5|Fable|Fable|fable-legacy
 claude-mythos-5|Fable|Fable|Fable|fable-legacy
@@ -74,6 +88,7 @@ while IFS='|' read -r _m _exp_label _exp_btier _exp_atier _exp_jtier; do
 
   # 1. Each implementation still says what this list says it says.
   assert_eq "label($_m): bash label"      "$_exp_label" "$(_insights_model_label "$_m")"
+  assert_eq "label($_m): jq model_label"  "$_exp_label" "$(_mla_jql "$_m")"
   assert_eq "label($_m): bash tier"       "$_exp_btier" "$(_norm_model_short "$_m")"
   assert_eq "label($_m): awk tier_label"  "$_exp_atier" "$(_mla_awk "$_m")"
   assert_eq "label($_m): jq tier"         "$_exp_jtier" "$(_mla_jq "$_m")"
@@ -81,6 +96,8 @@ while IFS='|' read -r _m _exp_label _exp_btier _exp_atier _exp_jtier; do
   # 2. The agreement axis: the two tier implementations must return the SAME
   #    string, and the versioned bash label must start with that same tier.
   assert_eq "agree($_m): bash tier == awk tier" "$(_mla_awk "$_m")" "$(_norm_model_short "$_m")"
+  assert_eq "agree($_m): bash label == jq model_label" \
+    "$(_mla_jql "$_m")" "$(_insights_model_label "$_m")"
   assert_eq "agree($_m): bash label is tier-prefixed" \
     "$_exp_atier" "$(_lbl=$(_insights_model_label "$_m"); printf '%s' "${_lbl%% *}")"
 
@@ -108,11 +125,15 @@ assert_eq "unknown: bash label passes through" "gpt-4o"  "$(_insights_model_labe
 assert_eq "unknown: bash tier passes through"  "gpt-4o"  "$(_norm_model_short gpt-4o)"
 assert_eq "unknown: awk passes through"        "gpt-4o"  "$(_mla_awk gpt-4o)"
 assert_eq "unknown: jq falls back to sonnet"   "sonnet"  "$(_mla_jq gpt-4o)"
+# The jq label returns "" — its caller (lib/insights-cost-rows.jq) drops a row
+# with no Claude family, so there is nothing to pass through.
+assert_eq "unknown: jq model_label is empty"   ""        "$(_mla_jql gpt-4o)"
 
 assert_eq "empty: bash label is empty"         ""        "$(_insights_model_label '')"
 assert_eq "empty: bash tier is empty"          ""        "$(_norm_model_short '')"
 assert_eq "empty: awk is empty"                ""        "$(_mla_awk '')"
 assert_eq "empty: jq falls back to sonnet"     "sonnet"  "$(_mla_jq '')"
+assert_eq "empty: jq model_label is empty"     ""        "$(_mla_jql '')"
 
 # Word anchoring: awk and jq anchor on non-letter boundaries (a glued substring
 # must not classify — it drives legend grouping and a priced rate lookup), the
@@ -120,6 +141,18 @@ assert_eq "empty: jq falls back to sonnet"     "sonnet"  "$(_mla_jq '')"
 assert_eq "glued: bash label matches the substring" "Opus"    "$(_insights_model_label myopusx)"
 assert_eq "glued: awk refuses the substring"        "myopusx" "$(_mla_awk myopusx)"
 assert_eq "glued: jq refuses the substring"         "sonnet"  "$(_mla_jq myopusx)"
+assert_eq "glued: jq model_label refuses it too"    ""        "$(_mla_jql myopusx)"
+
+# Version rule edges, both versioned implementations. Only a single-digit
+# minor counts — a trailing 8-digit date is not "4.2" — and the Claude 3 ids
+# carry the version in front of the family.
+for _mla_v in 'claude-opus-4-20250514|Opus 4' 'claude-opus-4-1-20250805|Opus 4.1' \
+              'claude-3-5-haiku-20241022|Haiku 3.5' 'claude-3-haiku-20240307|Haiku 3' \
+              'claude-3-opus-20240229|Opus 3' 'claude-opus-9-9|Opus 9.9' \
+              'claude-opus-10|Opus' 'claude-mythos-5-1|Fable'; do
+  assert_eq "version rule: bash ${_mla_v%%|*}" "${_mla_v#*|}" "$(_insights_model_label "${_mla_v%%|*}")"
+  assert_eq "version rule: jq ${_mla_v%%|*}"   "${_mla_v#*|}" "$(_mla_jql "${_mla_v%%|*}")"
+done
 
 # Claude 3.x haiku ids put the version BEFORE the family. They keep the old
 # blanket haiku rate instead of falling through to Haiku 5.5's 10x lower one.
@@ -129,12 +162,13 @@ assert_eq "haiku 5.5: jq dated/[1m] id stays current" "haiku"       "$(_mla_jq '
 assert_eq "sonnet 3.x: jq claude-3-5-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-5-sonnet-20241022)"
 assert_eq "sonnet 3.x: jq claude-3-7-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-7-sonnet-20250219)"
 
-# Case folding: all four resolve a capitalised id. bash used to fold only in
+# Case folding: all five resolve a capitalised id. bash used to fold only in
 # _norm_model_short, so _insights_model_label handed "Opus" straight back.
 assert_eq "case: bash label folds"  "Opus 4.8" "$(_insights_model_label Claude-Opus-4-8)"
 assert_eq "case: bash tier folds"   "Opus"     "$(_norm_model_short Claude-Opus-4-8)"
 assert_eq "case: awk folds"         "Opus"     "$(_mla_awk Claude-Opus-4-8)"
 assert_eq "case: jq folds"          "opus"     "$(_mla_jq Claude-Opus-4-8)"
+assert_eq "case: jq label folds"    "Opus 4.8" "$(_mla_jql Claude-Opus-4-8)"
 
 # ── The regression guard: overview and perf render one cache identically ─────
 # The actual visible symptom. Both read $CLAUDII_CACHE_DIR/status-models; the
@@ -165,5 +199,5 @@ assert_contains "overview: down Mythos reads Fable" "Fable"  "$_MLA_OV"
 assert_not_contains "overview: no raw mythos key"   "mythos" "$_MLA_OV"
 
 rm -rf "$_MLA_CACHE"
-unset _MLA_ROWS _MLA_CACHE _MLA_PERF _MLA_OV _MLA_TIER_AWK _MLA_JQ_OUT _mla_jq_out \
+unset _MLA_ROWS _MLA_CACHE _MLA_PERF _MLA_OV _MLA_TIER_AWK _MLA_JQ_OUT _mla_jq_out _mla_v \
       _m _exp_label _exp_btier _exp_atier _exp_jtier _k _v

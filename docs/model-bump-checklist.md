@@ -10,10 +10,16 @@ claudii only *recognizes and displays* model IDs. The aliases/agent tiers in
 display + docs sweep, not a config rename. Older versions stay selectable via
 `/model`; we only keep their friendly labels.
 
-1. `lib/cmd/insights.sh` → `_insights_model_label()` — add `*opus-4-N*) → 'Opus 4.N'`
-   case **above** the bare `*opus*` fallback (most-specific-first). Keep older cases.
-2. `tests/test_cache.sh` — add a `label: opus 4.N (latest)` assert next to the existing
-   ones (sourced `_insights_model_label` guard). Older asserts stay as regression cover.
+1. Labels need no change for a version bump. `_insights_model_label()` in
+   `lib/cmd/insights.sh` and its jq twin `model_label()` in `lib/tier.jq` read
+   the version from the id — family + major[.minor], from
+   `claude-<family>-<major>[-<minor>]` or the Claude 3 order
+   `claude-<major>[-<minor>]-<family>` — so `claude-opus-4-9` prints
+   "Opus 4.9" unlisted. Only a new **family** touches them (step 5).
+2. `tests/test_model_label_agreement.sh` — add one fixture row for the new id
+   (label, tiers, rate key). It runs all five model->label implementations
+   (bash label + tier collapse, awk `tier_label()`, jq `tier()` +
+   `model_label()`) against it.
 3. `config/defaults.json` — bump any agent `description` that names a version
    (e.g. `orc`'s "Opus 4.N for long tool-chains"). Do **not** change `model`/`effort`.
 4. `bin/claudii-cc-statusline` shows `.model.display_name` verbatim — no change
@@ -35,8 +41,10 @@ display + docs sweep, not a config rename. Older versions stay selectable via
    Fable in 2026-06) needs: a `tier_label()` branch in `lib/model_tier.awk`
    (most-capable-first; covers cost AND trends), a `tier()` branch in
    `lib/tier.jq` (covers both skills-cost programs), a `_rates` entry in
-   `lib/cmd/skills-cost.sh`, plus a bare-tier fallback case in
-   `_insights_model_label()` (see pricing note below).
+   `lib/cmd/skills-cost.sh` (see pricing note below), plus the family in
+   `_insights_model_label()` — its glob case and both `_IML_RE_*` version
+   patterns — and in `family()` + the two `capture` patterns of
+   `model_label()` in `lib/tier.jq`.
    Also add the family keyword to `_KNOWN_MODEL_FAMILIES` in
    `bin/claudii-status` — an incident that names only the new family (and
    lists the `API` component) would otherwise cascade `degraded` onto
@@ -45,10 +53,10 @@ display + docs sweep, not a config rename. Older versions stay selectable via
    bumps within `opus`/`sonnet`/`haiku`/`fable` already match).
    To also **surface the new family in the collapsed health display** (like
    Fable), add it to the `statusline.models` default in `config/defaults.json`
-   and add its label case in three mirrors kept in sync: `_scm_lbl` (case) in
-   `bin/claudii-cc-statusline`, `_norm_model_short` in `lib/cmd/overview.sh`,
-   and — the zsh RPROMPT capitalizes via `${(C)model}` so no case is needed
-   there. The display collapses to `claude ✓` when all are healthy, so an
+   and add its label case to `_scm_lbl` (case) in `bin/claudii-cc-statusline`;
+   `_norm_model_short` in `lib/cmd/overview.sh` delegates to
+   `_insights_model_label` (step 1), and the zsh RPROMPT capitalizes via
+   `${(C)model}`, so neither needs a case. The display collapses to `claude ✓` when all are healthy, so an
    added family is invisible until it actually has an incident (`[Fable ↓]`).
 6. `CHANGELOG.md` unreleased block + `bash tests/run.sh --summary`.
 
