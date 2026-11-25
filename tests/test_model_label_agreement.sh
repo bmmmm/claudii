@@ -62,6 +62,10 @@ claude-opus-5|Opus 5|Opus|Opus|opus
 claude-opus-4-8|Opus 4.8|Opus|Opus|opus
 claude-opus-4-7|Opus 4.7|Opus|Opus|opus
 claude-opus-4-7[1m]|Opus 4.7|Opus|Opus|opus
+claude-opus-4-5-20251101|Opus 4.5|Opus|Opus|opus
+claude-opus-4-1-20250805|Opus 4.1|Opus|Opus|opus-legacy
+claude-opus-4-20250514|Opus 4|Opus|Opus|opus-legacy
+claude-3-opus-20240229|Opus 3|Opus|Opus|opus-legacy
 claude-sonnet-5-5|Sonnet 5.5|Sonnet|Sonnet|sonnet-5-5
 claude-sonnet-5|Sonnet 5|Sonnet|Sonnet|sonnet
 claude-sonnet-4-6|Sonnet 4.6|Sonnet|Sonnet|sonnet-legacy
@@ -71,6 +75,8 @@ claude-3-5-sonnet-20241022|Sonnet 3.5|Sonnet|Sonnet|sonnet-legacy
 claude-haiku-5-5|Haiku 5.5|Haiku|Haiku|haiku
 claude-haiku-4-5|Haiku 4.5|Haiku|Haiku|haiku-legacy
 claude-haiku-4-5-20251001|Haiku 4.5|Haiku|Haiku|haiku-legacy
+claude-3-5-haiku-20241022|Haiku 3.5|Haiku|Haiku|haiku-3-5
+claude-3-haiku-20240307|Haiku 3|Haiku|Haiku|haiku-3
 claude-fable-5-2|Fable 5.2|Fable|Fable|fable
 claude-fable-5-1|Fable 5.1|Fable|Fable|fable
 claude-fable-5|Fable 5|Fable|Fable|fable-legacy
@@ -154,10 +160,19 @@ for _mla_v in 'claude-opus-4-20250514|Opus 4' 'claude-opus-4-1-20250805|Opus 4.1
   assert_eq "version rule: jq ${_mla_v%%|*}"   "${_mla_v#*|}" "$(_mla_jql "${_mla_v%%|*}")"
 done
 
-# Claude 3.x haiku ids put the version BEFORE the family. They keep the old
-# blanket haiku rate instead of falling through to Haiku 5.5's 10x lower one.
-assert_eq "haiku 3.x: jq claude-3-5-haiku is legacy" "haiku-legacy" "$(_mla_jq claude-3-5-haiku-20241022)"
-assert_eq "haiku 3.x: jq claude-3-haiku is legacy"   "haiku-legacy" "$(_mla_jq claude-3-haiku-20240307)"
+# Claude 3.x haiku ids put the version BEFORE the family. Each gets its own
+# list price (haiku-3-5 $0.80/$4, haiku-3 $0.25/$1.25) instead of falling
+# through to Haiku 5.5's rate or the haiku-4 one.
+assert_eq "haiku 3.x: jq claude-3-5-haiku is haiku-3-5" "haiku-3-5" "$(_mla_jq claude-3-5-haiku-20241022)"
+assert_eq "haiku 3.x: jq claude-3-haiku is haiku-3"     "haiku-3"   "$(_mla_jq claude-3-haiku-20240307)"
+assert_eq "haiku 3.x: jq display name Haiku 3.5"        "haiku-3-5" "$(_mla_jq 'Haiku 3.5')"
+# Opus before 4.5 bills $15/$75. The tail must take a dated snapshot and a
+# "[1m]"/"@" suffix but not a "-5" minor, or Opus 4.5 would bill 3x.
+assert_eq "opus 4/4.1: jq vertex id is legacy"   "opus-legacy" "$(_mla_jq 'claude-opus-4-1@20250805')"
+assert_eq "opus 4/4.1: jq [1m] id is legacy"     "opus-legacy" "$(_mla_jq 'claude-opus-4-1[1m]')"
+assert_eq "opus 4/4.1: jq display name Opus 4.1" "opus-legacy" "$(_mla_jq 'Opus 4.1')"
+assert_eq "opus 4.5: jq stays opus"              "opus"        "$(_mla_jq claude-opus-4-5)"
+assert_eq "opus 4.6: jq stays opus"              "opus"        "$(_mla_jq claude-opus-4-6)"
 assert_eq "haiku 5.5: jq dated/[1m] id stays current" "haiku"       "$(_mla_jq 'claude-haiku-5-5[1m]')"
 assert_eq "sonnet 3.x: jq claude-3-5-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-5-sonnet-20241022)"
 assert_eq "sonnet 3.x: jq claude-3-7-sonnet is legacy" "sonnet-legacy" "$(_mla_jq claude-3-7-sonnet-20250219)"

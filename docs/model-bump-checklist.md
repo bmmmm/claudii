@@ -70,9 +70,10 @@ cache at 2× input — `usd()` in `lib/tier.jq` bills the schema-v11
 (`claudii cost` itself reads `costUSD` from history, not these). The `tier()` def
 in `lib/tier.jq` maps raw model ids to a `_rates` key (`fable`/`fable-legacy`
 for fable-5 / mythos-5 ids/`opus`/`opus-5-5` for the newer, cheaper opus-5-5
-id/`haiku` for Haiku 5.5 and later/`haiku-legacy` for haiku-4* and Claude 3.x
-haiku ids/`sonnet-legacy` for sonnet-4* and Claude 3.x sonnet ids/`sonnet-5-5` for the 5% cache read
-of Sonnet 5.5/`sonnet`, unknown → sonnet) —
+id/`opus-legacy` for Opus 4 / 4.1 and Claude 3 Opus at $15/$75/`haiku` for
+Haiku 5.5 and later/`haiku-legacy` for haiku-4*/`haiku-3-5` and `haiku-3` for
+the two Claude 3 Haikus/`sonnet-legacy` for sonnet-4* and Claude 3.x sonnet
+ids/`sonnet-5-5` for the 5% cache read of Sonnet 5.5/`sonnet`, unknown → sonnet) —
 keep it in sync with the table. A price
 change WITHIN a tier gets a version-aware `tier()` branch and its own `_rates`
 key rather than overwriting the old rate (Sonnet 5 precedent — old data must
