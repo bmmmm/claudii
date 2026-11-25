@@ -1053,7 +1053,8 @@ _ic_env_min() {
        && [[ -n "${BASH_REMATCH[1]}${BASH_REMATCH[3]}" ]]; then
     d="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"; x="${BASH_REMATCH[5]}"
     x="${x#"${x%%[!0]*}"}"; (( ${#x} > 4 )) && return 0   # 0 or Infinity: ignored
-    p=$(( ${#BASH_REMATCH[1]} ${BASH_REMATCH[4]:-+} 10#${x:-0} ))
+    x=$(( 10#${x:-0} )); [[ "${BASH_REMATCH[4]}" == - ]] && x=$(( -x ))
+    p=$(( ${#BASH_REMATCH[1]} + x ))
     (( p < 0 )) && p=0
     if (( p < ${#d} )); then
       [[ "${d:p}" =~ ^0*$ ]] || return 0                    # not an integer
