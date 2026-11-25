@@ -341,4 +341,5 @@ else
   echo ""
 fi
 
-exit $FAIL
+# Not `exit $FAIL`: exit codes are mod 256, so exactly 256 failures read as success.
+exit $(( FAIL > 0 ))

@@ -64,3 +64,18 @@ assert_eq "unguarded render appends no row to the real cost history" "1" \
 
 unset _iso_real _iso_sid _iso_prefix
 unset -f _iso_seen
+
+# ── runner exit code: any failure is non-zero, even exactly 256 ──
+# `exit $FAIL` is taken mod 256 — 256 failures exited 0 and read as green.
+_iso_rt=$(mktemp -d "${TMPDIR:-/tmp}/claudii_runner_rc.XXXXXX")
+printf 'for _i in $(seq 256); do assert_eq "fail $_i" a b; done\n' > "$_iso_rt/test_256.sh"
+printf 'assert_eq "pass" a a\n' > "$_iso_rt/test_ok.sh"
+_iso_rc=0
+CLAUDII_TEST_SEQUENTIAL=1 bash "$CLAUDII_HOME/tests/run.sh" --summary "$_iso_rt/test_256.sh" \
+  >/dev/null 2>&1 || _iso_rc=$?
+assert_eq "run.sh: 256 failures exit 1" "1" "$_iso_rc"
+_iso_rc=0
+bash "$CLAUDII_HOME/tests/run.sh" --summary "$_iso_rt/test_ok.sh" >/dev/null 2>&1 || _iso_rc=$?
+assert_eq "run.sh: all passing exits 0" "0" "$_iso_rc"
+rm -rf "$_iso_rt"
+unset _iso_rt _iso_rc
