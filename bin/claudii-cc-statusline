@@ -296,7 +296,7 @@ IFS="$_D" read -r model ctx_pct cost input_tok output_tok rate_5h rate_7d \
     (.workspace.repo.host // ""),
     (.workspace.repo.owner // ""),
     (.workspace.repo.name // ""),
-    (.workspace.repo.pr_number // "" | tostring),
+    (.pr.number // .workspace.repo.pr_number // "" | tostring),
     (.version // ""),
     (.prompt_cache.hit_ratio  | if type == "number" then (. * 100 | round | tostring) else "" end),
     (.prompt_cache.warm             | if . == null then "" else tostring end),
@@ -1454,9 +1454,11 @@ if [[ -n "$_dir_path" && "$_dir_path" != "null" ]]; then
   fi
 fi
 
-# GitHub / repo segment (workspace.repo.*, Claude Code 2.1.145+).
-# Renders <owner>/<name> + #<pr_number> when an open PR is detected on the
-# current branch. Skipped when repo info absent (non-git project, no remote).
+# GitHub / repo segment (workspace.repo.{owner,name}, Claude Code 2.1.145+).
+# Renders <owner>/<name> + #<number> when an open PR is detected on the
+# current branch — top-level pr.number (CC 2.1.332), else the older
+# workspace.repo.pr_number. Skipped when repo info absent (non-git project,
+# no remote).
 _seg_github=""
 if [[ -n "$repo_owner" && -n "$repo_name" ]]; then
   _seg_github="${DIM}◆ ${repo_owner}/${repo_name}${RST}"

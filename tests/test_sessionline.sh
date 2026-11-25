@@ -1396,7 +1396,8 @@ assert_contains "omlx: bench prefix passes through" "bench:summarize-file" "$str
 assert_contains "omlx: gemma-it-4bit suffix stripped" "gemma-4-e2b" "$strip"
 assert_not_contains "omlx: gemma -it-4bit removed"   "-it-4bit"     "$strip"
 
-# github segment — workspace.repo.{owner,name,pr_number} from CC 2.1.145+
+# github segment — workspace.repo.{owner,name} from CC 2.1.145+; the PR is the
+# top-level pr.number (CC 2.1.332), older builds put it in workspace.repo.pr_number
 _gh_cfg="$(mktemp -d "$CLAUDII_TEST_TMP/gh-XXXXXX")"; _SL_TMPDIRS+=("$_gh_cfg")
 mkdir -p "$_gh_cfg/claudii"
 printf '{"statusline":{"lines":[["model","github"]]}}\n' > "$_gh_cfg/claudii/config.json"
@@ -1409,6 +1410,17 @@ strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
 assert_contains "github: shows owner/name"  "bmmmm/claudii" "$strip"
 assert_contains "github: shows ◆ marker"    "◆"             "$strip"
 assert_contains "github: shows #pr_number"  "#42"           "$strip"
+
+# CC 2.1.332 shape: workspace.repo = {host,owner,name}, the PR at top-level pr
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":7,"url":"https://github.com/bmmmm/claudii/pull/7","review_state":"approved"},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains "github: shows the top-level pr.number (CC 2.1.332)" "bmmmm/claudii #7" "$strip"
+_j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii","pr_number":42}}' '{"model":{"display_name":"Opus"},"workspace":$w,"pr":{"number":7},"context_window":{"used_percentage":10,"context_window_size":200000}}')
+output=$(echo "$_j" | XDG_CONFIG_HOME="$_gh_cfg" bash "$SL" 2>&1)
+strip=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g')
+assert_contains     "github: pr.number wins over workspace.repo.pr_number" "#7"  "$strip"
+assert_not_contains "github: the older field is only a fallback"           "#42" "$strip"
 
 # Repo without PR: still shows owner/name but no #
 _j=$(jq -cn --argjson w '{"repo":{"host":"github.com","owner":"bmmmm","name":"claudii"}}' '{"model":{"display_name":"Opus"},"workspace":$w,"context_window":{"used_percentage":10,"context_window_size":200000}}')
