@@ -13,6 +13,8 @@ printf 'model=Sonnet\nctx_pct=50\ncost=5.00\ntok=5000000\ncache_pct=84\nrate_5h=
 # Orphan tmp artifacts: tok=99M each — would inflate today's tokens if parsed
 printf 'model=Opus\nctx_pct=80\ncost=99.00\ntok=99000000\n' > "$_tf_cache/session-realtest.tmp.11111"
 printf 'model=Opus\nctx_pct=80\ncost=99.00\ntok=99000000\n' > "$_tf_cache/session-unknown.tmp.22222"
+# What an interrupted `claudii pin` leaves behind (lib/cmd/sessions.sh) — same filter, same sweep
+printf 'model=Opus\nctx_pct=80\ncost=99.00\ntok=99000000\npinned=1\n' > "$_tf_cache/session-realtest.tmp.pin.33333"
 
 # Overview must skip .tmp.* — without the filter the two orphans would be counted
 # as inactive sessions and surface a `claudii si` hint, AND their tok=99M would
@@ -38,13 +40,20 @@ assert_contains "sessions: cache-hit shown in se detail"        "⚡84%"     "$_
 # gc must sweep .tmp.PID files older than 60s.
 # Force one tmp file's mtime to 5 minutes ago, leave the other fresh.
 _tf_old_ts=$(date -v-300S +%Y%m%d%H%M.%S 2>/dev/null || date -d "300 seconds ago" +%Y%m%d%H%M.%S 2>/dev/null || true)
-[[ -n "$_tf_old_ts" ]] && touch -t "$_tf_old_ts" "$_tf_cache/session-realtest.tmp.11111"
+[[ -n "$_tf_old_ts" ]] && touch -t "$_tf_old_ts" "$_tf_cache/session-realtest.tmp.11111" "$_tf_cache/session-realtest.tmp.pin.33333"
 CLAUDII_CACHE_DIR="$_tf_cache" bash "$CLAUDII_HOME/bin/claudii" gc >/dev/null 2>&1
 
 if [[ -f "$_tf_cache/session-realtest.tmp.11111" ]]; then
   assert_eq "gc: orphan .tmp.PID (>60s) deleted" "deleted" "still exists"
 else
   assert_eq "gc: orphan .tmp.PID (>60s) deleted" "deleted" "deleted"
+fi
+
+# ...and so must the leftover of an interrupted pin
+if [[ -f "$_tf_cache/session-realtest.tmp.pin.33333" ]]; then
+  assert_eq "gc: orphan pin temp file (>60s) deleted" "deleted" "still exists"
+else
+  assert_eq "gc: orphan pin temp file (>60s) deleted" "deleted" "deleted"
 fi
 
 # Fresh .tmp.PID (<60s) must survive gc — it might be an in-flight atomic write

@@ -113,7 +113,7 @@ _cmd_sessions_inactive() {
 _session_toggle_pin() {
   local action="$1" needle="$2"
   local cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
-  local found=0
+  local found=0 f
   _session_files "$cache_dir"
   for f in "${_SESSION_FILES[@]+"${_SESSION_FILES[@]}"}"; do
     # sid reset per file — a cache without a session_id line must not inherit
@@ -124,7 +124,10 @@ _session_toggle_pin() {
     sid=$(grep -m1 '^session_id=' "$f" 2>/dev/null) || true
     sid="${sid#*=}"
     if [[ "$sid" == *"$needle"* ]] || [[ "${f##*/session-}" == *"$needle"* ]]; then
-      local _tmp="${f}.pin.$$"
+      # `.tmp.` in the name: every session-file reader and gc's orphan sweep
+      # treat `*.tmp.*` as an in-flight atomic write, never as a session. The
+      # old `.pin.PID` suffix slipped past that filter if the mv never ran.
+      local _tmp="${f}.tmp.pin.$$"
       if [[ "$action" == "pin" ]]; then
         if grep -q '^pinned=1$' "$f" 2>/dev/null; then
           echo "Already pinned: $sid"
@@ -143,16 +146,38 @@ _session_toggle_pin() {
       found=1; break
     fi
   done
-  (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; exit 1; }
+  (( found )) || { echo "No session matching '$needle' — run 'claudii se' to list active sessions" >&2; return 1; }
+}
+
+# pin and unpin share one argument shape: a single session-id (substring). Ids
+# never start with a dash, so a dashed word is an option — `pin -h` used to
+# search for a session literally named "-h" and then exit 1.
+_session_pin_usage() {
+  printf 'Usage: claudii %s <session-id>\n\n' "$1"
+  if [[ "$1" == "pin" ]]; then
+    printf 'Protect a session from gc. <session-id> is a full id or any unique part of it\n'
+    printf '(see: claudii se). Pinned sessions stay until unpinned.\n'
+  else
+    printf 'Remove the gc protection set by claudii pin. <session-id> is a full id or any\n'
+    printf 'unique part of it (see: claudii se).\n'
+  fi
 }
 
 _cmd_pin() {
-  [[ -z "${2:-}" ]] && { echo "Usage: claudii pin <session-id>" >&2; exit 1; }
+  case "${2:-}" in
+    -h|--help) _session_pin_usage pin; return 0 ;;
+    -*)        _cli_unknown_opt pin "$2" '<session-id>'; return $? ;;
+  esac
+  [[ -z "${2:-}" ]] && { echo "Usage: claudii pin <session-id>" >&2; return 1; }
   _session_toggle_pin pin "$2"
 }
 
 _cmd_unpin() {
-  [[ -z "${2:-}" ]] && { echo "Usage: claudii unpin <session-id>" >&2; exit 1; }
+  case "${2:-}" in
+    -h|--help) _session_pin_usage unpin; return 0 ;;
+    -*)        _cli_unknown_opt unpin "$2" '<session-id>'; return $? ;;
+  esac
+  [[ -z "${2:-}" ]] && { echo "Usage: claudii unpin <session-id>" >&2; return 1; }
   _session_toggle_pin unpin "$2"
 }
 
@@ -316,7 +341,33 @@ _colorize_fingerprint() {
   printf '%s' "$_out"
 }
 
+_sessions_usage() {
+  cat <<'EOF'
+Usage: claudii sessions [--json | --tsv]
+       claudii sessions --resume <session-id>
+
+List active and recent sessions: model, context %, token throughput, rate
+limits, age and the claude -r line to resume each one. Alias: se.
+
+  --json, --tsv        machine-readable output
+  --resume <id>        resume that session (claude --resume <id>)
+
+See also: sessions-inactive (si), pin, unpin, gc.
+EOF
+}
+
 _cmd_sessions() {
+  # --json/--tsv were already taken into $_FORMAT by the dispatcher, and
+  # `--resume <id>` is exec'd there — a --resume that reaches this point has no
+  # id after it. Everything else is not an option sessions has.
+  case "${2:-}" in
+    "")        ;;
+    -h|--help) _sessions_usage; return 0 ;;
+    --resume)  printf 'claudii sessions: --resume needs a session id\n' >&2
+               printf '  try: claudii sessions --resume <session-id>\n' >&2
+               return 2 ;;
+    *)         _cli_unknown_opt sessions "$2" '[--json | --tsv | --resume <session-id>]'; return $? ;;
+  esac
   _cfg_init
   _live_pids_init
   cache_dir="${CLAUDII_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/claudii}"
@@ -440,7 +491,7 @@ _cmd_sessions() {
         fingerprint: .[11], last_user_message: .[12],
         tok: (.[13] | tonumber? // 0)
       })'
-    exit 0
+    return 0
   elif [[ "$_FORMAT" == "tsv" ]]; then
     printf "model\tctx_pct\tcost\trate_5h\trate_7d\treset_5h\tsession_id\tworktree\tagent\tage_seconds\tstatus\ttok\n"
     for (( _i=0; _i<_sf_count; _i++ )); do
@@ -450,7 +501,7 @@ _cmd_sessions() {
         "${_sf_sid[$_i]}" "${_sf_worktree[$_i]}" "${_sf_agent[$_i]}" \
         "${_sf_age[$_i]}" "${_sf_is_active[$_i]}" "${_sf_tok[$_i]:-0}"
     done
-    exit 0
+    return 0
   fi
 
   # ── Build cross-session file→color map (see _sessions_fp_colormap) ─────────
@@ -555,14 +606,38 @@ _cmd_sessions() {
   printf '\n'
 }
 
+_gc_usage() {
+  cat <<'EOF'
+Usage: claudii gc [--insights DAYS [--yes]]
+
+Remove session cache files whose Claude Code process has ended (and that are
+older than five minutes), plus orphaned atomic-write leftovers. Pinned
+sessions are never removed (see: claudii pin).
+
+  --insights DAYS   also prune insights caches whose source transcript is gone
+                    and older than DAYS days — a dry run unless --yes
+  --yes, -y         actually delete what --insights lists
+EOF
+}
+
 _cmd_gc() {
   local _insights_days="" _yes=0
+  # The dispatcher hands over "$@" including the command name; drop exactly
+  # that one. It used to be skipped wherever it appeared, which is how
+  # `claudii gc gc` slipped through as a clean run.
+  shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      gc|g)       ;;  # command name — dispatcher passes "$@" including it
-      --insights) shift; _insights_days="${1:-}" ;;
+      -h|--help)  _gc_usage; return 0 ;;
+      --insights)
+        # DAYS is a positive integer; a missing or flag-like value is a usage
+        # error rather than "--older-than" with nothing after it.
+        if [[ -z "${2:-}" || "$2" == -* ]]; then
+          printf 'claudii gc: --insights needs a number of days\n' >&2; return 2
+        fi
+        shift; _insights_days="$1" ;;
       --yes|-y)   _yes=1 ;;
-      *) printf 'Usage: claudii gc [--insights DAYS [--yes]]\n' >&2; return 1 ;;
+      *) _cli_unknown_opt gc "$1" '[--insights DAYS [--yes]]' || return $? ;;
     esac
     shift
   done

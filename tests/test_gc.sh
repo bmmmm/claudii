@@ -120,6 +120,34 @@ unset CLAUDII_CACHE_DIR _gc_cache _gc_old _gc_fresh _gc_old_ts
 
 # ── insights gc: orphaned-cache pruning (bin/claudii-insights gc) ───────────
 _igc_base="$CLAUDII_TEST_TMP/test_gc_insights"
+# ── Exit-code contract for `claudii gc` ──────────────────────────────────────
+# The dispatcher passes the command name through; gc used to skip a `gc` token
+# wherever it stood, so `gc gc` ran a clean sweep and answered 0.
+_gcc_cache=$(mktemp -d "${TMPDIR:-/tmp}/claudii_test_gcc.XXXXXX")
+printf 'model=Sonnet\nppid=%s\n' "$$" > "$_gcc_cache/session-gccontract"
+_gcc_env=(env CLAUDII_CACHE_DIR="$_gcc_cache" XDG_CONFIG_HOME="$_gcc_cache/cfg" HOME="$_gcc_cache")
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" gc gc 2>&1 >/dev/null); _gcc_rc=$?
+assert_eq "gc gc: exit 2 (the second gc is an unknown option)" "2" "$_gcc_rc"
+assert_contains "gc gc: contract message" "claudii gc: unknown option: gc" "$_gcc_out"
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" gc --bogus 2>&1 >/dev/null); _gcc_rc=$?
+assert_eq "gc --bogus: exit 2" "2" "$_gcc_rc"
+assert_contains "gc --bogus: contract message" "claudii gc: unknown option: --bogus" "$_gcc_out"
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" gc -h 2>/dev/null); _gcc_rc=$?
+assert_eq "gc -h: exit 0" "0" "$_gcc_rc"
+assert_contains "gc -h: usage on stdout" "Usage: claudii gc" "$_gcc_out"
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" gc --insights 2>&1 >/dev/null); _gcc_rc=$?
+assert_eq "gc --insights without DAYS: exit 2" "2" "$_gcc_rc"
+assert_contains "gc --insights without DAYS: says what is missing" "needs a number of days" "$_gcc_out"
+# The alias `g` goes through the same parser
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" g --bogus 2>&1 >/dev/null); _gcc_rc=$?
+assert_eq "g --bogus (alias): exit 2" "2" "$_gcc_rc"
+# A plain run still works and keeps the live session
+_gcc_out=$("${_gcc_env[@]}" bash "$CLAUDII_HOME/bin/claudii" gc 2>&1); _gcc_rc=$?
+assert_eq "gc (plain): exit 0" "0" "$_gcc_rc"
+assert_file_exists "gc (plain): live session kept" "$_gcc_cache/session-gccontract"
+rm -rf "$_gcc_cache"
+unset _gcc_cache _gcc_env _gcc_out _gcc_rc
+
 rm -rf "$_igc_base"
 mkdir -p "$_igc_base/cache/insights" "$_igc_base/projects/-fake-proj"
 _igc_cache="$_igc_base/cache/insights"

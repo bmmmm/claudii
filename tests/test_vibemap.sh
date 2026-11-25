@@ -149,6 +149,17 @@ _out=$(_vm_run zzzzzz 2>&1; echo "rc=$?")
 grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0
 assert_eq "vibemap: unknown subcommand returns rc=2" "1" "$_ok"
 
+# Exit-code contract: the same message as every other command, rc 2, stderr only
+_out=$(_vm_run --bogus 2>&1 >/dev/null; echo "rc=$?")
+assert_contains "vibemap --bogus: contract message" "claudii vibemap: unknown option: --bogus" "$_out"
+assert_contains "vibemap --bogus: rc=2" "rc=2" "$_out"
+_out=$(_vm_run strip --bogus 2>&1 >/dev/null; echo "rc=$?")
+assert_contains "vibemap strip --bogus: names the subcommand" "claudii vibemap strip: unknown option: --bogus" "$_out"
+assert_contains "vibemap strip --bogus: rc=2" "rc=2" "$_out"
+_out=$(_vm_run strip -h 2>/dev/null; echo "rc=$?")
+assert_contains "vibemap strip -h: usage on stdout" "Usage: claudii vibemap" "$_out"
+assert_contains "vibemap strip -h: rc=0" "rc=0" "$_out"
+
 # --days input validation
 _out=$(_vm_run strip --days 999 2>&1; echo "rc=$?")
 grep -q "rc=2" <<< "$_out" && _ok=1 || _ok=0

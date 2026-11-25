@@ -134,11 +134,7 @@ Available for:
 .BR \-h ", " \-\-help
 Print the command's own usage and exit 0 \(em for the commands under the exit
 status contract below. The rest still answer their own older conventions:
-.BR config
-prints the config,
-.B sessions
-ignores the flag, and
-.BR claudestatus ", " gc ", " pin " and " status
+.BR claudestatus " and " status
 print a usage line but exit 1.
 .PP
 When stdout is not a terminal, ANSI colors are stripped and plain text is emitted.
@@ -166,11 +162,9 @@ spec. Reported as
 .RB \(lq "claudii " cmd ": unknown option: " arg \(rq
 on standard error, never on standard output.
 .PP
-29 of the 46 dispatched commands are under this contract. The others
-.RB ( cc-statusline ", " claudestatus ", " config ", " dashboard ", " gc ,
-.BR insomnii ", " omlx ", " pin ", " search ", " session ,
-.BR session-dashboard ", " sessionline ", " sessions ", " status ,
-.BR unpin ", " vibemap ", " vpnii )
+36 of the 46 dispatched commands are under this contract. The others
+.RB ( cc-statusline ", " claudestatus ", " dashboard ", " insomnii ", " omlx ,
+.BR session ", " session-dashboard ", " sessionline ", " status ", " vpnii )
 still exit 0 or 1 on a bad argument. The list only shrinks:
 .I tests/test_arg_contract.sh
 holds it as a ratchet and turns red if one is converted without being removed
@@ -394,6 +388,12 @@ Supports
 .BR \-\-json " and " \-\-tsv .
 Aliases:
 .BR se ", " ss .
+.br
+Usage:
+.BR "claudii sessions" " [" \-\-json " | " \-\-tsv "]"
+.br
+.B \-h
+prints it. Any other option exits 2.
 .TP
 .BI "sessions \-\-resume " id
 Resume a session by ID.
@@ -403,6 +403,7 @@ Equivalent to
 .B sessions-inactive
 Inactive (ended or stale) sessions with age, context, and rate-limit data.
 Shows badges: pinned, stale, or idle.
+Takes no arguments (an option exits 2).
 Alias:
 .BR si .
 .TP
@@ -420,12 +421,24 @@ token data and the context bar is omitted.
 .BI "pin " session-id
 Protect an inactive session from garbage collection.
 Matches by session ID substring (first match wins).
+Usage:
+.BI "claudii pin " session-id
+a dashed word is an option, never an id: \fB\-h\fR prints the usage, anything
+else exits 2.
 .TP
 .BI "unpin " session-id
 Remove GC protection from a pinned session.
+Same argument rules as
+.BR pin .
 .TP
 .B gc
 Remove stale session cache files.
+Usage:
+.RB "claudii gc [" "\-\-insights " DAYS " [" \-\-yes "]]"
+.B \-h
+prints it, any other argument (including a second
+.BR gc )
+exits 2.
 Pinned sessions are never removed.
 Run
 .B claudii si
@@ -1064,6 +1077,11 @@ instead of the formatted tables.
 .TP
 .B config
 Show all config values.
+Usage:
+.RB "claudii config [" get | set | reset | export | import | theme "]"
+.br
+.B \-h
+prints it. An unknown subcommand exits 2 \(em it no longer prints the config.
 .TP
 .BI "config get " key
 Read a value using dot-notation.
@@ -1095,13 +1113,18 @@ Available:
 .B default
 (magenta accent, standard ANSI) and
 .B pastel
-(softer 256-color palette).
+(softer 256-color palette), or
+.B auto
+(pastel on a light terminal, default on a dark one \(em detected from
+.B COLORFGBG
+or the terminal program at each start).
 Stored as
 .B theme.name
 in
 .IR config.json .
 .TP
 .B agents
+Takes no arguments (an option exits 2).
 List configured agents as a table with columns
 .IR ALIAS ", " SKILL ", " MODEL ", " EFFORT ", " DESCRIPTION .
 With no agents configured, shows onboarding instructions instead.
@@ -1117,7 +1140,7 @@ claudii config set agents.clorch.description "Orchestrator"
 .fi
 .RE
 .TP
-.BI "search " "['query']"
+.BI "search " "['query'] [-- claude-flags]"
 Launch Claude Code in the configured search directory
 .RI ( search.dir ,
 default
@@ -1131,6 +1154,14 @@ from the start directory upwards.
 If a
 .I query
 is provided it is passed as the initial prompt.
+An option exits 2 (nothing is started) unless it follows a bare
+.BR \-\- :
+everything after that goes to
+.B claude
+untouched, e.g.
+.BR "claudii search \-\- \-\-continue" .
+.B \-h
+prints the usage.
 .
 .SS Local LLM (omlx / gateii)
 .TP
@@ -1322,6 +1353,10 @@ Schema:
 No prompt content is recorded.
 .TP
 .B vibemap
+Usage:
+.BR "claudii vibemap" " [" strip | grid | status | path | clear | help "]"
+.br
+An unknown subcommand or option exits 2.
 Last 30 days \[mu] 24-hour strip (default view).
 Today\[aq]s row is highlighted with a \[u25B6] marker and a cursor at the current hour.
 .TP
@@ -1350,6 +1385,16 @@ Enable:
 .TP
 .B explain
 Component overview with current status, data flow, and symbol legend.
+The RPROMPT example and legend mirror the real prompt: models that share one
+state collapse to a single
+.B claude \[u2713]
+(or
+.BR "claude \(ti" ,
+.BR "claude \(da" ),
+and a mix lists only the affected models. Incident stages follow as
+\[u203C] (investigating), \[u2690] (identified), \[u25CE] (monitoring) and
+\[u24D8] (an incident touching none of the tracked models).
+Takes no arguments (an option exits 2).
 Aliases:
 .BR layers ", " components .
 .TP
