@@ -23,7 +23,7 @@ _AC_CLI="$CLAUDII_HOME/bin/claudii"
 # is a RATCHET, not an excuse: the loop below asserts that each of these still
 # FAILS the contract, so converting one without deleting it from here turns this
 # test red. It can only shrink.
-_AC_PENDING=" cc-statusline claudestatus config dashboard gc insomnii omlx pin search session session-dashboard sessionline sessions status unpin vibemap vpnii "
+_AC_PENDING=" cc-statusline claudestatus config dashboard gc insomnii pin search session session-dashboard sessionline sessions status unpin vibemap vpnii "
 
 # Two arms exec into another command, so the message names the TARGET. That is
 # the honest answer for an alias — `claudii layers` IS `claudii explain`.

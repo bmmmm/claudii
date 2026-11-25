@@ -1132,35 +1132,6 @@ If a
 .I query
 is provided it is passed as the initial prompt.
 .
-.SS Local LLM (omlx / gateii)
-.TP
-.B "omlx status"
-Show whether the omlx segment is wired in, the
-.I active.json
-path, and oMLX server reachability.
-.TP
-.B "omlx connect"
-Detect a gateii install, store the path, and probe the server.
-.TP
-.B "omlx test"
-Render the cc-statusline against a synthetic
-.I active.json
-with the omlx segment.
-.TP
-.B "omlx disconnect"
-Remove the
-.B omlx
-entry from any custom
-.B statusline.lines
-layout.
-.PP
-Override the
-.I active.json
-path via
-.B CLAUDII_OMLX_ACTIVE
-or config key
-.BR statusline.omlx_active_path .
-.
 .SS VPN State (vpnii)
 Shows the active WireGuard tunnel name in the cc-statusline and RPROMPT.
 State file:

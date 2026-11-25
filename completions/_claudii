@@ -51,7 +51,6 @@ _claudii() {
         'update:Update claudii (auto-detects Homebrew or git install)'
         'search:Launch Claude in search mode'
         'agents:List configured agents (alias → skill mapping) or show onboarding'
-        'omlx:Local-LLM (gateii/oMLX) sessionline integration — status / connect / test / disconnect'
         'vpnii:VPN state file — set/clear/show (used by wg-quick PostUp/PreDown)'
         'vibemap:Activity heatmap (opt-in) — strip / grid / status / clear / path'
         'sync:Merge sessions from other hosts and accounts over ssh — status / add / rm'
@@ -241,17 +240,6 @@ _claudii() {
           esac
           ;;
 
-        omlx)
-          local -a omlx_opts
-          omlx_opts=(
-            'status:Show whether omlx integration is wired up (default)'
-            'connect:Walk through the setup — detect gateii path, verify omlx server'
-            'disconnect:Remove the omlx segment from custom statusline layouts'
-            'test:Render the statusline against a synthetic active.json'
-          )
-          _describe 'omlx command' omlx_opts
-          ;;
-
         sync)
           local -a sync_opts sync_hosts
           sync_opts=(
@@ -319,7 +307,6 @@ _claudii() {
                 'statusline.max_width:Hard per-line column budget; over-budget segments are dropped with a … (0 = off)'
                 'statusline.max_label:Max characters for branch/dir/worktree/session/agent names (default 20, 0 = off)'
                 'statusline.separator:Segment separator width — tight (default) or wide'
-                'statusline.omlx_active_path:Path to gateii data/agents/active.json for the omlx segment'
                 'session-dashboard.enabled:Session Dashboard mode (on/off)'
                 'debug.level:Debug log level (off/error/warn/info/debug)'
                 'search.dir:Directory for claudii search mode'

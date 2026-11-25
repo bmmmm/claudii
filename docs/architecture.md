@@ -29,7 +29,6 @@ lib/cmd/display.sh      # Commands: trends, version, changelog, explain, 42
 lib/cmd/config.sh       # Commands: config, agents, search
 lib/cmd/insights.sh     # Commands: cache, tokens, tools, limits, session (insights-cache views; cycleable window + --json)
 lib/cmd/perf.sh         # Command: perf (response-time p50/p90/p99, tok/s, latency trend; OTLP metrics or transcript estimate)
-lib/cmd/omlx.sh         # Command: omlx (gateii/oMLX integration)
 lib/cmd/vibemap.sh      # Command: vibemap (activity heatmap; core in lib/vibemap.sh)
 lib/cmd/vpnii.sh        # Command: vpnii (VPN state file for wg-quick hooks)
 lib/cmd/sync.sh         # Command: sync (other hosts' insights/history/live sessions → cache/hosts/<name>/, over ssh)

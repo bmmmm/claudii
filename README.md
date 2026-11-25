@@ -117,8 +117,6 @@ claudii changelog                # what changed between versions
 claudii config get/set <key>     # read/write config
 claudii agents                   # list configured agent aliases
 claudii search ['query']         # launch Claude in search mode
-claudii omlx [status|connect|test|disconnect]
-                                 # local-LLM (oMLX/gateii) sessionline integration
 claudii vpnii [set <name>|clear|show]
                                  # WireGuard tunnel marker for the VPN segment
                                  # (call from wg-quick PostUp/PreDown)
